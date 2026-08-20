@@ -1,0 +1,30 @@
+{
+  "name": "eden-os",
+  "version": "0.1.0",
+  "description": "EDEN OS — Multi-agent AI operating system for real estate client acquisition",
+  "main": "dist/server/index.js",
+  "scripts": {
+    "dev": "tsx watch server/index.ts",
+    "build": "tsc",
+    "start": "node dist/server/index.js",
+    "lint": "eslint . --ext .ts"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.52.0",
+    "@slack/bolt": "^4.1.0",
+    "@slack/web-api": "^7.8.0",
+    "dotenv": "^16.4.7",
+    "express": "^4.21.0",
+    "node-fetch": "^3.3.2",
+    "eventemitter3": "^5.0.1"
+  },
+  "devDependencies": {
+    "@types/express": "^5.0.0",
+    "@types/node": "^22.10.0",
+    "tsx": "^4.19.0",
+    "typescript": "^5.7.0"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  }
+}

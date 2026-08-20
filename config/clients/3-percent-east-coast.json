@@ -1,0 +1,46 @@
+{
+  "clientId": "3-percent-east-coast",
+  "clientName": "3 Percent East Coast",
+  "ghl": {
+    "locationId": "",
+    "apiKey": "env:GHL_3PCT_API_KEY",
+    "pipelineId": "",
+    "stages": {
+      "new": "",
+      "qualified": "",
+      "appointmentBooked": "",
+      "underContract": "",
+      "closed": ""
+    },
+    "calendarId": ""
+  },
+  "meta": {
+    "adAccountId": "act_",
+    "accessToken": "env:META_3PCT_TOKEN",
+    "pageId": ""
+  },
+  "routing": {
+    "rules": [],
+    "defaultAgent": "",
+    "roundRobin": true
+  },
+  "forge": {
+    "cplThreshold": 35,
+    "roasTarget": 3.5,
+    "dailyBudgetCap": 500,
+    "fatigueThreshold": 0.7
+  },
+  "iris": {
+    "qualificationQuestions": [
+      "Are you looking to buy or sell?",
+      "What area are you interested in?",
+      "What's your timeline?",
+      "Are you pre-approved? What's your budget range?"
+    ],
+    "hotScoreThreshold": 75,
+    "warmScoreThreshold": 40
+  },
+  "slack": {
+    "clientChannel": "3-percent-eastcoast-eden"
+  }
+}
