@@ -44,7 +44,8 @@ function verifySlackSignature(
   const now = Math.floor(Date.now() / 1000);
   if (Math.abs(now - parseInt(timestamp)) > 300) return false;
 
-  const sigBaseString = `v0:${timestamp}:${JSON.stringify(req.body)}`;
+  const rawBody = (req as Request & { rawBody?: Buffer }).rawBody;
+  const sigBaseString = `v0:${timestamp}:${rawBody?.toString("utf8") ?? JSON.stringify(req.body)}`;
   const mySignature =
     "v0=" +
     crypto
