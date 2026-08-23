@@ -5,6 +5,7 @@ import express from "express";
 import { initSlackClients } from "../shared/slack";
 import { createSlackRouter } from "../webhooks/slack-events";
 import { createGHLRouter } from "../webhooks/ghl-webhook";
+import { initDb } from "../shared/db";
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -51,6 +52,9 @@ async function start() {
 
   // Initialize Slack clients for all agents
   initSlackClients();
+
+  // Set up the database schema (idempotent)
+  await initDb();
 
   console.log("");
   console.log("  ─────────────────────────────");
