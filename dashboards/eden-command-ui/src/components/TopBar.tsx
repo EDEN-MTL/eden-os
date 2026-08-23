@@ -4,9 +4,13 @@ import { TABS } from "../modules";
 export default function TopBar({
   activeTab,
   onTabChange,
+  panelsOpen,
+  onTogglePanels,
 }: {
   activeTab: string;
   onTabChange: (tab: string) => void;
+  panelsOpen: boolean;
+  onTogglePanels: () => void;
 }) {
   const [time, setTime] = useState(() => new Date());
 
@@ -37,6 +41,11 @@ export default function TopBar({
         ))}
       </div>
       <div className="topbar-right">
+        {activeTab === "COMMAND" && (
+          <button className={`panels-toggle ${panelsOpen ? "active" : ""}`} onClick={onTogglePanels}>
+            {panelsOpen ? "⊠ HIDE PANELS" : "⊞ PANELS"}
+          </button>
+        )}
         <span className="status-dot" />
         <span>SYSTEMS NOMINAL</span>
         <span className="clock">{clock}</span>

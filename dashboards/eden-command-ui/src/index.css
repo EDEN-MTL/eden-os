@@ -394,6 +394,27 @@ a {
   color: var(--cyan);
   text-shadow: 0 0 10px rgba(0, 255, 242, 0.6);
 }
+.panels-toggle {
+  appearance: none;
+  cursor: pointer;
+  background: rgba(0, 184, 255, 0.06);
+  border: 1px solid rgba(0, 184, 255, 0.28);
+  color: rgba(150, 205, 235, 0.7);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 0.12em;
+  padding: 6px 12px;
+}
+.panels-toggle:hover {
+  background: rgba(0, 229, 255, 0.14);
+  border-color: var(--cyan);
+  color: var(--text-bright);
+}
+.panels-toggle.active {
+  color: var(--cyan);
+  border-color: var(--cyan);
+  text-shadow: 0 0 8px rgba(0, 255, 242, 0.6);
+}
 .status-dot {
   width: 6px;
   height: 6px;
