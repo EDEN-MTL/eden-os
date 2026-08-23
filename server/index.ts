@@ -6,6 +6,7 @@ import { initSlackClients } from "../shared/slack";
 import { createSlackRouter } from "../webhooks/slack-events";
 import { createGHLRouter } from "../webhooks/ghl-webhook";
 import { createChatRouter } from "./chat-api";
+import { createTtsRouter } from "./tts-api";
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -42,6 +43,7 @@ app.get("/health", (_req, res) => {
 app.use("/webhooks/slack", createSlackRouter());
 app.use("/webhooks/ghl", createGHLRouter());
 app.use("/api/chat", createChatRouter());
+app.use("/api/tts", createTtsRouter());
 
 // ─── Initialize & Start ───
 async function start() {
