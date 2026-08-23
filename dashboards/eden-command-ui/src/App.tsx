@@ -15,6 +15,7 @@ export default function App() {
   const [activeTab, setActiveTab] = useState("COMMAND");
   const [selectedAgent, setSelectedAgent] = useState("SCT");
   const [voiceLevel, setVoiceLevel] = useState(0);
+  const [panelsOpen, setPanelsOpen] = useState(false);
 
   const handleVoiceLevelChange = useCallback((level: number) => setVoiceLevel(level), []);
 
@@ -22,23 +23,32 @@ export default function App() {
     <div className="eden-root">
       <Atmosphere />
       <div className="eden-shell">
-        <TopBar activeTab={activeTab} onTabChange={setActiveTab} />
+        <TopBar
+          activeTab={activeTab}
+          onTabChange={setActiveTab}
+          panelsOpen={panelsOpen}
+          onTogglePanels={() => setPanelsOpen((v) => !v)}
+        />
 
         {activeTab === "COMMAND" ? (
           <div className="columns">
-            <div className="col-left">
-              <AgentDossierPanel selectedCode={selectedAgent} />
-              <CoreMetricsPanel />
-              <AgentsPanel selectedCode={selectedAgent} onSelectAgent={setSelectedAgent} />
-            </div>
+            {panelsOpen && (
+              <div className="col-left">
+                <AgentDossierPanel selectedCode={selectedAgent} />
+                <CoreMetricsPanel />
+                <AgentsPanel selectedCode={selectedAgent} onSelectAgent={setSelectedAgent} />
+              </div>
+            )}
             <div className="col-center">
               <ReactorCore selectedAgent={selectedAgent} onSelectAgent={setSelectedAgent} voiceLevel={voiceLevel} />
               <ChatPanel onVoiceLevelChange={handleVoiceLevelChange} />
             </div>
-            <div className="col-right">
-              <LiveFeedPanel />
-              <ClientPanel />
-            </div>
+            {panelsOpen && (
+              <div className="col-right">
+                <LiveFeedPanel />
+                <ClientPanel />
+              </div>
+            )}
           </div>
         ) : activeTab === "SETTINGS" ? (
           <SettingsPage />
