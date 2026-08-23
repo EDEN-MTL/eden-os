@@ -22,6 +22,30 @@ CREATE TABLE IF NOT EXISTS ad_settings (
     PRIMARY KEY (client_id, key)
 );
 
+-- Static integration credentials entered via the dashboard's Settings
+-- page — the seed inputs a human provides (app id/secret, seed access
+-- token, ad account id). Distinct from meta_tokens below, which holds the
+-- auto-refreshed *live* token state auth.ts manages on its own. Never
+-- returned to the browser after being saved — the settings API only ever
+-- reports "configured" / "not configured".
+CREATE TABLE IF NOT EXISTS meta_credentials (
+    client_id TEXT PRIMARY KEY DEFAULT 'eden',
+    app_id TEXT NOT NULL,
+    app_secret TEXT NOT NULL,
+    access_token TEXT NOT NULL,
+    ad_account_id TEXT NOT NULL,
+    page_id TEXT,
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE TABLE IF NOT EXISTS ghl_credentials (
+    client_id TEXT PRIMARY KEY DEFAULT 'eden',
+    api_key TEXT NOT NULL,
+    location_id TEXT NOT NULL,
+    attribution_pipeline_name TEXT,
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
 CREATE TABLE IF NOT EXISTS meta_tokens (
     client_id TEXT PRIMARY KEY,
     access_token TEXT NOT NULL,

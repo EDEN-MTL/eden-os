@@ -4,6 +4,7 @@
  * Handles contacts, pipeline, calendar, and communications.
  * GHL is the source of truth for all lead data.
  */
+import { query } from "../db";
 
 const GHL_BASE_URL = "https://services.leadconnectorhq.com";
 
@@ -11,6 +12,7 @@ interface GHLRequestOptions {
   method?: "GET" | "POST" | "PUT" | "DELETE";
   body?: Record<string, any>;
   locationId?: string;
+  apiKey?: string;
 }
 
 async function ghlRequest(
@@ -18,7 +20,7 @@ async function ghlRequest(
   options: GHLRequestOptions = {}
 ): Promise<any> {
   const { method = "GET", body, locationId } = options;
-  const apiKey = process.env.GHL_API_KEY;
+  const apiKey = options.apiKey || process.env.GHL_API_KEY;
 
   if (!apiKey) throw new Error("GHL_API_KEY not set");
 
@@ -115,9 +117,9 @@ function toEpochMs(isoTimestamp?: string | null): number | undefined {
  */
 export async function* listContactsPaginated(
   locationId: string,
-  options: { limit?: number; query?: string } = {}
+  options: { limit?: number; query?: string; apiKey?: string } = {}
 ): AsyncGenerator<any> {
-  const { limit = 100, query } = options;
+  const { limit = 100, query, apiKey } = options;
   let startAfterId: string | undefined;
   let startAfterMs: number | undefined;
 
@@ -128,7 +130,7 @@ export async function* listContactsPaginated(
       params.set("startAfterId", startAfterId);
       params.set("startAfter", String(startAfterMs));
     }
-    const payload = await ghlRequest(`/contacts/?${params.toString()}`);
+    const payload = await ghlRequest(`/contacts/?${params.toString()}`, { apiKey });
     const contacts: any[] = payload.contacts || [];
     if (contacts.length === 0) return;
     for (const c of contacts) yield c;
@@ -148,9 +150,9 @@ export async function* listContactsPaginated(
  */
 export async function* listOpportunitiesPaginated(
   locationId: string,
-  options: { pipelineId?: string; limit?: number } = {}
+  options: { pipelineId?: string; limit?: number; apiKey?: string } = {}
 ): AsyncGenerator<any> {
-  const { pipelineId, limit = 100 } = options;
+  const { pipelineId, limit = 100, apiKey } = options;
   let startAfterId: string | undefined;
   let startAfterMs: number | undefined;
 
@@ -161,7 +163,7 @@ export async function* listOpportunitiesPaginated(
       params.set("startAfterId", startAfterId);
       params.set("startAfter", String(startAfterMs));
     }
-    const payload = await ghlRequest(`/opportunities/search?${params.toString()}`);
+    const payload = await ghlRequest(`/opportunities/search?${params.toString()}`, { apiKey });
     const opps: any[] = payload.opportunities || [];
     if (opps.length === 0) return;
     for (const o of opps) yield o;
@@ -174,14 +176,51 @@ export async function* listOpportunitiesPaginated(
   }
 }
 
-export async function listPipelines(locationId: string): Promise<any[]> {
-  const payload = await ghlRequest(`/opportunities/pipelines?locationId=${locationId}`);
+export async function listPipelines(locationId: string, apiKey?: string): Promise<any[]> {
+  const payload = await ghlRequest(`/opportunities/pipelines?locationId=${locationId}`, { apiKey });
   return payload.pipelines || [];
 }
 
-export async function getCustomFieldDefs(locationId: string): Promise<any[]> {
-  const payload = await ghlRequest(`/locations/${locationId}/customFields`);
+export async function getCustomFieldDefs(locationId: string, apiKey?: string): Promise<any[]> {
+  const payload = await ghlRequest(`/locations/${locationId}/customFields`, { apiKey });
   return payload.customFields || [];
+}
+
+export interface GhlConfig {
+  apiKey: string;
+  locationId: string;
+  attributionPipelineName?: string;
+}
+
+interface GhlCredentialsRow {
+  api_key: string;
+  location_id: string;
+  attribution_pipeline_name: string | null;
+}
+
+/**
+ * Checks the database first (the dashboard's Settings page writes here —
+ * takes effect immediately, no redeploy), then falls back to env vars for
+ * local dev convenience. Eden-only for now, same pattern as
+ * shared/meta's getMetaConfig.
+ */
+export async function getGhlConfig(clientId = "eden"): Promise<GhlConfig | null> {
+  const rows = await query<GhlCredentialsRow>(
+    "SELECT api_key, location_id, attribution_pipeline_name FROM ghl_credentials WHERE client_id = $1",
+    [clientId]
+  );
+  if (rows.length > 0) {
+    const row = rows[0];
+    return {
+      apiKey: row.api_key,
+      locationId: row.location_id,
+      attributionPipelineName: row.attribution_pipeline_name || undefined,
+    };
+  }
+
+  const { GHL_API_KEY, GHL_LOCATION_ID, GHL_ATTRIBUTION_PIPELINE_NAME } = process.env;
+  if (!GHL_API_KEY || !GHL_LOCATION_ID) return null;
+  return { apiKey: GHL_API_KEY, locationId: GHL_LOCATION_ID, attributionPipelineName: GHL_ATTRIBUTION_PIPELINE_NAME };
 }
 
 export async function updateOpportunityStage(

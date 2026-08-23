@@ -7,6 +7,7 @@
  * actions on top of, plus typed convenience methods for reads.
  */
 import { getValidAccessToken } from "./auth";
+import { query } from "../db";
 
 const GRAPH_HOST = "https://graph.facebook.com";
 const API_VERSION = "v21.0";
@@ -28,12 +29,38 @@ export interface MetaConfig {
   clientId: string;
 }
 
+interface MetaCredentialsRow {
+  app_id: string;
+  app_secret: string;
+  access_token: string;
+  ad_account_id: string;
+  page_id: string | null;
+}
+
 /**
- * Eden-only for now — reads from env vars. Swapping this to a real
- * per-client lookup (config/clients/<id>.json) later is a one-function
- * change; every caller already takes a MetaConfig, not env vars directly.
+ * Checks the database first (what the dashboard's Settings page writes to
+ * — takes effect immediately, no redeploy), then falls back to env vars
+ * for local dev convenience. Eden-only for now; every caller already
+ * takes a MetaConfig, not env vars/DB rows directly, so generalizing this
+ * to a real per-client lookup later is a one-function change.
  */
-export function getMetaConfig(clientId = "eden"): MetaConfig | null {
+export async function getMetaConfig(clientId = "eden"): Promise<MetaConfig | null> {
+  const rows = await query<MetaCredentialsRow>(
+    "SELECT app_id, app_secret, access_token, ad_account_id, page_id FROM meta_credentials WHERE client_id = $1",
+    [clientId]
+  );
+  if (rows.length > 0) {
+    const row = rows[0];
+    return {
+      appId: row.app_id,
+      appSecret: row.app_secret,
+      accessToken: row.access_token,
+      adAccountId: row.ad_account_id,
+      pageId: row.page_id || undefined,
+      clientId,
+    };
+  }
+
   const { META_APP_ID, META_APP_SECRET, META_ACCESS_TOKEN, META_AD_ACCOUNT_ID, META_PAGE_ID } = process.env;
   if (!META_APP_ID || !META_APP_SECRET || !META_ACCESS_TOKEN || !META_AD_ACCOUNT_ID) return null;
   return {

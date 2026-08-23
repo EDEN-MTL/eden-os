@@ -80,13 +80,13 @@ export function deriveWon(status: string | undefined): boolean | null {
 export async function syncLeads(
   locationId: string,
   fieldMap: FieldMap,
-  options: { pipelineName?: string; clientId?: string } = {}
+  options: { pipelineName?: string; clientId?: string; apiKey?: string } = {}
 ): Promise<number> {
-  const { pipelineName, clientId = "eden" } = options;
+  const { pipelineName, clientId = "eden", apiKey } = options;
 
   const [customFieldDefs, pipelines] = await Promise.all([
-    getCustomFieldDefs(locationId),
-    listPipelines(locationId),
+    getCustomFieldDefs(locationId, apiKey),
+    listPipelines(locationId, apiKey),
   ]);
   const idLookup = buildFieldIdLookup(customFieldDefs, fieldMap);
 
@@ -112,7 +112,7 @@ export async function syncLeads(
 
   const oppsByContact = new Map<string, any>();
   for (const pipeline of targetPipelines) {
-    for await (const opp of listOpportunitiesPaginated(locationId, { pipelineId: pipeline.id })) {
+    for await (const opp of listOpportunitiesPaginated(locationId, { pipelineId: pipeline.id, apiKey })) {
       if (!opp.contactId) continue;
       const existing = oppsByContact.get(opp.contactId);
       if (!existing || (opp.updatedAt || "") > (existing.updatedAt || "")) {
@@ -122,7 +122,7 @@ export async function syncLeads(
   }
 
   let count = 0;
-  for await (const contact of listContactsPaginated(locationId)) {
+  for await (const contact of listContactsPaginated(locationId, { apiKey })) {
     if (!contact.id) continue;
     const attribution = extractAttribution(contact, idLookup);
 
