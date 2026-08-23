@@ -44,3 +44,44 @@ export async function fetchSpeech(text: string): Promise<Blob | null> {
   if (!res.ok) throw new Error(`TTS request failed: ${res.status}`);
   return res.blob();
 }
+
+export interface IntegrationsStatus {
+  meta: { configured: boolean };
+  ghl: { configured: boolean };
+}
+
+export async function getIntegrationsStatus(): Promise<IntegrationsStatus> {
+  const res = await fetch(`${API_BASE}/api/settings/integrations`, { headers: authHeaders() });
+  if (!res.ok) throw new Error(`Failed to load integration status: ${res.status}`);
+  return res.json();
+}
+
+async function postSettings(path: string, body: Record<string, unknown>): Promise<void> {
+  const res = await fetch(`${API_BASE}/api/settings/${path}`, {
+    method: "POST",
+    headers: authHeaders({ "Content-Type": "application/json" }),
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) {
+    const data = await res.json().catch(() => ({}));
+    throw new Error(data.error || `Request failed: ${res.status}`);
+  }
+}
+
+export function saveMetaCredentials(fields: {
+  appId: string;
+  appSecret: string;
+  accessToken: string;
+  adAccountId: string;
+  pageId?: string;
+}): Promise<void> {
+  return postSettings("meta", fields);
+}
+
+export function saveGhlCredentials(fields: {
+  apiKey: string;
+  locationId: string;
+  attributionPipelineName?: string;
+}): Promise<void> {
+  return postSettings("ghl", fields);
+}
