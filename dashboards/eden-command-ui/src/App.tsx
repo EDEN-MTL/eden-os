@@ -9,6 +9,7 @@ import ChatPanel from "./components/ChatPanel";
 import LiveFeedPanel from "./components/LiveFeedPanel";
 import ClientPanel from "./components/ClientPanel";
 import ModuleScreen from "./components/ModuleScreen";
+import SettingsPage from "./components/SettingsPage";
 
 export default function App() {
   const [activeTab, setActiveTab] = useState("COMMAND");
@@ -39,6 +40,8 @@ export default function App() {
               <ClientPanel />
             </div>
           </div>
+        ) : activeTab === "SETTINGS" ? (
+          <SettingsPage />
         ) : (
           <ModuleScreen tab={activeTab} />
         )}

@@ -14,6 +14,7 @@ import { join } from "path";
 // since config/ isn't compiled into dist/ alongside the TypeScript output.
 import { query } from "../../../shared/db";
 import { getMetaConfig, MetaClient } from "../../../shared/meta";
+import { getGhlConfig } from "../../../shared/ghl";
 import { FieldMap, syncLeads } from "./attribution";
 
 /**
@@ -75,9 +76,9 @@ function loadFieldMap(clientId: string): FieldMap {
   return JSON.parse(readFileSync(path, "utf-8"));
 }
 
-export async function syncGhl(locationId: string, clientId = "eden", pipelineName?: string): Promise<number> {
+export async function syncGhl(locationId: string, clientId = "eden", pipelineName?: string, apiKey?: string): Promise<number> {
   const fieldMap = loadFieldMap(clientId);
-  return syncLeads(locationId, fieldMap, { pipelineName, clientId });
+  return syncLeads(locationId, fieldMap, { pipelineName, clientId, apiKey });
 }
 
 export interface SyncStats {
@@ -93,19 +94,19 @@ export interface SyncStats {
 export async function runFullSync(clientId = "eden", datePreset = "last_7d"): Promise<SyncStats> {
   const stats: SyncStats = { metaRows: null, ghlLeads: null };
 
-  const metaConfig = getMetaConfig(clientId);
+  const metaConfig = await getMetaConfig(clientId);
   if (metaConfig) {
     const client = new MetaClient(metaConfig);
     stats.metaRows = await syncMetaPerformance(client, datePreset, clientId);
   } else {
-    console.log("[FORGE] Skipping Meta sync — not configured (missing META_* env vars).");
+    console.log("[FORGE] Skipping Meta sync — not configured (see the dashboard's Settings page).");
   }
 
-  const { GHL_API_KEY, GHL_LOCATION_ID, GHL_ATTRIBUTION_PIPELINE_NAME } = process.env;
-  if (GHL_API_KEY && GHL_LOCATION_ID) {
-    stats.ghlLeads = await syncGhl(GHL_LOCATION_ID, clientId, GHL_ATTRIBUTION_PIPELINE_NAME);
+  const ghlConfig = await getGhlConfig(clientId);
+  if (ghlConfig) {
+    stats.ghlLeads = await syncGhl(ghlConfig.locationId, clientId, ghlConfig.attributionPipelineName, ghlConfig.apiKey);
   } else {
-    console.log("[FORGE] Skipping GHL sync — not configured (missing GHL_API_KEY/GHL_LOCATION_ID).");
+    console.log("[FORGE] Skipping GHL sync — not configured (see the dashboard's Settings page).");
   }
 
   return stats;

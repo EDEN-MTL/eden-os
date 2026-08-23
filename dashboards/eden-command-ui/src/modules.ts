@@ -32,7 +32,7 @@ function sideItem(head: string, text: string, color: string) {
   return { head, text, color, glow: glow(color, 0.6) };
 }
 
-export const TABS = ["COMMAND", "LEADS", "ISA", "ADS", "CONTENT", "INTEL", "CLIENTS"];
+export const TABS = ["COMMAND", "LEADS", "ISA", "ADS", "CONTENT", "INTEL", "CLIENTS", "SETTINGS"];
 
 export const MODULES: Record<string, any> = {
   LEADS: {
