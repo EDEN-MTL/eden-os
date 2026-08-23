@@ -8,6 +8,7 @@ import { createGHLRouter } from "../webhooks/ghl-webhook";
 import { initDb } from "../shared/db";
 import { createChatRouter } from "./chat-api";
 import { createTtsRouter } from "./tts-api";
+import { createSettingsRouter } from "./settings-api";
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -45,6 +46,7 @@ app.use("/webhooks/slack", createSlackRouter());
 app.use("/webhooks/ghl", createGHLRouter());
 app.use("/api/chat", createChatRouter());
 app.use("/api/tts", createTtsRouter());
+app.use("/api/settings", createSettingsRouter());
 
 // ─── Initialize & Start ───
 async function start() {
