@@ -5,24 +5,28 @@
   "main": "dist/server/index.js",
   "scripts": {
     "dev": "tsx watch server/index.ts",
-    "build": "tsc",
+    "build": "tsc && cp shared/db/schema.sql dist/shared/db/schema.sql",
     "start": "node dist/server/index.js",
-    "lint": "eslint . --ext .ts"
+    "lint": "eslint . --ext .ts",
+    "test": "vitest run"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.52.0",
     "@slack/bolt": "^4.1.0",
     "@slack/web-api": "^7.8.0",
     "dotenv": "^16.4.7",
+    "eventemitter3": "^5.0.1",
     "express": "^4.21.0",
     "node-fetch": "^3.3.2",
-    "eventemitter3": "^5.0.1"
+    "pg": "^8.23.0"
   },
   "devDependencies": {
     "@types/express": "^5.0.0",
     "@types/node": "^22.10.0",
+    "@types/pg": "^8.23.1",
     "tsx": "^4.19.0",
-    "typescript": "^5.7.0"
+    "typescript": "^5.7.0",
+    "vitest": "^4.1.11"
   },
   "engines": {
     "node": ">=20.0.0"

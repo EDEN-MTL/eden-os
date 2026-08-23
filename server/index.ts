@@ -5,6 +5,7 @@ import express from "express";
 import { initSlackClients } from "../shared/slack";
 import { createSlackRouter } from "../webhooks/slack-events";
 import { createGHLRouter } from "../webhooks/ghl-webhook";
+import { initDb } from "../shared/db";
 import { createChatRouter } from "./chat-api";
 import { createTtsRouter } from "./tts-api";
 
@@ -55,6 +56,9 @@ async function start() {
 
   // Initialize Slack clients for all agents
   initSlackClients();
+
+  // Set up the database schema (idempotent)
+  await initDb();
 
   console.log("");
   console.log("  ─────────────────────────────");

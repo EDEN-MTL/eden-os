@@ -103,6 +103,87 @@ export async function getOpportunities(
   );
 }
 
+function toEpochMs(isoTimestamp?: string | null): number | undefined {
+  if (!isoTimestamp) return undefined;
+  return new Date(isoTimestamp).getTime();
+}
+
+/**
+ * Paginates the full contact list for a location. GHL's cursor pagination
+ * wants `startAfter` as an epoch-millisecond timestamp (not the raw
+ * `dateAdded` ISO string) alongside `startAfterId`.
+ */
+export async function* listContactsPaginated(
+  locationId: string,
+  options: { limit?: number; query?: string } = {}
+): AsyncGenerator<any> {
+  const { limit = 100, query } = options;
+  let startAfterId: string | undefined;
+  let startAfterMs: number | undefined;
+
+  while (true) {
+    const params = new URLSearchParams({ locationId, limit: String(limit) });
+    if (query) params.set("query", query);
+    if (startAfterId) {
+      params.set("startAfterId", startAfterId);
+      params.set("startAfter", String(startAfterMs));
+    }
+    const payload = await ghlRequest(`/contacts/?${params.toString()}`);
+    const contacts: any[] = payload.contacts || [];
+    if (contacts.length === 0) return;
+    for (const c of contacts) yield c;
+    if (contacts.length < limit) return;
+
+    const last = contacts[contacts.length - 1];
+    if (!last.id || last.id === startAfterId) return; // cursor didn't advance — stop rather than loop forever
+    startAfterId = last.id;
+    startAfterMs = toEpochMs(last.dateAdded);
+  }
+}
+
+/**
+ * /opportunities/search uses the same cursor pagination as contacts
+ * (page-number params are rejected) — cursor off each page's last
+ * opportunity by `updatedAt`, same approach as listContactsPaginated.
+ */
+export async function* listOpportunitiesPaginated(
+  locationId: string,
+  options: { pipelineId?: string; limit?: number } = {}
+): AsyncGenerator<any> {
+  const { pipelineId, limit = 100 } = options;
+  let startAfterId: string | undefined;
+  let startAfterMs: number | undefined;
+
+  while (true) {
+    const params = new URLSearchParams({ location_id: locationId, limit: String(limit) });
+    if (pipelineId) params.set("pipeline_id", pipelineId);
+    if (startAfterId) {
+      params.set("startAfterId", startAfterId);
+      params.set("startAfter", String(startAfterMs));
+    }
+    const payload = await ghlRequest(`/opportunities/search?${params.toString()}`);
+    const opps: any[] = payload.opportunities || [];
+    if (opps.length === 0) return;
+    for (const o of opps) yield o;
+    if (opps.length < limit) return;
+
+    const last = opps[opps.length - 1];
+    if (!last.id || last.id === startAfterId) return;
+    startAfterId = last.id;
+    startAfterMs = toEpochMs(last.updatedAt);
+  }
+}
+
+export async function listPipelines(locationId: string): Promise<any[]> {
+  const payload = await ghlRequest(`/opportunities/pipelines?locationId=${locationId}`);
+  return payload.pipelines || [];
+}
+
+export async function getCustomFieldDefs(locationId: string): Promise<any[]> {
+  const payload = await ghlRequest(`/locations/${locationId}/customFields`);
+  return payload.customFields || [];
+}
+
 export async function updateOpportunityStage(
   opportunityId: string,
   stageId: string,
