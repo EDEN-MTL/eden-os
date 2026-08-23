@@ -1,0 +1,12 @@
+{
+  "_comment": "Maps internal attribution field names to the GHL custom field 'fieldKey' that actually holds each value on a Contact. Edit this to match Eden's real GHL field setup, not the linker code. See docs/attribution-setup (or ask Jacob) for how fbclid/utm_* get into GHL in the first place — landing page capture + Meta ad set URL parameters using {{campaign.id}}/{{adset.id}}/{{ad.id}}.",
+  "fbclid": "contact.fbclid",
+  "utm_source": "contact.utm_source",
+  "utm_medium": "contact.utm_medium",
+  "utm_campaign": "contact.utm_campaign",
+  "utm_content": "contact.utm_content",
+  "utm_term": "contact.utm_term",
+  "meta_campaign_id": "contact.meta_campaign_id",
+  "meta_adset_id": "contact.meta_adset_id",
+  "meta_ad_id": "contact.meta_ad_id"
+}
