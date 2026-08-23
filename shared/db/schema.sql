@@ -7,6 +7,21 @@
 -- No ORM — plain SQL, matching the rest of eden-os and the system this
 -- was ported from. Idempotent: safe to run on every server startup.
 
+-- Live-toggleable flags (the emergency_hold_all kill switch, and anything
+-- similar later). The Python prototype this was ported from stored this in
+-- a local .env file it re-read on every check, so flipping it from the
+-- dashboard took effect without a restart. Render doesn't support that —
+-- env vars are injected at container start, not read live from a file —
+-- so this table is the direct equivalent: read fresh on every rules-engine
+-- evaluation, writable from the dashboard with no redeploy needed.
+CREATE TABLE IF NOT EXISTS ad_settings (
+    client_id TEXT NOT NULL DEFAULT 'eden',
+    key TEXT NOT NULL,
+    value TEXT NOT NULL,
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    PRIMARY KEY (client_id, key)
+);
+
 CREATE TABLE IF NOT EXISTS meta_tokens (
     client_id TEXT PRIMARY KEY,
     access_token TEXT NOT NULL,
