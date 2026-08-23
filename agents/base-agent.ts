@@ -55,27 +55,8 @@ export abstract class BaseAgent {
       ? `dm:${message.userId}`
       : `channel:${message.channelId}:${message.threadTs || "main"}`;
 
-    // Get or create conversation history
-    const history = this.conversationHistory.get(historyKey) || [];
-
-    // Add user message
-    history.push({ role: "user", content: message.text });
-
-    // Keep last 20 messages to manage context window
-    const trimmedHistory = history.slice(-20);
-
-    // Get system prompt with any dynamic context
-    const systemPrompt = this.getSystemPrompt();
-
-    // Generate response
     try {
-      const response = await chat(systemPrompt, trimmedHistory);
-
-      // Add assistant response to history
-      trimmedHistory.push({ role: "assistant", content: response });
-      this.conversationHistory.set(historyKey, trimmedHistory);
-
-      // Send response
+      const response = await this.generateReply(historyKey, message.text);
       await this.respond(message, response);
     } catch (error) {
       console.error(`[${this.code}] Error generating response:`, error);
@@ -84,6 +65,25 @@ export abstract class BaseAgent {
         "Systems experiencing interference. Retrying..."
       );
     }
+  }
+
+  /**
+   * Generate a reply for arbitrary callers (Slack, the dashboard's chat API, etc.)
+   * — same history + Claude call as handleMessage, minus the Slack-specific bits.
+   */
+  async generateReply(historyKey: string, userText: string): Promise<string> {
+    const history = this.conversationHistory.get(historyKey) || [];
+
+    history.push({ role: "user", content: userText });
+    const trimmedHistory = history.slice(-20);
+
+    const systemPrompt = this.getSystemPrompt();
+    const response = await chat(systemPrompt, trimmedHistory);
+
+    trimmedHistory.push({ role: "assistant", content: response });
+    this.conversationHistory.set(historyKey, trimmedHistory);
+
+    return response;
   }
 
   /**
