@@ -50,8 +50,10 @@ export interface IntegrationsStatus {
   ghl: { configured: boolean };
 }
 
-export async function getIntegrationsStatus(): Promise<IntegrationsStatus> {
-  const res = await fetch(`${API_BASE}/api/settings/integrations`, { headers: authHeaders() });
+export async function getIntegrationsStatus(clientId = "eden"): Promise<IntegrationsStatus> {
+  const res = await fetch(`${API_BASE}/api/settings/integrations?clientId=${encodeURIComponent(clientId)}`, {
+    headers: authHeaders(),
+  });
   if (!res.ok) throw new Error(`Failed to load integration status: ${res.status}`);
   return res.json();
 }
@@ -68,22 +70,28 @@ async function postSettings(path: string, body: Record<string, unknown>): Promis
   }
 }
 
-export function saveMetaCredentials(fields: {
-  appId: string;
-  appSecret: string;
-  accessToken: string;
-  adAccountId: string;
-  pageId?: string;
-}): Promise<void> {
-  return postSettings("meta", fields);
+export function saveMetaCredentials(
+  fields: {
+    appId: string;
+    appSecret: string;
+    accessToken: string;
+    adAccountId: string;
+    pageId?: string;
+  },
+  clientId = "eden"
+): Promise<void> {
+  return postSettings("meta", { ...fields, clientId });
 }
 
-export function saveGhlCredentials(fields: {
-  apiKey: string;
-  locationId: string;
-  attributionPipelineName?: string;
-}): Promise<void> {
-  return postSettings("ghl", fields);
+export function saveGhlCredentials(
+  fields: {
+    apiKey: string;
+    locationId: string;
+    attributionPipelineName?: string;
+  },
+  clientId = "eden"
+): Promise<void> {
+  return postSettings("ghl", { ...fields, clientId });
 }
 
 export interface ClientSummary {
