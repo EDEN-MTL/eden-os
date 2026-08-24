@@ -89,7 +89,15 @@ function SaveButton({ state }: { state: SaveState }) {
   );
 }
 
-export default function SettingsPage() {
+export default function SettingsPage({
+  clientId = "eden",
+  clientName,
+  onBack,
+}: {
+  clientId?: string;
+  clientName?: string;
+  onBack?: () => void;
+}) {
   const [status, setStatus] = useState<IntegrationsStatus | null>(null);
 
   const [metaFields, setMetaFields] = useState({ appId: "", appSecret: "", accessToken: "", adAccountId: "", pageId: "" });
@@ -101,18 +109,22 @@ export default function SettingsPage() {
   const [ghlError, setGhlError] = useState<string | null>(null);
 
   useEffect(() => {
-    getIntegrationsStatus().then(setStatus).catch(() => setStatus(null));
-  }, []);
+    setStatus(null);
+    getIntegrationsStatus(clientId).then(setStatus).catch(() => setStatus(null));
+  }, [clientId]);
 
   async function submitMeta(e: FormEvent) {
     e.preventDefault();
     setMetaState("saving");
     setMetaError(null);
     try {
-      await saveMetaCredentials({
-        ...metaFields,
-        pageId: metaFields.pageId || undefined,
-      });
+      await saveMetaCredentials(
+        {
+          ...metaFields,
+          pageId: metaFields.pageId || undefined,
+        },
+        clientId
+      );
       setMetaState("success");
       setMetaFields({ appId: "", appSecret: "", accessToken: "", adAccountId: "", pageId: "" });
       setStatus((s) => (s ? { ...s, meta: { configured: true } } : s));
@@ -127,10 +139,13 @@ export default function SettingsPage() {
     setGhlState("saving");
     setGhlError(null);
     try {
-      await saveGhlCredentials({
-        ...ghlFields,
-        attributionPipelineName: ghlFields.attributionPipelineName || undefined,
-      });
+      await saveGhlCredentials(
+        {
+          ...ghlFields,
+          attributionPipelineName: ghlFields.attributionPipelineName || undefined,
+        },
+        clientId
+      );
       setGhlState("success");
       setGhlFields({ apiKey: "", locationId: "", attributionPipelineName: "" });
       setStatus((s) => (s ? { ...s, ghl: { configured: true } } : s));
@@ -143,7 +158,12 @@ export default function SettingsPage() {
   return (
     <div className="module-screen">
       <div className="module-inner">
-        <div className="module-eyebrow">FORGE · INTEGRATIONS</div>
+        {onBack && (
+          <button className="expand-btn" onClick={onBack} style={{ marginBottom: 16 }}>
+            ← BACK
+          </button>
+        )}
+        <div className="module-eyebrow">{clientName ? `${clientName.toUpperCase()} · INTEGRATIONS` : "FORGE · INTEGRATIONS"}</div>
         <div className="module-title">SETTINGS</div>
         <div className="module-title-line" />
 

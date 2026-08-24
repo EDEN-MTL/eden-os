@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { ClientDetail, decidePendingAction, getClientDetail } from "../api";
+import SettingsPage from "./SettingsPage";
 
 function StatusBadge({ configured, label }: { configured: boolean; label: string }) {
   return (
@@ -21,6 +22,7 @@ export default function ClientDetailPage({ clientId, onBack }: { clientId: strin
   const [detail, setDetail] = useState<ClientDetail | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [decidingId, setDecidingId] = useState<number | null>(null);
+  const [showSettings, setShowSettings] = useState(false);
 
   const load = useCallback(() => {
     getClientDetail(clientId)
@@ -68,12 +70,30 @@ export default function ClientDetailPage({ clientId, onBack }: { clientId: strin
     );
   }
 
+  if (showSettings) {
+    return (
+      <SettingsPage
+        clientId={clientId}
+        clientName={detail.clientName}
+        onBack={() => {
+          setShowSettings(false);
+          load();
+        }}
+      />
+    );
+  }
+
   return (
     <div className="module-screen">
       <div className="module-inner">
-        <button className="expand-btn" onClick={onBack} style={{ marginBottom: 16 }}>
-          ← BACK TO CLIENTS
-        </button>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
+          <button className="expand-btn" onClick={onBack} style={{ marginBottom: 16 }}>
+            ← BACK TO CLIENTS
+          </button>
+          <button className="expand-btn" onClick={() => setShowSettings(true)} style={{ marginBottom: 16 }}>
+            ⚙ CONFIGURE CREDENTIALS
+          </button>
+        </div>
         <div className="module-eyebrow">CLIENT</div>
         <div className="module-title">{detail.clientName.toUpperCase()}</div>
         <div style={{ display: "flex", gap: 10, marginTop: 12 }}>
