@@ -52,17 +52,18 @@
   },
 
   "ghl": {
-    "locationId": "",
-    "pipelineId": "",
+    "locationId": "I8lajQ7AFCLAMqPw9dCW",
+    "pipelineId": "YJtjZqPdvzIoxDUvz25n",
     "stages": {
-      "new": "",
-      "quoted": "",
-      "scheduled": "",
-      "completed": "",
-      "lost": ""
+      "new": "55994bbd-4f46-417f-94de-1064d3270adc",
+      "contacted": "64fcb301-37fd-400e-8e53-f4d36e2daab4",
+      "quoted": "14ea48c3-c02f-4fb5-a372-20900365f0bd",
+      "scheduled": "cb1fbba6-c3c7-4a34-95ec-f320e5b2490a",
+      "completed": "caed204c-fc3d-47e3-885f-c73500641dae",
+      "lost": "238026a4-0490-4328-9390-41ba1f1ff502"
     },
     "calendarId": "",
-    "_comment": "Pipeline stages are the home-services shape (quote -> schedule -> complete), not the real-estate shape. Fill in real IDs from GHL once the sub-account exists."
+    "_comment": "Real IDs read back from the live location. NOTE: this GHL location is shared with Pedro's older real-estate work — it also contains real-estate pipelines, real-estate custom fields, and ~169 legacy real-estate contacts that are NOT floor customers. Only the 'Matama Floors' pipeline above is relevant to this client. Stage display names in GHL are New Lead / Contacted / Proposal Sent / Scheduled / Closed / Lost; 'quoted' maps to Proposal Sent and 'completed' maps to Closed."
   },
 
   "meta": {

@@ -80,9 +80,20 @@ export function deriveWon(status: string | undefined): boolean | null {
 export async function syncLeads(
   locationId: string,
   fieldMap: FieldMap,
-  options: { pipelineName?: string; clientId?: string; apiKey?: string } = {}
+  options: {
+    pipelineName?: string;
+    clientId?: string;
+    apiKey?: string;
+    /**
+     * Skip contacts that neither carry ad attribution nor sit in the target
+     * pipeline — i.e. other businesses' data on a shared GHL location.
+     * Defaults to true; pass false only for a location you know is
+     * dedicated to this one client and where you want every contact.
+     */
+    skipUnrelatedContacts?: boolean;
+  } = {}
 ): Promise<number> {
-  const { pipelineName, clientId = "eden", apiKey } = options;
+  const { pipelineName, clientId = "eden", apiKey, skipUnrelatedContacts = true } = options;
 
   const [customFieldDefs, pipelines] = await Promise.all([
     getCustomFieldDefs(locationId, apiKey),
@@ -122,6 +133,7 @@ export async function syncLeads(
   }
 
   let count = 0;
+  let skipped = 0;
   for await (const contact of listContactsPaginated(locationId, { apiKey })) {
     if (!contact.id) continue;
     const attribution = extractAttribution(contact, idLookup);
@@ -131,6 +143,24 @@ export async function syncLeads(
     const metaAdId = attribution.meta_ad_id || attribution.utm_content;
 
     const opp = oppsByContact.get(contact.id) || {};
+
+    // A GHL location isn't always dedicated to one business — Matama's, for
+    // instance, is shared with the owner's older real-estate work and holds
+    // ~169 contacts that have nothing to do with floors. Importing those
+    // would fill this client's lead list with other people's customers.
+    //
+    // A contact is relevant if EITHER it carries ad attribution (so it
+    // demonstrably came from an ad) OR it has an opportunity in the target
+    // pipeline (so someone deliberately put it in this business's process).
+    // Everything else is another business's data and is skipped.
+    if (skipUnrelatedContacts) {
+      const hasAttribution = Boolean(attribution.fbclid || metaCampaignId || metaAdsetId || metaAdId);
+      const inTargetPipeline = Boolean(opp.id);
+      if (!hasAttribution && !inTargetPipeline) {
+        skipped++;
+        continue;
+      }
+    }
     const won = deriveWon(opp.status);
     const pipelineStage = stageNames.get(opp.pipelineStageId) ?? opp.pipelineStageId ?? null;
 
@@ -159,7 +189,10 @@ export async function syncLeads(
     );
     count++;
   }
-  console.log(`[FORGE] Synced ${count} GHL leads.`);
+  console.log(
+    `[FORGE] Synced ${count} GHL leads for ${clientId}` +
+      (skipped ? ` (skipped ${skipped} unrelated contacts on this location).` : ".")
+  );
   return count;
 }
 
