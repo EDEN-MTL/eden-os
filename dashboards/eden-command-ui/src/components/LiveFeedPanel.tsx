@@ -1,7 +1,7 @@
 import { AGENTS } from "../agents";
 
 const MOCK_FEED = [
-  { agent: "SCT", time: "2m ago", text: "3 leads captured — Coral Springs Meta campaign" },
+  { agent: "SCT", time: "2m ago", text: "3 leads captured — Mount Pearl Meta campaign" },
   { agent: "IRS", time: "4m ago", text: "Warm transfer → Diaz. Brief: buyer $450k, pool home, 60 days" },
   { agent: "ATL", time: "5m ago", text: "Showing booked tomorrow 2pm — agent brief sent" },
   { agent: "EMB", time: "18m ago", text: "Reactivated cold lead — dormant 4 months" },

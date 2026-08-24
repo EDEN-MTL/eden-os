@@ -1,6 +1,14 @@
 {
   "clientId": "3-percent-east-coast",
   "clientName": "3 Percent East Coast",
+  "industry": "real-estate",
+  "market": {
+    "city": "St. John's",
+    "region": "NL",
+    "country": "CA",
+    "currency": "CAD",
+    "_comment": "St. John's, Newfoundland — NOT South Florida. Earlier versions of this system inherited 'South Florida' from a placeholder in the original design brief and repeated it in every agent prompt; it was wrong. The Meta ad account bills in CAD, which is consistent with this."
+  },
   "ghl": {
     "locationId": "",
     "apiKey": "env:GHL_3PCT_API_KEY",
