@@ -12,14 +12,14 @@ export interface DossierEntry {
 }
 
 export const DOSSIER: Record<string, DossierEntry> = {
-  SCT: { task: "Ingesting Coral Springs Meta form fills — enriching with property history and equity estimate.", m1l: "CAPTURED TODAY", m1v: "47", m2l: "ENRICH RATE", m2v: "96%" },
+  SCT: { task: "Ingesting Mount Pearl Meta form fills — enriching with property history and equity estimate.", m1l: "CAPTURED TODAY", m1v: "47", m2l: "ENRICH RATE", m2v: "96%" },
   IRS: { task: "Live voice call — Whitfield, T. Qualifying budget and timeline before warm transfer.", m1l: "ACTIVE THREADS", m1v: "3", m2l: "AVG RESPONSE", m2v: "4s" },
   ATL: { task: "Matching Iris handoff to a buyer specialist on shift. Martinez paused at capacity.", m1l: "BOOKED TODAY", m1v: "11", m2l: "ROUTE TIME", m2v: "9s" },
   EMB: { task: "Holding 340 long-cycle leads. Reactivated a 4-month dormant record 18m ago.", m1l: "IN NURTURE", m1v: "340", m2l: "REACTIVATED", m2v: "7" },
-  MUS: { task: "Drafted 4 listing captions for the Weston property — awaiting human approval.", m1l: "AWAITING APPR.", m1v: "7", m2l: "PUBLISHED WK", m2v: "18" },
-  FRG: { task: "Paused Parkland Buyers 03 at $36.20 CPL. Six replacement creatives compliance-cleared.", m1l: "CAMPAIGNS", m1v: "14", m2l: "ROAS", m2v: "4.2x" },
+  MUS: { task: "Drafted 4 listing captions for the Paradise property — awaiting human approval.", m1l: "AWAITING APPR.", m1v: "7", m2l: "PUBLISHED WK", m2v: "18" },
+  FRG: { task: "Paused Conception Bay Buyers 03 at $36.20 CPL. Six replacement creatives compliance-cleared.", m1l: "CAMPAIGNS", m1v: "14", m2l: "ROAS", m2v: "4.2x" },
   LNS: { task: "Bottleneck flagged: Martinez follow-up 3x team average. Routing weight reduced.", m1l: "PIPELINE", m1v: "$2.1M", m2l: "LEAD → APPT", m2v: "23%" },
-  NVA: { task: "Palm Beach brokerage at step 4 of 7 — ad account linked, creative assets pending.", m1l: "ONBOARDING", m1v: "2", m2l: "TIME TO LIVE", m2v: "9d" },
+  NVA: { task: "Corner Brook brokerage at step 4 of 7 — ad account linked, creative assets pending.", m1l: "ONBOARDING", m1v: "2", m2l: "TIME TO LIVE", m2v: "9d" },
 };
 
 function feedItem(agent: string, time: string, text: string, color: string) {
@@ -41,7 +41,7 @@ export const MODULES: Record<string, any> = {
     metrics: [metric("CAPTURED TODAY", "47", "↑ 12%", "#00b8ff"), metric("QUALIFIED", "19", "↑ 8%", "#a78bfa"), metric("BOOKED", "11", "", "#00e5ff"), metric("IN NURTURE", "340", "", "#ffa800")],
     feedLabel: "PIPELINE ACTIVITY",
     feed: [
-      feedItem("SCOUT", "2m ago", "3 leads captured — Coral Springs Meta campaign. Enriched with property history + equity estimate.", "#00b8ff"),
+      feedItem("SCOUT", "2m ago", "3 leads captured — Mount Pearl Meta campaign. Enriched with property history + equity estimate.", "#00b8ff"),
       feedItem("IRIS", "4m ago", "Warm transfer → Diaz. Brief: buyer $450k, pool home, 60 days.", "#a78bfa"),
       feedItem("ATLAS", "5m ago", "Showing booked tomorrow 2pm — agent brief sent to mobile.", "#00e5ff"),
       feedItem("IRIS", "11m ago", "Qualified 4 of 6 inbound texts. 2 flagged as unresponsive after 3 attempts.", "#a78bfa"),
@@ -62,17 +62,17 @@ export const MODULES: Record<string, any> = {
     metrics: [metric("ACTIVE CALLS", "1", "", "#a78bfa"), metric("ACTIVE TEXTS", "2", "", "#00b8ff"), metric("AVG RESPONSE", "4s", "", "#00fff2"), metric("WARM TRANSFERS", "6", "↑ 3 today", "#00ff88")],
     feedLabel: "LIVE CONVERSATION · VOICE",
     feed: [
-      feedItem("IRIS", "live · 02:41", "Call in progress — Whitfield, T. Inbound from Weston listing ad.", "#a78bfa"),
+      feedItem("IRIS", "live · 02:41", "Call in progress — Whitfield, T. Inbound from Paradise listing ad.", "#a78bfa"),
       feedItem("IRIS", "02:20", "“Are you looking to buy, sell, or both this year?” → Buying, first home.", "#a78bfa"),
       feedItem("IRIS", "01:52", "Budget confirmed: $380k–$450k. Pre-approval in hand.", "#a78bfa"),
-      feedItem("IRIS", "01:14", "Timeline: 45–60 days. Areas: Weston, Davie. Must-have: fenced yard.", "#a78bfa"),
+      feedItem("IRIS", "01:14", "Timeline: 45–60 days. Areas: Paradise, Torbay. Must-have: fenced yard.", "#a78bfa"),
       feedItem("IRIS", "00:36", "Intent score 87. Preparing warm transfer + agent brief.", "#a78bfa"),
       feedItem("ATLAS", "00:04", "Receiving handoff — matching to buyer specialist on shift.", "#00e5ff"),
     ],
     sideLabel: "RECENT WARM TRANSFERS",
     side: [
       sideItem("→ DIAZ, M.", "Buyer $450k, pool home, 60 days. Pre-approved. Brief delivered 4m ago.", "#a78bfa"),
-      sideItem("→ MARTINEZ, R.", "Seller, Coral Springs, wants valuation + net sheet. Delivered 22m ago.", "#00e5ff"),
+      sideItem("→ MARTINEZ, R.", "Seller, Mount Pearl, wants valuation + net sheet. Delivered 22m ago.", "#00e5ff"),
       sideItem("→ OKAFOR, J.", "Relocation buyer, cash, 30 days. Escalated as priority. 1h ago.", "#00ff88"),
       sideItem("→ HOLD QUEUE", "2 leads awaiting agent availability — Ember holding with nurture touch.", "#ffa800"),
     ],
@@ -83,19 +83,19 @@ export const MODULES: Record<string, any> = {
     metrics: [metric("ACTIVE CAMPAIGNS", "14", "", "#ff2255"), metric("ROAS", "4.2x", "↑ 0.4", "#00ff88"), metric("CPL", "$18.40", "↓ $2.10", "#00fff2"), metric("DAILY SPEND", "$340", "", "#ffa800")],
     feedLabel: "ENGINE ACTIVITY",
     feed: [
-      feedItem("FORGE", "1h ago", "Paused underperformer — CPL exceeded $35 threshold on Parkland Buyers 03.", "#ff2255"),
-      feedItem("FORGE", "1h ago", "Scaled Coral Springs Sellers +25% budget — CPL $12.80, 3-day trend stable.", "#ff2255"),
-      feedItem("FORGE", "2h ago", "6 new creatives generated for Weston listing — 3 static, 3 video hooks.", "#ff2255"),
+      feedItem("FORGE", "1h ago", "Paused underperformer — CPL exceeded $35 threshold on Conception Bay Buyers 03.", "#ff2255"),
+      feedItem("FORGE", "1h ago", "Scaled Mount Pearl Sellers +25% budget — CPL $12.80, 3-day trend stable.", "#ff2255"),
+      feedItem("FORGE", "2h ago", "6 new creatives generated for Paradise listing — 3 static, 3 video hooks.", "#ff2255"),
       feedItem("FORGE", "3h ago", "Compliance check passed: housing policy review on 6 new assets.", "#ff2255"),
-      feedItem("MUSE", "4h ago", "Copy variants drafted for Davie campaign — awaiting approval.", "#ec4899"),
+      feedItem("MUSE", "4h ago", "Copy variants drafted for Torbay campaign — awaiting approval.", "#ec4899"),
       feedItem("LENS", "5h ago", "Attribution reconciled: 11 booked appointments traced to Meta spend.", "#00ff88"),
     ],
     sideLabel: "TOP CAMPAIGNS",
     side: [
-      sideItem("CORAL SPRINGS SELLERS", "CPL $12.80 · 6.1x ROAS · scaling. Best performer this week.", "#00ff88"),
-      sideItem("WESTON BUYERS", "CPL $17.40 · 4.4x ROAS · holding. New creative set entering test.", "#00b8ff"),
-      sideItem("PARKLAND BUYERS 03", "CPL $36.20 · paused by Forge. Creative fatigue after 9 days.", "#ff2255"),
-      sideItem("DAVIE FIRST-TIME", "CPL $21.10 · 3.2x ROAS · learning phase, 2 days remaining.", "#ffa800"),
+      sideItem("MOUNT PEARL SELLERS", "CPL $12.80 · 6.1x ROAS · scaling. Best performer this week.", "#00ff88"),
+      sideItem("PARADISE BUYERS", "CPL $17.40 · 4.4x ROAS · holding. New creative set entering test.", "#00b8ff"),
+      sideItem("CONCEPTION BAY BUYERS 03", "CPL $36.20 · paused by Forge. Creative fatigue after 9 days.", "#ff2255"),
+      sideItem("TORBAY FIRST-TIME", "CPL $21.10 · 3.2x ROAS · learning phase, 2 days remaining.", "#ffa800"),
     ],
   },
   INTEL: {
@@ -124,15 +124,15 @@ export const MODULES: Record<string, any> = {
     metrics: [metric("AWAITING APPROVAL", "7", "", "#ec4899"), metric("PUBLISHED THIS WEEK", "18", "↑ 5", "#00b8ff"), metric("ENGAGEMENT", "3.8%", "↑ 0.6pt", "#00fff2"), metric("ASSETS IN QUEUE", "24", "", "#ffa800")],
     feedLabel: "PRODUCTION FEED",
     feed: [
-      feedItem("MUSE", "12m ago", "Drafted 4 listing captions for Weston property — awaiting approval.", "#ec4899"),
-      feedItem("MUSE", "48m ago", "Market update reel scripted — South Florida inventory shift, 45s cut.", "#ec4899"),
-      feedItem("MUSE", "2h ago", "Neighborhood guide drafted: Coral Springs schools + commute data.", "#ec4899"),
-      feedItem("FORGE", "3h ago", "3 approved creatives pushed live into Weston Buyers ad set.", "#ff2255"),
+      feedItem("MUSE", "12m ago", "Drafted 4 listing captions for Paradise property — awaiting approval.", "#ec4899"),
+      feedItem("MUSE", "48m ago", "Market update reel scripted — Newfoundland inventory shift, 45s cut.", "#ec4899"),
+      feedItem("MUSE", "2h ago", "Neighborhood guide drafted: Mount Pearl schools + commute data.", "#ec4899"),
+      feedItem("FORGE", "3h ago", "3 approved creatives pushed live into Paradise Buyers ad set.", "#ff2255"),
       feedItem("MUSE", "5h ago", "Email sequence rewritten for Ember 90-day dormant cohort.", "#ec4899"),
     ],
     sideLabel: "APPROVAL QUEUE",
     side: [
-      sideItem("LISTING CAPTIONS · 4", "Weston 4/3 pool home. Muse holds until human approval.", "#ec4899"),
+      sideItem("LISTING CAPTIONS · 4", "Paradise 4/3 pool home. Muse holds until human approval.", "#ec4899"),
       sideItem("MARKET REEL · 1", "45-second inventory update. Voiceover script attached.", "#00b8ff"),
       sideItem("EMAIL SEQUENCE · 2", "Reactivation rewrite for Ember. A/B variants prepared.", "#ffa800"),
     ],
@@ -143,7 +143,7 @@ export const MODULES: Record<string, any> = {
     metrics: [metric("ACTIVE CLIENTS", "1", "", "#f97316"), metric("IN ONBOARDING", "2", "", "#00b8ff"), metric("AVG TIME TO LIVE", "9d", "↓ 3d", "#00fff2"), metric("SEATS DEPLOYED", "14", "", "#00ff88")],
     feedLabel: "ONBOARDING ACTIVITY",
     feed: [
-      feedItem("NOVA", "20m ago", "Meta ad account access confirmed — Palm Beach brokerage, step 4 of 7.", "#f97316"),
+      feedItem("NOVA", "20m ago", "Meta ad account access confirmed — Corner Brook brokerage, step 4 of 7.", "#f97316"),
       feedItem("NOVA", "1h ago", "CRM field mapping complete. 1,240 historical leads imported for Ember.", "#f97316"),
       feedItem("NOVA", "3h ago", "Agent roster ingested: 9 agents, routing rules drafted for Atlas.", "#f97316"),
       feedItem("NOVA", "1d ago", "Kickoff call recorded and summarized to #eden-command.", "#f97316"),
@@ -151,9 +151,9 @@ export const MODULES: Record<string, any> = {
     ],
     sideLabel: "ACCOUNTS",
     side: [
-      sideItem("3 PERCENT EAST COAST", "Live · South Florida. 312 leads MTD, 67 appointments, $18 CPL.", "#00ff88"),
-      sideItem("PALM BEACH BROKERAGE", "Onboarding · step 4 of 7. Ad account linked, creative pending.", "#00b8ff"),
-      sideItem("TREASURE COAST GROUP", "Onboarding · step 2 of 7. Contract signed, CRM audit scheduled.", "#f97316"),
+      sideItem("3 PERCENT EAST COAST", "Live · Newfoundland. 312 leads MTD, 67 appointments, $18 CPL.", "#00ff88"),
+      sideItem("CORNER BROOK BROKERAGE", "Onboarding · step 4 of 7. Ad account linked, creative pending.", "#00b8ff"),
+      sideItem("GANDER REALTY GROUP", "Onboarding · step 2 of 7. Contract signed, CRM audit scheduled.", "#f97316"),
     ],
   },
 };
