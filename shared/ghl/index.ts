@@ -107,7 +107,44 @@ export async function getOpportunities(
 
 function toEpochMs(isoTimestamp?: string | null): number | undefined {
   if (!isoTimestamp) return undefined;
-  return new Date(isoTimestamp).getTime();
+  const ms = new Date(isoTimestamp).getTime();
+  return Number.isNaN(ms) ? undefined : ms;
+}
+
+/**
+ * Backstop for GHL's cursor pagination, which was observed live to cycle
+ * rather than terminate: paginating one real pipeline yielded 3,000
+ * opportunities that were only 207 unique records, repeating forever.
+ *
+ * The original guard only compared the LAST item of a page against the
+ * previous cursor, which a cycling page slips straight past. Tracking every
+ * id seen and stopping when a whole page contributes nothing new is robust
+ * regardless of how the server's cursor semantics misbehave.
+ *
+ * MAX_PAGES is a second, cruder stop so a pathological response can never
+ * spin indefinitely — at limit=100 that's 100k records, far beyond any real
+ * location, so it should never be the thing that fires.
+ */
+const MAX_PAGES = 1000;
+
+function makeDedupeTracker() {
+  const seen = new Set<string>();
+  return {
+    /**
+     * Returns only the items not yielded before. An empty result means the
+     * whole page was a repeat, which is the signal to stop paginating.
+     */
+    newItemsIn(items: any[]): any[] {
+      const fresh: any[] = [];
+      for (const item of items) {
+        if (item?.id && !seen.has(item.id)) {
+          seen.add(item.id);
+          fresh.push(item);
+        }
+      }
+      return fresh;
+    },
+  };
 }
 
 /**
@@ -122,25 +159,32 @@ export async function* listContactsPaginated(
   const { limit = 100, query, apiKey } = options;
   let startAfterId: string | undefined;
   let startAfterMs: number | undefined;
+  const tracker = makeDedupeTracker();
 
-  while (true) {
+  for (let page = 0; page < MAX_PAGES; page++) {
     const params = new URLSearchParams({ locationId, limit: String(limit) });
     if (query) params.set("query", query);
     if (startAfterId) {
       params.set("startAfterId", startAfterId);
-      params.set("startAfter", String(startAfterMs));
+      if (startAfterMs !== undefined) params.set("startAfter", String(startAfterMs));
     }
     const payload = await ghlRequest(`/contacts/?${params.toString()}`, { apiKey });
     const contacts: any[] = payload.contacts || [];
     if (contacts.length === 0) return;
-    for (const c of contacts) yield c;
+
+    // Yield only records not seen before; a fully-repeated page means the
+    // server is cycling, so stop rather than loop forever.
+    const fresh = tracker.newItemsIn(contacts);
+    if (fresh.length === 0) return;
+    for (const c of fresh) yield c;
     if (contacts.length < limit) return;
 
     const last = contacts[contacts.length - 1];
-    if (!last.id || last.id === startAfterId) return; // cursor didn't advance — stop rather than loop forever
+    if (!last.id || last.id === startAfterId) return;
     startAfterId = last.id;
     startAfterMs = toEpochMs(last.dateAdded);
   }
+  console.warn(`[GHL] listContactsPaginated hit the ${MAX_PAGES}-page cap for location ${locationId} — stopping.`);
 }
 
 /**
@@ -155,18 +199,24 @@ export async function* listOpportunitiesPaginated(
   const { pipelineId, limit = 100, apiKey } = options;
   let startAfterId: string | undefined;
   let startAfterMs: number | undefined;
+  const tracker = makeDedupeTracker();
 
-  while (true) {
+  for (let page = 0; page < MAX_PAGES; page++) {
     const params = new URLSearchParams({ location_id: locationId, limit: String(limit) });
     if (pipelineId) params.set("pipeline_id", pipelineId);
     if (startAfterId) {
       params.set("startAfterId", startAfterId);
-      params.set("startAfter", String(startAfterMs));
+      if (startAfterMs !== undefined) params.set("startAfter", String(startAfterMs));
     }
     const payload = await ghlRequest(`/opportunities/search?${params.toString()}`, { apiKey });
     const opps: any[] = payload.opportunities || [];
     if (opps.length === 0) return;
-    for (const o of opps) yield o;
+
+    // This endpoint was observed cycling on a real pipeline (3,000 yielded,
+    // 207 unique) — the dedupe stop is what actually terminates it.
+    const fresh = tracker.newItemsIn(opps);
+    if (fresh.length === 0) return;
+    for (const o of fresh) yield o;
     if (opps.length < limit) return;
 
     const last = opps[opps.length - 1];
@@ -174,6 +224,7 @@ export async function* listOpportunitiesPaginated(
     startAfterId = last.id;
     startAfterMs = toEpochMs(last.updatedAt);
   }
+  console.warn(`[GHL] listOpportunitiesPaginated hit the ${MAX_PAGES}-page cap for location ${locationId} — stopping.`);
 }
 
 export async function listPipelines(locationId: string, apiKey?: string): Promise<any[]> {
