@@ -58,8 +58,21 @@ describe("validateImageBytes", () => {
     expect(() => validateImageBytes(malformed, "bad.jpg")).toThrow(ImageSpecError);
   });
 
-  it("warns (but doesn't reject) an off-spec aspect ratio", () => {
-    const result = validateImageBytes(makePng(1000, 1000), "square.png");
+  it("warns (but doesn't reject) a ratio matching no Meta placement", () => {
+    // 6:1 letterbox — matches none of 1.91:1, 1:1, 4:5, or 9:16.
+    const result = validateImageBytes(makePng(3000, 500), "letterbox.png");
     expect(result.warnings.length).toBeGreaterThan(0);
+  });
+
+  it.each([
+    ["1.91:1 link ad", 1200, 628],
+    ["1:1 feed", 1000, 1000],
+    ["4:5 mobile feed", 928, 1160],
+    ["9:16 Stories/Reels", 1080, 1920],
+  ])("does NOT warn on %s, which Meta recommends", (_label, w, h) => {
+    // Regression guard: an earlier version warned on anything that wasn't
+    // 1.91:1, which flagged 4:5 — the ratio our own image generator
+    // produces by default and which Meta explicitly recommends for feed.
+    expect(validateImageBytes(makePng(w, h), "ad.png").warnings).toEqual([]);
   });
 });
