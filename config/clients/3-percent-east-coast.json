@@ -10,22 +10,22 @@
     "_comment": "St. John's, Newfoundland — NOT South Florida. Earlier versions of this system inherited 'South Florida' from a placeholder in the original design brief and repeated it in every agent prompt; it was wrong. The Meta ad account bills in CAD, which is consistent with this."
   },
   "ghl": {
-    "locationId": "",
-    "apiKey": "env:GHL_3PCT_API_KEY",
-    "pipelineId": "",
-    "stages": {
-      "new": "",
-      "qualified": "",
-      "appointmentBooked": "",
-      "underContract": "",
-      "closed": ""
+    "locationId": "t3ypFoQY6EC5IJfj2UYl",
+    "attributionPipelineName": "1. Real Estate Pipeline",
+    "calendarId": "",
+    "outcomeStages": {
+      "_comment": "This team does NOT use GHL's won/lost status — every opportunity sits at status 'open' and the outcome is signalled by dragging the card to a terminal column. Reading status alone returned null for all 149 leads, zeroing revenue and making the ROAS rule unfireable. These stage names are how won/lost is actually determined. 'Buyer Confirmed' and 'Listing Active' are NOT included as won — both carry deal values but are arguably mid-pipeline, so Jacob should confirm before counting them as revenue.",
+      "wonStages": ["Deal Closed"],
+      "lostStages": ["Not Qualified/Not Interested", "No-Show"]
     },
-    "calendarId": ""
+    "_credentialsNote": "Live GHL credentials are stored in the database (ghl_credentials), entered via the dashboard Settings page — not in this file."
   },
   "meta": {
-    "adAccountId": "act_",
-    "accessToken": "env:META_3PCT_TOKEN",
-    "pageId": ""
+    "adAccountId": "act_10150181877529722",
+    "pageId": "130915410412209",
+    "specialAdCategories": ["HOUSING"],
+    "specialAdCategoryCountry": ["CA"],
+    "_comment": "Real estate IS a Meta restricted category (HOUSING), unlike Matama. This means no age/gender targeting, no sub-15mi radius, no lookalikes — the compliance gate in shared/meta/compliance.ts enforces this and cannot be overridden. Credentials live in the database, not here."
   },
   "routing": {
     "rules": [],
@@ -33,10 +33,17 @@
     "roundRobin": true
   },
   "forge": {
+    "_comment": "All values CAD. Grounded in real data pulled 2026-08-24 over a 30-day window: $1,131.37 total spend, $37.71/day actual, 3,203 clicks, $0.35 blended CPC. Client's own Meta daily budget is $50 ($30 buyers / $20 sellers).",
+    "currency": "CAD",
     "cplThreshold": 35,
+    "cplThresholdNote": "UNVALIDATED. Zero leads carry ad attribution yet, so real CPL is unknown — at a 3% click-to-lead rate it would be ~$12, at 1% ~$35. Revisit once attribution produces the first 20-30 leads.",
     "roasTarget": 3.5,
-    "dailyBudgetCap": 500,
-    "fatigueThreshold": 0.7
+    "roasEnabled": false,
+    "roasNote": "Rule DISABLED until revenue data is trustworthy. Only 4 of 149 leads carry a non-zero deal value. A rule that can never fire is worse than no rule — it looks like coverage that doesn't exist. Re-enable once outcomeStages above are confirmed and deal values are being recorded consistently.",
+    "dailyBudgetCap": 75,
+    "dailyBudgetCapNote": "Was 500 — ten times the client's actual $50/day budget, so it was no guardrail at all. 75 allows 50% headroom to scale while still catching a runaway.",
+    "fatigueThreshold": 3.0,
+    "fatigueThresholdNote": "Was 0.7, which is mathematically impossible to stay under: frequency is impressions/reach, so any running ad is >= 1. All 63 ad sets exceeded it, meaning it would have flagged everything as fatigued forever. Their actual range is 1.48 avg / 1.88 max, so 3.0 sits above normal operation but still catches genuine fatigue."
   },
   "iris": {
     "qualificationQuestions": [
