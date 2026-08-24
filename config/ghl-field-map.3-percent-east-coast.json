@@ -1,0 +1,12 @@
+{
+  "_comment": "Maps internal attribution field names to the GHL custom field 'fieldKey' holding each value on a 3 Percent East Coast Contact. Created by provisionAttributionFields against this location, so these keys are verified to match what GHL actually generated. Attribution also requires the landing page to capture fbclid/utm_* into these fields, and each Meta ad set's URL parameters to stamp Meta's dynamic IDs: utm_source=facebook&utm_medium=paid&utm_campaign={{campaign.id}}&utm_content={{ad.id}}&utm_term={{adset.id}}",
+  "fbclid": "contact.fbclid",
+  "utm_source": "contact.utm_source",
+  "utm_medium": "contact.utm_medium",
+  "utm_campaign": "contact.utm_campaign",
+  "utm_content": "contact.utm_content",
+  "utm_term": "contact.utm_term",
+  "meta_campaign_id": "contact.meta_campaign_id",
+  "meta_adset_id": "contact.meta_adset_id",
+  "meta_ad_id": "contact.meta_ad_id"
+}
