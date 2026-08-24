@@ -4,11 +4,15 @@ import { ClientSummary, getClients } from "../api";
 export default function ClientsListPage({ onSelectClient }: { onSelectClient: (clientId: string) => void }) {
   const [clients, setClients] = useState<ClientSummary[] | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [slowLoad, setSlowLoad] = useState(false);
 
   useEffect(() => {
+    const slowTimer = setTimeout(() => setSlowLoad(true), 3000);
     getClients()
       .then(setClients)
-      .catch((err) => setError(err instanceof Error ? err.message : "Failed to load clients"));
+      .catch((err) => setError(err instanceof Error ? err.message : "Failed to load clients"))
+      .finally(() => clearTimeout(slowTimer));
+    return () => clearTimeout(slowTimer);
   }, []);
 
   return (
@@ -19,6 +23,25 @@ export default function ClientsListPage({ onSelectClient }: { onSelectClient: (c
         <div className="module-title-line" />
 
         {error && <div style={{ color: "#ff2255", fontSize: 12 }}>{error}</div>}
+
+        {/*
+          The backend runs on a Render plan that sleeps when idle, so the
+          first request after a quiet period can take ~50s to wake it.
+          Without this the page renders empty during that window and looks
+          broken. The explanation line only appears once the wait is long
+          enough to actually be a cold start, so a normal fast load doesn't
+          show a misleading "waking up" message.
+        */}
+        {!clients && !error && (
+          <div className="mock-note" style={{ fontSize: 11 }}>
+            Loading clients…
+            {slowLoad && (
+              <div style={{ marginTop: 6 }}>
+                The backend sleeps when idle — waking it up can take up to a minute.
+              </div>
+            )}
+          </div>
+        )}
 
         {clients && clients.length === 0 && (
           <div className="mock-note" style={{ fontSize: 11 }}>
