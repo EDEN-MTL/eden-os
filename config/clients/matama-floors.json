@@ -63,6 +63,12 @@
       "lost": "238026a4-0490-4328-9390-41ba1f1ff502"
     },
     "calendarId": "",
+    "attributionPipelineName": "Matama Floors",
+    "outcomeStages": {
+      "_comment": "Added pre-emptively, matching the fix made for the real-estate client. deriveWon reads GHL's won/lost STATUS first and falls back to these stage names. The other client never set that status — every opportunity sat at 'open', so revenue computed as $0 and the ROAS rule could never fire. Pedro's workflow is unconfirmed, so this makes Matama correct either way. UNCONFIRMED: whether 'Scheduled' should also count as won — it is a booked job, but not yet delivered or paid, so it is excluded here.",
+      "wonStages": ["Closed"],
+      "lostStages": ["Lost"]
+    },
     "_comment": "Real IDs read back from the live location. NOTE: this GHL location is shared with Pedro's older real-estate work — it also contains real-estate pipelines, real-estate custom fields, and ~169 legacy real-estate contacts that are NOT floor customers. Only the 'Matama Floors' pipeline above is relevant to this client. Stage display names in GHL are New Lead / Contacted / Proposal Sent / Scheduled / Closed / Lost; 'quoted' maps to Proposal Sent and 'completed' maps to Closed."
   },
 
@@ -78,9 +84,12 @@
     "currency": "CAD",
     "cplThreshold": 45,
     "roasTarget": 8,
+    "roasEnabled": false,
     "dailyBudgetCap": 60,
-    "fatigueThreshold": 0.7,
-    "roasTargetComment": "ROAS is meaningful here only because job value is large ($2,100 reference). A real-estate-style 3.5x target would never trigger and would be useless as a guardrail. Requires deal_value to be recorded on won opportunities in GHL — otherwise ROAS stays null and this rule never fires."
+    "fatigueThreshold": 3.0,
+    "fatigueThresholdNote": "Was 0.7 — the same impossible value the real-estate config had, copied along with the rest of the shape. Frequency is impressions/reach, so it is ALWAYS >= 1 for any ad that has run; nothing can ever sit below 0.7. On the other client this flagged all 63 ad sets as permanently fatigued. It never misfired here only because Matama's Meta account isn't connected yet. 3.0 sits above normal operation while still catching genuine fatigue; retune once Matama has its own frequency history.",
+    "roasTargetComment": "ROAS is meaningful here only because job value is large ($2,100 reference). A real-estate-style 3.5x target would never trigger and would be useless as a guardrail. Requires deal_value to be recorded on won opportunities in GHL — otherwise ROAS stays null and this rule never fires.",
+    "roasEnabledNote": "DISABLED until Matama has closed jobs with deal_value recorded in GHL. Enabling it now would look like coverage that doesn't exist — the rule would sit there never firing. Turn on once outcomeStages above are confirmed with Pedro and deal values are being entered consistently."
   },
 
   "qualification": {
