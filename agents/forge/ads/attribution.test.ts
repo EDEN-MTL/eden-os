@@ -62,3 +62,36 @@ describe("deriveWon", () => {
     expect(deriveWon(undefined)).toBeNull();
   });
 });
+
+describe("deriveWon — stage fallback for teams not using won/lost status", () => {
+  const map = { wonStages: ["Deal Closed"], lostStages: ["Not Qualified/Not Interested", "No-Show"] };
+
+  it("prefers explicit status over stage when status is decisive", () => {
+    // Status is the more reliable signal, so it must win even if the stage disagrees.
+    expect(deriveWon("won", "Not Qualified/Not Interested", map)).toBe(true);
+    expect(deriveWon("lost", "Deal Closed", map)).toBe(false);
+  });
+
+  it("treats abandoned as lost", () => {
+    expect(deriveWon("abandoned", undefined, map)).toBe(false);
+  });
+
+  it("falls back to stage when status is open — the real 3 Percent case", () => {
+    // All 149 of their opportunities are status "open"; the outcome lives in the stage.
+    expect(deriveWon("open", "Deal Closed", map)).toBe(true);
+    expect(deriveWon("open", "Not Qualified/Not Interested", map)).toBe(false);
+    expect(deriveWon("open", "No-Show", map)).toBe(false);
+  });
+
+  it("matches stage names case- and whitespace-insensitively", () => {
+    expect(deriveWon("open", "  deal closed  ", map)).toBe(true);
+  });
+
+  it("returns null for a mid-pipeline stage", () => {
+    expect(deriveWon("open", "Appointment Set", map)).toBe(null);
+  });
+
+  it("returns null when no stage map is configured, rather than guessing", () => {
+    expect(deriveWon("open", "Deal Closed")).toBe(null);
+  });
+});
