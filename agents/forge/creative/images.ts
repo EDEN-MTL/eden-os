@@ -44,7 +44,22 @@ const NO_TEXT_CONSTRAINT =
 
 /** Meta's recommended ratio for single-image feed ads. */
 export const DEFAULT_ASPECT_RATIO = "4:5";
-export const DEFAULT_MODEL = "gemini-3-pro-image-preview";
+
+/**
+ * Flash, not Pro, and deliberately so. There is NO free tier for Gemini
+ * image generation — every call costs money — and ad creative is a
+ * generate-many-discard-most workflow, so the default should be the cheap
+ * model. Rough per-image cost when this was written: 2.5-flash ~$0.039,
+ * 3.1-flash ~$0.067, 3-pro ~$0.134. Generating 20 variations to pick 3
+ * runs ~$1.34 on Pro versus ~$0.78 here.
+ *
+ * Callers can pass HIGH_QUALITY_MODEL explicitly to re-render a chosen
+ * concept — that's the intended pattern: explore on Flash, finish on Pro.
+ * Re-check ai.google.dev/gemini-api/docs/pricing before trusting these
+ * numbers; Google revises them.
+ */
+export const DEFAULT_MODEL = "gemini-3.1-flash-image";
+export const HIGH_QUALITY_MODEL = "gemini-3-pro-image-preview";
 
 export class ImageGenerationError extends Error {}
 
