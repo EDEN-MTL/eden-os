@@ -9,6 +9,7 @@ import { initDb } from "../shared/db";
 import { createChatRouter } from "./chat-api";
 import { createTtsRouter } from "./tts-api";
 import { createSettingsRouter } from "./settings-api";
+import { createClientsRouter } from "./clients-api";
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -47,6 +48,7 @@ app.use("/webhooks/ghl", createGHLRouter());
 app.use("/api/chat", createChatRouter());
 app.use("/api/tts", createTtsRouter());
 app.use("/api/settings", createSettingsRouter());
+app.use("/api/clients", createClientsRouter());
 
 // ─── Initialize & Start ───
 async function start() {
