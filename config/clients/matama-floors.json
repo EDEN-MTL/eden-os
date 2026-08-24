@@ -1,0 +1,104 @@
+{
+  "clientId": "matama-floors",
+  "clientName": "Matama Floors",
+  "legalName": "Planchers Matama",
+  "industry": "home-services",
+  "market": {
+    "city": "Montreal",
+    "region": "QC",
+    "country": "CA",
+    "currency": "CAD",
+    "languages": ["fr", "en"],
+    "_comment": "Montreal is a bilingual market — ad copy, landing pages, and lead follow-up should exist in both FR and EN. Owner contact: Pedro."
+  },
+
+  "services": {
+    "primary": "floor-sanding",
+    "_comment": "Sanding/polishing/varnishing (refinishing) is the core money-maker and should be the focus of ad spend. The rest are real services but secondary — do not split budget across all of them at this stage.",
+    "offered": [
+      "floor-sanding",
+      "floor-polishing",
+      "floor-varnishing",
+      "hardwood-installation",
+      "laminate-installation",
+      "vinyl-installation",
+      "ceramic-installation",
+      "interior-door-installation",
+      "baseboard-installation",
+      "staircase-installation",
+      "handrail-installation"
+    ]
+  },
+
+  "unitEconomics": {
+    "_comment": "Baseline from Pedro as of 2026-08-24, using a 600 sq ft reference job. jobCostPerSqFt is DIRECT job cost only — it does not include overhead (van, insurance, admin, ad spend) and may not fully cost the owner's own labour on overflow jobs. Treat grossMarginPct as gross-on-direct-cost, not net profit. See notes in the PR before using these for pricing decisions.",
+    "referenceJobSqFt": 600,
+    "currentPricePerSqFt": 3.5,
+    "jobCostPerSqFt": 0.667,
+    "referenceJobRevenue": 2100,
+    "referenceJobDirectCost": 400,
+    "referenceJobGrossProfit": 1700,
+    "grossMarginPct": 81,
+    "currentPriceAsMultipleOfCost": 5.25,
+    "pricingUnderReview": true
+  },
+
+  "capacity": {
+    "_comment": "CURRENT ceiling, not the target — the stated goal is to grow fleet and headcount, funded out of profit as leads convert. Ad budget should be paced against this, not against ambition: over-generating leads past servicing capacity burns spend and damages response times. Revisit dailyBudgetCap whenever headcount/vans change.",
+    "vans": 1,
+    "employees": 2,
+    "currentNewClientsPerMonth": 1,
+    "overflowBridge": "Pedro + contractor personally take overflow jobs — temporary buffer during hiring gaps, not standing capacity."
+  },
+
+  "ghl": {
+    "locationId": "",
+    "pipelineId": "",
+    "stages": {
+      "new": "",
+      "quoted": "",
+      "scheduled": "",
+      "completed": "",
+      "lost": ""
+    },
+    "calendarId": "",
+    "_comment": "Pipeline stages are the home-services shape (quote -> schedule -> complete), not the real-estate shape. Fill in real IDs from GHL once the sub-account exists."
+  },
+
+  "meta": {
+    "adAccountId": "",
+    "pageId": "",
+    "specialAdCategories": [],
+    "_comment": "specialAdCategories is deliberately EMPTY. Meta's HOUSING restricted category covers listings, sales/rentals, mortgages and homeowners insurance — NOT home-improvement contractors selling a service. So unlike the real-estate client, Matama keeps full targeting: radius targeting under 15mi/25km, age and gender targeting, and lookalike audiences are all permitted. Do not copy HOUSING over from the real-estate config."
+  },
+
+  "forge": {
+    "_comment": "STARTING VALUES, not validated. cplThreshold is derived from job economics (~10% of the $1,700 reference gross profit spent per closed job, at an assumed ~25% lead->job close rate). The close rate is a GUESS until real data exists — revisit after the first ~30 leads. dailyBudgetCap is intentionally low and paced to the 1-van capacity above, not to what the funnel could spend.",
+    "currency": "CAD",
+    "cplThreshold": 45,
+    "roasTarget": 8,
+    "dailyBudgetCap": 60,
+    "fatigueThreshold": 0.7,
+    "roasTargetComment": "ROAS is meaningful here only because job value is large ($2,100 reference). A real-estate-style 3.5x target would never trigger and would be useless as a guardrail. Requires deal_value to be recorded on won opportunities in GHL — otherwise ROAS stays null and this rule never fires."
+  },
+
+  "qualification": {
+    "_comment": "Replaces the real-estate buy/sell script. These map directly to the inputs a pricing quote needs, so a qualified lead arrives quote-ready.",
+    "questions": [
+      "Which service do you need — floor refinishing (sanding/polishing/varnishing), or an installation?",
+      "Roughly how many square feet?",
+      "What kind of floor is it, and what condition is it in?",
+      "Is it a house, condo, or commercial space?",
+      "Which neighbourhood are you in?",
+      "Is the space occupied or empty right now?",
+      "What's your timeline?"
+    ],
+    "serviceAreaCheck": true,
+    "hotScoreThreshold": 75,
+    "warmScoreThreshold": 40
+  },
+
+  "slack": {
+    "clientChannel": "matama-floors-eden"
+  }
+}

@@ -1,0 +1,12 @@
+{
+  "_comment": "Maps internal attribution field names to the GHL custom field 'fieldKey' holding each value on a Matama Floors Contact. These are the CONVENTIONAL defaults — they must be checked against the real Matama GHL sub-account once it exists, since custom field keys are set per-location and may differ. Attribution only works if the landing page captures fbclid/utm_* into these fields AND each Meta ad set's URL parameters stamp Meta's dynamic IDs: utm_source=facebook&utm_medium=paid&utm_campaign={{campaign.id}}&utm_content={{ad.id}}&utm_term={{adset.id}}",
+  "fbclid": "contact.fbclid",
+  "utm_source": "contact.utm_source",
+  "utm_medium": "contact.utm_medium",
+  "utm_campaign": "contact.utm_campaign",
+  "utm_content": "contact.utm_content",
+  "utm_term": "contact.utm_term",
+  "meta_campaign_id": "contact.meta_campaign_id",
+  "meta_adset_id": "contact.meta_adset_id",
+  "meta_ad_id": "contact.meta_ad_id"
+}
