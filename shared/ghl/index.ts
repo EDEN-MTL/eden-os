@@ -186,6 +186,28 @@ export async function getCustomFieldDefs(locationId: string, apiKey?: string): P
   return payload.customFields || [];
 }
 
+/**
+ * Creates a custom field on a location.
+ *
+ * NOTE: GHL derives the field's `fieldKey` (e.g. "contact.fbclid") from
+ * `name` server-side — there is no way to set it explicitly through this
+ * endpoint. So the name has to be chosen such that GHL's own slugification
+ * produces the key we want; see provisionAttributionFields for how that's
+ * handled and verified.
+ */
+export async function createCustomField(
+  locationId: string,
+  name: string,
+  dataType = "TEXT",
+  apiKey?: string
+): Promise<any> {
+  return ghlRequest(`/locations/${locationId}/customFields`, {
+    method: "POST",
+    body: { name, dataType },
+    apiKey,
+  });
+}
+
 export interface GhlConfig {
   apiKey: string;
   locationId: string;
