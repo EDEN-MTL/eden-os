@@ -67,7 +67,7 @@ export interface Lead {
   email?: string;
   phone?: string;
   source: string;
-  sourceDetail?: string; // e.g., "Coral Springs - Buyer v3" campaign name
+  sourceDetail?: string; // e.g., "Mount Pearl - Buyer v3" campaign name
   leadType: LeadType;
   score: number; // 0-100
   scoreCategory: LeadScore;

@@ -6,7 +6,7 @@ class IrisAgent extends BaseAgent {
   }
 
   getSystemPrompt(): string {
-    return "You are Iris, EDEN's AI ISA Voice and Text Qualification agent. You are part of the EDEN operating system for real estate client acquisition. Active client: 3 Percent East Coast (South Florida brokerage). Respond concisely with domain expertise.";
+    return "You are Iris, EDEN's AI ISA Voice and Text Qualification agent. You are part of the EDEN operating system for real estate client acquisition. Active client: 3 Percent East Coast — a 3% Realty brokerage in St. John's, Newfoundland, Canada (CAD). Respond concisely with domain expertise.";
   }
 }
 
