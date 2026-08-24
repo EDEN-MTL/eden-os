@@ -104,10 +104,22 @@ export function validateImageBytes(fileBytes: Buffer, filename: string): ImageSp
 
   const warnings: string[] = [];
   const actualRatio = parsed.width / parsed.height;
-  if (Math.abs(actualRatio - RECOMMENDED_ASPECT_RATIO) > 0.15) {
+  // Meta recommends different ratios per placement, so a single "correct"
+  // ratio doesn't exist: 1.91:1 for link ads, 1:1 and 4:5 for mobile feed,
+  // 9:16 for Stories/Reels. Only warn when the image matches NONE of them —
+  // warning on 4:5 (which our own generator produces by default, and which
+  // Meta explicitly recommends for feed) was misleading.
+  const isNearRatio = (target: number) => Math.abs(actualRatio - target) <= 0.15;
+  const matchesAKnownPlacement =
+    isNearRatio(RECOMMENDED_ASPECT_RATIO) || // 1.91:1 link ads
+    isNearRatio(1) ||                        // 1:1 feed
+    isNearRatio(4 / 5) ||                    // 4:5 mobile feed
+    isNearRatio(9 / 16);                     // 9:16 Stories/Reels
+  if (!matchesAKnownPlacement) {
     warnings.push(
-      `${parsed.width}x${parsed.height} (ratio ${actualRatio.toFixed(2)}) is off Meta's recommended 1.91:1 ` +
-        "(1200x628) for single-image feed ads — it'll still upload, but may get cropped differently across placements."
+      `${parsed.width}x${parsed.height} (ratio ${actualRatio.toFixed(2)}) doesn't match any ratio Meta ` +
+        "recommends (1.91:1 link, 1:1 or 4:5 feed, 9:16 Stories/Reels) — it'll still upload, but may get " +
+        "cropped unpredictably across placements."
     );
   }
 
