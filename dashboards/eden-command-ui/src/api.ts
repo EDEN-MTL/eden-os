@@ -50,8 +50,10 @@ export interface IntegrationsStatus {
   ghl: { configured: boolean };
 }
 
-export async function getIntegrationsStatus(): Promise<IntegrationsStatus> {
-  const res = await fetch(`${API_BASE}/api/settings/integrations`, { headers: authHeaders() });
+export async function getIntegrationsStatus(clientId = "eden"): Promise<IntegrationsStatus> {
+  const res = await fetch(`${API_BASE}/api/settings/integrations?clientId=${encodeURIComponent(clientId)}`, {
+    headers: authHeaders(),
+  });
   if (!res.ok) throw new Error(`Failed to load integration status: ${res.status}`);
   return res.json();
 }
@@ -68,20 +70,112 @@ async function postSettings(path: string, body: Record<string, unknown>): Promis
   }
 }
 
-export function saveMetaCredentials(fields: {
-  appId: string;
-  appSecret: string;
-  accessToken: string;
-  adAccountId: string;
-  pageId?: string;
-}): Promise<void> {
-  return postSettings("meta", fields);
+export function saveMetaCredentials(
+  fields: {
+    appId: string;
+    appSecret: string;
+    accessToken: string;
+    adAccountId: string;
+    pageId?: string;
+  },
+  clientId = "eden"
+): Promise<void> {
+  return postSettings("meta", { ...fields, clientId });
 }
 
-export function saveGhlCredentials(fields: {
-  apiKey: string;
-  locationId: string;
-  attributionPipelineName?: string;
-}): Promise<void> {
-  return postSettings("ghl", fields);
+export function saveGhlCredentials(
+  fields: {
+    apiKey: string;
+    locationId: string;
+    attributionPipelineName?: string;
+  },
+  clientId = "eden"
+): Promise<void> {
+  return postSettings("ghl", { ...fields, clientId });
+}
+
+export interface ClientSummary {
+  clientId: string;
+  clientName: string;
+  configured: boolean;
+  metaConfigured: boolean;
+  ghlConfigured: boolean;
+  spendLast30d: number;
+  leadsLast30d: number;
+}
+
+export interface AdPerformanceRow {
+  ad_id: string;
+  ad_name: string | null;
+  campaign_name: string | null;
+  spend: number;
+  lead_count: number;
+  won_count: number;
+  revenue: number;
+  cpl: number | null;
+  roas: number | null;
+}
+
+export interface RecentLead {
+  id: number;
+  meta_campaign_id: string | null;
+  meta_adset_id: string | null;
+  meta_ad_id: string | null;
+  pipeline_stage: string | null;
+  deal_value: number | null;
+  won: boolean | null;
+  created_at: string;
+}
+
+export interface PendingAction {
+  id: number;
+  rule_name: string;
+  entity_type: string;
+  entity_id: string;
+  entity_name: string | null;
+  action_type: string;
+  reasoning: string;
+  auto_execute_eligible: boolean;
+  created_at: string;
+}
+
+export interface ClientDetail {
+  clientId: string;
+  clientName: string;
+  metaConfigured: boolean;
+  ghlConfigured: boolean;
+  forgeRules: { cplThreshold: number; roasTarget: number; dailyBudgetCap: number; fatigueThreshold: number } | null;
+  adPerformance: AdPerformanceRow[];
+  recentLeads: RecentLead[];
+  pendingActions: PendingAction[];
+  appointments: { available: boolean; reason?: string };
+}
+
+export async function getClients(): Promise<ClientSummary[]> {
+  const res = await fetch(`${API_BASE}/api/clients`, { headers: authHeaders() });
+  if (!res.ok) throw new Error(`Failed to load clients: ${res.status}`);
+  const data = await res.json();
+  return data.clients;
+}
+
+export async function getClientDetail(clientId: string): Promise<ClientDetail> {
+  const res = await fetch(`${API_BASE}/api/clients/${clientId}`, { headers: authHeaders() });
+  if (!res.ok) throw new Error(`Failed to load client: ${res.status}`);
+  return res.json();
+}
+
+export async function decidePendingAction(
+  clientId: string,
+  pendingActionId: number,
+  decision: "approve" | "reject"
+): Promise<void> {
+  const res = await fetch(`${API_BASE}/api/clients/${clientId}/pending-actions/${pendingActionId}/${decision}`, {
+    method: "POST",
+    headers: authHeaders({ "Content-Type": "application/json" }),
+    body: JSON.stringify({ decidedBy: "dashboard" }),
+  });
+  if (!res.ok) {
+    const data = await res.json().catch(() => ({}));
+    throw new Error(data.error || `Failed to ${decision} action: ${res.status}`);
+  }
 }
