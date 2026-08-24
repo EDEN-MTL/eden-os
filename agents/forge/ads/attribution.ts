@@ -60,11 +60,47 @@ export function extractAttribution(contact: any, idLookup: Record<string, string
   return out;
 }
 
-/** 'won' | 'lost' | null (open) from GHL's opportunity status string. */
-export function deriveWon(status: string | undefined): boolean | null {
+export interface OutcomeStageMap {
+  /** Pipeline stage names that mean the deal was won. Case-insensitive. */
+  wonStages?: string[];
+  /** Pipeline stage names that mean the deal was lost. Case-insensitive. */
+  lostStages?: string[];
+}
+
+/**
+ * Decides whether an opportunity was won, lost, or is still open.
+ *
+ * GHL has an explicit `status` field (open/won/lost/abandoned), and that is
+ * the most reliable signal when it's used — so it wins whenever it says
+ * anything other than "open".
+ *
+ * But not every team uses it. 3 Percent East Coast, for instance, leaves
+ * every opportunity at status "open" and instead drags the card into a
+ * terminal column ("Deal Closed", "Not Qualified/Not Interested"). Reading
+ * status alone returned null for all 149 of their leads, which zeroed out
+ * revenue and made the ROAS rule permanently unfireable — the data was
+ * there, we were looking in the wrong field.
+ *
+ * So when status is open/absent, fall back to the per-client stage mapping
+ * in config. Stage names are client-specific and change over time, which is
+ * exactly why they belong in config rather than hardcoded here.
+ */
+export function deriveWon(
+  status: string | undefined,
+  pipelineStage?: string | null,
+  stageMap?: OutcomeStageMap
+): boolean | null {
   const normalized = (status || "").toLowerCase();
   if (normalized === "won") return true;
-  if (normalized === "lost") return false;
+  if (normalized === "lost" || normalized === "abandoned") return false;
+
+  if (pipelineStage && stageMap) {
+    const stage = pipelineStage.trim().toLowerCase();
+    const matches = (list?: string[]) => (list || []).some((s) => s.trim().toLowerCase() === stage);
+    if (matches(stageMap.wonStages)) return true;
+    if (matches(stageMap.lostStages)) return false;
+  }
+
   return null;
 }
 
@@ -91,9 +127,15 @@ export async function syncLeads(
      * dedicated to this one client and where you want every contact.
      */
     skipUnrelatedContacts?: boolean;
+    /**
+     * Which pipeline stages mean won/lost, for teams that don't set GHL's
+     * won/lost status and instead signal the outcome by moving the card to
+     * a terminal column. See deriveWon.
+     */
+    outcomeStages?: OutcomeStageMap;
   } = {}
 ): Promise<number> {
-  const { pipelineName, clientId = "eden", apiKey, skipUnrelatedContacts = true } = options;
+  const { pipelineName, clientId = "eden", apiKey, skipUnrelatedContacts = true, outcomeStages } = options;
 
   const [customFieldDefs, pipelines] = await Promise.all([
     getCustomFieldDefs(locationId, apiKey),
@@ -161,8 +203,8 @@ export async function syncLeads(
         continue;
       }
     }
-    const won = deriveWon(opp.status);
     const pipelineStage = stageNames.get(opp.pipelineStageId) ?? opp.pipelineStageId ?? null;
+    const won = deriveWon(opp.status, pipelineStage, outcomeStages);
 
     await query(
       `INSERT INTO ad_leads (
