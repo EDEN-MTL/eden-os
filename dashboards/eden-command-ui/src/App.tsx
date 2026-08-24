@@ -10,14 +10,22 @@ import LiveFeedPanel from "./components/LiveFeedPanel";
 import ClientPanel from "./components/ClientPanel";
 import ModuleScreen from "./components/ModuleScreen";
 import SettingsPage from "./components/SettingsPage";
+import ClientsListPage from "./components/ClientsListPage";
+import ClientDetailPage from "./components/ClientDetailPage";
 
 export default function App() {
   const [activeTab, setActiveTab] = useState("COMMAND");
   const [selectedAgent, setSelectedAgent] = useState("SCT");
   const [voiceLevel, setVoiceLevel] = useState(0);
   const [panelsOpen, setPanelsOpen] = useState(false);
+  const [selectedClientId, setSelectedClientId] = useState<string | null>(null);
 
   const handleVoiceLevelChange = useCallback((level: number) => setVoiceLevel(level), []);
+
+  function handleTabChange(tab: string) {
+    if (tab !== "CLIENTS") setSelectedClientId(null);
+    setActiveTab(tab);
+  }
 
   return (
     <div className="eden-root">
@@ -25,7 +33,7 @@ export default function App() {
       <div className="eden-shell">
         <TopBar
           activeTab={activeTab}
-          onTabChange={setActiveTab}
+          onTabChange={handleTabChange}
           panelsOpen={panelsOpen}
           onTogglePanels={() => setPanelsOpen((v) => !v)}
         />
@@ -52,6 +60,12 @@ export default function App() {
           </div>
         ) : activeTab === "SETTINGS" ? (
           <SettingsPage />
+        ) : activeTab === "CLIENTS" ? (
+          selectedClientId ? (
+            <ClientDetailPage clientId={selectedClientId} onBack={() => setSelectedClientId(null)} />
+          ) : (
+            <ClientsListPage onSelectClient={setSelectedClientId} />
+          )
         ) : (
           <ModuleScreen tab={activeTab} />
         )}
