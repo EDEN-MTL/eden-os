@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildFieldIdLookup, deriveWon, extractAttribution } from "./attribution";
+import { buildFieldIdLookup, deriveWon, derivePipelineActive, extractAttribution } from "./attribution";
 
 describe("buildFieldIdLookup", () => {
   const fieldMap = {
@@ -93,5 +93,50 @@ describe("deriveWon — stage fallback for teams not using won/lost status", () 
 
   it("returns null when no stage map is configured, rather than guessing", () => {
     expect(deriveWon("open", "Deal Closed")).toBe(null);
+  });
+});
+
+describe("derivePipelineActive", () => {
+  // Mirrors 3 Percent East Coast: a signed buyer and a live listing are real
+  // commitments, but the money is not in the door.
+  const map = {
+    wonStages: ["Deal Closed"],
+    lostStages: ["No-Show"],
+    activeStages: ["Buyer Confirmed", "Listing Active"],
+  };
+
+  it("flags committed-but-unbanked stages", () => {
+    expect(derivePipelineActive("open", "Buyer Confirmed", map)).toBe(true);
+    expect(derivePipelineActive("open", "Listing Active", map)).toBe(true);
+  });
+
+  it("does not flag early stages that carry no commitment", () => {
+    expect(derivePipelineActive("open", "New Lead", map)).toBe(false);
+  });
+
+  /**
+   * The point of the whole split: Jacob was explicit that these stages are
+   * NOT won. If they ever also read as won, they would inflate revenue from
+   * $11,247 to ~$30,295 on deals that have not closed, and ROAS with it.
+   */
+  it("keeps active stages strictly out of won", () => {
+    for (const stage of map.activeStages) {
+      expect(deriveWon("open", stage, map)).toBeNull();
+    }
+  });
+
+  it("never double-counts a resolved deal as active", () => {
+    expect(derivePipelineActive("open", "Deal Closed", map)).toBe(false);
+    expect(derivePipelineActive("open", "No-Show", map)).toBe(false);
+    expect(derivePipelineActive("won", "Buyer Confirmed", map)).toBe(false);
+  });
+
+  it("is inert when a client has no activeStages configured", () => {
+    expect(derivePipelineActive("open", "Buyer Confirmed", { wonStages: ["Deal Closed"] })).toBe(false);
+    expect(derivePipelineActive("open", "Buyer Confirmed", undefined)).toBe(false);
+  });
+
+  it("matches stage names case- and whitespace-insensitively, as GHL text drifts", () => {
+    expect(derivePipelineActive("open", "  buyer confirmed ", map)).toBe(true);
   });
 });

@@ -146,6 +146,17 @@ export interface ClientDetail {
   ghlConfigured: boolean;
   forgeRules: { cplThreshold: number; roasTarget: number; dailyBudgetCap: number; fatigueThreshold: number } | null;
   adPerformance: AdPerformanceRow[];
+  /**
+   * Whole-CRM totals, NOT ad-attributed. Kept separate from adPerformance
+   * so ad spend never takes credit for organic deals.
+   */
+  crmPipeline: {
+    revenue: number;
+    wonCount: number;
+    pipelineValue: number;
+    activeCount: number;
+    note: string;
+  };
   recentLeads: RecentLead[];
   pendingActions: PendingAction[];
   appointments: { available: boolean; reason?: string };

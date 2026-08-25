@@ -4,3 +4,7 @@ dist/
 *.log
 .DS_Store
 *.tsbuildinfo
+
+# Ad-hoc scratch scripts (e.g. one-off sync runners) — never part of the build
+*.tmp.js
+*.tmp.ts

@@ -8,10 +8,12 @@
     "region": "QC",
     "country": "CA",
     "currency": "CAD",
-    "languages": ["fr", "en"],
+    "languages": [
+      "fr",
+      "en"
+    ],
     "_comment": "Montreal is a bilingual market — ad copy, landing pages, and lead follow-up should exist in both FR and EN. Owner contact: Pedro."
   },
-
   "services": {
     "primary": "floor-sanding",
     "_comment": "Sanding/polishing/varnishing (refinishing) is the core money-maker and should be the focus of ad spend. The rest are real services but secondary — do not split budget across all of them at this stage.",
@@ -29,7 +31,6 @@
       "handrail-installation"
     ]
   },
-
   "unitEconomics": {
     "_comment": "Baseline from Pedro as of 2026-08-24, using a 600 sq ft reference job. jobCostPerSqFt is DIRECT job cost only — it does not include overhead (van, insurance, admin, ad spend) and may not fully cost the owner's own labour on overflow jobs. Treat grossMarginPct as gross-on-direct-cost, not net profit. See notes in the PR before using these for pricing decisions.",
     "referenceJobSqFt": 600,
@@ -42,7 +43,6 @@
     "currentPriceAsMultipleOfCost": 5.25,
     "pricingUnderReview": true
   },
-
   "capacity": {
     "_comment": "CURRENT ceiling, not the target — the stated goal is to grow fleet and headcount, funded out of profit as leads convert. Ad budget should be paced against this, not against ambition: over-generating leads past servicing capacity burns spend and damages response times. Revisit dailyBudgetCap whenever headcount/vans change.",
     "vans": 1,
@@ -50,7 +50,6 @@
     "currentNewClientsPerMonth": 1,
     "overflowBridge": "Pedro + contractor personally take overflow jobs — temporary buffer during hiring gaps, not standing capacity."
   },
-
   "ghl": {
     "locationId": "I8lajQ7AFCLAMqPw9dCW",
     "pipelineId": "YJtjZqPdvzIoxDUvz25n",
@@ -66,19 +65,25 @@
     "attributionPipelineName": "Matama Floors",
     "outcomeStages": {
       "_comment": "Added pre-emptively, matching the fix made for the real-estate client. deriveWon reads GHL's won/lost STATUS first and falls back to these stage names. The other client never set that status — every opportunity sat at 'open', so revenue computed as $0 and the ROAS rule could never fire. Pedro's workflow is unconfirmed, so this makes Matama correct either way. UNCONFIRMED: whether 'Scheduled' should also count as won — it is a booked job, but not yet delivered or paid, so it is excluded here.",
-      "wonStages": ["Closed"],
-      "lostStages": ["Lost"]
+      "wonStages": [
+        "Closed"
+      ],
+      "lostStages": [
+        "Lost"
+      ],
+      "activeStages": [
+        "Scheduled"
+      ],
+      "activeStagesNote": "Jacob, 2026-08-24: same rule as the real-estate client — a booked job is committed but not delivered or paid, so it is active pipeline value, not won. Stays won=null; totalled as pipeline_value."
     },
     "_comment": "Real IDs read back from the live location. NOTE: this GHL location is shared with Pedro's older real-estate work — it also contains real-estate pipelines, real-estate custom fields, and ~169 legacy real-estate contacts that are NOT floor customers. Only the 'Matama Floors' pipeline above is relevant to this client. Stage display names in GHL are New Lead / Contacted / Proposal Sent / Scheduled / Closed / Lost; 'quoted' maps to Proposal Sent and 'completed' maps to Closed."
   },
-
   "meta": {
     "adAccountId": "",
     "pageId": "",
     "specialAdCategories": [],
     "_comment": "specialAdCategories is deliberately EMPTY. Meta's HOUSING restricted category covers listings, sales/rentals, mortgages and homeowners insurance — NOT home-improvement contractors selling a service. So unlike the real-estate client, Matama keeps full targeting: radius targeting under 15mi/25km, age and gender targeting, and lookalike audiences are all permitted. Do not copy HOUSING over from the real-estate config."
   },
-
   "forge": {
     "_comment": "STARTING VALUES, not validated. cplThreshold is derived from job economics (~10% of the $1,700 reference gross profit spent per closed job, at an assumed ~25% lead->job close rate). The close rate is a GUESS until real data exists — revisit after the first ~30 leads. dailyBudgetCap is intentionally low and paced to the 1-van capacity above, not to what the funnel could spend.",
     "currency": "CAD",
@@ -91,7 +96,6 @@
     "roasTargetComment": "ROAS is meaningful here only because job value is large ($2,100 reference). A real-estate-style 3.5x target would never trigger and would be useless as a guardrail. Requires deal_value to be recorded on won opportunities in GHL — otherwise ROAS stays null and this rule never fires.",
     "roasEnabledNote": "DISABLED until Matama has closed jobs with deal_value recorded in GHL. Enabling it now would look like coverage that doesn't exist — the rule would sit there never firing. Turn on once outcomeStages above are confirmed with Pedro and deal values are being entered consistently."
   },
-
   "qualification": {
     "_comment": "Replaces the real-estate buy/sell script. These map directly to the inputs a pricing quote needs, so a qualified lead arrives quote-ready.",
     "questions": [
@@ -107,7 +111,6 @@
     "hotScoreThreshold": 75,
     "warmScoreThreshold": 40
   },
-
   "slack": {
     "clientChannel": "matama-floors-eden"
   }
