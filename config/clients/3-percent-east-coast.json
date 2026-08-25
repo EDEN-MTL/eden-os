@@ -69,6 +69,14 @@
     ],
     "hotScoreThreshold": 75,
     "warmScoreThreshold": 40,
+    "writeFields": {
+      "_comment": "Iris build-brief update, 2026-08-25: Iris must write structured fields after a call, never prose into isa_notes — that field only needs a parser (agents/scout/isa-notes.ts) because the ISA's answers are trapped in prose, and Iris repeating that pattern would automate the bottleneck instead of fixing it. These are single write-target keys, not scout.fields' read-priority lists: scout.fields.timeline tries the survey field first because that is what is populated when a lead arrives; Iris writes to the LF field specifically, because that is the one the ISA has historically written after a call.",
+      "timeline": "contact.lf_timeframe",
+      "budget": "contact.lf_budget",
+      "propertyInterest": "contact.lf_proprety",
+      "preApproved": "contact.are_you_pre_approuved",
+      "preApprovedNote": "Written as the actual financing value — cash / pre-approved / in-progress / not-approved — not a yes/no. See agents/scout/isa-notes.ts Financing type."
+    },
     "callbacks": {
       "_comment": "Iris books its own callbacks. GHL calendar creation IS permitted on this token (POST /calendars/ returns 400 for a missing body, not 401), so this can be provisioned programmatically once the owner and calling hours are confirmed.",
       "calendarKey": "callback",
