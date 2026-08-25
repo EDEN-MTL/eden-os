@@ -24,9 +24,10 @@
       ],
       "activeStages": [
         "Buyer Confirmed",
+        "Seller Confirmed",
         "Listing Active"
       ],
-      "activeStagesNote": "Jacob, 2026-08-24: these are NOT won, but they ARE active pipeline value. Verified against the live DB on that date: Buyer Confirmed = 9 deals / $21,450.00, Listing Active = 1 deal / $4,048.50, so pipeline value is $25,498.50 against $11,247.00 of banked revenue (2 deals at Deal Closed). They stay won=null, so revenue and ROAS are untouched; they are totalled separately as pipeline_value. Counting them as won would have overstated revenue as $36,745.50 on deals that have not closed."
+      "activeStagesNote": "Jacob, 2026-08-24: these are NOT won, but they ARE active pipeline value. Verified against the live DB on that date: Buyer Confirmed = 9 deals / $21,450.00, Listing Active = 1 deal / $4,048.50, so pipeline value is $25,498.50 against $11,247.00 of banked revenue (2 deals at Deal Closed). They stay won=null, so revenue and ROAS are untouched; they are totalled separately as pipeline_value. Counting them as won would have overstated revenue as $36,745.50 on deals that have not closed. UPDATED 2026-08-25: 'Seller Confirmed' added. Mark's pipeline mapping showed it as an under-contract stage alongside 'Buyer Confirmed' — a formally signed seller. I had missed it because it carried no deal value at the time I checked the data, so it never surfaced. Same commitment level as the other two; it belongs here."
     },
     "_credentialsNote": "Live GHL credentials are stored in the database (ghl_credentials), entered via the dashboard Settings page — not in this file."
   },
@@ -71,5 +72,48 @@
   },
   "slack": {
     "clientChannel": "3-percent-eastcoast-eden"
+  },
+  "scout": {
+    "_comment": "Lead intake mapping for 3% East Coast, from Mark's GHL discovery (2026-08-25), verified against the live location before being committed. Every stage ID he mapped resolved correctly. Two values were corrected — see _corrections.",
+    "_corrections": {
+      "preApprovedField": "Mark had contact.are_you_pre_approved. No such field exists. The real key is contact.are_you_pre_approuved — GHL's own label carries a typo ('Are You Pre-approuved ?'). This mattered: Mark notes pre-approval is the ONLY real scoring signal the ISA uses, and a wrong key returns null rather than erroring, so every lead would have silently read as not-pre-approved.",
+      "buyerCalendarId": "Mark had 4Eyz51DOl7TY78gRgBU3 (lowercase L at index 8); the real ID is 4Eyz51DOI7TY78gRgBU3 (uppercase i). Same length, one glyph apart — transcribed by eye. Every buyer booking would have failed. The seller calendar was correct.",
+      "leadSourceNote": "Mark noted 'no custom source/campaign field exists'. That was true when he looked but is now out of date: nine attribution fields (fbclid, utm_*, meta_campaign/adset/ad_id) were provisioned into this location. Scout reads those for ad-level attribution and falls back to the built-in contact.source only when they are empty."
+    },
+    "pipelineId": "g8DgskR6GqDvRR3A6jnN",
+    "pipelineName": "1. Real Estate Pipeline",
+    "intakeStages": {
+      "_comment": "No single 'new' stage — the lead type IS the entry stage. Lead type is also captured in the propertyInterest field.",
+      "Buyer Leads": "f83b5ac8-e445-4a3e-b1e0-ac99a4747b56",
+      "Seller Leads": "674a9e3f-fcc2-4dd3-8240-137de723aeaa",
+      "Downsize Leads": "1044d381-5202-4e0e-936c-b393de93b517",
+      "Upgrading Leads": "02254e3e-7807-45e9-958b-59d45c760aba"
+    },
+    "qualifiedTags": [
+      "appt booked",
+      "live transferred"
+    ],
+    "qualifiedTagsNote": "Qualification is NOT a pipeline stage here — the ISA qualifies and books or transfers in the same call, so either tag means qualified.",
+    "calendars": {
+      "buyer": "4Eyz51DOI7TY78gRgBU3",
+      "seller": "vbsoYjk2Q6nI66q8u8to"
+    },
+    "fields": {
+      "propertyInterest": "contact.lf_proprety",
+      "budget": "contact.lf_budget",
+      "timeline": "contact.lf_timeframe",
+      "preApproved": "contact.are_you_pre_approuved",
+      "leadSource": "contact.source",
+      "_comment": "The 'LF Leads' folder fields are the current lead form. The location holds 49 custom fields including several legacy duplicates from earlier forms (budget_range, what_is_your_budget, when_are_you_looking_to_move, and three separate 'working with a realtor' variants). Do not read those — they are stale."
+    },
+    "_liveDataFindings": {
+      "checkedOn": "2026-08-25, against 80 contacts and 222 opportunities in the live location",
+      "propertyInterestNeverPopulated": "contact.lf_proprety is EMPTY on all 80 contacts checked. The field exists and the key is correct, it is simply never written. Intent is therefore derived from the intake stage the lead lands in (Buyer/Seller/Downsize/Upgrading Leads), not from this field.",
+      "preApprovedNeverPopulated": "contact.are_you_pre_approuved is empty on all 80 contacts. Mark reports the ISA pre-screens on pre-approval, so it is evidently captured outside GHL — verbally or in ISA NOTES. The scoring rule is retained because it is the right rule, but it cannot fire until someone starts recording the answer. This is the single highest-value data-entry change the team could make: it is worth 40 of 100 points.",
+      "timelineValues": "contact.lf_timeframe is populated on 21/80 and holds '1-4 Months' (most common), '4+ months', 'ASAP', and '1 - 4 months'. Spacing is inconsistent because the form has been revised.",
+      "intakeStagesAreTransient": "Only 1 of 222 opportunities sits in an intake stage — leads move through quickly. Intent resolution therefore works at capture time, which is when Scout runs, and reads 'unknown' for the existing back catalogue. Expected, not a fault.",
+      "orphanedStageIds": "9 of 222 opportunities sit in three stage IDs absent from the pipeline definition: 9a26c74a-3f57-4302-9b53-7bd557ee5281 (7), 41a3e23b-aefd-4ac2-bf5a-571887c97c6e (1), 6be178c8-60e5-48da-954f-806febebb672 (1). Likely deleted stages that still hold records. Worth Mark confirming whether those leads are stranded.",
+      "noAdAttributionYet": "0 of 60 contacts carry fbclid or meta_ad_id. The fields exist; nothing is populating them until the landing page and Meta ad set URL parameters pass them through."
+    }
   }
 }
