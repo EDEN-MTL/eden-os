@@ -9,14 +9,27 @@
 
 import { Financing, parseIsaNotes } from "./isa-notes";
 
+/**
+ * A field can be a single key or a list tried in priority order.
+ *
+ * The list exists because this location has the same question stored under
+ * several keys from successive form revisions — budget lives in both
+ * what_is_your_budget (90 contacts) and lf_budget (12), and "working with a
+ * realtor" exists three separate times. Which one is populated depends on
+ * when the lead arrived and whether anyone has called them.
+ */
+export type FieldRef = string | string[];
+
 export interface ScoutFieldMap {
-  propertyInterest: string;
-  budget: string;
-  timeline: string;
-  preApproved: string;
-  leadSource: string;
+  propertyInterest: FieldRef;
+  budget: FieldRef;
+  timeline: FieldRef;
+  preApproved: FieldRef;
+  leadSource: FieldRef;
   /** Free-text ISA call notes — richer than the form fields on this account. */
-  isaNotes?: string;
+  isaNotes?: FieldRef;
+  /** Captured for context; see scoreLead for why it is not scored. */
+  workingWithRealtor?: FieldRef;
 }
 
 export interface ScoutConfig {
@@ -182,6 +195,25 @@ export function deriveIntent(propertyInterest: string | null): NormalisedLead["i
  * GHL's built-in "Engagement Score" profile has never been switched on.
  * Deliberately simple: a score nobody can explain is a score nobody trusts.
  */
+/**
+ * Earliest month the lead could transact, or null if unreadable.
+ *
+ * Handles every real value across both sources: the survey dropdown
+ * ("ASAP", "3-6 Months", "12 + months", "7 - 12 months"), the ISA's typed
+ * answers ("1-4 Months", "4+ months", "1 - 4 months"), and prose like
+ * "sooner the better". Takes the LOWER bound of a range — "3-6 Months"
+ * means they could move in three.
+ */
+export function parseTimelineMonths(raw: string | null): number | null {
+  if (!raw) return null;
+  const v = raw.trim().toLowerCase();
+  if (/asap|immediat|right away|sooner the better|soon as possible|this month|within a month/.test(v)) return 0;
+  const m = v.match(/\d+/);
+  if (!m) return null;
+  const n = Number(m[0]);
+  return Number.isFinite(n) && n >= 0 && n <= 120 ? n : null;
+}
+
 export function scoreLead(lead: Omit<NormalisedLead, "score" | "scoreReasons">): {
   score: number;
   reasons: string[];
@@ -210,16 +242,24 @@ export function scoreLead(lead: Omit<NormalisedLead, "score" | "scoreReasons">):
   else if (lead.financing === "not-approved") add(-10, "not pre-approved");
 
   /*
-   * Patterns are written against the values this location actually stores,
-   * checked over 80 live contacts: "1-4 Months" (most common), "4+ months",
-   * "ASAP", "1 - 4 months". An earlier version used textbook ranges (0-3,
-   * 3-6, 6-12) and scored the single most common real value at zero.
-   * Spacing varies because the form has been edited over time.
+   * Scored off a parsed month count rather than by matching the text.
+   *
+   * Two separate string-matching versions of this have now been wrong. The
+   * first used textbook ranges and gave "1-4 Months" — the most common value
+   * in the ISA notes — a zero. The second handled the notes but missed the
+   * survey dropdown, scoring "3-6 Months", "4 - 6 months", "7 - 12 months"
+   * and "12 + months" at zero: 32 of 113 real answers, 28%.
+   *
+   * The forms have been revised repeatedly and the two sources disagree on
+   * format, so any pattern list will keep rotting. A number does not.
    */
-  const t = (lead.timeline || "").toLowerCase().replace(/\s+/g, "");
-  if (/asap|immediate|rightaway|thismonth|withinamonth/.test(t)) add(25, "urgent timeline");
-  else if (/^1-4|0-3|1-3|1-6|fewmonths|soon/.test(t)) add(15, "near-term timeline");
-  else if (/4\+|6\+|6-12|year|browsing|justlooking/.test(t)) add(5, "long timeline");
+  const months = parseTimelineMonths(lead.timeline);
+  if (months !== null) {
+    if (months === 0) add(25, "wants to move now");
+    else if (months <= 3) add(18, `${months}+ month timeline`);
+    else if (months <= 6) add(10, `${months}+ month timeline`);
+    else add(5, `${months}+ month timeline`);
+  }
 
   if (lead.budget) add(10, "budget provided");
   if (lead.intent !== "unknown") add(10, "intent known");
@@ -242,7 +282,14 @@ export function normaliseLead(
 ): NormalisedLead {
   const cf = payload.customFields ?? payload.customField ?? {};
   const f = config.fields;
-  const read = (k: string) => readField(cf, k, keyToId);
+  const read = (ref: FieldRef | undefined): string | null => {
+    if (!ref) return null;
+    for (const k of Array.isArray(ref) ? ref : [ref]) {
+      const v = readField(cf, k, keyToId);
+      if (v !== null) return v;
+    }
+    return null;
+  };
 
   const attribution = {
     fbclid: read("contact.fbclid"),

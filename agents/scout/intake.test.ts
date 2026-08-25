@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { deriveIntent, intentFromStage, normaliseLead, parseYesNo, readField, scoreLead, ScoutConfig } from "./intake";
+import { deriveIntent, intentFromStage, normaliseLead, parseTimelineMonths, parseYesNo, readField, scoreLead, ScoutConfig } from "./intake";
 
 const config: ScoutConfig = {
   pipelineId: "g8DgskR6GqDvRR3A6jnN",
@@ -151,10 +151,11 @@ describe("timeline scoring against real stored values", () => {
     });
 
   it("scores every real value seen in the account", () => {
+    // Bands follow the parsed month count: 0 -> 25, 1-3 -> 18, 4-6 -> 10, 7+ -> 5.
     expect(score("ASAP").score).toBe(25);
-    expect(score("1-4 Months").score).toBe(15);
-    expect(score("1 - 4 months").score).toBe(15);   // same answer, different spacing
-    expect(score("4+ months").score).toBe(5);
+    expect(score("1-4 Months").score).toBe(18);
+    expect(score("1 - 4 months").score).toBe(18);   // same answer, different spacing
+    expect(score("4+ months").score).toBe(10);
   });
 
   it("gives no timeline credit when the field is blank", () => {
@@ -185,5 +186,86 @@ describe("intentFromStage", () => {
     };
     const lead = normaliseLead({ id: "1", pipelineStageName: "Seller Leads", customFields: {} }, cfg);
     expect(lead.intent).toBe("seller");
+  });
+});
+
+describe("parseTimelineMonths", () => {
+  /**
+   * Every value below is real. The survey dropdown and the ISA's free text
+   * disagree on format, and two previous string-matching scorers each got a
+   * different subset wrong — the second scored 32 of 113 real answers at zero.
+   */
+  it("reads the survey dropdown values", () => {
+    expect(parseTimelineMonths("ASAP")).toBe(0);
+    expect(parseTimelineMonths("1-3 Months")).toBe(1);
+    expect(parseTimelineMonths("3-6 Months")).toBe(3);
+    expect(parseTimelineMonths("4 - 6 months")).toBe(4);
+    expect(parseTimelineMonths("6-12 Months")).toBe(6);
+    expect(parseTimelineMonths("7 - 12 months")).toBe(7);
+    expect(parseTimelineMonths("12 + months")).toBe(12);
+  });
+
+  it("reads the ISA's typed values", () => {
+    expect(parseTimelineMonths("1-4 Months")).toBe(1);
+    expect(parseTimelineMonths("4+ months")).toBe(4);
+    expect(parseTimelineMonths("1 - 4 months")).toBe(1);
+    expect(parseTimelineMonths("sooner the better")).toBe(0);
+    expect(parseTimelineMonths("soon as possible")).toBe(0);
+  });
+
+  it("takes the lower bound of a range — 3-6 months means they could move in three", () => {
+    expect(parseTimelineMonths("3-6 Months")).toBe(3);
+  });
+
+  it("returns null rather than guessing at prose it cannot read", () => {
+    expect(parseTimelineMonths("before the winter")).toBeNull();
+    expect(parseTimelineMonths("looking at different options not sure yet")).toBeNull();
+    expect(parseTimelineMonths(null)).toBeNull();
+  });
+
+  it("scores every real survey value non-zero — the bug that prompted this", () => {
+    const base = {
+      contactId:"x", name:null, email:null, phone:null, propertyInterest:null, budget:null,
+      preApproved:null, financing:null, leadSource:null,
+      sources:{financing:null,timeline:null,budget:null},
+      attribution:{fbclid:null,utmSource:null,utmCampaign:null,metaCampaignId:null,metaAdsetId:null,metaAdId:null},
+      attributed:false, qualified:false, intent:"unknown" as const,
+    };
+    for (const t of ["ASAP","1-3 Months","3-6 Months","4 - 6 months","6-12 Months","7 - 12 months","12 + months"])
+      expect(scoreLead({ ...base, timeline: t }).score).toBeGreaterThan(0);
+  });
+});
+
+describe("field priority", () => {
+  /**
+   * Budget lives under several keys from successive form revisions. The
+   * survey field must win: it is populated on 90 of 150 contacts and is
+   * present at lead arrival, while lf_budget is on 12 and only after a call.
+   */
+  it("prefers the survey field over the LF field", () => {
+    const cfg: any = {
+      pipelineId:"p", intakeStages:{}, qualifiedTags:[], calendars:{buyer:"b",seller:"s"},
+      fields:{ timeline:["contact.when_are_you_looking_to_move","contact.lf_timeframe"],
+               budget:["contact.what_is_your_budget","contact.lf_budget"],
+               propertyInterest:"contact.lf_proprety", preApproved:"contact.are_you_pre_approuved",
+               leadSource:"contact.source" },
+    };
+    const lead = normaliseLead({ id:"1", customFields:{
+      "contact.when_are_you_looking_to_move":"ASAP", "contact.lf_timeframe":"4+ months",
+      "contact.what_is_your_budget":">$400K",        "contact.lf_budget":"nope" } }, cfg);
+    expect(lead.timeline).toBe("ASAP");
+    expect(lead.budget).toBe(">$400K");
+  });
+
+  it("falls back down the list when the preferred key is empty", () => {
+    const cfg: any = {
+      pipelineId:"p", intakeStages:{}, qualifiedTags:[], calendars:{buyer:"b",seller:"s"},
+      fields:{ timeline:["contact.when_are_you_looking_to_move","contact.lf_timeframe"],
+               budget:"contact.what_is_your_budget", propertyInterest:"contact.lf_proprety",
+               preApproved:"contact.are_you_pre_approuved", leadSource:"contact.source" },
+    };
+    const lead = normaliseLead({ id:"1", customFields:{
+      "contact.when_are_you_looking_to_move":"", "contact.lf_timeframe":"1-4 Months" } }, cfg);
+    expect(lead.timeline).toBe("1-4 Months");
   });
 });

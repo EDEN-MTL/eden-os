@@ -99,13 +99,29 @@
       "seller": "vbsoYjk2Q6nI66q8u8to"
     },
     "fields": {
-      "propertyInterest": "contact.lf_proprety",
-      "budget": "contact.lf_budget",
-      "timeline": "contact.lf_timeframe",
+      "_comment": "Each entry is tried in order. Survey fields come FIRST because they are the only ones populated when a lead arrives — measured across 49 contacts that had never been called, the LF fields were empty on all of them while the survey fields were present on 25-30. Mark's original mapping had this inverted: it treated what_is_your_budget and when_are_you_looking_to_move as stale duplicates 'not used going forward' and pointed at the LF fields instead. In fact what_is_your_budget is populated on 90 of 150 contacts against lf_budget's 12, and the LF fields are written by the ISA after a call, not by the form. The LF entries are kept as second choice since the ISA does still fill them in.",
+      "timeline": [
+        "contact.when_are_you_looking_to_move",
+        "contact.lf_timeframe",
+        "contact.when_are_you_looking_to_buy"
+      ],
+      "budget": [
+        "contact.what_is_your_budget",
+        "contact.lf_budget",
+        "contact.budget_range"
+      ],
+      "workingWithRealtor": [
+        "contact.are_you_currently_working_with_a_realtor",
+        "contact.are_you_working_with_a_realtor_",
+        "contact.do_you_work_with_a_realtor"
+      ],
+      "propertyInterest": [
+        "contact.lf_proprety",
+        "contact.what_type_of_property_are_you_looking_for"
+      ],
       "preApproved": "contact.are_you_pre_approuved",
-      "leadSource": "contact.source",
       "isaNotes": "contact.isa_notes",
-      "_comment": "The 'LF Leads' folder fields are the current lead form. The location holds 49 custom fields including several legacy duplicates from earlier forms (budget_range, what_is_your_budget, when_are_you_looking_to_move, and three separate 'working with a realtor' variants). Do not read those — they are stale."
+      "leadSource": "contact.source"
     },
     "_liveDataFindings": {
       "checkedOn": "2026-08-25, against 80 contacts and 222 opportunities in the live location",
@@ -115,7 +131,10 @@
       "intakeStagesAreTransient": "Only 1 of 222 opportunities sits in an intake stage — leads move through quickly. Intent resolution therefore works at capture time, which is when Scout runs, and reads 'unknown' for the existing back catalogue. Expected, not a fault.",
       "noAdAttributionYet": "0 of 60 contacts carry fbclid or meta_ad_id. The fields exist; nothing is populating them until the landing page and Meta ad set URL parameters pass them through.",
       "isaNotesIsTheRealSource": "ISA NOTES is populated on 101 of 150 contacts and carries more usable signal than any dedicated field. Reading it lifted financing from 0 to 16 records, timeline from 21 to 62 and budget to 49, and took leads carrying any score from a handful to 135 of 150. Two note formats exist: buyers get Area/1st Time Buyer/Price Range/Pre-approved/When, sellers get area/reason/timeline.",
-      "cashBuyersAreNotFailedApprovals": "Five contacts answered 'paying cash', 'cash', 'no need' or 'not necessary'. Three of those begin with a negation but describe the strongest possible buyer — no lender, no appraisal, no financing condition. A boolean pre-approved flag would have scored them as negatives, so financing is modelled as cash | pre-approved | in-progress | not-approved | null and cash scores highest."
+      "cashBuyersAreNotFailedApprovals": "Five contacts answered 'paying cash', 'cash', 'no need' or 'not necessary'. Three of those begin with a negation but describe the strongest possible buyer — no lender, no appraisal, no financing condition. A boolean pre-approved flag would have scored them as negatives, so financing is modelled as cash | pre-approved | in-progress | not-approved | null and cash scores highest.",
+      "surveyFieldsAreTheIntakeData": "Corrects the earlier note that nothing is available at lead arrival. Survey answers DO come in with the lead: when_are_you_looking_to_move (113/150 overall, 30/49 on never-called contacts), what_is_your_budget (90/150), are_you_currently_working_with_a_realtor (90/150). The LF fields and ISA notes are post-call. So intake scoring is viable on timeline and budget; financing is not, because it only ever appears after a call.",
+      "realtorFieldHasNoVariance": "are_you_currently_working_with_a_realtor is 'No' on all 90 contacts that answer it. Captured for context but deliberately NOT scored — a field with one value carries no information, and scoring it would inflate every lead equally while looking like a real signal. Worth revisiting if a 'Yes' ever appears, which would be a strong negative.",
+      "timelineScoredNumerically": "Timeline is parsed to a month count rather than matched as text. Two string-matching versions were wrong: the first scored '1-4 Months' at zero, the second scored the survey values '3-6 Months', '4 - 6 months', '7 - 12 months' and '12 + months' at zero — 32 of 113 real answers. The two sources use different formats and the forms keep being revised, so patterns rot; a number does not."
     }
   }
 }
