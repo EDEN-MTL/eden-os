@@ -68,7 +68,20 @@
       "Are you pre-approved? What's your budget range?"
     ],
     "hotScoreThreshold": 75,
-    "warmScoreThreshold": 40
+    "warmScoreThreshold": 40,
+    "callbacks": {
+      "_comment": "Iris books its own callbacks. GHL calendar creation IS permitted on this token (POST /calendars/ returns 400 for a missing body, not 401), so this can be provisioned programmatically once the owner and calling hours are confirmed.",
+      "calendarKey": "callback",
+      "writeContactNote": true,
+      "writeContactNoteReason": "Jacob, 2026-08-25: Iris must leave notes on the contact as well as booking the slot. The ISA notes content is sent to the client as the appointment brief, so it is client-facing output, not just internal record-keeping. This also matters to Scout: ISA notes are one of the signals isFirstTouch uses to tell that a lead has genuinely been spoken to."
+    },
+    "outreachCadence": {
+      "_comment": "Jacob, 2026-08-25: Iris calls new leads morning and afternoon for the first 3-4 days trying to reach them. Iris owns this cadence internally — Scout fires ONCE per lead and does not trigger per attempt. scout.touchedTags gates whether a sequence STARTS, not each call.",
+      "attemptsPerDay": 2,
+      "days": 4,
+      "recheckBeforeEachAttempt": true,
+      "recheckReason": "The human ISA is on until the end of the month, so both they and Iris may work the same lead. Iris must re-check the contact before EVERY attempt, not just at sequence start, or a lead the ISA already spoke to on day 2 keeps getting called on days 3 and 4."
+    }
   },
   "slack": {
     "clientChannel": "3-percent-eastcoast-eden"
@@ -98,7 +111,9 @@
     "qualifiedTagsNote": "Qualification is not a pipeline stage — the ISA qualifies and books or transfers on the same call, so any of these tags means qualified. Two corrections to Mark's original pair: 'appointment' (16 contacts) means the same thing as 'appt booked' (60), and 'live transfered' with one r exists on 8 contacts against 5 for the correct spelling. Matching only the correct spelling missed 8 of 13 live transfers — 62%. Jacob confirms only the correct spelling is used now, but the misspelling is kept because the historical records still carry it and tag text drifts.",
     "calendars": {
       "buyer": "4Eyz51DOI7TY78gRgBU3",
-      "seller": "vbsoYjk2Q6nI66q8u8to"
+      "seller": "vbsoYjk2Q6nI66q8u8to",
+      "callback": "",
+      "_comment": "buyer/seller are the client's consultation calendars. 'callback' is a separate calendar used ONLY by Iris, for when a lead asks to be called back at a specific time — kept apart from the consultation calendars so a callback is never mistaken for a booked appointment, and so the team can see Iris's commitments in GHL rather than them living only inside our system. Empty until created; see iris.callbacks."
     },
     "fields": {
       "_comment": "Each entry is tried in order. Survey fields come FIRST because they are the only ones populated when a lead arrives — measured across 49 contacts that had never been called, the LF fields were empty on all of them while the survey fields were present on 25-30. Mark's original mapping had this inverted: it treated what_is_your_budget and when_are_you_looking_to_move as stale duplicates 'not used going forward' and pointed at the LF fields instead. In fact what_is_your_budget is populated on 90 of 150 contacts against lf_budget's 12, and the LF fields are written by the ISA after a call, not by the form. The LF entries are kept as second choice since the ISA does still fill them in.",
