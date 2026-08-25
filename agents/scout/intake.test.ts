@@ -271,15 +271,26 @@ describe("field priority", () => {
 });
 
 describe("isFirstTouch", () => {
-  const touchedTags = ["replied", "appt booked", "appointment", "live transferred", "live transfered"];
+  const touchedTags = ["appt booked", "appointment", "live transferred", "live transfered"];
 
   it("is true only for a lead nothing has engaged yet", () => {
     expect(isFirstTouch({ tags: ["buyer lead"], touchedTags })).toBe(true);
     expect(isFirstTouch({ tags: ["buyer lead", "new construction"], touchedTags })).toBe(true);
   });
 
-  it("is false once the text automation has had a reply", () => {
-    expect(isFirstTouch({ tags: ["buyer lead", "replied"], touchedTags })).toBe(false);
+  /**
+   * 'replied' is deliberately NOT blocking. It is applied when a lead answers
+   * the text automation, which is engagement, not a conversation. 10 of 150
+   * live contacts had replied and never been called — blocking those would
+   * have skipped the most engaged leads on the board.
+   */
+  it("still opens a sequence for a lead that only answered a text", () => {
+    expect(isFirstTouch({ tags: ["buyer lead", "replied"], touchedTags })).toBe(true);
+  });
+
+  it("does not open one once a real conversation has happened", () => {
+    expect(isFirstTouch({ tags: ["buyer lead", "replied", "appt booked"], touchedTags })).toBe(false);
+    expect(isFirstTouch({ tags: ["buyer lead", "replied"], touchedTags, isaNotes: "spoke to them" })).toBe(false);
   });
 
   it("catches the misspelled live-transfer tag", () => {

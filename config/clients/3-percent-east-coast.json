@@ -145,7 +145,6 @@
     ],
     "newLeadTagsNote": "Applied automatically by the form workflow when a lead is created (confirmed by Jacob 2026-08-25). These are Scout's intake trigger. 14 of 150 contacts carry no tags at all; per Jacob only leads in the pipeline matter and those are all tagged, so untagged contacts are out of scope rather than a gap in coverage.",
     "touchedTags": [
-      "replied",
       "appt booked",
       "appointment",
       "live transferred",
@@ -154,6 +153,6 @@
       "showed up",
       "connection made"
     ],
-    "touchedTagsNote": "Any of these means somebody or something has already engaged this lead, so it is NOT a first touch and Iris must not open contact again. 'replied' is applied by the text automation when a lead responds. This list is how Scout stays idempotent without keeping its own state: the CRM is the source of truth, so a restart or a replayed webhook cannot cause a duplicate call."
+    "touchedTagsNote": "Evidence that a lead has actually been SPOKEN TO, so Iris should not open a new outreach sequence. 'replied' was originally in this list and has been removed: it is applied when a lead answers the text automation, which is engagement, not a conversation. 10 of 150 contacts carry 'replied' with no other contact evidence — they answered a text and nobody ever called them. Those are among the hottest leads on the board and blocking them was exactly backwards. Note this gates whether Iris STARTS a sequence, not each call within it: Iris dials morning and afternoon for 3-4 days and owns that cadence itself."
   }
 }

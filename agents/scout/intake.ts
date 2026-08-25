@@ -190,7 +190,10 @@ export function intentFromStageId(
 }
 
 /**
- * Whether this is a genuinely untouched lead.
+ * Whether Iris should OPEN a new outreach sequence for this lead.
+ *
+ * Not "should Iris place a call" — Iris dials morning and afternoon for 3-4
+ * days and owns that cadence internally. This gates the start of it.
  *
  * Checked against 150 live contacts, and a tags-only version of this was
  * WRONG on 14 of them: those carry ISA notes — a human demonstrably spoke to
@@ -203,6 +206,10 @@ export function intentFromStageId(
  * Read from the CRM rather than from state Scout keeps, which matters more
  * than it looks: a restart, a replayed webhook, or GHL firing twice would all
  * produce a duplicate call if Scout were remembering this itself.
+ *
+ * Note that answering the text automation ('replied') is NOT contact: 10 of
+ * 150 live contacts had replied to a text and never been called. Blocking
+ * those would have skipped the most engaged leads on the board.
  *
  * Fails CLOSED — missing or unreadable input reads as "already touched". The
  * cost of wrongly skipping a lead is that it waits for the next trigger; the
