@@ -13,7 +13,7 @@ export default function AgentsPanel({
         <span className="panel-title" style={{ marginBottom: 0 }}>
           AGENTS
         </span>
-        <span style={{ fontSize: 9, letterSpacing: "0.18em", color: "rgba(0,255,136,.65)" }}>8 / 8 ONLINE</span>
+        <span style={{ fontSize: 11, letterSpacing: "0.18em", color: "rgba(0,255,136,.65)" }}>8 / 8 ONLINE</span>
       </div>
       {AGENTS.map((agent) => (
         <div

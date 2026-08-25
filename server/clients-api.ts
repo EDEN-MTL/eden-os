@@ -16,6 +16,7 @@ import { query } from "../shared/db";
 import { getMetaConfig, MetaClient, MetaAPIError } from "../shared/meta";
 import { ComplianceError } from "../shared/meta/compliance";
 import { attributionReport } from "../agents/forge/ads/attribution";
+import { loadOutcomeStages } from "../agents/forge/ads/client-config";
 import * as queue from "../agents/forge/ads/queue";
 import { MetaActions } from "../agents/forge/ads/actions";
 import { ActionExecutor, ExecutionError } from "../agents/forge/ads/executor";
@@ -109,13 +110,32 @@ export function createClientsRouter(): Router {
 
     const status = await integrationStatus(clientId);
     const { since, until } = last30Days();
-    const [report, recentLeads, pending] = await Promise.all([
+    const activeStages = (loadOutcomeStages(clientId)?.activeStages || []).map((x) => x.trim().toLowerCase());
+
+    const [report, recentLeads, pending, crmTotals] = await Promise.all([
       attributionReport(since, until, clientId).catch(() => []),
       query(
         "SELECT id, meta_campaign_id, meta_adset_id, meta_ad_id, pipeline_stage, deal_value, won, created_at FROM ad_leads WHERE client_id = $1 ORDER BY created_at DESC LIMIT 15",
         [clientId]
       ),
       queue.listPending(clientId),
+      /*
+       * Deliberately NOT the attribution report. That one only counts leads
+       * joined to a Meta ad, and no lead carries attribution yet — so every
+       * ad-attributed figure reads $0 until the landing page and ad set URL
+       * params are wired up. This is the whole CRM, which is the number that
+       * is actually true today. The two are reported separately rather than
+       * blended, so ad performance never borrows credit from organic deals.
+       */
+      query(
+        `SELECT
+           SUM(CASE WHEN won THEN deal_value ELSE 0 END) AS revenue,
+           COUNT(*) FILTER (WHERE won) AS won_count,
+           SUM(CASE WHEN won IS NULL AND lower(trim(pipeline_stage)) = ANY($2) THEN deal_value ELSE 0 END) AS pipeline_value,
+           COUNT(*) FILTER (WHERE won IS NULL AND lower(trim(pipeline_stage)) = ANY($2)) AS active_count
+         FROM ad_leads WHERE client_id = $1`,
+        [clientId, activeStages]
+      ).catch(() => [{}]),
     ]);
 
     res.json({
@@ -125,6 +145,13 @@ export function createClientsRouter(): Router {
       ghlConfigured: status.ghlConfigured,
       forgeRules: config.forge || null,
       adPerformance: report,
+      crmPipeline: {
+        revenue: Number((crmTotals as any[])[0]?.revenue) || 0,
+        wonCount: Number((crmTotals as any[])[0]?.won_count) || 0,
+        pipelineValue: Number((crmTotals as any[])[0]?.pipeline_value) || 0,
+        activeCount: Number((crmTotals as any[])[0]?.active_count) || 0,
+        note: "Whole-CRM totals, not ad-attributed. Revenue is banked (won stages); pipeline value is committed but not yet closed.",
+      },
       recentLeads,
       pendingActions: pending,
       appointments: { available: false, reason: "Atlas (routing & booking) isn't built yet — no appointment data exists." },

@@ -16,6 +16,7 @@ import { query } from "../../../shared/db";
 import { getMetaConfig, MetaClient } from "../../../shared/meta";
 import { getGhlConfig } from "../../../shared/ghl";
 import { FieldMap, syncLeads } from "./attribution";
+import { loadOutcomeStages } from "./client-config";
 
 /**
  * Each call fetches one row PER DAY per entity (MetaClient.getInsights'
@@ -76,22 +77,6 @@ function loadFieldMap(clientId: string): FieldMap {
   return JSON.parse(readFileSync(path, "utf-8"));
 }
 
-/**
- * Reads the client's won/lost stage mapping from config, if present. Teams
- * that don't use GHL's won/lost status signal the outcome by moving a card
- * to a terminal column instead; without this, revenue reads as zero and the
- * ROAS rule can never fire. Returns undefined when unconfigured, which
- * leaves deriveWon relying on status alone.
- */
-function loadOutcomeStages(clientId: string): { wonStages?: string[]; lostStages?: string[] } | undefined {
-  try {
-    const raw = JSON.parse(readFileSync(join(process.cwd(), "config", "clients", `${clientId}.json`), "utf-8"));
-    const stages = raw?.ghl?.outcomeStages;
-    return stages && (stages.wonStages || stages.lostStages) ? stages : undefined;
-  } catch {
-    return undefined;
-  }
-}
 
 export async function syncGhl(locationId: string, clientId = "eden", pipelineName?: string, apiKey?: string): Promise<number> {
   const fieldMap = loadFieldMap(clientId);

@@ -21,7 +21,7 @@ function IntegrationCard({
         {configured !== null && (
           <span
             style={{
-              fontSize: 9,
+              fontSize: 11,
               letterSpacing: "0.14em",
               color: configured ? "#00ff88" : "rgba(255,60,90,.8)",
               textShadow: configured ? "0 0 8px rgba(0,255,136,.6)" : "none",
@@ -53,7 +53,7 @@ function Field({
 }) {
   return (
     <div style={{ marginBottom: 12 }}>
-      <label style={{ display: "block", fontSize: 9.5, letterSpacing: "0.14em", color: "rgba(120,180,215,.6)", marginBottom: 5 }}>
+      <label style={{ display: "block", fontSize: 11.5, letterSpacing: "0.14em", color: "rgba(120,180,215,.6)", marginBottom: 5 }}>
         {label.toUpperCase()} {required && <span style={{ color: "#ff2255" }}>*</span>}
       </label>
       <input

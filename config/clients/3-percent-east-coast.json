@@ -15,16 +15,30 @@
     "calendarId": "",
     "outcomeStages": {
       "_comment": "This team does NOT use GHL's won/lost status — every opportunity sits at status 'open' and the outcome is signalled by dragging the card to a terminal column. Reading status alone returned null for all 149 leads, zeroing revenue and making the ROAS rule unfireable. These stage names are how won/lost is actually determined. 'Buyer Confirmed' and 'Listing Active' are NOT included as won — both carry deal values but are arguably mid-pipeline, so Jacob should confirm before counting them as revenue.",
-      "wonStages": ["Deal Closed"],
-      "lostStages": ["Not Qualified/Not Interested", "No-Show"]
+      "wonStages": [
+        "Deal Closed"
+      ],
+      "lostStages": [
+        "Not Qualified/Not Interested",
+        "No-Show"
+      ],
+      "activeStages": [
+        "Buyer Confirmed",
+        "Listing Active"
+      ],
+      "activeStagesNote": "Jacob, 2026-08-24: these are NOT won, but they ARE active pipeline value. Verified against the live DB on that date: Buyer Confirmed = 9 deals / $21,450.00, Listing Active = 1 deal / $4,048.50, so pipeline value is $25,498.50 against $11,247.00 of banked revenue (2 deals at Deal Closed). They stay won=null, so revenue and ROAS are untouched; they are totalled separately as pipeline_value. Counting them as won would have overstated revenue as $36,745.50 on deals that have not closed."
     },
     "_credentialsNote": "Live GHL credentials are stored in the database (ghl_credentials), entered via the dashboard Settings page — not in this file."
   },
   "meta": {
     "adAccountId": "act_10150181877529722",
     "pageId": "130915410412209",
-    "specialAdCategories": ["HOUSING"],
-    "specialAdCategoryCountry": ["CA"],
+    "specialAdCategories": [
+      "HOUSING"
+    ],
+    "specialAdCategoryCountry": [
+      "CA"
+    ],
     "_comment": "Real estate IS a Meta restricted category (HOUSING), unlike Matama. This means no age/gender targeting, no sub-15mi radius, no lookalikes — the compliance gate in shared/meta/compliance.ts enforces this and cannot be overridden. Credentials live in the database, not here."
   },
   "routing": {
