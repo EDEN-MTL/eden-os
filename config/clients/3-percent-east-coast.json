@@ -104,16 +104,18 @@
       "timeline": "contact.lf_timeframe",
       "preApproved": "contact.are_you_pre_approuved",
       "leadSource": "contact.source",
+      "isaNotes": "contact.isa_notes",
       "_comment": "The 'LF Leads' folder fields are the current lead form. The location holds 49 custom fields including several legacy duplicates from earlier forms (budget_range, what_is_your_budget, when_are_you_looking_to_move, and three separate 'working with a realtor' variants). Do not read those — they are stale."
     },
     "_liveDataFindings": {
       "checkedOn": "2026-08-25, against 80 contacts and 222 opportunities in the live location",
       "propertyInterestNeverPopulated": "contact.lf_proprety is EMPTY on all 80 contacts checked. The field exists and the key is correct, it is simply never written. Intent is therefore derived from the intake stage the lead lands in (Buyer/Seller/Downsize/Upgrading Leads), not from this field.",
-      "preApprovedNeverPopulated": "contact.are_you_pre_approuved is empty on all 80 contacts. Mark reports the ISA pre-screens on pre-approval, so it is evidently captured outside GHL — verbally or in ISA NOTES. The scoring rule is retained because it is the right rule, but it cannot fire until someone starts recording the answer. This is the single highest-value data-entry change the team could make: it is worth 40 of 100 points.",
+      "preApprovedNeverPopulated": "contact.are_you_pre_approuved is empty on all 150 contacts checked — the ISA never fills the form field in. It is captured in the free-text ISA NOTES field instead ('Pre-approved: yes', 'Pre-approved: paying cash', 'Pre-approved: no, in the process'). Scout parses that; see agents/scout/isa-notes.ts. The dedicated field is still read first in case the team starts using it.",
       "timelineValues": "contact.lf_timeframe is populated on 21/80 and holds '1-4 Months' (most common), '4+ months', 'ASAP', and '1 - 4 months'. Spacing is inconsistent because the form has been revised.",
       "intakeStagesAreTransient": "Only 1 of 222 opportunities sits in an intake stage — leads move through quickly. Intent resolution therefore works at capture time, which is when Scout runs, and reads 'unknown' for the existing back catalogue. Expected, not a fault.",
-      "orphanedStageIds": "9 of 222 opportunities sit in three stage IDs absent from the pipeline definition: 9a26c74a-3f57-4302-9b53-7bd557ee5281 (7), 41a3e23b-aefd-4ac2-bf5a-571887c97c6e (1), 6be178c8-60e5-48da-954f-806febebb672 (1). Likely deleted stages that still hold records. Worth Mark confirming whether those leads are stranded.",
-      "noAdAttributionYet": "0 of 60 contacts carry fbclid or meta_ad_id. The fields exist; nothing is populating them until the landing page and Meta ad set URL parameters pass them through."
+      "noAdAttributionYet": "0 of 60 contacts carry fbclid or meta_ad_id. The fields exist; nothing is populating them until the landing page and Meta ad set URL parameters pass them through.",
+      "isaNotesIsTheRealSource": "ISA NOTES is populated on 101 of 150 contacts and carries more usable signal than any dedicated field. Reading it lifted financing from 0 to 16 records, timeline from 21 to 62 and budget to 49, and took leads carrying any score from a handful to 135 of 150. Two note formats exist: buyers get Area/1st Time Buyer/Price Range/Pre-approved/When, sellers get area/reason/timeline.",
+      "cashBuyersAreNotFailedApprovals": "Five contacts answered 'paying cash', 'cash', 'no need' or 'not necessary'. Three of those begin with a negation but describe the strongest possible buyer — no lender, no appraisal, no financing condition. A boolean pre-approved flag would have scored them as negatives, so financing is modelled as cash | pre-approved | in-progress | not-approved | null and cash scores highest."
     }
   }
 }

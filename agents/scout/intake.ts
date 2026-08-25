@@ -7,12 +7,16 @@
  * than throwing, so leads quietly score as if the answer were "no".
  */
 
+import { Financing, parseIsaNotes } from "./isa-notes";
+
 export interface ScoutFieldMap {
   propertyInterest: string;
   budget: string;
   timeline: string;
   preApproved: string;
   leadSource: string;
+  /** Free-text ISA call notes — richer than the form fields on this account. */
+  isaNotes?: string;
 }
 
 export interface ScoutConfig {
@@ -32,6 +36,14 @@ export interface NormalisedLead {
   budget: string | null;
   timeline: string | null;
   preApproved: boolean | null;
+  /**
+   * Richer than preApproved: distinguishes a cash buyer (no financing needed)
+   * from someone who simply has not been approved. preApproved stays for
+   * callers that only need the yes/no.
+   */
+  financing: Financing;
+  /** Where each answer came from, so thin data is visible rather than assumed. */
+  sources: { financing: "field" | "isa-notes" | null; timeline: "field" | "isa-notes" | null; budget: "field" | "isa-notes" | null };
   leadSource: string | null;
   /** Ad-level attribution, when the lead carried it through from the ad click. */
   attribution: {
@@ -187,8 +199,15 @@ export function scoreLead(lead: Omit<NormalisedLead, "score" | "scoreReasons">):
    * asking the team to start recording it, since it would be the single
    * strongest input to this score.
    */
-  if (lead.preApproved === true) add(40, "pre-approved");
-  else if (lead.preApproved === false) add(-10, "not pre-approved");
+  /*
+   * A cash buyer outranks a pre-approved one — no lender, no appraisal, no
+   * financing condition. Scoring them the same, or worse treating "no need"
+   * as a negative, would penalise the strongest prospects on the board.
+   */
+  if (lead.financing === "cash") add(45, "cash buyer");
+  else if (lead.financing === "pre-approved") add(40, "pre-approved");
+  else if (lead.financing === "in-progress") add(15, "financing in progress");
+  else if (lead.financing === "not-approved") add(-10, "not pre-approved");
 
   /*
    * Patterns are written against the values this location actually stores,
@@ -237,6 +256,23 @@ export function normaliseLead(
   const tags: string[] = (payload.tags || []).map((t: string) => String(t).trim().toLowerCase());
   const propertyInterest = read(f.propertyInterest);
 
+  /*
+   * The dedicated form fields win when populated, but on this account they
+   * mostly are not — lf_proprety and are_you_pre_approuved are empty on all
+   * 150 contacts checked, while ISA notes carry answers on 101 of them. The
+   * ISA types into the notes box instead of filling the form in, so the notes
+   * are the real source and the fields are the fallback, not the reverse.
+   */
+  const notes = parseIsaNotes(f.isaNotes ? read(f.isaNotes) : null);
+  const fieldFinancing = parseYesNo(read(f.preApproved));
+  const financing: Financing =
+    fieldFinancing === true ? "pre-approved" :
+    fieldFinancing === false ? "not-approved" :
+    notes.financing;
+
+  const fieldTimeline = read(f.timeline);
+  const fieldBudget = read(f.budget);
+
   const base = {
     contactId: payload.contactId ?? payload.id ?? "",
     name: [payload.firstName ?? payload.first_name, payload.lastName ?? payload.last_name]
@@ -244,9 +280,15 @@ export function normaliseLead(
     email: payload.email || null,
     phone: payload.phone || null,
     propertyInterest,
-    budget: read(f.budget),
-    timeline: read(f.timeline),
-    preApproved: parseYesNo(read(f.preApproved)),
+    budget: fieldBudget ?? notes.budget,
+    timeline: fieldTimeline ?? notes.timeline,
+    preApproved: financing === null ? null : financing === "cash" || financing === "pre-approved",
+    financing,
+    sources: {
+      financing: (fieldFinancing !== null ? "field" : notes.financing !== null ? "isa-notes" : null) as NormalisedLead["sources"]["financing"],
+      timeline: (fieldTimeline ? "field" : notes.timeline ? "isa-notes" : null) as NormalisedLead["sources"]["timeline"],
+      budget: (fieldBudget ? "field" : notes.budget ? "isa-notes" : null) as NormalisedLead["sources"]["budget"],
+    },
     // The built-in source field is the fallback, not the primary — it says
     // "Facebook" at best, never which ad.
     leadSource: attribution.utmSource || payload.source || null,
