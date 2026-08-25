@@ -81,19 +81,60 @@ export function processLead(payload: any, clientId: string): NormalisedLead | nu
 
 // ─── Event Subscriptions ───
 
+/**
+ * A new lead arrived.
+ *
+ * Fired by a GHL workflow when the form applies the "buyer lead" / "seller
+ * lead" tag at creation. Emits lead.enriched carrying firstTouch, which is
+ * the flag Iris opens contact on.
+ */
 eventBus.subscribe("lead.captured", (event) => {
   const clientId = clientIdForLocation(event.clientId) || event.clientId;
   const lead = processLead(event.data, clientId);
   if (!lead) return;
+  logLead(lead, "intake");
+  eventBus.publish("lead.enriched", "scout", clientId, lead as unknown as Record<string, any>);
+});
 
+/**
+ * Re-score a lead after it has been worked.
+ *
+ * Called directly by Iris once it has written its notes and moved the card —
+ * NOT wired to a GHL webhook. Iris is our own code, so it can say when it is
+ * finished rather than us guessing at a delay and racing its writes. The
+ * equivalent for calls we do not control (the human ISA) still needs a
+ * delayed GHL trigger, since nothing tells us when that person is done.
+ *
+ * The resulting lead.enriched carries firstTouch: false, because the tags Iris
+ * just applied mark the lead as touched. That is what stops a re-score from
+ * being read as "call this person".
+ */
+export function rescoreAfterContact(payload: any, clientId: string): NormalisedLead | null {
+  const lead = processLead(payload, clientId);
+  if (!lead) return null;
+  logLead(lead, "re-score");
+
+  if (lead.firstTouch) {
+    // Iris has just spoken to them, so a touch tag should exist. If it does
+    // not, the tags were not written — surface it rather than emitting an
+    // event that would read as "nobody has contacted this lead".
+    console.warn(
+      `[SCT] ${lead.contactId} re-scored after contact but carries no touch tag. ` +
+      `Iris may not have written its tags yet; not emitting, to avoid a duplicate call.`
+    );
+    return lead;
+  }
+
+  eventBus.publish("lead.enriched", "scout", clientId, lead as unknown as Record<string, any>);
+  return lead;
+}
+
+function logLead(lead: NormalisedLead, phase: string) {
   console.log(
-    `[SCT] ${lead.name || lead.contactId} · ${lead.intent} · score ${lead.score}` +
-    ` · ${lead.qualified ? "QUALIFIED" : "unqualified"}` +
+    `[SCT] ${phase} · ${lead.name || lead.contactId} · ${lead.intent} · score ${lead.score}` +
+    ` · ${lead.firstTouch ? "FIRST TOUCH" : "already worked"}` +
+    ` · ${lead.qualified ? "qualified" : "unqualified"}` +
     ` · ${lead.attributed ? `ad ${lead.attribution.metaAdId}` : "no ad attribution"}`
   );
   console.log(`[SCT]   ${lead.scoreReasons.join(", ") || "no scoring signals present"}`);
-
-  // Hot leads are worth interrupting for; the threshold lives in client config
-  // under iris.hotScoreThreshold and is read by whoever acts on this event.
-  eventBus.publish("lead.enriched", "scout", clientId, lead as unknown as Record<string, any>);
-});
+}

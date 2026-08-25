@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { deriveIntent, intentFromStage, normaliseLead, parseTimelineMonths, parseYesNo, readField, scoreLead, ScoutConfig } from "./intake";
+import { deriveIntent, intentFromStage, isFirstTouch, normaliseLead, parseTimelineMonths, parseYesNo, readField, scoreLead, ScoutConfig } from "./intake";
 
 const config: ScoutConfig = {
   pipelineId: "g8DgskR6GqDvRR3A6jnN",
@@ -267,5 +267,62 @@ describe("field priority", () => {
     const lead = normaliseLead({ id:"1", customFields:{
       "contact.when_are_you_looking_to_move":"", "contact.lf_timeframe":"1-4 Months" } }, cfg);
     expect(lead.timeline).toBe("1-4 Months");
+  });
+});
+
+describe("isFirstTouch", () => {
+  const touchedTags = ["replied", "appt booked", "appointment", "live transferred", "live transfered"];
+
+  it("is true only for a lead nothing has engaged yet", () => {
+    expect(isFirstTouch({ tags: ["buyer lead"], touchedTags })).toBe(true);
+    expect(isFirstTouch({ tags: ["buyer lead", "new construction"], touchedTags })).toBe(true);
+  });
+
+  it("is false once the text automation has had a reply", () => {
+    expect(isFirstTouch({ tags: ["buyer lead", "replied"], touchedTags })).toBe(false);
+  });
+
+  it("catches the misspelled live-transfer tag", () => {
+    // 'live transfered' (one r) is on 8 contacts against 5 for the correct
+    // spelling; missing it would mean re-calling 8 transferred leads.
+    expect(isFirstTouch({ tags: ["buyer lead", "live transfered"], touchedTags })).toBe(false);
+    expect(isFirstTouch({ tags: ["buyer lead", "live transferred"], touchedTags })).toBe(false);
+  });
+
+  /**
+   * The case a tags-only guard got wrong on 14 of 150 live contacts. The ISA
+   * writes a note and does not always tag, so notes alone must count as
+   * evidence that a human has already spoken to this person.
+   */
+  it("is false when ISA notes exist, even with no touch tag", () => {
+    expect(isFirstTouch({
+      tags: ["buyer lead"], touchedTags,
+      isaNotes: "Area: st.johns\nPre-approved: yes\nWhen: ASAP",
+    })).toBe(false);
+  });
+
+  it("ignores an empty notes field", () => {
+    expect(isFirstTouch({ tags: ["buyer lead"], touchedTags, isaNotes: "   " })).toBe(true);
+    expect(isFirstTouch({ tags: ["buyer lead"], touchedTags, isaNotes: null })).toBe(true);
+  });
+
+  it("is false once the lead has moved past the intake columns", () => {
+    const intakeStages = { "Buyer Leads": "stage-buyer", "Seller Leads": "stage-seller" };
+    expect(isFirstTouch({ tags: ["buyer lead"], touchedTags, stageId: "stage-buyer", intakeStages })).toBe(true);
+    expect(isFirstTouch({ tags: ["buyer lead"], touchedTags, stageId: "stage-appointment-set", intakeStages })).toBe(false);
+  });
+
+  it("matches regardless of case or padding, since GHL keeps whatever was typed", () => {
+    expect(isFirstTouch({ tags: ["Buyer Lead", "  Appt Booked "], touchedTags })).toBe(false);
+  });
+
+  /**
+   * Fails closed on purpose. Wrongly skipping a lead costs one trigger cycle;
+   * wrongly calling one means a real person is phoned twice by a bot.
+   */
+  it("treats missing or unconfigured input as already touched", () => {
+    expect(isFirstTouch({ tags: undefined, touchedTags })).toBe(false);
+    expect(isFirstTouch({ tags: ["buyer lead"], touchedTags: [] })).toBe(false);
+    expect(isFirstTouch({ tags: ["buyer lead"] })).toBe(false);
   });
 });

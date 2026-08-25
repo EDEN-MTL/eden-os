@@ -91,9 +91,11 @@
     },
     "qualifiedTags": [
       "appt booked",
-      "live transferred"
+      "appointment",
+      "live transferred",
+      "live transfered"
     ],
-    "qualifiedTagsNote": "Qualification is NOT a pipeline stage here — the ISA qualifies and books or transfers in the same call, so either tag means qualified.",
+    "qualifiedTagsNote": "Qualification is not a pipeline stage — the ISA qualifies and books or transfers on the same call, so any of these tags means qualified. Two corrections to Mark's original pair: 'appointment' (16 contacts) means the same thing as 'appt booked' (60), and 'live transfered' with one r exists on 8 contacts against 5 for the correct spelling. Matching only the correct spelling missed 8 of 13 live transfers — 62%. Jacob confirms only the correct spelling is used now, but the misspelling is kept because the historical records still carry it and tag text drifts.",
     "calendars": {
       "buyer": "4Eyz51DOI7TY78gRgBU3",
       "seller": "vbsoYjk2Q6nI66q8u8to"
@@ -134,7 +136,24 @@
       "cashBuyersAreNotFailedApprovals": "Five contacts answered 'paying cash', 'cash', 'no need' or 'not necessary'. Three of those begin with a negation but describe the strongest possible buyer — no lender, no appraisal, no financing condition. A boolean pre-approved flag would have scored them as negatives, so financing is modelled as cash | pre-approved | in-progress | not-approved | null and cash scores highest.",
       "surveyFieldsAreTheIntakeData": "Corrects the earlier note that nothing is available at lead arrival. Survey answers DO come in with the lead: when_are_you_looking_to_move (113/150 overall, 30/49 on never-called contacts), what_is_your_budget (90/150), are_you_currently_working_with_a_realtor (90/150). The LF fields and ISA notes are post-call. So intake scoring is viable on timeline and budget; financing is not, because it only ever appears after a call.",
       "realtorFieldHasNoVariance": "are_you_currently_working_with_a_realtor is 'No' on all 90 contacts that answer it. Captured for context but deliberately NOT scored — a field with one value carries no information, and scoring it would inflate every lead equally while looking like a real signal. Worth revisiting if a 'Yes' ever appears, which would be a strong negative.",
-      "timelineScoredNumerically": "Timeline is parsed to a month count rather than matched as text. Two string-matching versions were wrong: the first scored '1-4 Months' at zero, the second scored the survey values '3-6 Months', '4 - 6 months', '7 - 12 months' and '12 + months' at zero — 32 of 113 real answers. The two sources use different formats and the forms keep being revised, so patterns rot; a number does not."
-    }
+      "timelineScoredNumerically": "Timeline is parsed to a month count rather than matched as text. Two string-matching versions were wrong: the first scored '1-4 Months' at zero, the second scored the survey values '3-6 Months', '4 - 6 months', '7 - 12 months' and '12 + months' at zero — 32 of 113 real answers. The two sources use different formats and the forms keep being revised, so patterns rot; a number does not.",
+      "freshLeadCoverage": "Corrects an earlier, looser measurement. Using 'no ISA notes' as a proxy for 'never contacted' was wrong — it included leads the text automation had already worked (21 of 49 carried 'replied'). On strictly fresh leads (buyer/seller tag, no ISA notes, no touch tags) the survey data is near-complete: timeline 9/9, budget 8/9, all scoring above zero. Only 9 such leads in a 150-contact sample, so treat as directional."
+    },
+    "newLeadTags": [
+      "buyer lead",
+      "seller lead"
+    ],
+    "newLeadTagsNote": "Applied automatically by the form workflow when a lead is created (confirmed by Jacob 2026-08-25). These are Scout's intake trigger. 14 of 150 contacts carry no tags at all; per Jacob only leads in the pipeline matter and those are all tagged, so untagged contacts are out of scope rather than a gap in coverage.",
+    "touchedTags": [
+      "replied",
+      "appt booked",
+      "appointment",
+      "live transferred",
+      "live transfered",
+      "no show",
+      "showed up",
+      "connection made"
+    ],
+    "touchedTagsNote": "Any of these means somebody or something has already engaged this lead, so it is NOT a first touch and Iris must not open contact again. 'replied' is applied by the text automation when a lead responds. This list is how Scout stays idempotent without keeping its own state: the CRM is the source of truth, so a restart or a replayed webhook cannot cause a duplicate call."
   }
 }

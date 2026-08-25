@@ -36,6 +36,10 @@ export interface ScoutConfig {
   pipelineId: string;
   intakeStages: Record<string, string>;
   qualifiedTags: string[];
+  /** Tags the form workflow applies at creation. Scout's intake trigger. */
+  newLeadTags?: string[];
+  /** Any of these means the lead has already been engaged — see isFirstTouch. */
+  touchedTags?: string[];
   calendars: { buyer: string; seller: string };
   fields: ScoutFieldMap;
 }
@@ -69,6 +73,12 @@ export interface NormalisedLead {
   };
   attributed: boolean;
   qualified: boolean;
+  /**
+   * True only when nothing has engaged this lead yet. Iris opens contact on
+   * this and nothing else; a re-score of an already-worked lead must never
+   * trigger another call.
+   */
+  firstTouch: boolean;
   intent: "buyer" | "seller" | "downsize" | "upgrading" | "unknown";
   score: number;
   scoreReasons: string[];
@@ -177,6 +187,53 @@ export function intentFromStageId(
     if (id === stageId) return intentFromStage(name);
   }
   return "unknown";
+}
+
+/**
+ * Whether this is a genuinely untouched lead.
+ *
+ * Checked against 150 live contacts, and a tags-only version of this was
+ * WRONG on 14 of them: those carry ISA notes — a human demonstrably spoke to
+ * them — but no touch tag, because the ISA writes the note and does not
+ * always tag. A tags-only guard would have had Iris ring all 14 a second time.
+ *
+ * So evidence of contact is taken from anywhere it appears: a touch tag, ISA
+ * notes, or a pipeline stage past intake. Any one of them is enough.
+ *
+ * Read from the CRM rather than from state Scout keeps, which matters more
+ * than it looks: a restart, a replayed webhook, or GHL firing twice would all
+ * produce a duplicate call if Scout were remembering this itself.
+ *
+ * Fails CLOSED — missing or unreadable input reads as "already touched". The
+ * cost of wrongly skipping a lead is that it waits for the next trigger; the
+ * cost of wrongly calling one is a real person phoned twice by a bot.
+ */
+export function isFirstTouch(input: {
+  tags?: string[];
+  touchedTags?: string[];
+  /** Free-text ISA notes. Any content means somebody has had a conversation. */
+  isaNotes?: string | null;
+  /** Stage the lead sits in, if known. Anything past intake means worked. */
+  stageId?: string | null;
+  intakeStages?: Record<string, string>;
+}): boolean {
+  const { tags, touchedTags, isaNotes, stageId, intakeStages } = input;
+  if (!Array.isArray(tags)) return false;
+
+  const list = (touchedTags || []).map((t) => t.trim().toLowerCase());
+  if (list.length === 0) return false;
+  if (tags.map((t) => String(t).trim().toLowerCase()).some((t) => list.includes(t))) return false;
+
+  // Notes exist only because someone had a conversation worth writing down.
+  if (isaNotes && String(isaNotes).trim() !== "") return false;
+
+  // Past the intake columns means the lead has been moved by someone.
+  if (stageId && intakeStages) {
+    const isIntake = Object.entries(intakeStages).some(([k, id]) => !k.startsWith("_") && id === stageId);
+    if (!isIntake) return false;
+  }
+
+  return true;
 }
 
 export function deriveIntent(propertyInterest: string | null): NormalisedLead["intent"] {
@@ -342,6 +399,13 @@ export function normaliseLead(
     attribution,
     attributed: Boolean(attribution.metaAdId || attribution.fbclid),
     qualified: config.qualifiedTags.some((t) => tags.includes(t.trim().toLowerCase())),
+    firstTouch: isFirstTouch({
+      tags: payload.tags,
+      touchedTags: config.touchedTags,
+      isaNotes: f.isaNotes ? read(f.isaNotes) : null,
+      stageId: payload.pipelineStageId,
+      intakeStages: config.intakeStages,
+    }),
     // Stage id first (what the API actually returns), then a stage name if a
     // webhook supplies one, then the form field as a last resort.
     intent:
