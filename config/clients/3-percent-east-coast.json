@@ -74,12 +74,14 @@
       "calendarKey": "callback",
       "writeContactNote": true,
       "writeContactNoteReason": "Jacob, 2026-08-25: Iris must leave notes on the contact as well as booking the slot. The ISA notes content is sent to the client as the appointment brief, so it is client-facing output, not just internal record-keeping. This also matters to Scout: ISA notes are one of the signals isFirstTouch uses to tell that a lead has genuinely been spoken to.",
-      "calendarId": "uO9ilBEtfhr7BBE7e9qJ",
+      "calendarId": "buxIQTE3TkpVpjrYBaRc",
       "calendarName": "3% REC - ISA Callback (Iris)",
       "settings": "15-min slots, 08:00-21:00 all seven days, zero minimum notice, bookable 30 days out.",
       "noticeReason": "Minimum notice is 0, against 3 hours on the consultation calendars. A lead who asks to be called back this afternoon has to be bookable this afternoon.",
       "timezoneNote": "The location timezone is America/St_Johns — UTC-02:30, a half-hour offset that is a classic source of scheduling bugs. Slots come back from GHL already stamped -02:30, so Iris should pass GHL's own timestamps through rather than computing the offset itself.",
-      "ownerTodo": "OWNED BY JACOB'S USER (pGxXyOG6FV3nEXdA9Kt2) as a temporary measure so Iris development is not blocked. It must be reassigned to a dedicated Iris user — account creation is Jacob's to do. This is not cosmetic: as a round_robin calendar it inherits the owner's real availability, so today it offers only 10 slots and tomorrow starts at 09:45 instead of 08:00 because Jacob has other commitments. Reassigning frees the full 08:00-21:00 window. The calendar id does not change, so nothing downstream breaks."
+      "ownerTodo": "OWNED BY JACOB'S USER (pGxXyOG6FV3nEXdA9Kt2) as a temporary measure so Iris development is not blocked. It must be reassigned to a dedicated Iris user — account creation is Jacob's to do. This is not cosmetic: as a round_robin calendar it inherits the owner's real availability, so today it offers only 10 slots and tomorrow starts at 09:45 instead of 08:00 because Jacob has other commitments. Reassigning frees the full 08:00-21:00 window. The calendar id does not change, so nothing downstream breaks.",
+      "calendarType": "personal",
+      "calendarTypeNote": "calendarType is IMMUTABLE after creation. A PUT changing round_robin to personal returned 200 and silently did nothing — the field simply came back unchanged, with no error. The calendar had to be recreated, which is why the id changed once (uO9ilBEtfhr7BBE7e9qJ was deleted after confirming it held zero appointments). Worth knowing before anyone tries to 'fix' a calendar type in place."
     },
     "outreachCadence": {
       "_comment": "Jacob, 2026-08-25: Iris calls new leads morning and afternoon for the first 3-4 days trying to reach them. Iris owns this cadence internally — Scout fires ONCE per lead and does not trigger per attempt. scout.touchedTags gates whether a sequence STARTS, not each call.",
@@ -118,7 +120,7 @@
     "calendars": {
       "buyer": "4Eyz51DOI7TY78gRgBU3",
       "seller": "vbsoYjk2Q6nI66q8u8to",
-      "callback": "uO9ilBEtfhr7BBE7e9qJ",
+      "callback": "buxIQTE3TkpVpjrYBaRc",
       "_comment": "buyer/seller are the client's consultation calendars. 'callback' is a separate calendar used ONLY by Iris, for when a lead asks to be called back at a specific time — kept apart from the consultation calendars so a callback is never mistaken for a booked appointment, and so the team can see Iris's commitments in GHL rather than them living only inside our system. Empty until created; see iris.callbacks."
     },
     "fields": {
