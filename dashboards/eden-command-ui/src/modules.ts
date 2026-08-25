@@ -32,7 +32,9 @@ function sideItem(head: string, text: string, color: string) {
   return { head, text, color, glow: glow(color, 0.6) };
 }
 
-export const TABS = ["COMMAND", "LEADS", "ISA", "ADS", "CONTENT", "INTEL", "CLIENTS", "SETTINGS"];
+// AGENTS sits second so the reactor's top bar can reach the console; every
+// other tab leaves the reactor anyway.
+export const TABS = ["COMMAND", "AGENTS", "LEADS", "ISA", "ADS", "CONTENT", "INTEL", "CLIENTS", "SETTINGS"];
 
 export const MODULES: Record<string, any> = {
   LEADS: {

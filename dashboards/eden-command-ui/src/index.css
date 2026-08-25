@@ -1337,3 +1337,280 @@ a {
   color: rgba(210, 238, 252, 0.9);
   margin-top: 5px;
 }
+
+/* ═══════════════════════════════════════════════════════════════════
+   CONSOLE
+   ───────────────────────────────────────────────────────────────────
+   The operations layout: persistent sidebar, card surfaces, org chart.
+
+   Softer than the reactor screen on purpose. That view is a showpiece
+   you look AT; these are screens you work IN, so the contrast is lower,
+   the type is plain, and nothing glows unless it means something.
+   Command Center keeps the original treatment.
+   ═══════════════════════════════════════════════════════════════════ */
+
+:root {
+  --con-bg: #070a12;
+  --con-panel: #0d1320;
+  --con-panel-hi: #121b2c;
+  --con-border: rgba(125, 165, 220, 0.14);
+  --con-border-hi: rgba(125, 165, 220, 0.28);
+  --con-text: #e6edf7;
+  --con-muted: #8ba0bd;
+  --con-faint: #64788f;
+  --ok: #22c55e;
+  --warn: #f0a92b;
+  --off: #5a6b82;
+}
+
+.console {
+  display: grid;
+  grid-template-columns: 248px 1fr;
+  height: 100%;
+  background: var(--con-bg);
+  color: var(--con-text);
+  font-family: var(--font-body);
+}
+
+/* ─── Sidebar ─── */
+
+.sidebar {
+  border-right: 1px solid var(--con-border);
+  background: #060910;
+  display: flex;
+  flex-direction: column;
+  overflow-y: auto;
+}
+
+.sidebar-brand {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  padding: 17px 16px;
+  border-bottom: 1px solid var(--con-border);
+}
+.sidebar-mark {
+  width: 32px; height: 32px;
+  display: grid; place-items: center;
+  border-radius: 8px;
+  background: linear-gradient(140deg, rgba(0, 229, 255, 0.22), rgba(80, 130, 255, 0.14));
+  border: 1px solid rgba(0, 229, 255, 0.32);
+  color: var(--cyan);
+  font-size: 15px;
+}
+.sidebar-brand-name {
+  font-family: var(--font-display);
+  font-weight: 700;
+  font-size: 14px;
+  letter-spacing: 0.08em;
+}
+.sidebar-brand-sub {
+  font-size: 11px;
+  color: var(--con-faint);
+  margin-top: 2px;
+}
+
+.sidebar-nav { padding: 10px 8px 20px; }
+.sidebar-section { margin-bottom: 14px; }
+.sidebar-heading {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--con-faint);
+  padding: 8px 8px 6px;
+}
+
+.sidebar-item {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 9px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--con-muted);
+  font-family: inherit;
+  font-size: 13.5px;
+  text-align: left;
+  cursor: pointer;
+}
+.sidebar-item:hover { background: rgba(125, 165, 220, 0.07); color: var(--con-text); }
+.sidebar-item.active {
+  background: rgba(0, 229, 255, 0.1);
+  color: #fff;
+  box-shadow: inset 2px 0 0 var(--cyan);
+}
+.sidebar-icon { width: 16px; text-align: center; opacity: 0.75; font-size: 12.5px; }
+
+.sidebar-agent {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 7px 9px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--con-muted);
+  font-family: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.sidebar-agent:hover { background: rgba(125, 165, 220, 0.07); }
+.sidebar-agent.active { background: rgba(125, 165, 220, 0.1); }
+.agent-swatch { width: 7px; height: 7px; border-radius: 2px; flex: none; }
+.sidebar-agent-text { display: flex; flex-direction: column; min-width: 0; flex: 1; }
+.sidebar-agent-name { font-size: 13px; color: var(--con-text); }
+.sidebar-agent-role {
+  font-size: 11px;
+  color: var(--con-faint);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+
+/* ─── Status pills ─── */
+
+.status-pill {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  letter-spacing: 0.06em;
+  padding: 2px 7px;
+  border-radius: 999px;
+  white-space: nowrap;
+  display: inline-flex; align-items: center; gap: 5px;
+}
+.status-pill::before {
+  content: ""; width: 5px; height: 5px; border-radius: 50%; background: currentColor;
+}
+.status-pill.working { color: var(--ok);   background: rgba(34, 197, 94, 0.12); }
+.status-pill.waiting { color: var(--warn); background: rgba(240, 169, 43, 0.12); }
+.status-pill.idle    { color: var(--off);  background: rgba(90, 107, 130, 0.14); }
+
+/* ─── Screen shell ─── */
+
+.console-main { overflow-y: auto; padding: 26px 30px 60px; }
+.screen-head { margin-bottom: 24px; }
+.screen-eyebrow {
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--blue);
+}
+.screen-title {
+  font-family: var(--font-display);
+  font-weight: 700;
+  font-size: 27px;
+  letter-spacing: 0.03em;
+  margin: 6px 0 0;
+}
+.screen-sub { color: var(--con-muted); font-size: 13.5px; margin: 7px 0 0; max-width: 68ch; line-height: 1.6; }
+
+/* ─── Agent network ─── */
+
+.network { position: relative; }
+.orchestrator { display: flex; justify-content: center; }
+.orchestrator .agent-card { max-width: 420px; }
+.orchestrator-card {
+  background: linear-gradient(160deg, rgba(0, 229, 255, 0.07), rgba(13, 19, 32, 0.9));
+  border-color: rgba(0, 229, 255, 0.3);
+}
+.orchestrator-avatar {
+  background: rgba(0, 229, 255, 0.16) !important;
+  border-color: rgba(0, 229, 255, 0.5) !important;
+  color: var(--cyan) !important;
+}
+
+.network-links {
+  width: 100%; height: 34px; display: block;
+  stroke: var(--con-border-hi); stroke-width: 0.35; vector-effect: non-scaling-stroke;
+}
+
+.agent-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 14px;
+}
+
+.agent-card {
+  display: flex;
+  flex-direction: column;
+  text-align: left;
+  padding: 15px;
+  border-radius: 11px;
+  border: 1px solid var(--con-border);
+  background: var(--con-panel);
+  color: inherit;
+  font-family: inherit;
+  cursor: pointer;
+  transition: border-color 0.14s, background 0.14s, transform 0.14s;
+}
+.agent-card:hover { border-color: var(--con-border-hi); background: var(--con-panel-hi); transform: translateY(-1px); }
+.agent-card.selected { border-color: rgba(0, 229, 255, 0.45); background: var(--con-panel-hi); }
+
+.agent-card-top { display: flex; align-items: center; justify-content: space-between; margin-bottom: 11px; }
+.agent-avatar {
+  width: 34px; height: 34px;
+  display: grid; place-items: center;
+  border-radius: 9px;
+  border: 1px solid;
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  letter-spacing: 0.04em;
+}
+.agent-card-name { font-family: var(--font-display); font-weight: 600; font-size: 16px; }
+.agent-card-role {
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--blue);
+  margin-top: 3px;
+}
+.agent-card-note { font-size: 13px; line-height: 1.55; color: var(--con-muted); margin: 10px 0 0; flex: 1; }
+.agent-card-foot {
+  display: flex; align-items: center; justify-content: space-between;
+  margin-top: 13px; padding-top: 10px;
+  border-top: 1px solid var(--con-border);
+}
+.meta-label {
+  font-family: var(--font-mono);
+  font-size: 11px; letter-spacing: 0.14em; text-transform: uppercase; color: var(--con-faint);
+}
+.meta-value { font-family: var(--font-mono); font-size: 12px; color: var(--con-text); }
+
+@media (max-width: 900px) {
+  .console { grid-template-columns: 1fr; }
+  .sidebar { display: none; }
+}
+
+/*
+ * Module screens inherit the reactor's heading treatment — 38px Orbitron with
+ * a glow and an animated scan bar. That belongs on a screen you look at, not
+ * on one you work in, and having two heading styles inside the same shell
+ * reads as an unfinished port. Inside the console they match .screen-title.
+ */
+.console .module-eyebrow {
+  font-size: 11.5px;
+  letter-spacing: 0.18em;
+  color: var(--blue);
+  text-shadow: none;
+}
+.console .module-title {
+  font-size: 27px;
+  letter-spacing: 0.03em;
+  text-shadow: none;
+  margin-top: 6px;
+}
+.console .module-title-line {
+  background: var(--con-border-hi);
+  box-shadow: none;
+  animation: none;
+  height: 1px;
+  max-width: 100%;
+  margin: 16px 0 22px;
+}
+/* The scan bar sweeping behind a data table is pure distraction. */
+.console .module-title-line::after,
+.console .screen::before { display: none; }
