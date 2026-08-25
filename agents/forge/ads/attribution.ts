@@ -20,6 +20,7 @@
  */
 import { getCustomFieldDefs, listContactsPaginated, listOpportunitiesPaginated, listPipelines } from "../../../shared/ghl";
 import { query } from "../../../shared/db";
+import { loadOutcomeStages } from "./client-config";
 
 export type FieldMap = Record<string, string>;
 
@@ -65,6 +66,17 @@ export interface OutcomeStageMap {
   wonStages?: string[];
   /** Pipeline stage names that mean the deal was lost. Case-insensitive. */
   lostStages?: string[];
+  /**
+   * Stages that are NOT won, but carry real committed value — a signed
+   * buyer, a live listing, a booked job. Case-insensitive.
+   *
+   * Won/lost/open is too coarse on its own. "Buyer Confirmed" is not
+   * revenue, but it is also not the same as an untouched new lead, and
+   * collapsing the two hides forecastable money. These stages stay
+   * `won = null` (so they never inflate revenue or ROAS) and are totalled
+   * separately as pipeline value.
+   */
+  activeStages?: string[];
 }
 
 /**
@@ -102,6 +114,25 @@ export function deriveWon(
   }
 
   return null;
+}
+
+/**
+ * Whether an opportunity is sitting in a stage that carries committed but
+ * unbanked value.
+ *
+ * Deliberately independent of deal size: a stage either represents a real
+ * commitment or it doesn't. Anything already resolved (won or lost) is
+ * excluded, so this never double-counts against revenue.
+ */
+export function derivePipelineActive(
+  status: string | undefined,
+  pipelineStage?: string | null,
+  stageMap?: OutcomeStageMap
+): boolean {
+  if (deriveWon(status, pipelineStage, stageMap) !== null) return false;
+  if (!pipelineStage || !stageMap?.activeStages) return false;
+  const stage = pipelineStage.trim().toLowerCase();
+  return stageMap.activeStages.some((s) => s.trim().toLowerCase() === stage);
 }
 
 /**
@@ -251,6 +282,10 @@ export interface AttributionReportRow {
   lead_count: number;
   won_count: number;
   revenue: number;
+  /** Deals still in flight in a committed stage. Not counted in revenue. */
+  active_count: number;
+  /** Value of those in-flight deals. Forecastable, NOT banked — excluded from ROAS. */
+  pipeline_value: number;
   cpl: number | null;
   roas: number | null;
 }
@@ -262,6 +297,10 @@ export interface AttributionReportRow {
  * performance snapshot window.
  */
 export async function attributionReport(since: string, until: string, clientId = "eden"): Promise<AttributionReportRow[]> {
+  // Lower-cased here so the SQL comparison is a plain equality against an
+  // array rather than a per-row function call.
+  const activeStages = (loadOutcomeStages(clientId)?.activeStages || []).map((s) => s.trim().toLowerCase());
+
   const rows = await query<any>(
     `SELECT
        p.ad_id, p.ad_name, p.adset_id, p.adset_name, p.campaign_id, p.campaign_name,
@@ -270,13 +309,15 @@ export async function attributionReport(since: string, until: string, clientId =
        SUM(p.clicks) AS clicks,
        COUNT(DISTINCT l.id) AS lead_count,
        SUM(CASE WHEN l.won THEN 1 ELSE 0 END) AS won_count,
-       SUM(CASE WHEN l.won THEN l.deal_value ELSE 0 END) AS revenue
+       SUM(CASE WHEN l.won THEN l.deal_value ELSE 0 END) AS revenue,
+       COUNT(DISTINCT CASE WHEN l.won IS NULL AND lower(trim(l.pipeline_stage)) = ANY($4) THEN l.id END) AS active_count,
+       SUM(CASE WHEN l.won IS NULL AND lower(trim(l.pipeline_stage)) = ANY($4) THEN l.deal_value ELSE 0 END) AS pipeline_value
      FROM meta_performance_snapshots p
      LEFT JOIN ad_leads l ON l.meta_ad_id = p.ad_id AND l.client_id = p.client_id
      WHERE p.client_id = $1 AND p.level = 'ad' AND p.date_start >= $2 AND p.date_stop <= $3
      GROUP BY p.ad_id, p.ad_name, p.adset_id, p.adset_name, p.campaign_id, p.campaign_name
      ORDER BY spend DESC`,
-    [clientId, since, until]
+    [clientId, since, until, activeStages]
   );
 
   return rows.map((row) => {
@@ -291,7 +332,11 @@ export async function attributionReport(since: string, until: string, clientId =
       lead_count: leads,
       won_count: Number(row.won_count) || 0,
       revenue,
+      active_count: Number(row.active_count) || 0,
+      pipeline_value: Number(row.pipeline_value) || 0,
       cpl: leads ? Math.round((spend / leads) * 100) / 100 : null,
+      // Deliberately revenue-only. Folding pipeline_value in here would let
+      // unbanked deals justify spend that hasn't been earned back yet.
       roas: spend ? Math.round((revenue / spend) * 100) / 100 : null,
     };
   });
