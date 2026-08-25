@@ -68,7 +68,28 @@
       "Are you pre-approved? What's your budget range?"
     ],
     "hotScoreThreshold": 75,
-    "warmScoreThreshold": 40
+    "warmScoreThreshold": 40,
+    "callbacks": {
+      "_comment": "Iris books its own callbacks. GHL calendar creation IS permitted on this token (POST /calendars/ returns 400 for a missing body, not 401), so this can be provisioned programmatically once the owner and calling hours are confirmed.",
+      "calendarKey": "callback",
+      "writeContactNote": true,
+      "writeContactNoteReason": "Jacob, 2026-08-25: Iris must leave notes on the contact as well as booking the slot. The ISA notes content is sent to the client as the appointment brief, so it is client-facing output, not just internal record-keeping. This also matters to Scout: ISA notes are one of the signals isFirstTouch uses to tell that a lead has genuinely been spoken to.",
+      "calendarId": "buxIQTE3TkpVpjrYBaRc",
+      "calendarName": "3% REC - ISA Callback (Iris)",
+      "settings": "15-min slots, 08:00-21:00 all seven days, zero minimum notice, bookable 30 days out.",
+      "noticeReason": "Minimum notice is 0, against 3 hours on the consultation calendars. A lead who asks to be called back this afternoon has to be bookable this afternoon.",
+      "timezoneNote": "The location timezone is America/St_Johns — UTC-02:30, a half-hour offset that is a classic source of scheduling bugs. Slots come back from GHL already stamped -02:30, so Iris should pass GHL's own timestamps through rather than computing the offset itself.",
+      "ownerTodo": "OWNED BY JACOB'S USER (pGxXyOG6FV3nEXdA9Kt2) as a temporary measure so Iris development is not blocked. It must be reassigned to a dedicated Iris user — account creation is Jacob's to do. This is not cosmetic: as a round_robin calendar it inherits the owner's real availability, so today it offers only 10 slots and tomorrow starts at 09:45 instead of 08:00 because Jacob has other commitments. Reassigning frees the full 08:00-21:00 window. The calendar id does not change, so nothing downstream breaks.",
+      "calendarType": "personal",
+      "calendarTypeNote": "calendarType is IMMUTABLE after creation. A PUT changing round_robin to personal returned 200 and silently did nothing — the field simply came back unchanged, with no error. The calendar had to be recreated, which is why the id changed once (uO9ilBEtfhr7BBE7e9qJ was deleted after confirming it held zero appointments). Worth knowing before anyone tries to 'fix' a calendar type in place."
+    },
+    "outreachCadence": {
+      "_comment": "Jacob, 2026-08-25: Iris calls new leads morning and afternoon for the first 3-4 days trying to reach them. Iris owns this cadence internally — Scout fires ONCE per lead and does not trigger per attempt. scout.touchedTags gates whether a sequence STARTS, not each call.",
+      "attemptsPerDay": 2,
+      "days": 4,
+      "recheckBeforeEachAttempt": true,
+      "recheckReason": "The human ISA is on until the end of the month, so both they and Iris may work the same lead. Iris must re-check the contact before EVERY attempt, not just at sequence start, or a lead the ISA already spoke to on day 2 keeps getting called on days 3 and 4."
+    }
   },
   "slack": {
     "clientChannel": "3-percent-eastcoast-eden"
@@ -91,12 +112,16 @@
     },
     "qualifiedTags": [
       "appt booked",
-      "live transferred"
+      "appointment",
+      "live transferred",
+      "live transfered"
     ],
-    "qualifiedTagsNote": "Qualification is NOT a pipeline stage here — the ISA qualifies and books or transfers in the same call, so either tag means qualified.",
+    "qualifiedTagsNote": "Qualification is not a pipeline stage — the ISA qualifies and books or transfers on the same call, so any of these tags means qualified. Two corrections to Mark's original pair: 'appointment' (16 contacts) means the same thing as 'appt booked' (60), and 'live transfered' with one r exists on 8 contacts against 5 for the correct spelling. Matching only the correct spelling missed 8 of 13 live transfers — 62%. Jacob confirms only the correct spelling is used now, but the misspelling is kept because the historical records still carry it and tag text drifts.",
     "calendars": {
       "buyer": "4Eyz51DOI7TY78gRgBU3",
-      "seller": "vbsoYjk2Q6nI66q8u8to"
+      "seller": "vbsoYjk2Q6nI66q8u8to",
+      "callback": "buxIQTE3TkpVpjrYBaRc",
+      "_comment": "buyer/seller are the client's consultation calendars. 'callback' is a separate calendar used ONLY by Iris, for when a lead asks to be called back at a specific time — kept apart from the consultation calendars so a callback is never mistaken for a booked appointment, and so the team can see Iris's commitments in GHL rather than them living only inside our system. Empty until created; see iris.callbacks."
     },
     "fields": {
       "_comment": "Each entry is tried in order. Survey fields come FIRST because they are the only ones populated when a lead arrives — measured across 49 contacts that had never been called, the LF fields were empty on all of them while the survey fields were present on 25-30. Mark's original mapping had this inverted: it treated what_is_your_budget and when_are_you_looking_to_move as stale duplicates 'not used going forward' and pointed at the LF fields instead. In fact what_is_your_budget is populated on 90 of 150 contacts against lf_budget's 12, and the LF fields are written by the ISA after a call, not by the form. The LF entries are kept as second choice since the ISA does still fill them in.",
@@ -134,7 +159,23 @@
       "cashBuyersAreNotFailedApprovals": "Five contacts answered 'paying cash', 'cash', 'no need' or 'not necessary'. Three of those begin with a negation but describe the strongest possible buyer — no lender, no appraisal, no financing condition. A boolean pre-approved flag would have scored them as negatives, so financing is modelled as cash | pre-approved | in-progress | not-approved | null and cash scores highest.",
       "surveyFieldsAreTheIntakeData": "Corrects the earlier note that nothing is available at lead arrival. Survey answers DO come in with the lead: when_are_you_looking_to_move (113/150 overall, 30/49 on never-called contacts), what_is_your_budget (90/150), are_you_currently_working_with_a_realtor (90/150). The LF fields and ISA notes are post-call. So intake scoring is viable on timeline and budget; financing is not, because it only ever appears after a call.",
       "realtorFieldHasNoVariance": "are_you_currently_working_with_a_realtor is 'No' on all 90 contacts that answer it. Captured for context but deliberately NOT scored — a field with one value carries no information, and scoring it would inflate every lead equally while looking like a real signal. Worth revisiting if a 'Yes' ever appears, which would be a strong negative.",
-      "timelineScoredNumerically": "Timeline is parsed to a month count rather than matched as text. Two string-matching versions were wrong: the first scored '1-4 Months' at zero, the second scored the survey values '3-6 Months', '4 - 6 months', '7 - 12 months' and '12 + months' at zero — 32 of 113 real answers. The two sources use different formats and the forms keep being revised, so patterns rot; a number does not."
-    }
+      "timelineScoredNumerically": "Timeline is parsed to a month count rather than matched as text. Two string-matching versions were wrong: the first scored '1-4 Months' at zero, the second scored the survey values '3-6 Months', '4 - 6 months', '7 - 12 months' and '12 + months' at zero — 32 of 113 real answers. The two sources use different formats and the forms keep being revised, so patterns rot; a number does not.",
+      "freshLeadCoverage": "Corrects an earlier, looser measurement. Using 'no ISA notes' as a proxy for 'never contacted' was wrong — it included leads the text automation had already worked (21 of 49 carried 'replied'). On strictly fresh leads (buyer/seller tag, no ISA notes, no touch tags) the survey data is near-complete: timeline 9/9, budget 8/9, all scoring above zero. Only 9 such leads in a 150-contact sample, so treat as directional."
+    },
+    "newLeadTags": [
+      "buyer lead",
+      "seller lead"
+    ],
+    "newLeadTagsNote": "Applied automatically by the form workflow when a lead is created (confirmed by Jacob 2026-08-25). These are Scout's intake trigger. 14 of 150 contacts carry no tags at all; per Jacob only leads in the pipeline matter and those are all tagged, so untagged contacts are out of scope rather than a gap in coverage.",
+    "touchedTags": [
+      "appt booked",
+      "appointment",
+      "live transferred",
+      "live transfered",
+      "no show",
+      "showed up",
+      "connection made"
+    ],
+    "touchedTagsNote": "Evidence that a lead has actually been SPOKEN TO, so Iris should not open a new outreach sequence. 'replied' was originally in this list and has been removed: it is applied when a lead answers the text automation, which is engagement, not a conversation. 10 of 150 contacts carry 'replied' with no other contact evidence — they answered a text and nobody ever called them. Those are among the hottest leads on the board and blocking them was exactly backwards. Note this gates whether Iris STARTS a sequence, not each call within it: Iris dials morning and afternoon for 3-4 days and owns that cadence itself."
   }
 }
