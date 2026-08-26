@@ -58,6 +58,14 @@ running it.
 The brand's job is the landing page and the product. An ad's job is to stop a
 thumb.
 
+## Diversity does not override the ICP test
+
+Spanning mediums is how a batch gets reach. It is not how an individual ad gets
+a click. Every ad still has to pass ICP-TEST.md from the buyer's chair, and a
+medium nobody has used is not a reason to ship a concept the buyer would scroll
+past. Reach for a new medium to carry a message that already works, not to
+rescue one that does not.
+
 ## Practical rules for a batch
 
 1. **No two ads in the same medium** until every medium has been used once.

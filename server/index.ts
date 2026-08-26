@@ -1,5 +1,11 @@
-import dotenv from "dotenv";
-dotenv.config();
+// Side-effect import, NOT `import dotenv` + `dotenv.config()`.
+// TypeScript emits every `require` above the first statement in the CJS
+// output, so `dotenv.config()` used to run AFTER shared/db had already been
+// loaded — and shared/db builds its Pool at module scope from
+// process.env.DATABASE_URL. The result was a pool pointed at localhost:5432
+// on every local run while .env sat there looking correct. Render masks it
+// by injecting env vars into the process directly.
+import "dotenv/config";
 
 import express from "express";
 import { initSlackClients } from "../shared/slack";

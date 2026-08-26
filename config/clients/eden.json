@@ -28,7 +28,7 @@
     "roasNote": "DISABLED. Eden does not record deal value per lead anywhere the system can read, so ROAS would compute as null forever. A rule that cannot fire looks like coverage that does not exist.",
     "dailyBudgetCap": 75,
     "dailyBudgetCapNote": "Campaign budget is $50/day (CBO, set at campaign level). 75 leaves headroom to scale without letting a runaway through.",
-    "fatigueThreshold": 3.0,
+    "fatigueThreshold": 3,
     "fatigueThresholdNote": "Frequency is impressions/reach so it is always >= 1; the 0.7 that shipped in the other configs was impossible to satisfy and flagged everything. 3.0 sits above normal operation."
   },
   "ghl": {
@@ -54,5 +54,154 @@
   },
   "slack": {
     "clientChannel": ""
+  },
+  "quarry": {
+    "_comment": "Quarry prospects Montreal small businesses with absent or dated websites, builds them a speculative site, and opens a screenshot-first SMS sequence. Eden's own acquisition, same as the forge block above. Search queries drive BOTH discovery and category assignment — Google Places types are too coarse to pick a design brief from, so the query that surfaced a business decides which brief it gets.",
+    "enabled": false,
+    "enabledNote": "OFF until Jacob confirms the per-API spend and the Lovable plan credit ceiling. Every billable call in this agent checks this flag first.",
+    "searches": [
+      {
+        "query": "picture framing Montreal",
+        "category": "trade-service",
+        "maxResults": 20
+      },
+      {
+        "query": "shoe repair Montreal",
+        "category": "trade-service",
+        "maxResults": 20
+      },
+      {
+        "query": "locksmith Verdun Montreal",
+        "category": "trade-service",
+        "maxResults": 20
+      },
+      {
+        "query": "upholstery repair Montreal",
+        "category": "trade-service",
+        "maxResults": 20
+      },
+      {
+        "query": "antique dealer Montreal",
+        "category": "retail-boutique",
+        "maxResults": 20
+      },
+      {
+        "query": "florist NDG Montreal",
+        "category": "retail-boutique",
+        "maxResults": 20
+      },
+      {
+        "query": "tailor Mile End Montreal",
+        "category": "retail-boutique",
+        "maxResults": 20
+      },
+      {
+        "query": "record store Montreal",
+        "category": "retail-boutique",
+        "maxResults": 20
+      },
+      {
+        "query": "accountant Cote-des-Neiges Montreal",
+        "category": "professional",
+        "maxResults": 20
+      },
+      {
+        "query": "notary Montreal",
+        "category": "professional",
+        "maxResults": 20
+      },
+      {
+        "query": "denturist Montreal",
+        "category": "professional",
+        "maxResults": 20
+      }
+    ],
+    "discovery": {
+      "recheckAfterDays": 90,
+      "recheckAfterDaysNote": "How long a place_id stays skipped before it is looked at again. Google Places terms restrict how long its content may be cached — check the current policy before raising this. 30 days is the figure their terms have historically used for most content.",
+      "maxLeadsPerRun": 20,
+      "maxLeadsPerRunNote": "Hard ceiling on generations per run, because each one burns Lovable credits. Raise only alongside the plan."
+    },
+    "triage": {
+      "outdatedSignals": [
+        "Google+",
+        "<font",
+        "<marquee",
+        "<frameset",
+        "cellpadding=",
+        "application/x-shockwave-flash",
+        "<embed",
+        "WordPress 3.",
+        "Powered by Joomla"
+      ],
+      "copyrightYearBefore": 2018,
+      "visionScoring": true,
+      "visionScoreThreshold": 6,
+      "visionScoreThresholdNote": "A site that passes every technical check but scores >= 6 for looking dated still qualifies. This is the branch that catches a technically-fine site that looks like 2009."
+    },
+    "phone": {
+      "provider": "twilio",
+      "cacheDays": 180,
+      "cacheDaysNote": "A business line type effectively never changes. Long cache because each lookup is billable.",
+      "voipPolicy": "holdout",
+      "voipPolicyNote": "fixedVoip/nonFixedVoip are held out of SMS rather than auto-rejected — some business VOIP lines receive SMS and some do not. This is a human-decision bucket, visible in the console as a holdout."
+    },
+    "generation": {
+      "generator": "lovable",
+      "bookingUrl": "",
+      "bookingUrlNote": "GHL calendar link for the Book a call CTA. Empty until Jacob picks the calendar; generation writes a placeholder anchor and sync.ts patches it once the opportunity exists."
+    },
+    "outreach": {
+      "senderName": "Jacob",
+      "dailySendCap": 25,
+      "dailySendCapNote": "Deliverability/carrier-health measure, independent of any compliance requirement handled in GHL. Sends are spaced with jitter rather than fired as a burst.",
+      "minSendSpacingSeconds": 180,
+      "jitterSeconds": 120,
+      "nudgeAfterDays": 3,
+      "positiveKeywords": [
+        "yes",
+        "yeah",
+        "yep",
+        "sure",
+        "ok",
+        "okay",
+        "send",
+        "send it",
+        "link",
+        "please",
+        "interested",
+        "oui",
+        "bien sur",
+        "envoie"
+      ],
+      "negativeKeywords": [
+        "no",
+        "stop",
+        "unsubscribe",
+        "not interested",
+        "remove",
+        "arretez",
+        "non"
+      ],
+      "templates": {
+        "screenshot": "Hi, this is {{senderName}} — I put together a quick site redesign for {{businessName}}, wanted you to see it. Want the live link to click around?",
+        "link": "Here it is — {{previewUrl}}. Have a look and tell me what you'd change.",
+        "nudge": "Hey, just checking if you got a chance to look — no pressure!"
+      }
+    },
+    "ghlPipeline": {
+      "_comment": "Built by hand in the GHL UI 2026-08-26 and verified live against location UJVzcdJ4NHJMhTs280OM. GHL v2 exposes no create-pipeline endpoint — same shape as the workflows.readonly limit in CLAUDE.md — so this pipeline can only be created and renamed by a human. These names are transcribed from the live pipeline, NOT chosen here: sync.ts matches them exactly and case-sensitively, so editing this list without editing GHL breaks the sync. The pipeline id is deliberately not stored; it is resolved by name at runtime.",
+      "name": "Website Offer Pipeline",
+      "stages": [
+        "New Lead",
+        "Screenshot Sent",
+        "Site Sent",
+        "Replied Interest",
+        "Call Booked",
+        "Closed Won",
+        "Lost/Nurture"
+      ],
+      "stagesNote": "Screenshot Sent and Site Sent are deliberately separate — the offer turns on a picture going out first and the link only following a positive reply, so collapsing them would hide the one drop-off worth measuring. Note that Lost/Nurture merges two outcomes: a lead that said no and a lead worth re-touching later read identically in the funnel. Split it if the nurture path ever gets its own cadence."
+    }
   }
 }
