@@ -61,15 +61,15 @@ function Field({
         value={value}
         onChange={(e) => onChange(e.target.value)}
         placeholder={placeholder}
-        style={{
-          width: "100%",
-          background: "rgba(2,10,18,.7)",
-          border: "1px solid rgba(0,184,255,.28)",
-          color: "#e6f7ff",
-          fontFamily: "var(--font-mono)",
-          fontSize: 12.5,
-          padding: "9px 12px",
-        }}
+        /*
+         * Only width is set inline. Everything else — face, border, radius,
+         * padding, colour — comes from the stylesheet, so the console and the
+         * reactor can style this differently. Inline styles beat any rule
+         * short of !important, and these were silently overriding the
+         * console's flattened input styling: the border-radius applied
+         * because it was not set here, while the font and border did not.
+         */
+        style={{ width: "100%" }}
       />
     </div>
   );

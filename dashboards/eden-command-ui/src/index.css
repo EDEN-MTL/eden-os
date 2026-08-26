@@ -1766,3 +1766,84 @@ a {
 /* .glow is an explicit request for the reactor treatment; inside the
    console it should do nothing. */
 .console .panel.glow { box-shadow: none; border-color: var(--con-border); }
+
+/*
+ * TYPOGRAPHY — drop the display faces inside the console.
+ *
+ * Orbitron is a geometric sci-fi face and Share Tech Mono is a terminal
+ * face. Both were chosen for the reactor, and both still read as "space"
+ * no matter how flat the surfaces around them get — the letterforms
+ * themselves carry the theme, so no amount of removing glow fixes it.
+ *
+ * The console now uses one sans throughout, with weight and size doing
+ * the work that a second face was doing. Mono survives only where the
+ * content is genuinely a machine value — an id, a token, a raw code —
+ * and there it is a plain system mono rather than a styled one.
+ */
+.console,
+.console .screen-title,
+.console .module-title,
+.console .agent-card-name,
+.console .sidebar-brand-name,
+.console .metric-value,
+.console .module-metric-value,
+.console .client-name,
+.console .client-metric .value,
+.console h1, .console h2, .console h3 {
+  font-family: var(--font-body);
+}
+
+/* Headings carry weight, not letterspacing. Wide tracking on a heading is
+   the other half of the sci-fi signal. */
+.console .screen-title,
+.console .module-title {
+  font-weight: 650;
+  letter-spacing: -0.01em;
+  text-transform: none;
+}
+.console .sidebar-brand-name { font-weight: 650; letter-spacing: 0.01em; }
+.console .agent-card-name { font-weight: 600; letter-spacing: 0; }
+.console .metric-value,
+.console .module-metric-value,
+.console .client-metric .value {
+  font-weight: 650;
+  letter-spacing: -0.015em;
+}
+.console .client-name { font-weight: 600; letter-spacing: 0; text-transform: none; }
+
+/* Small caps labels stay uppercase but lose the terminal face and the
+   extreme tracking. */
+.console .screen-eyebrow,
+.console .module-eyebrow,
+.console .panel-title,
+.console .meta-label,
+.console .metric-label,
+.console .module-metric-label,
+.console .client-metric .label,
+.console .sidebar-heading,
+.console .agent-card-role,
+.console .status-pill {
+  font-family: var(--font-body);
+  font-weight: 550;
+  letter-spacing: 0.07em;
+}
+
+/* Genuine machine values keep a mono, but a neutral one. */
+.console .meta-value,
+.console .agent-avatar,
+.console code,
+.console .mono {
+  font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, monospace;
+  letter-spacing: 0;
+}
+
+/*
+ * No blanket input rule for the reactor.
+ *
+ * A .eden-root input rule was added here when the settings field's inline
+ * styles were moved into CSS — but SettingsPage only renders inside the
+ * console, so it styled nothing it was meant to and did override
+ * .transmit-bar input, which deliberately sets background: transparent and
+ * border: 0 because the chat field sits inside an already-styled bar. It
+ * gave the chat box a border and background it should not have.
+ */
