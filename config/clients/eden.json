@@ -1,0 +1,41 @@
+{
+  "clientId": "eden",
+  "clientName": "Eden",
+  "industry": "b2b-agency",
+  "_comment": "Eden's OWN acquisition, not a client's. Added 2026-08-26 so Eden's ad spend sits alongside the clients' in the same reporting rather than only in Ads Manager. EDEN the agent is the system's brain; 'eden' the client is the business buying its own ads.",
+  "market": {
+    "city": "Montreal",
+    "region": "QC",
+    "country": "CA",
+    "currency": "CAD",
+    "_comment": "Eden is based in Montreal and the ad account bills in CAD, but the live ad set targets the US — Eden sells to US real estate teams. Do not assume the audience geo matches the business geo here."
+  },
+  "meta": {
+    "adAccountId": "act_1156222865817200",
+    "pageId": "324390000761080",
+    "specialAdCategories": [],
+    "_comment": "Deliberately EMPTY. Meta's HOUSING category covers ads for listings, home sales/rentals, mortgages and homeowners insurance. Eden sells a marketing system TO real estate agents — the audience is realtors, the product is B2B software and services, and no housing is being offered. Real-estate-ADJACENT is not the same as real estate. The 3% config is HOUSING for the opposite reason: that client actually sells homes.",
+    "pixelId": "2075698479609404",
+    "pixelNote": "EDEN Base Funnel Dataset. Installed inside the GoHighLevel form iframe on edenmtl.com/get-started/, NOT on the parent page. Meta therefore sees the Lead event but never the landing-page view, the fbclid lands on edenmtl.com where the iframe cannot read it, and Safari/iOS third-party cookie blocking hits iframe pixels hardest. Conversions will under-report until the base code is also on the page itself."
+  },
+  "forge": {
+    "_comment": "Grounded in Eden's own history, which is thin. Only one campaign has meaningful spend: Realtor Acquisition (March 2025), $1,888 over 1,694 clicks — CTR 2.64%, CPC $1.11, a strong CTR for cold B2B. Lead data is far weaker: 3 leads on $19.43 of spend in the Conversions API campaign, which is too small to set a threshold from.",
+    "currency": "CAD",
+    "cplThreshold": 120,
+    "cplThresholdNote": "UNVALIDATED and deliberately loose. The only observed CPL is ~$6.48 from a 3-lead sample, which is not credible for a booked call with a real estate team. Eden's own deal size is large enough that a three-figure CPL can still be profitable, so a tight threshold would pause working ads. Revisit after 20-30 real leads.",
+    "roasTarget": 5,
+    "roasEnabled": false,
+    "roasNote": "DISABLED. Eden does not record deal value per lead anywhere the system can read, so ROAS would compute as null forever. A rule that cannot fire looks like coverage that does not exist.",
+    "dailyBudgetCap": 75,
+    "dailyBudgetCapNote": "Campaign budget is $50/day (CBO, set at campaign level). 75 leaves headroom to scale without letting a runaway through.",
+    "fatigueThreshold": 3.0,
+    "fatigueThresholdNote": "Frequency is impressions/reach so it is always >= 1; the 0.7 that shipped in the other configs was impossible to satisfy and flagged everything. 3.0 sits above normal operation."
+  },
+  "ghl": {
+    "locationId": "",
+    "_comment": "NOT configured. Eden's inbound goes to a GoHighLevel form (widget LDC6AQwrZ1JgEqJIkMw3) but the location id and API key have not been supplied, so Eden's own leads are invisible to the system — spend is visible, outcomes are not. Attribution reporting stays empty until this is filled in."
+  },
+  "slack": {
+    "clientChannel": ""
+  }
+}
