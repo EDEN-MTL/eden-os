@@ -27,6 +27,7 @@
  * fast-moving API.
  */
 import { GoogleGenAI } from "@google/genai";
+import type { ReferenceImage } from "./ad-prompt";
 
 /**
  * Real-looking photos consistently outperform slick studio shots in ad
@@ -63,6 +64,24 @@ export const HIGH_QUALITY_MODEL = "gemini-3-pro-image-preview";
 
 export class ImageGenerationError extends Error {}
 
+/** Tells the model what each attached image is FOR. */
+function roleInstruction(ref: ReferenceImage): string {
+  const base = {
+    product:
+      "REFERENCE IMAGE (product): place this product as-is. Do not regenerate, redraw or " +
+      "modify it or any text on it, and do not describe or alter its proportions.",
+    scene:
+      "REFERENCE IMAGE (scene): match this photograph's real-world style — its lighting, " +
+      "grain, depth of field and imperfection. Adapt the composition as directed below.",
+    font:
+      "FONT REFERENCE ONLY — do not place this image, or any part of it, in the ad. Copy only " +
+      "the letterforms, weights and colours shown, and use them for the text described below.",
+    style:
+      "STYLE REFERENCE: match the visual treatment of this image. Do not copy its content.",
+  }[ref.role];
+  return ref.note ? `${base} ${ref.note}` : base;
+}
+
 export interface GeneratedImage {
   data: Buffer;
   mimeType: string;
@@ -88,6 +107,21 @@ export interface GenerateImageOptions {
   aspectRatio?: string;
   /** Renders this exact short phrase in the image. Omit for a clean frame. */
   overlayText?: string;
+  /**
+   * Images the model should look at, not just read about.
+   *
+   * This is the single biggest lever on output quality. A photo-centric ad
+   * built from a text description alone comes out looking like stock; built
+   * on a real reference it inherits that photo's lighting, grain and
+   * imperfection. A type sheet gets the brand's actual letterforms instead
+   * of a generic sans.
+   *
+   * Roles matter: a "font" reference is labelled as font-only in the request,
+   * because otherwise the model helpfully pastes the type sheet into the ad.
+   */
+  referenceImages?: ReferenceImage[];
+  /** A fully-composed prompt, used verbatim instead of the brief wrapper. */
+  prompt?: string;
 }
 
 /**
@@ -129,13 +163,30 @@ export async function generateImage(
   }
 
   const client = new GoogleGenAI({ apiKey: config.apiKey });
-  const prompt = buildStructuredPrompt(options);
+  const prompt = options.prompt || buildStructuredPrompt(options);
+
+  /*
+   * Reference images go BEFORE the prompt text. The model weights earlier
+   * parts more heavily, and the references are meant to govern how the
+   * output looks rather than being an afterthought to a description.
+   *
+   * Each carries a one-line instruction naming its role, because an
+   * unlabelled type sheet gets rendered into the ad as a picture of a type
+   * sheet.
+   */
+  const refs = options.referenceImages || [];
+  const parts: any[] = [];
+  for (const ref of refs) {
+    parts.push({ text: roleInstruction(ref) });
+    parts.push({ inlineData: { mimeType: ref.mimeType, data: ref.data.toString("base64") } });
+  }
+  parts.push({ text: prompt });
 
   let response;
   try {
     response = await client.models.generateContent({
       model: config.model || DEFAULT_MODEL,
-      contents: [prompt],
+      contents: [{ role: "user", parts }],
       config: {
         responseModalities: ["TEXT", "IMAGE"],
         imageConfig: { aspectRatio: options.aspectRatio || DEFAULT_ASPECT_RATIO },

@@ -32,8 +32,25 @@
     "fatigueThresholdNote": "Frequency is impressions/reach so it is always >= 1; the 0.7 that shipped in the other configs was impossible to satisfy and flagged everything. 3.0 sits above normal operation."
   },
   "ghl": {
-    "locationId": "",
-    "_comment": "NOT configured. Eden's inbound goes to a GoHighLevel form (widget LDC6AQwrZ1JgEqJIkMw3) but the location id and API key have not been supplied, so Eden's own leads are invisible to the system — spend is visible, outcomes are not. Attribution reporting stays empty until this is filled in."
+    "locationId": "UJVzcdJ4NHJMhTs280OM",
+    "attributionPipelineName": "Main Pipeline",
+    "_comment": "Connected 2026-08-26. Five pipelines exist; Main Pipeline is the one carrying real opportunities and the only one whose stages describe money (Placeholder Paid, Trial Client, Closed, EDEN System Subscribed). Cold SMS and Cold Voicemail Drop are outbound prospecting, not inbound ad leads.",
+    "outcomeStages": {
+      "_comment": "INFERRED from stage names, not confirmed by Jacob — worth a check. Applies the same rule he set for the clients: won means money banked, active means committed but not yet banked. 'Trial Client' and 'Placeholder Paid' are real commitments that have not converted to full revenue, so they are active rather than won. 'Appointment Booked' is deliberately NOT active — for Eden a booked call is not a commitment, it is a conversation.",
+      "wonStages": [
+        "Closed 💸",
+        "EDEN System Subscribed ⚙️"
+      ],
+      "lostStages": [
+        "Lost 😢",
+        "Not Qualified ❌ / Not Interested"
+      ],
+      "activeStages": [
+        "Placeholder Paid",
+        "Trial Client"
+      ]
+    },
+    "attributionNote": "All nine attribution fields now exist in the location — six were already there, and meta_campaign_id / meta_adset_id / meta_ad_id were provisioned on 2026-08-26. They stay empty until the landing page captures fbclid and the Meta ad set carries {{campaign.id}}/{{adset.id}}/{{ad.id}} in its URL parameters."
   },
   "slack": {
     "clientChannel": ""
