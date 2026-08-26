@@ -20,7 +20,7 @@ export default function ChatPanel({
   const [input, setInput] = useState("");
   const [pending, setPending] = useState(false);
   const sessionId = useRef(`${Date.now()}-${Math.random().toString(36).slice(2)}`);
-  const { play, level, speaking } = useVoicePlayer();
+  const { play, stop, level, speaking } = useVoicePlayer();
 
   useEffect(() => onVoiceLevelChange(level), [level, onVoiceLevelChange]);
 
@@ -122,7 +122,19 @@ export default function ChatPanel({
             placeholder="Issue a command to EDEN…"
             disabled={pending}
           />
-          {speaking && <span className="speaking-indicator">◆ SPEAKING</span>}
+          {speaking && (
+            <>
+              <span className="speaking-indicator">◆ SPEAKING</span>
+              <button
+                className="stop-btn"
+                onClick={stop}
+                title="Stop EDEN talking"
+                aria-label="Stop speaking"
+              >
+                ■ STOP
+              </button>
+            </>
+          )}
           {micSupported && (
             <button className={`mic-btn ${listening ? "listening" : ""}`} onClick={toggleMic} disabled={pending} title="Talk to EDEN">
               {listening ? "●" : "🎙"}
@@ -142,7 +154,19 @@ export default function ChatPanel({
               {listening ? "●" : "🎙"}
             </button>
           )}
-          {speaking && <span className="speaking-indicator">◆ SPEAKING</span>}
+          {speaking && (
+            <>
+              <span className="speaking-indicator">◆ SPEAKING</span>
+              <button
+                className="stop-btn"
+                onClick={stop}
+                title="Stop EDEN talking"
+                aria-label="Stop speaking"
+              >
+                ■ STOP
+              </button>
+            </>
+          )}
           <button className="expand-btn" onClick={() => setExpanded(true)} title="Open chat">
             💬 CHAT
           </button>
