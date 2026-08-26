@@ -89,7 +89,10 @@ describe("buildAdPrompt", () => {
   });
 
   it("constrains stray text, which is how these models add their own words", () => {
-    expect(buildAdPrompt(spec)).toMatch(/no other words, letters or numbers/);
+    // Case-insensitive: the sentence was recapitalised when the leakage
+    // constraint was strengthened, and the assertion should track the rule
+    // rather than the exact casing.
+    expect(buildAdPrompt(spec)).toMatch(/no other words, letters or numbers/i);
   });
 });
 
@@ -103,5 +106,32 @@ describe("buildFileName", () => {
   it("appends an offer only when there is one", () => {
     expect(buildFileName({ id: 2, product: "Eden", persona: "a", angle: "b", format: "c", offer: "WELCOME20" }))
       .toBe("2_4x5_Eden_A_B_C_WELCOME20");
+  });
+});
+
+describe("instruction leakage", () => {
+  const spec = {
+    formatName: "Search result",
+    composition: "Top 22%: a search field. Middle 34%: a result card.",
+    textSlots: [{ name: "hook", copy: "One slot open in your market.",
+                  design: "Manrope 400 font, #F5F3EC at 64%" }],
+    design: "Background #0A0B08.",
+    fileName: "9_4x5_Eden_Scaler_Scarcity_SearchResult",
+  };
+
+  /**
+   * A real batch produced an ad with "Manrope 400, #F5F3EC 64%" and "34%"
+   * rendered as visible text: the model read the styling spec and the position
+   * percentages as copy. The prompt now says outright that they are not.
+   */
+  it("tells the model that percentages, hex codes and font names are not content", () => {
+    const p = buildAdPrompt(spec);
+    expect(p).toMatch(/percentages, hex codes/);
+    expect(p).toMatch(/never draw them/);
+    expect(p).toMatch(/Render ONLY the quoted copy/);
+  });
+
+  it("phrases styling as an instruction about a slot, not as a line of copy", () => {
+    expect(buildAdPrompt(spec)).toContain("SET the hook slot in:");
   });
 });

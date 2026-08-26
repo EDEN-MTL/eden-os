@@ -82,8 +82,15 @@ export function buildAdPrompt(spec: AdPromptSpec): string {
   const text = spec.textSlots
     .map((s) => `- ${s.name}: "${s.copy}"`)
     .join("\n");
+  /*
+   * Styling is described as an instruction ABOUT a slot, never as a line that
+   * could be read as content. A batch run produced an ad with "Manrope 400,
+   * #F5F3EC 64%" and "34%" rendered into the image as visible text: the model
+   * had read the design spec and the position percentages as copy. Naming the
+   * slot first and prefixing with SET makes the grammar unambiguous.
+   */
   const design = spec.textSlots
-    .map((s) => `- ${s.name}: ${s.design}`)
+    .map((s) => `- SET the ${s.name} slot in: ${s.design}`)
     .join("\n");
 
   return [
@@ -99,9 +106,11 @@ export function buildAdPrompt(spec: AdPromptSpec): string {
     design,
     ...(spec.photography ? [``, `Photography direction: ${spec.photography}`] : []),
     ``,
-    `Constraints: exactly one image. No logos, no watermarks, no URLs. Render only the`,
-    `text listed above and no other words, letters or numbers anywhere in the frame.`,
-    `Natural undistorted proportions.`,
+    `Constraints: exactly one image. No logos, no watermarks, no URLs.`,
+    `Render ONLY the quoted copy from the Text section. The percentages, hex codes,`,
+    `font names and slot names elsewhere in this brief are layout instructions for`,
+    `you, not content: never draw them. No other words, letters or numbers anywhere`,
+    `in the frame. Natural undistorted proportions.`,
     ``,
     `File name: ${spec.fileName}`,
   ].join("\n");
