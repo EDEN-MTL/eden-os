@@ -40,7 +40,8 @@ export async function fetchSpeech(text: string): Promise<Blob | null> {
     body: JSON.stringify({ text }),
   });
 
-  if (res.status === 501) return null;
+  if (res.status === 501) return null;           // TTS not configured
+  if (res.status === 204) return null;           // nothing speakable in the reply
   if (!res.ok) throw new Error(`TTS request failed: ${res.status}`);
   return res.blob();
 }
