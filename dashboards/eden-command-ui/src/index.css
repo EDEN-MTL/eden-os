@@ -1615,6 +1615,158 @@ a {
 .console .module-title-line::after,
 .console .screen::before { display: none; }
 
+/* ═══════════════════════════════════════════════════════════════════
+   CONSOLE — flatten the reactor treatment
+   ───────────────────────────────────────────────────────────────────
+   The shell was already plain, but the CONTENT inside it still carried
+   the reactor's look: cyan corner brackets on every panel, glowing
+   numerals, neon borders, animated rules. Against a working dashboard
+   that reads as decoration competing with the data.
+
+   Everything below only applies inside .console. The Command Center
+   keeps all of it.
+   ═══════════════════════════════════════════════════════════════════ */
+
+.console .panel {
+  border: 1px solid var(--con-border);
+  border-radius: 11px;
+  background: var(--con-panel);
+  backdrop-filter: none;
+  box-shadow: none;
+  padding: 15px 16px 16px;
+}
+/* The corner brackets are the single most "sci-fi" element on screen. */
+.console .panel::before,
+.console .panel::after { display: none; }
+
+.console .panel-title {
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--con-faint);
+  text-shadow: none;
+}
+
+/* Numbers stop glowing. Colour still carries meaning, light no longer does. */
+.console .metric-value,
+.console .module-metric-value,
+.console .client-metric .value {
+  text-shadow: none;
+  font-family: var(--font-display);
+}
+.console .metric-label,
+.console .module-metric-label,
+.console .client-metric .label {
+  color: var(--con-faint);
+  text-shadow: none;
+}
+
+.console .client-card,
+.console .module-panel,
+.console .mock-card {
+  border: 1px solid var(--con-border);
+  border-radius: 11px;
+  background: var(--con-panel);
+  box-shadow: none;
+  backdrop-filter: none;
+}
+.console .client-card::before,
+.console .client-card::after,
+.console .module-panel::before,
+.console .module-panel::after { display: none; }
+.console .client-card:hover {
+  border-color: var(--con-border-hi);
+  background: var(--con-panel-hi);
+}
+.console .client-name { text-shadow: none; }
+
+.console .feed-item { border-radius: 8px; }
+.console .feed-bar { border-radius: 2px; }
+.console .mock-note { color: var(--con-faint); }
+
+/* Nothing in a working screen should be moving on its own. */
+.console *,
+.console *::before,
+.console *::after { animation: none !important; }
+
+/*
+ * Big numbers read as data, not as signage.
+ *
+ * The module metrics were each a different neon — cyan, violet, amber —
+ * which looks like the colours mean something. They do not; they were
+ * assigned per tile for variety. Colour that encodes nothing still costs
+ * the reader a beat working out whether it does.
+ *
+ * Numbers go near-white and colour is left to the small badges and status
+ * pills, which genuinely carry state.
+ */
+.console .module-metric-value,
+.console .metric-value {
+  color: var(--con-text) !important;
+  text-shadow: none !important;
+}
+/* Deltas keep their colour — up and down is real meaning. */
+.console .module-metric-delta { opacity: 0.9; }
+
+/* Section rules stop being glowing cyan hairlines. */
+.console .panel-title-row { border-bottom-color: var(--con-border); }
+.console .module-body-grid { gap: 14px; }
+
+/*
+ * Form controls.
+ *
+ * Inputs were inheriting the reactor's cyan hairline borders and mono
+ * face. Mono is the wrong choice for anything you TYPE into — it is here
+ * for scanning codes and figures — and a glowing border on an empty text
+ * field reads as an alert rather than an affordance.
+ */
+.console input,
+.console textarea,
+.console select {
+  font-family: var(--font-body);
+  font-size: 13.5px;
+  color: var(--con-text);
+  background: #080d17;
+  border: 1px solid var(--con-border);
+  border-radius: 8px;
+  padding: 9px 11px;
+  box-shadow: none;
+}
+.console input:focus,
+.console textarea:focus,
+.console select:focus {
+  outline: none;
+  border-color: rgba(0, 229, 255, 0.45);
+  background: #0a1019;
+}
+.console input::placeholder,
+.console textarea::placeholder { color: var(--con-faint); }
+
+.console .transmit-btn,
+.console .expand-btn {
+  font-family: var(--font-body);
+  font-size: 13px;
+  letter-spacing: 0.02em;
+  text-transform: none;
+  border-radius: 8px;
+  padding: 8px 14px;
+  border: 1px solid var(--con-border-hi);
+  background: var(--con-panel-hi);
+  color: var(--con-text);
+  box-shadow: none;
+  text-shadow: none;
+}
+.console .transmit-btn:hover,
+.console .expand-btn:hover {
+  border-color: rgba(0, 229, 255, 0.45);
+  background: #16202f;
+}
+
+/* .glow is an explicit request for the reactor treatment; inside the
+   console it should do nothing. */
+.console .panel.glow { box-shadow: none; border-color: var(--con-border); }
+
 /*
  * TYPOGRAPHY — drop the display faces inside the console.
  *
