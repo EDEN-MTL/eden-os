@@ -1836,3 +1836,14 @@ a {
   font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, monospace;
   letter-spacing: 0;
 }
+
+/*
+ * No blanket input rule for the reactor.
+ *
+ * A .eden-root input rule was added here when the settings field's inline
+ * styles were moved into CSS — but SettingsPage only renders inside the
+ * console, so it styled nothing it was meant to and did override
+ * .transmit-bar input, which deliberately sets background: transparent and
+ * border: 0 because the chat field sits inside an already-styled bar. It
+ * gave the chat box a border and background it should not have.
+ */
