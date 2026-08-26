@@ -1847,3 +1847,20 @@ a {
  * border: 0 because the chat field sits inside an already-styled bar. It
  * gave the chat box a border and background it should not have.
  */
+
+/* Interrupt EDEN mid-sentence. Sits next to the speaking indicator, so it
+   only exists while there is something to stop. */
+.stop-btn {
+  appearance: none;
+  cursor: pointer;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  letter-spacing: 0.12em;
+  color: #ff5c7a;
+  background: rgba(255, 34, 85, 0.1);
+  border: 1px solid rgba(255, 92, 122, 0.45);
+  border-radius: 6px;
+  padding: 3px 9px;
+  margin-left: 8px;
+}
+.stop-btn:hover { background: rgba(255, 34, 85, 0.2); border-color: #ff5c7a; }

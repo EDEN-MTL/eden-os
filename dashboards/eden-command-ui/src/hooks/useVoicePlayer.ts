@@ -13,6 +13,7 @@ export function useVoicePlayer() {
   const sourceRef = useRef<MediaElementAudioSourceNode | null>(null);
   const audioElRef = useRef<HTMLAudioElement | null>(null);
   const rafRef = useRef<number | null>(null);
+  const resolveRef = useRef<(() => void) | null>(null);
 
   const stopMeter = useCallback(() => {
     if (rafRef.current) cancelAnimationFrame(rafRef.current);
@@ -55,11 +56,16 @@ export function useVoicePlayer() {
       tick();
 
       await new Promise<void>((resolve) => {
+        // Held so stop() can settle this promise. Without it, interrupting
+        // playback leaves whoever awaited play() hanging forever, and the
+        // auto-listen that runs after EDEN finishes never fires again.
+        resolveRef.current = resolve;
         audioEl.onended = () => resolve();
         audioEl.onerror = () => resolve();
         audioEl.play().catch(() => resolve());
       });
 
+      resolveRef.current = null;
       setSpeaking(false);
       stopMeter();
       URL.revokeObjectURL(url);
@@ -67,7 +73,27 @@ export function useVoicePlayer() {
     [stopMeter]
   );
 
+  /**
+   * Cut EDEN off mid-sentence.
+   *
+   * Pauses and rewinds the element rather than tearing down the AudioContext:
+   * the context, analyser and source node are created once and reused, so
+   * destroying them would break every later play() — and creating a second
+   * MediaElementAudioSourceNode for the same element throws.
+   */
+  const stop = useCallback(() => {
+    const el = audioElRef.current;
+    if (el) {
+      el.pause();
+      try { el.currentTime = 0; } catch { /* not seekable yet */ }
+    }
+    resolveRef.current?.();
+    resolveRef.current = null;
+    setSpeaking(false);
+    stopMeter();
+  }, [stopMeter]);
+
   useEffect(() => stopMeter, [stopMeter]);
 
-  return { play, level, speaking };
+  return { play, stop, level, speaking };
 }
