@@ -71,15 +71,21 @@ export const BLANK_ANSWERS: QualificationAnswers = {
   financing: null,
 };
 
-export type QualificationOutcome = "book" | "transfer" | "nurture";
+/**
+ * Per the VA/ISA pipeline SOP: once a lead is qualified, live transfer is
+ * ALWAYS attempted first — there is no score tier that skips straight to
+ * booking. Booking only happens as the fallback when a transfer is
+ * attempted and no agent picks up, which depends on what actually happens
+ * on a real call — that decision belongs to the (not yet built) call
+ * execution step, not to this score-based module.
+ */
+export type QualificationOutcome = "transfer" | "nurture";
 
 export interface QualificationResult {
   answers: QualificationAnswers;
   score: number;
   scoreReasons: string[];
   outcome: QualificationOutcome;
-  calendarId: string | null;
-  tag: "appt booked" | "live transferred" | null;
 }
 
 /**
@@ -161,10 +167,14 @@ export function scoreQualification(answers: QualificationAnswers): { score: numb
   });
 }
 
+/**
+ * Single qualifying bar (warmScoreThreshold) — the SOP has no "hot enough to
+ * skip the agent" tier, so hotScoreThreshold isn't used here. It's left in
+ * client config for now in case it's still useful for something like call
+ * queue ordering, a separate concern from qualified-or-not.
+ */
 export function decideOutcome(config: IrisConfig, score: number): QualificationOutcome {
-  if (score >= config.hotScoreThreshold) return "book";
-  if (score >= config.warmScoreThreshold) return "transfer";
-  return "nurture";
+  return score >= config.warmScoreThreshold ? "transfer" : "nurture";
 }
 
 /**
@@ -173,6 +183,10 @@ export function decideOutcome(config: IrisConfig, score: number): QualificationO
  * hybrid — a downsizer has to list before they buy, an upgrader has to
  * qualify to buy before they list — so each routes to the calendar for the
  * transaction that has to happen first.
+ *
+ * Used by the (not yet built) transfer-fallback step, once a live transfer
+ * has actually been attempted and no agent picked up — not by qualify()
+ * below, since booking is no longer a score-time decision.
  */
 export function calendarForIntent(config: IrisConfig, intent: CallIntent): string | null {
   if (intent === "seller" || intent === "downsize") return config.calendars.seller;
@@ -187,10 +201,7 @@ export function calendarForIntent(config: IrisConfig, intent: CallIntent): strin
 export function qualify(config: IrisConfig, answers: QualificationAnswers): QualificationResult {
   const { score, reasons } = scoreQualification(answers);
   const outcome = decideOutcome(config, score);
-  const calendarId = outcome === "book" ? calendarForIntent(config, answers.intent) : null;
-  const tag = outcome === "book" ? "appt booked" : outcome === "transfer" ? "live transferred" : null;
-
-  return { answers, score, scoreReasons: reasons, outcome, calendarId, tag };
+  return { answers, score, scoreReasons: reasons, outcome };
 }
 
 /**

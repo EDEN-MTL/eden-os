@@ -138,14 +138,16 @@ describe("scoreQualification", () => {
 });
 
 describe("decideOutcome", () => {
-  it("books at or above the hot threshold", () => {
-    expect(decideOutcome(config, 75)).toBe("book");
-    expect(decideOutcome(config, 95)).toBe("book");
-  });
-
-  it("transfers between the warm and hot thresholds", () => {
+  /**
+   * Per the VA/ISA pipeline SOP: live transfer is attempted for EVERY
+   * qualified lead, regardless of how high the score is — there is no tier
+   * that skips straight to booking. hotScoreThreshold is intentionally
+   * unused here.
+   */
+  it("transfers at or above the warm threshold, however high the score goes", () => {
     expect(decideOutcome(config, 40)).toBe("transfer");
-    expect(decideOutcome(config, 74)).toBe("transfer");
+    expect(decideOutcome(config, 75)).toBe("transfer");
+    expect(decideOutcome(config, 95)).toBe("transfer");
   });
 
   it("nurtures below the warm threshold", () => {
@@ -171,7 +173,12 @@ describe("calendarForIntent", () => {
 });
 
 describe("qualify", () => {
-  it("books a hot cash buyer onto the buyer calendar and tags appt booked", () => {
+  /**
+   * The SOP's core rule: ANY qualified lead gets "transfer" — a top score
+   * gets the exact same outcome as a lead that just barely cleared the bar.
+   * There is no separate "good enough to book directly" tier.
+   */
+  it("transfers a hot cash buyer, same outcome as any other qualified lead", () => {
     const result = qualify(config, {
       intent: "buyer",
       area: "Mount Pearl",
@@ -180,12 +187,10 @@ describe("qualify", () => {
       budget: "$450,000",
     });
     expect(result.score).toBe(95);
-    expect(result.outcome).toBe("book");
-    expect(result.calendarId).toBe(config.calendars.buyer);
-    expect(result.tag).toBe("appt booked");
+    expect(result.outcome).toBe("transfer");
   });
 
-  it("nurtures a seller with no financing signal and books no calendar slot", () => {
+  it("nurtures a seller with no financing signal", () => {
     const result = qualify(config, {
       intent: "seller",
       area: "St. John's",
@@ -196,11 +201,9 @@ describe("qualify", () => {
     // +18 near-term timeline (parsed to 1 month), +10 intent known, +5 phone (in-call) = 33
     expect(result.score).toBe(33);
     expect(result.outcome).toBe("nurture");
-    expect(result.calendarId).toBeNull();
-    expect(result.tag).toBeNull();
   });
 
-  it("transfers a mid-score lead without booking a calendar slot", () => {
+  it("transfers a lead that just clears the warm threshold", () => {
     const result = qualify(config, {
       intent: "buyer",
       area: "Mount Pearl",
@@ -211,8 +214,6 @@ describe("qualify", () => {
     // +18 near-term timeline, +10 budget, +10 intent known, +5 phone (in-call) = 43
     expect(result.score).toBe(43);
     expect(result.outcome).toBe("transfer");
-    expect(result.calendarId).toBeNull();
-    expect(result.tag).toBe("live transferred");
   });
 });
 
