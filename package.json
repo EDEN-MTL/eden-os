@@ -18,12 +18,14 @@
     "dotenv": "^16.4.7",
     "eventemitter3": "^5.0.1",
     "express": "^4.21.0",
+    "node-cron": "^4.6.0",
     "node-fetch": "^3.3.2",
     "pg": "^8.23.0"
   },
   "devDependencies": {
     "@types/express": "^5.0.0",
     "@types/node": "^22.10.0",
+    "@types/node-cron": "^3.0.11",
     "@types/pg": "^8.23.1",
     "tsx": "^4.19.0",
     "typescript": "^5.7.0",

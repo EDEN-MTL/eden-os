@@ -12,6 +12,7 @@ import { initSlackClients } from "../shared/slack";
 import { createSlackRouter } from "../webhooks/slack-events";
 import { createGHLRouter } from "../webhooks/ghl-webhook";
 import { initDb } from "../shared/db";
+import { startScheduler } from "../shared/scheduler";
 import { createChatRouter } from "./chat-api";
 import { createTtsRouter } from "./tts-api";
 import { createSettingsRouter } from "./settings-api";
@@ -69,6 +70,9 @@ async function start() {
 
   // Set up the database schema (idempotent)
   await initDb();
+
+  // Nothing in the system ran on its own before this.
+  startScheduler();
 
   console.log("");
   console.log("  ─────────────────────────────");

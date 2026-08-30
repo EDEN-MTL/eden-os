@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { sendChatMessage, fetchSpeech } from "../api";
 import { useVoicePlayer } from "../hooks/useVoicePlayer";
 import { useSpeechInput } from "../hooks/useSpeechInput";
+import { agentByCode } from "../agents";
 
 interface ChatMessage {
   role: "user" | "agent" | "error";
@@ -11,8 +12,10 @@ interface ChatMessage {
 const SUGGESTIONS = ["System status", "Ad performance", "Brainstorm campaign", "Who needs attention?"];
 
 export default function ChatPanel({
+  selectedAgent,
   onVoiceLevelChange,
 }: {
+  selectedAgent: string;
   onVoiceLevelChange: (level: number) => void;
 }) {
   const [expanded, setExpanded] = useState(false);
@@ -21,8 +24,16 @@ export default function ChatPanel({
   const [pending, setPending] = useState(false);
   const sessionId = useRef(`${Date.now()}-${Math.random().toString(36).slice(2)}`);
   const { play, stop, level, speaking } = useVoicePlayer();
+  const agent = agentByCode(selectedAgent);
 
   useEffect(() => onVoiceLevelChange(level), [level, onVoiceLevelChange]);
+
+  // Switching who you're talking to starts a fresh conversation — a reply
+  // from Forge answering a question you asked Scout would be confusing, and
+  // each agent's own history lives server-side keyed by session anyway.
+  useEffect(() => {
+    setMessages([]);
+  }, [agent.id]);
 
   async function send(text: string) {
     const trimmed = text.trim();
@@ -33,7 +44,7 @@ export default function ChatPanel({
     setPending(true);
 
     try {
-      const reply = await sendChatMessage("eden", trimmed, sessionId.current);
+      const reply = await sendChatMessage(agent.id, trimmed, sessionId.current);
       setMessages((prev) => [...prev, { role: "agent", text: reply }]);
       setPending(false);
 
@@ -48,7 +59,7 @@ export default function ChatPanel({
       }
     } catch (err) {
       setPending(false);
-      const msg = err instanceof Error ? err.message : "Failed to reach EDEN";
+      const msg = err instanceof Error ? err.message : `Failed to reach ${agent.name}`;
       setMessages((prev) => [...prev, { role: "error", text: msg }]);
     }
   }
@@ -74,12 +85,18 @@ export default function ChatPanel({
         <div className="chat-scroll">
           {messages.length === 0 ? (
             <div className="chat-welcome">
-              <div className="chat-eyebrow">EDEN INTELLIGENCE UPLINK</div>
+              <div className="chat-eyebrow">{agent.name.toUpperCase()} UPLINK</div>
               <div className="chat-divider" />
               <div className="chat-welcome-text">
-                All systems operational. 8 agents reporting.
-                <br />
-                Awaiting your command.
+                {agent.id === "eden" ? (
+                  <>
+                    All systems operational. 8 agents reporting.
+                    <br />
+                    Awaiting your command.
+                  </>
+                ) : (
+                  agent.role
+                )}
               </div>
               <div className="suggestions">
                 {SUGGESTIONS.map((s) => (
@@ -93,13 +110,13 @@ export default function ChatPanel({
             <div className="messages">
               {messages.map((m, i) => (
                 <div className={`message ${m.role === "user" ? "user" : m.role === "error" ? "agent error" : "agent"}`} key={i}>
-                  <div className="message-label">{m.role === "user" ? "OPERATOR" : "◆ EDEN"}</div>
+                  <div className="message-label">{m.role === "user" ? "OPERATOR" : `◆ ${agent.name.toUpperCase()}`}</div>
                   <div className="message-body">{m.text}</div>
                 </div>
               ))}
               {pending && (
                 <div className="message agent pending">
-                  <div className="message-label">◆ EDEN</div>
+                  <div className="message-label">◆ {agent.name.toUpperCase()}</div>
                   <div className="message-body">Processing...</div>
                 </div>
               )}
@@ -119,7 +136,7 @@ export default function ChatPanel({
             onKeyDown={(e) => {
               if (e.key === "Enter") send(input);
             }}
-            placeholder="Issue a command to EDEN…"
+            placeholder={`Issue a command to ${agent.name}…`}
             disabled={pending}
           />
           {speaking && (
@@ -128,7 +145,7 @@ export default function ChatPanel({
               <button
                 className="stop-btn"
                 onClick={stop}
-                title="Stop EDEN talking"
+                title={`Stop ${agent.name} talking`}
                 aria-label="Stop speaking"
               >
                 ■ STOP
@@ -136,7 +153,7 @@ export default function ChatPanel({
             </>
           )}
           {micSupported && (
-            <button className={`mic-btn ${listening ? "listening" : ""}`} onClick={toggleMic} disabled={pending} title="Talk to EDEN">
+            <button className={`mic-btn ${listening ? "listening" : ""}`} onClick={toggleMic} disabled={pending} title={`Talk to ${agent.name}`}>
               {listening ? "●" : "🎙"}
             </button>
           )}
@@ -150,7 +167,7 @@ export default function ChatPanel({
       ) : (
         <div className="voice-bar">
           {micSupported && (
-            <button className={`mic-btn-lg ${listening ? "listening" : ""}`} onClick={toggleMic} disabled={pending} title="Talk to EDEN">
+            <button className={`mic-btn-lg ${listening ? "listening" : ""}`} onClick={toggleMic} disabled={pending} title={`Talk to ${agent.name}`}>
               {listening ? "●" : "🎙"}
             </button>
           )}
@@ -160,7 +177,7 @@ export default function ChatPanel({
               <button
                 className="stop-btn"
                 onClick={stop}
-                title="Stop EDEN talking"
+                title={`Stop ${agent.name} talking`}
                 aria-label="Stop speaking"
               >
                 ■ STOP
