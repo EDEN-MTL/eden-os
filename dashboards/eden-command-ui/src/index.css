@@ -118,27 +118,6 @@ a {
     opacity: 0.1;
   }
 }
-@keyframes edGrid {
-  to {
-    transform: translateY(60px);
-  }
-}
-@keyframes edScanBar {
-  0% {
-    top: -4%;
-    opacity: 0;
-  }
-  8% {
-    opacity: 0.9;
-  }
-  92% {
-    opacity: 0.9;
-  }
-  100% {
-    top: 104%;
-    opacity: 0;
-  }
-}
 @keyframes edGlow {
   0%,
   100% {
@@ -284,31 +263,6 @@ a {
   animation: edDrift ease-in-out infinite;
 }
 
-.grid-floor-wrap {
-  position: absolute;
-  left: 0;
-  right: 0;
-  bottom: 0;
-  height: 38vh;
-  perspective: 340px;
-  perspective-origin: 50% 0%;
-  overflow: hidden;
-  mask-image: linear-gradient(to bottom, transparent, #000 55%);
-  -webkit-mask-image: linear-gradient(to bottom, transparent, #000 55%);
-}
-.grid-floor {
-  position: absolute;
-  left: -25%;
-  right: -25%;
-  top: 0;
-  height: 200%;
-  transform: rotateX(72deg);
-  background-image: linear-gradient(to right, rgba(0, 184, 255, 0.22) 1px, transparent 1px),
-    linear-gradient(to bottom, rgba(0, 184, 255, 0.22) 1px, transparent 1px);
-  background-size: 60px 60px;
-  animation: edGrid 2.6s linear infinite;
-}
-
 .scanlines-overlay {
   position: absolute;
   inset: 0;
@@ -324,17 +278,6 @@ a {
   z-index: 6;
   background: radial-gradient(75% 60% at 50% 45%, transparent 40%, rgba(0, 2, 6, 0.78) 100%);
 }
-.scan-bar {
-  position: absolute;
-  left: 0;
-  right: 0;
-  height: 2px;
-  z-index: 7;
-  background: linear-gradient(to right, transparent, rgba(0, 255, 242, 0.55), transparent);
-  box-shadow: 0 0 18px 2px rgba(0, 255, 242, 0.35);
-  animation: edScanBar 9s linear infinite;
-}
-
 /* ─── Shell layout ─── */
 
 .eden-shell {
@@ -792,6 +735,9 @@ a {
   width: 112px;
   height: 132px;
   margin: -66px 0 0 -56px;
+  border: 0;
+  padding: 0;
+  cursor: pointer;
   border-radius: 50%;
   overflow: hidden;
   background: radial-gradient(ellipse at 50% 50%, rgba(0, 110, 190, 0.3) 0%, rgba(0, 60, 130, 0.14) 55%, transparent 78%);
@@ -799,6 +745,10 @@ a {
     0 0 150px 34px rgba(0, 110, 200, 0.18);
   animation: edBreathe 4.6s ease-in-out infinite;
   transition: box-shadow 0.08s linear;
+}
+.reactor-core-wrap.selected {
+  box-shadow: 0 0 calc(70px + var(--voice-level) * 60px) calc(10px + var(--voice-level) * 20px) rgba(0, 150, 240, 0.3),
+    0 0 150px 34px rgba(0, 110, 200, 0.18), 0 0 0 2px rgba(0, 255, 242, 0.65);
 }
 .reactor-core-inner {
   position: absolute;

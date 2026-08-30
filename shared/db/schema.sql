@@ -244,3 +244,121 @@ CREATE TABLE IF NOT EXISTS fathom_meetings_processed (
     processed_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     ideas_generated INTEGER NOT NULL DEFAULT 0
 );
+
+-- ─────────────────────────────────────────────────────────────────────
+-- QUARRY — prospecting + speculative site generation.
+--
+-- Module 0 of the "bad website finder" spec called for a separate Supabase
+-- instance. It lives here instead: eden-os already runs Postgres on Render,
+-- already holds GHL credentials per client, and the console already has a
+-- login. A second database would have meant a second GHL client and a
+-- second set of the field-id gotchas in CLAUDE.md.
+-- ─────────────────────────────────────────────────────────────────────
+
+CREATE TABLE IF NOT EXISTS quarry_leads (
+    id BIGSERIAL PRIMARY KEY,
+    client_id TEXT NOT NULL DEFAULT 'eden',
+    place_id TEXT NOT NULL,
+    name TEXT NOT NULL,
+    formatted_address TEXT,
+    phone TEXT,
+    -- Raw provider string ("mobile" | "landline" | "fixedVoip" | ...), kept
+    -- verbatim rather than collapsed to the boolean, because VOIP results are
+    -- a human-decision bucket and the distinction is lost once flattened.
+    phone_line_type TEXT,
+    is_mobile BOOLEAN,
+    email TEXT,
+    email_source TEXT,                              -- own_website_contact_page
+    has_public_email BOOLEAN NOT NULL DEFAULT FALSE,
+    website TEXT,
+    category TEXT,                                  -- maps to a design brief
+    search_query TEXT,                              -- which config query surfaced it
+    rating DOUBLE PRECISION,
+    user_ratings_total INTEGER,
+    business_status TEXT,
+    photo_refs JSONB NOT NULL DEFAULT '[]'::jsonb,  -- Places photo references
+    is_candidate BOOLEAN,
+    reasons JSONB NOT NULL DEFAULT '[]'::jsonb,
+    outdated_score INTEGER,                         -- 1-10, Claude vision
+    outdated_reasoning TEXT,
+    preview_url TEXT,
+    preview_image_url TEXT,
+    generator TEXT,                                 -- which SiteGenerator built it
+    generation_error TEXT,
+    ghl_contact_id TEXT,
+    ghl_opportunity_id TEXT,
+    pipeline_stage TEXT,
+    approval_status TEXT NOT NULL DEFAULT 'pending', -- pending|approved|rejected
+    -- The pipeline never sets this. It exists because unsolicited commercial
+    -- texts in Canada sit under the CRTC's Unsolicited Telecommunications
+    -- Rules as well as CASL, and the National DNCL is not something GHL
+    -- screens for you. A human ticks it, or a future DNCL integration does.
+    dncl_checked BOOLEAN NOT NULL DEFAULT FALSE,
+    -- Set when a lead is held out of the SMS path (landline/VOIP) so it can
+    -- be worked by call or email instead of silently disappearing.
+    holdout_reason TEXT,
+    sent_at TIMESTAMPTZ,
+    replied_at TIMESTAMPTZ,
+    last_lookup_at TIMESTAMPTZ,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    UNIQUE (client_id, place_id)
+);
+CREATE INDEX IF NOT EXISTS idx_quarry_stage ON quarry_leads(client_id, pipeline_stage);
+CREATE INDEX IF NOT EXISTS idx_quarry_approval ON quarry_leads(client_id, approval_status);
+CREATE INDEX IF NOT EXISTS idx_quarry_category ON quarry_leads(client_id, category);
+
+CREATE TABLE IF NOT EXISTS quarry_runs (
+    id BIGSERIAL PRIMARY KEY,
+    client_id TEXT NOT NULL DEFAULT 'eden',
+    started_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    finished_at TIMESTAMPTZ,
+    status TEXT NOT NULL DEFAULT 'running',         -- running|ok|failed
+    leads_found INTEGER NOT NULL DEFAULT 0,
+    leads_qualified INTEGER NOT NULL DEFAULT 0,
+    leads_mobile INTEGER NOT NULL DEFAULT 0,
+    leads_generated INTEGER NOT NULL DEFAULT 0,
+    leads_screenshotted INTEGER NOT NULL DEFAULT 0,
+    leads_synced INTEGER NOT NULL DEFAULT 0,
+    -- [{ step, placeId, name, message, at }] — one entry per skipped lead.
+    -- A lead that fails generation must not take the batch down with it.
+    errors JSONB NOT NULL DEFAULT '[]'::jsonb,
+    triggered_by TEXT NOT NULL DEFAULT 'schedule'   -- schedule|dashboard|cli
+);
+CREATE INDEX IF NOT EXISTS idx_quarry_runs_started ON quarry_runs(client_id, started_at DESC);
+
+CREATE TABLE IF NOT EXISTS quarry_send_log (
+    id BIGSERIAL PRIMARY KEY,
+    client_id TEXT NOT NULL DEFAULT 'eden',
+    lead_id BIGINT NOT NULL REFERENCES quarry_leads(id) ON DELETE CASCADE,
+    step TEXT NOT NULL,                             -- screenshot|link|nudge
+    sent_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    message_content TEXT NOT NULL,
+    attachment_url TEXT,
+    ghl_message_id TEXT,
+    error TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_quarry_send_day ON quarry_send_log(client_id, sent_at DESC);
+CREATE INDEX IF NOT EXISTS idx_quarry_send_lead ON quarry_send_log(lead_id, step);
+
+CREATE TABLE IF NOT EXISTS quarry_design_briefs (
+    client_id TEXT NOT NULL DEFAULT 'eden',
+    category TEXT NOT NULL,                         -- trade-service | retail-boutique | professional
+    label TEXT NOT NULL,
+    brief_markdown TEXT NOT NULL,
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    PRIMARY KEY (client_id, category)
+);
+
+-- Carrier lookups are billable and a business's line type effectively never
+-- changes, so they're cached by number rather than by lead — the same shop
+-- resurfacing under a second search query costs nothing the second time.
+CREATE TABLE IF NOT EXISTS quarry_phone_lookups (
+    phone TEXT PRIMARY KEY,
+    line_type TEXT NOT NULL,
+    is_mobile BOOLEAN NOT NULL,
+    carrier TEXT,
+    provider TEXT NOT NULL,
+    checked_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    raw JSONB
+);

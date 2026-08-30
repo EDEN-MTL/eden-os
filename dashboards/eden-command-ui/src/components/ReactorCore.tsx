@@ -39,9 +39,14 @@ export default function ReactorCore({
         <div className="reactor-ring inner" />
         <div className="reactor-ring tickmarks2" />
 
-        <div className="reactor-core-wrap">
+        <button
+          type="button"
+          className={`reactor-core-wrap ${selectedAgent === "EDEN" ? "selected" : ""}`}
+          title="EDEN"
+          onClick={() => onSelectAgent("EDEN")}
+        >
           <div className="reactor-core-inner" />
-        </div>
+        </button>
         <div className="reactor-halo" />
         <div className="reactor-halo2" />
 

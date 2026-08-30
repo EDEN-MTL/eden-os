@@ -66,6 +66,29 @@ export async function searchContacts(
   );
 }
 
+/**
+ * Creates a contact. `locationId` goes in the BODY here, not just the header —
+ * the create endpoint reads it from the payload and returns a 422 without it.
+ */
+export async function createContact(
+  data: {
+    name: string;
+    phone?: string;
+    email?: string;
+    tags?: string[];
+    locationId: string;
+    source?: string;
+  },
+  apiKey?: string
+): Promise<any> {
+  return ghlRequest(`/contacts/`, {
+    method: "POST",
+    body: data,
+    apiKey,
+    locationId: data.locationId,
+  });
+}
+
 export async function updateContact(
   contactId: string,
   data: Record<string, any>,
@@ -296,6 +319,30 @@ export async function getGhlConfig(clientId = "eden"): Promise<GhlConfig | null>
   return { apiKey: GHL_API_KEY, locationId: GHL_LOCATION_ID, attributionPipelineName: GHL_ATTRIBUTION_PIPELINE_NAME };
 }
 
+/**
+ * Creates an opportunity. `pipelineStageId` is the STAGE id, not a stage name
+ * — see gotcha 5 in CLAUDE.md. Resolve it via listPipelines first.
+ */
+export async function createOpportunity(
+  data: {
+    pipelineId: string;
+    pipelineStageId: string;
+    contactId: string;
+    name: string;
+    locationId: string;
+    monetaryValue?: number;
+    status?: "open" | "won" | "lost" | "abandoned";
+  },
+  apiKey?: string
+): Promise<any> {
+  return ghlRequest(`/opportunities/`, {
+    method: "POST",
+    body: { status: "open", ...data },
+    apiKey,
+    locationId: data.locationId,
+  });
+}
+
 export async function updateOpportunityStage(
   opportunityId: string,
   stageId: string,
@@ -345,7 +392,8 @@ export async function createAppointment(
 export async function sendSMS(
   contactId: string,
   message: string,
-  locationId?: string
+  locationId?: string,
+  apiKey?: string
 ): Promise<any> {
   return ghlRequest(`/conversations/messages`, {
     method: "POST",
@@ -355,6 +403,40 @@ export async function sendSMS(
       message,
     },
     locationId,
+    apiKey,
+  });
+}
+
+/**
+ * Sends an SMS carrying an image (MMS).
+ *
+ * GHL has no separate "MMS" message type — the type stays "SMS" and the image
+ * rides along in `attachments`, which must be an array of PUBLIC URLs. A
+ * local file path or a signed URL that expires will send as a plain text
+ * message with no image and no error, which looks identical to success in
+ * the API response. That is why the screenshot step uploads to a public
+ * bucket before this is ever called.
+ */
+export async function sendMMS(
+  contactId: string,
+  message: string,
+  attachmentUrls: string[],
+  locationId?: string,
+  apiKey?: string
+): Promise<any> {
+  if (attachmentUrls.length === 0) {
+    throw new Error("sendMMS called with no attachments — use sendSMS instead");
+  }
+  return ghlRequest(`/conversations/messages`, {
+    method: "POST",
+    body: {
+      type: "SMS",
+      contactId,
+      message,
+      attachments: attachmentUrls,
+    },
+    locationId,
+    apiKey,
   });
 }
 

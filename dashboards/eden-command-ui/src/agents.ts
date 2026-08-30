@@ -36,3 +36,19 @@ export function glow(hex: string, alpha = 0.55): string {
 }
 
 export const EDEN_COLOR = "#00fff2";
+
+/** The central orb isn't one of the 8 orbiting AGENTS — it's EDEN itself. */
+export const EDEN_META: AgentMeta = {
+  id: "eden",
+  code: "EDEN",
+  name: "EDEN",
+  role: "Central Intelligence",
+  status: "ORCHESTRATING",
+  color: EDEN_COLOR,
+};
+
+/** Resolves a reactor node code (an orbiting agent's code, or "EDEN") to its metadata. */
+export function agentByCode(code: string): AgentMeta {
+  if (code === "EDEN") return EDEN_META;
+  return AGENTS.find((a) => a.code === code) || EDEN_META;
+}

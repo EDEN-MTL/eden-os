@@ -28,7 +28,7 @@ import ClientDetailPage from "./components/ClientDetailPage";
  */
 export default function App() {
   const [activeTab, setActiveTab] = useState("COMMAND");
-  const [selectedAgent, setSelectedAgent] = useState("SCT");
+  const [selectedAgent, setSelectedAgent] = useState("EDEN");
   const [voiceLevel, setVoiceLevel] = useState(0);
   const [panelsOpen, setPanelsOpen] = useState(false);
   const [selectedClientId, setSelectedClientId] = useState<string | null>(null);
@@ -62,7 +62,7 @@ export default function App() {
             )}
             <div className="col-center">
               <ReactorCore selectedAgent={selectedAgent} onSelectAgent={setSelectedAgent} voiceLevel={voiceLevel} />
-              <ChatPanel onVoiceLevelChange={handleVoiceLevelChange} />
+              <ChatPanel selectedAgent={selectedAgent} onVoiceLevelChange={handleVoiceLevelChange} />
             </div>
             {panelsOpen && (
               <div className="col-right">

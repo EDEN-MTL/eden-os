@@ -35,12 +35,8 @@ export default function Atmosphere() {
           />
         ))}
       </div>
-      <div className="grid-floor-wrap">
-        <div className="grid-floor" />
-      </div>
       <div className="scanlines-overlay" />
       <div className="vignette" />
-      <div className="scan-bar" />
     </div>
   );
 }
