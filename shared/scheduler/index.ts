@@ -16,7 +16,7 @@ import { join } from "path";
 import { query } from "../db";
 import { getMetaConfig, MetaClient } from "../meta";
 import { syncMetaPerformance } from "../../agents/forge/ads/sync";
-import { computeWeeklyTotals, formatWeeklyReport } from "../../agents/lens/report";
+import { computeWeeklyTotals, formatAllClientsReport, WeeklyTotals } from "../../agents/lens/report";
 import { sendMessage } from "../slack";
 
 const TIMEZONE = "America/Toronto";
@@ -51,23 +51,41 @@ export async function runMetaSync(): Promise<void> {
   }
 }
 
+/**
+ * One combined report, every client, sent ONLY to Eden's internal ops
+ * channel — never to a client's own Slack channel. Jacob was explicit
+ * about this after the scheduler shipped: clients don't get an automated
+ * weekly message, the team does.
+ */
 export async function runWeeklyLensReport(): Promise<void> {
+  const opsChannel = process.env.LENS_OPS_CHANNEL;
+  if (!opsChannel) {
+    console.warn("[SCHEDULER] LENS_OPS_CHANNEL not set, skipping weekly Lens report");
+    return;
+  }
+
   const clientIds = await listMetaClientIds();
+  const entries: { clientName: string; totals: WeeklyTotals }[] = [];
   for (const clientId of clientIds) {
-    const cfg = loadClientJson(clientId);
-    const channel = cfg?.slack?.clientChannel;
-    if (!channel) {
-      console.log(`[SCHEDULER] no slack.clientChannel configured for ${clientId}, skipping Lens report`);
-      continue;
-    }
     try {
+      const cfg = loadClientJson(clientId);
       const totals = await computeWeeklyTotals(clientId);
-      const text = formatWeeklyReport(cfg.clientName || clientId, totals);
-      await sendMessage("lens", { channel, text });
-      console.log(`[SCHEDULER] Lens report sent for ${clientId} -> #${channel}`);
+      entries.push({ clientName: cfg?.clientName || clientId, totals });
     } catch (e) {
-      console.error(`[SCHEDULER] Lens report failed for ${clientId}:`, e instanceof Error ? e.message : e);
+      console.error(`[SCHEDULER] Lens totals failed for ${clientId}:`, e instanceof Error ? e.message : e);
     }
+  }
+  if (!entries.length) {
+    console.log("[SCHEDULER] no client totals computed, skipping Lens report");
+    return;
+  }
+
+  try {
+    const text = formatAllClientsReport(entries);
+    await sendMessage("lens", { channel: opsChannel, text });
+    console.log(`[SCHEDULER] Lens weekly report sent to internal ops channel (${entries.length} clients)`);
+  } catch (e) {
+    console.error("[SCHEDULER] Lens weekly report failed:", e instanceof Error ? e.message : e);
   }
 }
 
