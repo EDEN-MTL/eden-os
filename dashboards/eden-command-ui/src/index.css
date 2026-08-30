@@ -837,6 +837,24 @@ a {
   color: rgba(165, 205, 230, 0.82);
   margin-top: 6px;
 }
+.back-to-eden {
+  display: block;
+  margin: 10px auto 0;
+  padding: 0;
+  border: 0;
+  background: none;
+  cursor: pointer;
+  font-family: var(--font-body);
+  font-size: 11.5px;
+  letter-spacing: 0.08em;
+  color: #00fff2;
+  opacity: 0.85;
+  transition: opacity 0.15s ease;
+}
+.back-to-eden:hover {
+  opacity: 1;
+  text-decoration: underline;
+}
 
 /* ─── Chat ─── */
 

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { formatWeeklyReport } from "./report";
+import { formatAllClientsReport, formatWeeklyReport } from "./report";
 
 describe("formatWeeklyReport", () => {
   it("renders n/a for cpl and roas when nothing is computable", () => {
@@ -27,5 +27,25 @@ describe("formatWeeklyReport", () => {
     });
     expect(text).toContain("Blended CPL: n/a");
     expect(text).toContain("ROAS: 0x");
+  });
+});
+
+describe("formatAllClientsReport", () => {
+  it("labels the report as covering all clients, not one", () => {
+    const text = formatAllClientsReport([
+      { clientName: "Eden", totals: { spend: 0, leads: 0, won: 0, revenue: 0, pipelineValue: 0, activeCount: 0, cpl: null, roas: null } },
+    ]);
+    expect(text).toContain("Weekly ad performance — all clients");
+  });
+
+  it("includes a section per client, each under its own name", () => {
+    const text = formatAllClientsReport([
+      { clientName: "Eden", totals: { spend: 100, leads: 2, won: 0, revenue: 0, pipelineValue: 0, activeCount: 0, cpl: 50, roas: 0 } },
+      { clientName: "3 Percent East Coast", totals: { spend: 1200, leads: 20, won: 3, revenue: 6000, pipelineValue: 15000, activeCount: 1, cpl: 60, roas: 5 } },
+    ]);
+    expect(text).toContain("*Eden*");
+    expect(text).toContain("*3 Percent East Coast*");
+    expect(text).toContain("Spend: $100");
+    expect(text).toContain("Spend: $1,200");
   });
 });

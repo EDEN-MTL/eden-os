@@ -54,11 +54,24 @@ function money(n: number): string {
   return `$${n.toLocaleString(undefined, { maximumFractionDigits: 0 })}`;
 }
 
-export function formatWeeklyReport(clientName: string, t: WeeklyTotals): string {
+/** The three stat lines shared by both the single-client and all-clients report. */
+function statLines(t: WeeklyTotals): string[] {
   return [
-    `*${clientName} — weekly ad performance (last 7 days)*`,
     `Spend: ${money(t.spend)}  ·  Leads: ${t.leads}  ·  Blended CPL: ${t.cpl !== null ? money(t.cpl) : "n/a"}`,
     `Won: ${t.won}  ·  Revenue: ${money(t.revenue)}  ·  ROAS: ${t.roas !== null ? `${t.roas}x` : "n/a"}`,
     `In pipeline: ${t.activeCount} deal${t.activeCount === 1 ? "" : "s"} worth ${money(t.pipelineValue)} (not yet counted in ROAS)`,
-  ].join("\n");
+  ];
+}
+
+export function formatWeeklyReport(clientName: string, t: WeeklyTotals): string {
+  return [`*${clientName} — weekly ad performance (last 7 days)*`, ...statLines(t)].join("\n");
+}
+
+/**
+ * One message covering every client, for the internal ops channel only.
+ * Never sent to a client's own channel — see runWeeklyLensReport.
+ */
+export function formatAllClientsReport(entries: { clientName: string; totals: WeeklyTotals }[]): string {
+  const sections = entries.map(({ clientName, totals }) => [`*${clientName}*`, ...statLines(totals)].join("\n"));
+  return [`*Weekly ad performance — all clients (last 7 days)*`, "", sections.join("\n\n")].join("\n");
 }

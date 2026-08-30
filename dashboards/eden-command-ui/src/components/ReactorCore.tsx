@@ -1,4 +1,4 @@
-import { AGENTS, REACTOR_POSITIONS } from "../agents";
+import { AGENTS, REACTOR_POSITIONS, agentByCode } from "../agents";
 
 export default function ReactorCore({
   selectedAgent,
@@ -76,10 +76,25 @@ export default function ReactorCore({
           );
         })}
       </div>
-      <div className="reactor-label">
-        <div className="title">CENTRAL INTELLIGENCE</div>
-        <div className="subtitle">MULTI-AGENT ORCHESTRATION ACTIVE</div>
-      </div>
+      {selectedAgent === "EDEN" ? (
+        <div className="reactor-label">
+          <div className="title">CENTRAL INTELLIGENCE</div>
+          <div className="subtitle">MULTI-AGENT ORCHESTRATION ACTIVE</div>
+        </div>
+      ) : (
+        <div className="reactor-label">
+          <div
+            className="title"
+            style={{ color: agentByCode(selectedAgent).color, textShadow: `0 0 14px ${agentByCode(selectedAgent).color}b3` }}
+          >
+            {agentByCode(selectedAgent).name.toUpperCase()}
+          </div>
+          <div className="subtitle">{agentByCode(selectedAgent).role}</div>
+          <button type="button" className="back-to-eden" onClick={() => onSelectAgent("EDEN")}>
+            ← Back to EDEN
+          </button>
+        </div>
+      )}
     </div>
   );
 }
