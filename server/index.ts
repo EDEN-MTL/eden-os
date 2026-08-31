@@ -11,6 +11,7 @@ import express from "express";
 import { initSlackClients } from "../shared/slack";
 import { createSlackRouter } from "../webhooks/slack-events";
 import { createGHLRouter } from "../webhooks/ghl-webhook";
+import { createVapiRouter } from "../webhooks/vapi-webhook";
 import { initDb } from "../shared/db";
 import { startScheduler } from "../shared/scheduler";
 import { createChatRouter } from "./chat-api";
@@ -52,6 +53,7 @@ app.get("/health", (_req, res) => {
 // ─── Webhook Routes ───
 app.use("/webhooks/slack", createSlackRouter());
 app.use("/webhooks/ghl", createGHLRouter());
+app.use("/webhooks/vapi", createVapiRouter());
 app.use("/api/chat", createChatRouter());
 app.use("/api/tts", createTtsRouter());
 app.use("/api/settings", createSettingsRouter());

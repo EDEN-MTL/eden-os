@@ -362,3 +362,25 @@ CREATE TABLE IF NOT EXISTS quarry_phone_lookups (
     checked_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     raw JSONB
 );
+
+-- One row per Vapi call Iris places, keyed by Vapi's own call id so the
+-- end-of-call-report webhook can update the row it started (placeTestCall
+-- inserts 'initiated'; the webhook fills in the rest once the call ends).
+-- contact_id is nullable because the first real usage of this table is
+-- manual test calls (scripts/test-iris-call.ts) that aren't tied to a real
+-- GHL lead at all.
+CREATE TABLE IF NOT EXISTS iris_call_log (
+    id BIGSERIAL PRIMARY KEY,
+    client_id TEXT NOT NULL DEFAULT 'eden',
+    vapi_call_id TEXT NOT NULL UNIQUE,
+    contact_id TEXT,
+    phone TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'initiated', -- initiated | ended | failed
+    ended_reason TEXT,
+    transcript TEXT,
+    triggered_by TEXT NOT NULL DEFAULT 'manual', -- manual | automatic (automatic is not wired up yet)
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    ended_at TIMESTAMPTZ,
+    raw JSONB
+);
+CREATE INDEX IF NOT EXISTS idx_iris_call_log_client ON iris_call_log(client_id, created_at DESC);
