@@ -24,3 +24,23 @@ describe("IrisAgent.getSystemPrompt sender recognition", () => {
     expect(prompt).toMatch(/don't have a confirmed name/);
   });
 });
+
+describe("IrisAgent.getSystemPrompt brand-voice scoping", () => {
+  it("never opens with the lead-facing brand introduction", () => {
+    const prompt = irisAgent.getSystemPrompt();
+    expect(prompt).not.toMatch(/^You are IRIS, the virtual assistant for/);
+    expect(prompt).not.toMatch(/You are IRIS, a warm, professional/);
+  });
+
+  it("explicitly scopes the brand name to lead calls/texts, not Slack", () => {
+    const prompt = irisAgent.getSystemPrompt();
+    expect(prompt).toMatch(/never to Slack/i);
+    expect(prompt).toMatch(/live call once Vapi is wired up, or a GHL\s+text thread/i);
+  });
+
+  it("only mentions the client name once, as background rather than a recurring role description", () => {
+    const prompt = irisAgent.getSystemPrompt();
+    const mentions = prompt.match(/3 Percent East Coast/g) || [];
+    expect(mentions.length).toBe(1);
+  });
+});
