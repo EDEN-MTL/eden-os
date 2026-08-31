@@ -1,5 +1,5 @@
 import { chat, ChatMessage } from "../shared/claude";
-import { sendMessage } from "../shared/slack";
+import { getUserRealName, sendMessage } from "../shared/slack";
 import { AgentId, SlackIncomingMessage } from "../shared/types";
 
 /**
@@ -55,8 +55,14 @@ export abstract class BaseAgent {
       ? `dm:${message.userId}`
       : `channel:${message.channelId}:${message.threadTs || "main"}`;
 
+    // Resolved once per message rather than baked into history — Slack is the
+    // only channel wired up today, and everyone reaching an agent there is a
+    // real, identifiable person, not an anonymous lead. getUserRealName never
+    // throws (returns null on lookup failure), so this can't break a reply.
+    const senderName = await getUserRealName(this.id, message.userId);
+
     try {
-      const response = await this.generateReply(historyKey, message.text);
+      const response = await this.generateReply(historyKey, message.text, { senderName });
       await this.respond(message, response);
     } catch (error) {
       console.error(`[${this.code}] Error generating response:`, error);
@@ -71,13 +77,13 @@ export abstract class BaseAgent {
    * Generate a reply for arbitrary callers (Slack, the dashboard's chat API, etc.)
    * — same history + Claude call as handleMessage, minus the Slack-specific bits.
    */
-  async generateReply(historyKey: string, userText: string): Promise<string> {
+  async generateReply(historyKey: string, userText: string, context?: Record<string, any>): Promise<string> {
     const history = this.conversationHistory.get(historyKey) || [];
 
     history.push({ role: "user", content: userText });
     const trimmedHistory = history.slice(-20);
 
-    const systemPrompt = this.getSystemPrompt();
+    const systemPrompt = this.getSystemPrompt(context);
     const response = await chat(systemPrompt, trimmedHistory);
 
     trimmedHistory.push({ role: "assistant", content: response });
