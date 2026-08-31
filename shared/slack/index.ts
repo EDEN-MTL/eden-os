@@ -119,6 +119,37 @@ export async function sendBlocks(
 }
 
 /**
+ * Slack user id -> real name, cached in-process. userId is global to the
+ * whole workspace (not per-agent), and someone's display name doesn't
+ * change mid-conversation, so there's no reason to re-fetch it on every
+ * message — same reasoning as quarry_phone_lookups caching carrier lookups
+ * by number. Cleared only by a process restart.
+ */
+const userNameCache: Map<string, string | null> = new Map();
+
+/**
+ * Resolves a Slack user id to the name they'd actually recognize themselves
+ * by — real_name over the raw profile display_name, which is often a
+ * lowercase handle. Returns null (never throws) on any lookup failure, so a
+ * transient Slack API error degrades to "unknown sender" rather than
+ * breaking the whole reply.
+ */
+export async function getUserRealName(agentId: AgentId, userId: string): Promise<string | null> {
+  if (userNameCache.has(userId)) return userNameCache.get(userId)!;
+
+  try {
+    const client = getClient(agentId);
+    const result = await client.users.info({ user: userId });
+    const name = result.user?.real_name || result.user?.profile?.display_name || null;
+    userNameCache.set(userId, name || null);
+    return name || null;
+  } catch (error) {
+    console.warn(`[SLACK] Could not resolve real name for ${userId}:`, error);
+    return null;
+  }
+}
+
+/**
  * React to a message as a specific agent.
  */
 export async function addReaction(
