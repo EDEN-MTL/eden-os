@@ -69,7 +69,7 @@ export async function computeMetrics(
      WHERE client_id = $1 AND level = $2
        AND date_start >= (CURRENT_DATE - $3::int) AND date_stop <= CURRENT_DATE
        AND ${idCol} IS NOT NULL
-     GROUP BY ${idCol}`,
+     GROUP BY ${idCol}, ${nameCol}`,
     [clientId, scope, lookbackDays]
   );
 
@@ -105,7 +105,7 @@ export async function computeAdMetricsForAdset(
      WHERE client_id = $1 AND level = 'ad' AND adset_id = $2
        AND date_start >= (CURRENT_DATE - $3::int) AND date_stop <= CURRENT_DATE
        AND ad_id IS NOT NULL
-     GROUP BY ad_id`,
+     GROUP BY ad_id, ad_name`,
     [clientId, adsetId, lookbackDays]
   );
 
