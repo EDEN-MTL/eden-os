@@ -15,6 +15,7 @@ export const SPEECH_RECOGNITION_SUPPORTED = !!getRecognitionCtor();
 export function useSpeechInput(onResult: (text: string) => void) {
   const [listening, setListening] = useState(false);
   const recognitionRef = useRef<any>(null);
+  const cancelledRef = useRef(false);
   const onResultRef = useRef(onResult);
   onResultRef.current = onResult;
 
@@ -28,6 +29,7 @@ export function useSpeechInput(onResult: (text: string) => void) {
     recognition.lang = "en-US";
 
     recognition.onresult = (event: any) => {
+      if (cancelledRef.current) return;
       const transcript = event.results[0]?.[0]?.transcript;
       if (transcript) onResultRef.current(transcript);
     };
@@ -40,13 +42,21 @@ export function useSpeechInput(onResult: (text: string) => void) {
 
   const start = useCallback(() => {
     if (!recognitionRef.current || listening) return;
+    cancelledRef.current = false;
     setListening(true);
     recognitionRef.current.start();
   }, [listening]);
 
+  /** Finalizes early and still sends whatever was captured so far. */
   const stop = useCallback(() => {
     recognitionRef.current?.stop();
   }, []);
 
-  return { start, stop, listening, supported: SPEECH_RECOGNITION_SUPPORTED };
+  /** Discards the in-progress recording — nothing gets sent. */
+  const cancel = useCallback(() => {
+    cancelledRef.current = true;
+    recognitionRef.current?.abort();
+  }, []);
+
+  return { start, stop, cancel, listening, supported: SPEECH_RECOGNITION_SUPPORTED };
 }
