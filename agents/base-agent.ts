@@ -1,4 +1,4 @@
-import { chat, chatWithTools, ChatMessage, ToolDef } from "../shared/claude";
+import { Attachment, attachmentToBlock, chat, chatWithTools, ChatMessage, ToolDef } from "../shared/claude";
 import { appendHistory, loadHistory } from "../shared/conversation-memory";
 import { getUserRealName, sendMessage } from "../shared/slack";
 import { AgentId, SlackIncomingMessage } from "../shared/types";
@@ -100,7 +100,12 @@ export abstract class BaseAgent {
    * "no memory this turn" rather than breaking the reply outright — worth
    * one turn of amnesia, never worth an agent going silent.
    */
-  async generateReply(historyKey: string, userText: string, context?: Record<string, any>): Promise<string> {
+  async generateReply(
+    historyKey: string,
+    userText: string,
+    context?: Record<string, any>,
+    attachment?: Attachment
+  ): Promise<string> {
     const history = await loadHistory(this.id, historyKey).catch((error) => {
       console.error(`[${this.code}] Failed to load conversation history:`, error);
       return [];
@@ -108,15 +113,28 @@ export abstract class BaseAgent {
     const systemPrompt = this.getSystemPrompt(context);
     const tools = this.getTools();
 
+    const userContent: ChatMessage["content"] = attachment
+      ? [attachmentToBlock(attachment), { type: "text", text: userText }]
+      : userText;
+
     const reply =
       tools.length === 0
-        ? await chat(systemPrompt, [...history, { role: "user", content: userText }])
-        : await this.runToolLoop(history, systemPrompt, tools, userText);
+        ? await chat(systemPrompt, [...history, { role: "user", content: userContent }])
+        : await this.runToolLoop(history, systemPrompt, tools, userContent);
+
+    // An attachment is scratch input for this turn only, like a
+    // tool_use/tool_result exchange — replaying its raw bytes into every
+    // future turn's context would balloon token cost for no benefit once
+    // the model has already answered on it. A short marker preserves the
+    // fact that a file was shared without persisting the file itself.
+    const textForHistory = attachment
+      ? `${userText}\n[attached: ${attachment.filename || attachment.mediaType}]`
+      : userText;
 
     try {
       // Sequential, not Promise.all — order matters (user before assistant)
       // and these share one auto-increment id column that defines it.
-      await appendHistory(this.id, historyKey, "user", userText);
+      await appendHistory(this.id, historyKey, "user", textForHistory);
       await appendHistory(this.id, historyKey, "assistant", reply);
     } catch (error) {
       console.error(`[${this.code}] Failed to persist conversation history:`, error);
@@ -140,9 +158,9 @@ export abstract class BaseAgent {
     priorHistory: ChatMessage[],
     systemPrompt: string,
     tools: ToolDef[],
-    userText: string
+    userContent: ChatMessage["content"]
   ): Promise<string> {
-    let working: ChatMessage[] = [...priorHistory, { role: "user", content: userText }];
+    let working: ChatMessage[] = [...priorHistory, { role: "user", content: userContent }];
     let finalText = "";
 
     for (let turn = 0; turn < MAX_TOOL_TURNS; turn++) {

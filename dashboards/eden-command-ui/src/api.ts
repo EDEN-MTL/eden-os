@@ -8,15 +8,35 @@ function authHeaders(extra: Record<string, string> = {}) {
   };
 }
 
+export interface ChatAttachment {
+  data: string; // base64, no data-URL prefix
+  mediaType: string;
+  filename?: string;
+}
+
+/** Reads a File into the base64 payload the chat API expects, no data-URL prefix. */
+export function readAttachment(file: File): Promise<ChatAttachment> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      const result = reader.result as string;
+      resolve({ data: result.slice(result.indexOf(",") + 1), mediaType: file.type, filename: file.name });
+    };
+    reader.onerror = () => reject(reader.error || new Error("Failed to read file"));
+    reader.readAsDataURL(file);
+  });
+}
+
 export async function sendChatMessage(
   agentId: string,
   message: string,
-  sessionId: string
+  sessionId: string,
+  attachment?: ChatAttachment
 ): Promise<string> {
   const res = await fetch(`${API_BASE}/api/chat/${agentId}`, {
     method: "POST",
     headers: authHeaders({ "Content-Type": "application/json" }),
-    body: JSON.stringify({ message, sessionId }),
+    body: JSON.stringify({ message, sessionId, attachment }),
   });
 
   if (!res.ok) {

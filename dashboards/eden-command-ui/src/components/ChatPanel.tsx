@@ -1,5 +1,5 @@
-import { useEffect, useRef, useState } from "react";
-import { sendChatMessage, fetchSpeech } from "../api";
+import { ChangeEvent, useEffect, useRef, useState } from "react";
+import { sendChatMessage, fetchSpeech, readAttachment } from "../api";
 import { useVoicePlayer } from "../hooks/useVoicePlayer";
 import { useSpeechInput } from "../hooks/useSpeechInput";
 import { agentByCode } from "../agents";
@@ -7,9 +7,13 @@ import { agentByCode } from "../agents";
 interface ChatMessage {
   role: "user" | "agent" | "error";
   text: string;
+  attachmentName?: string;
 }
 
 const SUGGESTIONS = ["System status", "Ad performance", "Brainstorm campaign", "Who needs attention?"];
+
+const ACCEPTED_ATTACHMENT_TYPES = "image/png,image/jpeg,image/webp,image/gif,application/pdf";
+const MAX_ATTACHMENT_BYTES = 8 * 1024 * 1024; // matches server/chat-api.ts's decoded-size cap
 
 export default function ChatPanel({
   selectedAgent,
@@ -22,6 +26,8 @@ export default function ChatPanel({
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [input, setInput] = useState("");
   const [pending, setPending] = useState(false);
+  const [pendingFile, setPendingFile] = useState<File | null>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
   const sessionId = useRef(`${Date.now()}-${Math.random().toString(36).slice(2)}`);
   const { play, stop, level, speaking } = useVoicePlayer();
   const agent = agentByCode(selectedAgent);
@@ -37,14 +43,20 @@ export default function ChatPanel({
 
   async function send(text: string) {
     const trimmed = text.trim();
-    if (!trimmed || pending) return;
+    const file = pendingFile;
+    if ((!trimmed && !file) || pending) return;
 
-    setMessages((prev) => [...prev, { role: "user", text: trimmed }]);
+    // A file with no caption still needs something to send as the turn's text.
+    const messageText = trimmed || "Take a look at this.";
+
+    setMessages((prev) => [...prev, { role: "user", text: messageText, attachmentName: file?.name }]);
     setInput("");
+    setPendingFile(null);
     setPending(true);
 
     try {
-      const reply = await sendChatMessage(agent.id, trimmed, sessionId.current);
+      const attachment = file ? await readAttachment(file) : undefined;
+      const reply = await sendChatMessage(agent.id, messageText, sessionId.current, attachment);
       setMessages((prev) => [...prev, { role: "agent", text: reply }]);
       setPending(false);
 
@@ -62,6 +74,19 @@ export default function ChatPanel({
       const msg = err instanceof Error ? err.message : `Failed to reach ${agent.name}`;
       setMessages((prev) => [...prev, { role: "error", text: msg }]);
     }
+  }
+
+  function handleFileSelect(e: ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    e.target.value = ""; // allow re-selecting the same file after removing it
+    if (!file) return;
+
+    if (file.size > MAX_ATTACHMENT_BYTES) {
+      setMessages((prev) => [...prev, { role: "error", text: `${file.name} is over the 8MB attachment limit.` }]);
+      return;
+    }
+    setExpanded(true);
+    setPendingFile(file);
   }
 
   const {
@@ -82,6 +107,14 @@ export default function ChatPanel({
 
   return (
     <>
+      <input
+        ref={fileInputRef}
+        type="file"
+        accept={ACCEPTED_ATTACHMENT_TYPES}
+        onChange={handleFileSelect}
+        style={{ display: "none" }}
+      />
+
       {expanded && (
         <div className="chat-scroll">
           {messages.length === 0 ? (
@@ -112,7 +145,10 @@ export default function ChatPanel({
               {messages.map((m, i) => (
                 <div className={`message ${m.role === "user" ? "user" : m.role === "error" ? "agent error" : "agent"}`} key={i}>
                   <div className="message-label">{m.role === "user" ? "OPERATOR" : `◆ ${agent.name.toUpperCase()}`}</div>
-                  <div className="message-body">{m.text}</div>
+                  <div className="message-body">
+                    {m.text}
+                    {m.attachmentName && <span className="message-attachment">📎 {m.attachmentName}</span>}
+                  </div>
                 </div>
               ))}
               {pending && (
@@ -123,6 +159,15 @@ export default function ChatPanel({
               )}
             </div>
           )}
+        </div>
+      )}
+
+      {expanded && pendingFile && (
+        <div className="attachment-chip">
+          <span>📎 {pendingFile.name}</span>
+          <button onClick={() => setPendingFile(null)} title="Remove attachment" aria-label="Remove attachment">
+            ✕
+          </button>
         </div>
       )}
 
@@ -140,6 +185,9 @@ export default function ChatPanel({
             placeholder={`Issue a command to ${agent.name}…`}
             disabled={pending}
           />
+          <button className="attach-btn" onClick={() => fileInputRef.current?.click()} disabled={pending} title="Attach a file" aria-label="Attach a file">
+            📎
+          </button>
           {speaking && (
             <>
               <span className="speaking-indicator">◆ SPEAKING</span>
@@ -163,7 +211,7 @@ export default function ChatPanel({
               ✕
             </button>
           )}
-          <button className="transmit-btn" onClick={() => send(input)} disabled={pending || !input.trim()}>
+          <button className="transmit-btn" onClick={() => send(input)} disabled={pending || (!input.trim() && !pendingFile)}>
             TRANSMIT
           </button>
           <button className="collapse-btn" onClick={() => setExpanded(false)} title="Hide chat">
