@@ -1,6 +1,8 @@
-import { chat, ChatMessage } from "../shared/claude";
+import { chat, chatWithTools, ChatMessage, ToolDef } from "../shared/claude";
 import { getUserRealName, sendMessage } from "../shared/slack";
 import { AgentId, SlackIncomingMessage } from "../shared/types";
+
+const MAX_TOOL_TURNS = 6;
 
 /**
  * Base class for all EDEN agents.
@@ -33,6 +35,20 @@ export abstract class BaseAgent {
     message: SlackIncomingMessage
   ): Promise<string | null> {
     return null;
+  }
+
+  /**
+   * Override to give an agent real tool access (Forge does; nothing else
+   * does yet). Returning [] — the default — keeps generateReply on the
+   * exact plain-text path every other agent already relies on.
+   */
+  protected getTools(): ToolDef[] {
+    return [];
+  }
+
+  /** Override alongside getTools() to actually run a tool call. */
+  protected async executeTool(_name: string, _input: any): Promise<string> {
+    throw new Error(`${this.code} has no tools configured`);
   }
 
   /**
@@ -79,17 +95,80 @@ export abstract class BaseAgent {
    */
   async generateReply(historyKey: string, userText: string, context?: Record<string, any>): Promise<string> {
     const history = this.conversationHistory.get(historyKey) || [];
-
-    history.push({ role: "user", content: userText });
-    const trimmedHistory = history.slice(-20);
-
     const systemPrompt = this.getSystemPrompt(context);
-    const response = await chat(systemPrompt, trimmedHistory);
+    const tools = this.getTools();
 
-    trimmedHistory.push({ role: "assistant", content: response });
-    this.conversationHistory.set(historyKey, trimmedHistory);
+    if (tools.length === 0) {
+      const trimmedHistory = [...history, { role: "user" as const, content: userText }].slice(-20);
+      const response = await chat(systemPrompt, trimmedHistory);
+      trimmedHistory.push({ role: "assistant", content: response });
+      this.conversationHistory.set(historyKey, trimmedHistory);
+      return response;
+    }
 
-    return response;
+    return this.runToolLoop(historyKey, history, systemPrompt, tools, userText);
+  }
+
+  /**
+   * Tool-use loop for agents that define getTools()/executeTool().
+   *
+   * The persisted conversationHistory stays plain text — same shape every
+   * other agent uses — on purpose. The tool_use/tool_result exchange this
+   * turn generates is scratch space for THIS call only and is never
+   * trimmed or stored: Anthropic's API requires every tool_use block to be
+   * immediately followed by its tool_result, and a later `.slice(-20)` on
+   * stored history has no way to know not to cut between the two. Storing
+   * only the clean final text side-steps that failure mode entirely, at
+   * the cost of the model not literally re-reading old raw tool output —
+   * its own final answer each turn (which IS stored) already carries the
+   * substance of what it found.
+   */
+  private async runToolLoop(
+    historyKey: string,
+    priorHistory: ChatMessage[],
+    systemPrompt: string,
+    tools: ToolDef[],
+    userText: string
+  ): Promise<string> {
+    let working: ChatMessage[] = [...priorHistory.slice(-20), { role: "user", content: userText }];
+    let finalText = "";
+
+    for (let turn = 0; turn < MAX_TOOL_TURNS; turn++) {
+      const response = await chatWithTools(systemPrompt, working, tools);
+      working = [...working, { role: "assistant", content: response.content }];
+
+      const toolUses = response.content.filter((b) => b.type === "tool_use");
+      finalText = response.content
+        .filter((b) => b.type === "text")
+        .map((b) => (b as { text: string }).text)
+        .join("\n")
+        .trim();
+
+      if (response.stop_reason !== "tool_use" || toolUses.length === 0) break;
+
+      const toolResults = await Promise.all(
+        toolUses.map(async (tu) => {
+          const call = tu as { id: string; name: string; input: any };
+          let content: string;
+          try {
+            content = await this.executeTool(call.name, call.input);
+          } catch (error) {
+            content = `Error: ${error instanceof Error ? error.message : String(error)}`;
+          }
+          return { type: "tool_result" as const, tool_use_id: call.id, content };
+        })
+      );
+      working = [...working, { role: "user", content: toolResults }];
+    }
+
+    const finalReply = finalText || "No response generated.";
+    const cleaned = [
+      ...priorHistory.slice(-20),
+      { role: "user" as const, content: userText },
+      { role: "assistant" as const, content: finalReply },
+    ];
+    this.conversationHistory.set(historyKey, cleaned.slice(-20));
+    return finalReply;
   }
 
   /**
