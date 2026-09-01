@@ -156,7 +156,7 @@ export async function recheckFirstTouch(contactId: string, clientId: string): Pr
     const ghlConfig = await getGhlConfig(clientId);
     if (!config || !ghlConfig) return null;
 
-    const contactResp = await getContact(contactId, ghlConfig.locationId);
+    const contactResp = await getContact(contactId, ghlConfig.locationId, ghlConfig.apiKey);
     const contact = contactResp?.contact ?? contactResp;
     const defs = await getCustomFieldDefs(ghlConfig.locationId, ghlConfig.apiKey);
     const keyToId = buildKeyToId(defs);

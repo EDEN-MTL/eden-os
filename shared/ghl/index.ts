@@ -52,9 +52,10 @@ async function ghlRequest(
 
 export async function getContact(
   contactId: string,
-  locationId?: string
+  locationId?: string,
+  apiKey?: string
 ): Promise<any> {
-  return ghlRequest(`/contacts/${contactId}`, { locationId });
+  return ghlRequest(`/contacts/${contactId}`, { locationId, apiKey });
 }
 
 export async function searchContacts(
