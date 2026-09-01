@@ -67,6 +67,7 @@ export default function ChatPanel({
   const {
     start: startListening,
     stop: stopListening,
+    cancel: cancelListening,
     listening,
     supported: micSupported,
   } = useSpeechInput((transcript) => {
@@ -157,6 +158,11 @@ export default function ChatPanel({
               {listening ? "●" : "🎙"}
             </button>
           )}
+          {micSupported && listening && (
+            <button className="mic-cancel-btn" onClick={cancelListening} title="Cancel recording" aria-label="Cancel recording">
+              ✕
+            </button>
+          )}
           <button className="transmit-btn" onClick={() => send(input)} disabled={pending || !input.trim()}>
             TRANSMIT
           </button>
@@ -169,6 +175,11 @@ export default function ChatPanel({
           {micSupported && (
             <button className={`mic-btn-lg ${listening ? "listening" : ""}`} onClick={toggleMic} disabled={pending} title={`Talk to ${agent.name}`}>
               {listening ? "●" : "🎙"}
+            </button>
+          )}
+          {micSupported && listening && (
+            <button className="mic-cancel-btn" onClick={cancelListening} title="Cancel recording" aria-label="Cancel recording">
+              ✕
             </button>
           )}
           {speaking && (

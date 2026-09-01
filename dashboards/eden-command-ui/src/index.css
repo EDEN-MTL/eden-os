@@ -1832,3 +1832,20 @@ a {
   margin-left: 8px;
 }
 .stop-btn:hover { background: rgba(255, 34, 85, 0.2); border-color: #ff5c7a; }
+
+/* Discards an in-progress mic recording — only exists while listening. */
+.mic-cancel-btn {
+  appearance: none;
+  cursor: pointer;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: #ff5c7a;
+  background: rgba(255, 34, 85, 0.1);
+  border: 1px solid rgba(255, 92, 122, 0.45);
+  border-radius: 50%;
+  width: 26px;
+  height: 26px;
+  line-height: 1;
+  margin-left: 6px;
+}
+.mic-cancel-btn:hover { background: rgba(255, 34, 85, 0.2); border-color: #ff5c7a; }
