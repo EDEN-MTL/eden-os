@@ -78,7 +78,11 @@ export function getVapiEnvConfig(): {
     modelName: modelName!,
     voiceProvider: voiceProvider!,
     voiceId: voiceId!,
-    serverUrl: process.env.VAPI_SERVER_URL,
+    // dotenv turns "VAPI_SERVER_URL=" (present, empty) into "", not
+    // undefined — Vapi's API rejects an empty-string serverUrl outright
+    // ("must be a valid URL"), so normalize the unset case here rather
+    // than passing "" through to the payload.
+    serverUrl: process.env.VAPI_SERVER_URL || undefined,
   };
 }
 
