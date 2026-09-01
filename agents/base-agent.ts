@@ -1,4 +1,5 @@
 import { chat, chatWithTools, ChatMessage, ToolDef } from "../shared/claude";
+import { appendHistory, loadHistory } from "../shared/conversation-memory";
 import { getUserRealName, sendMessage } from "../shared/slack";
 import { AgentId, SlackIncomingMessage } from "../shared/types";
 
@@ -12,7 +13,6 @@ export abstract class BaseAgent {
   readonly id: AgentId;
   readonly name: string;
   readonly code: string;
-  protected conversationHistory: Map<string, ChatMessage[]> = new Map();
 
   constructor(id: AgentId, name: string, code: string) {
     this.id = id;
@@ -92,45 +92,57 @@ export abstract class BaseAgent {
   /**
    * Generate a reply for arbitrary callers (Slack, the dashboard's chat API, etc.)
    * — same history + Claude call as handleMessage, minus the Slack-specific bits.
+   *
+   * History is durable (agent_conversations in Postgres), not an in-process
+   * Map — this system deploys often, and Slack/dashboard chat is the actual
+   * interface people use it through, so every agent forgetting every
+   * conversation on every restart was a real gap. A DB hiccup degrades to
+   * "no memory this turn" rather than breaking the reply outright — worth
+   * one turn of amnesia, never worth an agent going silent.
    */
   async generateReply(historyKey: string, userText: string, context?: Record<string, any>): Promise<string> {
-    const history = this.conversationHistory.get(historyKey) || [];
+    const history = await loadHistory(this.id, historyKey).catch((error) => {
+      console.error(`[${this.code}] Failed to load conversation history:`, error);
+      return [];
+    });
     const systemPrompt = this.getSystemPrompt(context);
     const tools = this.getTools();
 
-    if (tools.length === 0) {
-      const trimmedHistory = [...history, { role: "user" as const, content: userText }].slice(-20);
-      const response = await chat(systemPrompt, trimmedHistory);
-      trimmedHistory.push({ role: "assistant", content: response });
-      this.conversationHistory.set(historyKey, trimmedHistory);
-      return response;
+    const reply =
+      tools.length === 0
+        ? await chat(systemPrompt, [...history, { role: "user", content: userText }])
+        : await this.runToolLoop(history, systemPrompt, tools, userText);
+
+    try {
+      // Sequential, not Promise.all — order matters (user before assistant)
+      // and these share one auto-increment id column that defines it.
+      await appendHistory(this.id, historyKey, "user", userText);
+      await appendHistory(this.id, historyKey, "assistant", reply);
+    } catch (error) {
+      console.error(`[${this.code}] Failed to persist conversation history:`, error);
     }
 
-    return this.runToolLoop(historyKey, history, systemPrompt, tools, userText);
+    return reply;
   }
 
   /**
    * Tool-use loop for agents that define getTools()/executeTool().
    *
-   * The persisted conversationHistory stays plain text — same shape every
-   * other agent uses — on purpose. The tool_use/tool_result exchange this
-   * turn generates is scratch space for THIS call only and is never
-   * trimmed or stored: Anthropic's API requires every tool_use block to be
-   * immediately followed by its tool_result, and a later `.slice(-20)` on
-   * stored history has no way to know not to cut between the two. Storing
-   * only the clean final text side-steps that failure mode entirely, at
-   * the cost of the model not literally re-reading old raw tool output —
-   * its own final answer each turn (which IS stored) already carries the
-   * substance of what it found.
+   * Only ever works with plain-text history in and a plain-text reply out —
+   * the tool_use/tool_result exchange this turn generates is scratch space
+   * for THIS call only, never persisted: Anthropic's API requires every
+   * tool_use block to be immediately followed by its tool_result, and a
+   * later history read has no way to know not to split the two. The
+   * model's own final answer (which IS persisted) already carries the
+   * substance of what it found via tools.
    */
   private async runToolLoop(
-    historyKey: string,
     priorHistory: ChatMessage[],
     systemPrompt: string,
     tools: ToolDef[],
     userText: string
   ): Promise<string> {
-    let working: ChatMessage[] = [...priorHistory.slice(-20), { role: "user", content: userText }];
+    let working: ChatMessage[] = [...priorHistory, { role: "user", content: userText }];
     let finalText = "";
 
     for (let turn = 0; turn < MAX_TOOL_TURNS; turn++) {
@@ -161,14 +173,7 @@ export abstract class BaseAgent {
       working = [...working, { role: "user", content: toolResults }];
     }
 
-    const finalReply = finalText || "No response generated.";
-    const cleaned = [
-      ...priorHistory.slice(-20),
-      { role: "user" as const, content: userText },
-      { role: "assistant" as const, content: finalReply },
-    ];
-    this.conversationHistory.set(historyKey, cleaned.slice(-20));
-    return finalReply;
+    return finalText || "No response generated.";
   }
 
   /**

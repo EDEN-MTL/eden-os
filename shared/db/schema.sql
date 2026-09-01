@@ -362,3 +362,20 @@ CREATE TABLE IF NOT EXISTS quarry_phone_lookups (
     checked_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     raw JSONB
 );
+
+-- Durable conversation memory. Before this, BaseAgent kept history in an
+-- in-process Map — wiped on every deploy, and this system deploys often.
+-- Slack/dashboard chat is the actual interface people use, so an agent
+-- forgetting every conversation each time the server restarted meant
+-- nothing ever felt remembered. history_key matches whatever BaseAgent
+-- already used as the in-memory map key (a Slack DM/channel+thread, or a
+-- dashboard session id) — same shape, just durable now.
+CREATE TABLE IF NOT EXISTS agent_conversations (
+    id BIGSERIAL PRIMARY KEY,
+    agent_id TEXT NOT NULL,
+    history_key TEXT NOT NULL,
+    role TEXT NOT NULL,                             -- user | assistant
+    content TEXT NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_agent_conversations_lookup ON agent_conversations(agent_id, history_key, id);

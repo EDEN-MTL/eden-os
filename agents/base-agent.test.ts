@@ -8,7 +8,21 @@ vi.mock("../shared/slack", () => ({
   sendMessage: vi.fn(),
 }));
 
+// A tiny fake of the real Postgres-backed store — same shape (load the
+// persisted turns, append new ones), so these tests exercise the actual
+// contract BaseAgent depends on without touching a real database.
+const fakeStore = new Map<string, { role: "user" | "assistant"; content: string }[]>();
+vi.mock("../shared/conversation-memory", () => ({
+  loadHistory: vi.fn(async (agentId: string, historyKey: string) => fakeStore.get(`${agentId}:${historyKey}`) || []),
+  appendHistory: vi.fn(async (agentId: string, historyKey: string, role: "user" | "assistant", content: string) => {
+    const key = `${agentId}:${historyKey}`;
+    const existing = fakeStore.get(key) || [];
+    fakeStore.set(key, [...existing, { role, content }]);
+  }),
+}));
+
 import { chat, chatWithTools } from "../shared/claude";
+import { appendHistory, loadHistory } from "../shared/conversation-memory";
 import { BaseAgent } from "./base-agent";
 
 class PlainAgent extends BaseAgent {
@@ -46,10 +60,11 @@ function toolUseBlock(id: string, name: string, input: any) {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  fakeStore.clear();
 });
 
 describe("BaseAgent.generateReply — no tools (every existing agent)", () => {
-  it("calls plain chat(), never chatWithTools(), and stores plain-string history", async () => {
+  it("loads history from the durable store, calls plain chat(), and persists both turns in order", async () => {
     vi.mocked(chat).mockResolvedValueOnce("hello back");
 
     const agent = new PlainAgent();
@@ -58,23 +73,37 @@ describe("BaseAgent.generateReply — no tools (every existing agent)", () => {
     expect(reply).toBe("hello back");
     expect(chat).toHaveBeenCalledTimes(1);
     expect(chatWithTools).not.toHaveBeenCalled();
+    expect(loadHistory).toHaveBeenCalledWith("eden", "key1");
 
-    // Second turn proves history round-trips as plain strings. generateReply
-    // mutates the same array it hands to chat() right after chat() resolves
-    // (appending the assistant reply for storage) — snapshot at call time
-    // via mockImplementation rather than reading mock.calls after the fact,
-    // or that in-place push shows up in the "before" snapshot too.
-    let secondCallMessages: unknown;
-    vi.mocked(chat).mockImplementationOnce(async (_sys, msgs) => {
-      secondCallMessages = JSON.parse(JSON.stringify(msgs));
-      return "second reply";
-    });
+    // appendHistory must be called user-then-assistant, not in parallel —
+    // both share one auto-increment id that defines conversation order.
+    const appendCalls = vi.mocked(appendHistory).mock.calls;
+    expect(appendCalls).toEqual([
+      ["eden", "key1", "user", "hi"],
+      ["eden", "key1", "assistant", "hello back"],
+    ]);
+
+    // Second turn proves history genuinely round-trips through the store.
+    vi.mocked(chat).mockResolvedValueOnce("second reply");
     await agent.generateReply("key1", "again");
-    expect(secondCallMessages).toEqual([
+    const secondChatMessages = vi.mocked(chat).mock.calls[1][1];
+    expect(secondChatMessages).toEqual([
       { role: "user", content: "hi" },
       { role: "assistant", content: "hello back" },
       { role: "user", content: "again" },
     ]);
+  });
+
+  it("degrades to no memory this turn if the store is unreachable, rather than failing the reply", async () => {
+    vi.mocked(loadHistory).mockRejectedValueOnce(new Error("Connection terminated unexpectedly"));
+    vi.mocked(chat).mockResolvedValueOnce("still answered");
+
+    const agent = new PlainAgent();
+    const reply = await agent.generateReply("key-db-down", "hi");
+
+    expect(reply).toBe("still answered");
+    const messagesSent = vi.mocked(chat).mock.calls[0][1];
+    expect(messagesSent).toEqual([{ role: "user", content: "hi" }]);
   });
 });
 
@@ -118,6 +147,13 @@ describe("BaseAgent.generateReply — tool-capable agent", () => {
       role: "user",
       content: [{ type: "tool_result", tool_use_id: "call_1", content: "result for get_thing" }],
     });
+
+    // And only the clean final text — not the tool_use/tool_result scratch
+    // work — gets persisted to the durable store.
+    expect(vi.mocked(appendHistory).mock.calls).toEqual([
+      ["forge", "key3", "user", "get me the thing"],
+      ["forge", "key3", "assistant", "here's your answer"],
+    ]);
   });
 
   it("turns a thrown tool error into a tool_result the model can react to, not a crash", async () => {
@@ -146,7 +182,7 @@ describe("BaseAgent.generateReply — tool-capable agent", () => {
     expect(toolResultMessage.content[0].content).toContain("Meta API is down");
   });
 
-  it("never persists raw content-block history — only clean text turns", async () => {
+  it("never persists raw content-block history — only clean text turns — across multiple turns", async () => {
     vi.mocked(chatWithTools)
       .mockResolvedValueOnce({
         content: [toolUseBlock("call_3", "get_thing", {})],
