@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   AGENT_UNAVAILABLE_FOLLOW_UP,
   AGENT_UNAVAILABLE_LINE,
+  buildLeadQualificationPrompt,
   BUYER_QUESTIONS,
   CALL_OPENING_GREETING,
   callbackRecapLine,
@@ -13,6 +14,8 @@ import {
   NATURAL_TRANSITIONS,
   SELLER_QUESTIONS,
 } from "./scripts";
+import { IrisConfig } from "./qualification";
+import { NormalisedLead } from "../scout/intake";
 
 function hasNoDuplicates(list: string[]): boolean {
   return new Set(list).size === list.length;
@@ -159,6 +162,81 @@ describe("callOpeningContextLine", () => {
 
   it("returns null for unknown intent rather than inventing a reason for the call", () => {
     expect(callOpeningContextLine("unknown", "St. John's", "facebook")).toBeNull();
+  });
+});
+
+const IRIS_CONFIG: IrisConfig = {
+  questions: [
+    "Are you looking to buy or sell?",
+    "What area are you interested in?",
+    "What's your timeline?",
+    "Are you pre-approved? What's your budget range?",
+  ],
+  hotScoreThreshold: 75,
+  warmScoreThreshold: 40,
+  calendars: { buyer: "buyer-cal", seller: "seller-cal" },
+  writeFields: {
+    timeline: "contact.lf_timeframe",
+    budget: "contact.lf_budget",
+    propertyInterest: "contact.lf_proprety",
+    preApproved: "contact.are_you_pre_approuved",
+  },
+  outreachCadence: { attemptsPerDay: 2, days: 4, recheckBeforeEachAttempt: true },
+};
+
+const BLANK_LEAD: NormalisedLead = {
+  contactId: "c1",
+  name: "Sam Test",
+  email: null,
+  phone: "+15555551234",
+  propertyInterest: null,
+  budget: null,
+  timeline: null,
+  preApproved: null,
+  financing: null,
+  sources: { financing: null, timeline: null, budget: null },
+  leadSource: null,
+  attribution: { fbclid: null, utmSource: null, utmCampaign: null, metaCampaignId: null, metaAdsetId: null, metaAdId: null },
+  attributed: false,
+  qualified: false,
+  firstTouch: true,
+  intent: "unknown",
+  score: 0,
+  scoreReasons: [],
+};
+
+describe("buildLeadQualificationPrompt", () => {
+  it("lists every question as still needed when nothing is known yet", () => {
+    const prompt = buildLeadQualificationPrompt(IRIS_CONFIG, BLANK_LEAD, "3 Percent East Coast", "St. John's");
+    expect(prompt).toContain("Nothing yet — this is a cold first contact.");
+    for (const q of IRIS_CONFIG.questions) {
+      expect(prompt).toContain(q);
+    }
+  });
+
+  it("marks a known answer as already-known and drops it from what's still needed", () => {
+    const lead: NormalisedLead = { ...BLANK_LEAD, intent: "seller", timeline: "3-6 months" };
+    const prompt = buildLeadQualificationPrompt(IRIS_CONFIG, lead, "3 Percent East Coast", "St. John's");
+    expect(prompt).toMatch(/Intent: seller — already known, do NOT ask again/);
+    expect(prompt).toMatch(/Timeline: 3-6 months — already known, do NOT ask again/);
+  });
+
+  it("skips the financing question for a seller, matching qualification.ts's nextQuestion behavior", () => {
+    const lead: NormalisedLead = { ...BLANK_LEAD, intent: "seller" };
+    const prompt = buildLeadQualificationPrompt(IRIS_CONFIG, lead, "3 Percent East Coast", "St. John's");
+    expect(prompt).not.toContain(IRIS_CONFIG.questions[3]);
+  });
+
+  it("uses the city and brand it's given rather than a hardcoded one", () => {
+    const prompt = buildLeadQualificationPrompt(IRIS_CONFIG, BLANK_LEAD, "Matama Floors", "Montreal");
+    expect(prompt).toContain("Matama Floors");
+    expect(prompt).toContain("Montreal only");
+  });
+
+  it("never claims to be human, pulling the real approved wording rather than inventing new lines", () => {
+    const prompt = buildLeadQualificationPrompt(IRIS_CONFIG, BLANK_LEAD, "3 Percent East Coast", "St. John's");
+    expect(prompt).toContain(EDGE_CASE_RESPONSES.isRealPerson[0]);
+    expect(prompt).toContain(EDGE_CASE_RESPONSES.dontKnowAnswer);
   });
 });
 

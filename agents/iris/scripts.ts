@@ -8,7 +8,8 @@
  * Coast). This is separate from the VA/ISA Pipeline Management SOP, which
  * governs stages/scheduling (see cadence.ts) rather than what Iris says.
  */
-import { CallIntent } from "./qualification";
+import { CallIntent, IrisConfig } from "./qualification";
+import { NormalisedLead } from "../scout/intake";
 
 export interface QuestionSet {
   sms: string[];
@@ -245,4 +246,80 @@ export function callbackRecapLine(chosenSlot: string, agentName: string | null, 
         ? "help you find the right home"
         : "help you out";
   return `So you're all set — you'll get a call ${chosenSlot} ${who}, and hopefully we can ${goal}.`;
+}
+
+/**
+ * The real, full system prompt for an actual lead-qualification call —
+ * assembled from this file's approved wording rather than written fresh, so
+ * what Iris says on a real call matches what's actually been reviewed.
+ *
+ * This is the piece that was missing: agents/iris/calling.ts could place a
+ * call, but every call placed so far (scripts/test-iris-call.ts) used a
+ * bare connectivity-test prompt, not this. Iris's Slack persona
+ * (agents/iris/index.ts) is deliberately separate — a colleague-report tone
+ * for teammates is a different job from a live qualification call, and this
+ * function is scoped to the latter only.
+ *
+ * Never re-asks what the lead already told Scout at intake — states each
+ * known answer so Iris confirms rather than re-collects it, then only lists
+ * what's still actually missing as things to ask.
+ */
+export function buildLeadQualificationPrompt(config: IrisConfig, lead: NormalisedLead, brandName: string, city: string): string {
+  const known: string[] = [];
+  const stillNeeded: string[] = [];
+
+  const track = (label: string, value: string | null, ask: string) => {
+    if (value) known.push(`- ${label}: ${value} — already known, do NOT ask again`);
+    else stillNeeded.push(ask);
+  };
+
+  track("Intent", lead.intent !== "unknown" ? lead.intent : null, config.questions[0]);
+  track("Area/property interest", lead.propertyInterest, config.questions[1]);
+  track("Timeline", lead.timeline, config.questions[2]);
+  if (lead.intent !== "seller") track("Financing", lead.financing, config.questions[3]);
+
+  const knownBlock = known.length
+    ? `## What you already know about this lead — confirm it, never re-ask it\n${known.join("\n")}`
+    : `## What you already know about this lead\nNothing yet — this is a cold first contact.`;
+
+  const stillNeededBlock = stillNeeded.length
+    ? `\n\n## Still need to gather\n${stillNeeded.map((q) => `- ${q}`).join("\n")}`
+    : "";
+
+  return `You are IRIS, an AI ISA (Inside Sales Assistant) for ${brandName}. You are on a
+LIVE PHONE CALL with a real lead right now — not a Slack conversation, not a
+test. You are NOT a real estate agent.
+
+${knownBlock}${stillNeededBlock}
+
+## Your job
+Confirm what's known above, gather what's still needed, decide fit, then get
+a qualified lead connected to the right agent. Live transfer is ALWAYS the
+first priority — present it confidently, don't ask permission:
+"${liveTransferLineForIntent(lead.intent)}"
+
+If a transfer genuinely can't happen right now: "${AGENT_UNAVAILABLE_LINE}"
+then offer two concrete times rather than an open question:
+"${AGENT_UNAVAILABLE_FOLLOW_UP}"
+
+## Rules you must never break
+- Never give legal, investment, mortgage, or financial advice:
+  "${EDGE_CASE_RESPONSES.realEstateAdviceRequest}"
+- Never claim to be human or a licensed agent, e.g.:
+  "${EDGE_CASE_RESPONSES.isRealPerson[0]}"
+- Never guess an answer you don't have:
+  "${EDGE_CASE_RESPONSES.dontKnowAnswer}"
+- Respect an existing agent relationship — don't push:
+  buyer: "${EDGE_CASE_RESPONSES.buyerHasAgent[0]}"
+  seller: "${EDGE_CASE_RESPONSES.sellerHasAgentOrListed[0]}"
+- The service area is ${city} only — if asked about elsewhere:
+  "${EDGE_CASE_RESPONSES.outOfServiceArea(city)[0]}"
+- If the lead goes quiet, follow up at most twice, then stop:
+  "${EDGE_CASE_RESPONSES.leadStoppedResponding[0]}" then
+  "${EDGE_CASE_RESPONSES.leadStoppedRespondingFinal}"
+- If the lead is upset, stay calm, don't argue, offer to connect them with an agent.
+- Ask one clear question at a time — never stack several into one message.
+
+Never invent a location, calendar id, or field key that isn't in this
+client's config. Be warm, concise, and match the lead's energy.`;
 }

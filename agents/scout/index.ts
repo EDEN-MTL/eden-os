@@ -2,7 +2,8 @@ import { readFileSync } from "fs";
 import { join } from "path";
 import { BaseAgent } from "../base-agent";
 import { eventBus } from "../../shared/events";
-import { normaliseLead, NormalisedLead, ScoutConfig } from "./intake";
+import { buildKeyToId, normaliseLead, NormalisedLead, ScoutConfig } from "./intake";
+import { getContact, getCustomFieldDefs, getGhlConfig } from "../../shared/ghl";
 
 class ScoutAgent extends BaseAgent {
   constructor() {
@@ -127,6 +128,45 @@ export function rescoreAfterContact(payload: any, clientId: string): NormalisedL
 
   eventBus.publish("lead.enriched", "scout", clientId, lead as unknown as Record<string, any>);
   return lead;
+}
+
+/**
+ * Fresh, live re-derivation of firstTouch for one contact — NOT from the
+ * webhook payload Scout saw at intake (which goes stale the moment the human
+ * ISA touches the lead), but from a real-time GET against GHL. This exists
+ * for Iris's delayed-dial path: cadence.ts's whole reason for taking a fresh
+ * check as an input rather than caching it is that the human ISA might reach
+ * a lead in the minutes between lead.enriched firing and Iris actually
+ * dialing.
+ *
+ * Returns null (never throws) when the client isn't configured for this or
+ * the GHL call fails — callers should treat null the same as "already
+ * touched": isFirstTouch's own doc comment is explicit that failing closed
+ * is correct here ("the cost of wrongly calling one is a real person phoned
+ * twice by a bot").
+ *
+ * contact.pipelineStageId is not populated by a plain contact GET (stage
+ * lives on the Opportunity, not the Contact) — isFirstTouch degrades
+ * correctly when stageId is absent, falling back to tags + ISA notes, which
+ * its own comment already documents as sufficient on their own.
+ */
+export async function recheckFirstTouch(contactId: string, clientId: string): Promise<boolean | null> {
+  try {
+    const config = loadScoutConfig(clientId);
+    const ghlConfig = await getGhlConfig(clientId);
+    if (!config || !ghlConfig) return null;
+
+    const contactResp = await getContact(contactId, ghlConfig.locationId);
+    const contact = contactResp?.contact ?? contactResp;
+    const defs = await getCustomFieldDefs(ghlConfig.locationId, ghlConfig.apiKey);
+    const keyToId = buildKeyToId(defs);
+
+    const lead = normaliseLead(contact, config, keyToId);
+    return lead.firstTouch;
+  } catch (error) {
+    console.error(`[SCT] recheckFirstTouch failed for ${contactId}:`, error instanceof Error ? error.message : error);
+    return null;
+  }
 }
 
 function logLead(lead: NormalisedLead, phase: string) {

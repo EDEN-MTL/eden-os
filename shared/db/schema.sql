@@ -378,9 +378,31 @@ CREATE TABLE IF NOT EXISTS iris_call_log (
     status TEXT NOT NULL DEFAULT 'initiated', -- initiated | ended | failed
     ended_reason TEXT,
     transcript TEXT,
-    triggered_by TEXT NOT NULL DEFAULT 'manual', -- manual | automatic (automatic is not wired up yet)
+    triggered_by TEXT NOT NULL DEFAULT 'manual', -- manual | automatic
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     ended_at TIMESTAMPTZ,
     raw JSONB
 );
 CREATE INDEX IF NOT EXISTS idx_iris_call_log_client ON iris_call_log(client_id, created_at DESC);
+
+-- A lead.enriched event doesn't dial immediately — it schedules a dial for
+-- ~5 minutes later, giving the initial GHL SMS automation time to actually
+-- send before Iris calls on top of it (Mark's requirement: never call before
+-- confirming the text landed). A cron job (shared/scheduler) picks up rows
+-- once due. UNIQUE(client_id, contact_id) means at most one pending dial per
+-- lead at a time — a second lead.enriched for the same contact while one is
+-- already pending is a no-op insert (ON CONFLICT DO NOTHING), not a second
+-- call queued.
+CREATE TABLE IF NOT EXISTS iris_pending_calls (
+    id BIGSERIAL PRIMARY KEY,
+    client_id TEXT NOT NULL,
+    contact_id TEXT NOT NULL,
+    lead JSONB NOT NULL, -- the NormalisedLead captured at lead.enriched time
+    call_after TIMESTAMPTZ NOT NULL,
+    status TEXT NOT NULL DEFAULT 'pending', -- pending | placed | skipped | failed
+    resolution_reason TEXT, -- why it was skipped/failed, or the Vapi call id if placed
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    resolved_at TIMESTAMPTZ,
+    UNIQUE (client_id, contact_id)
+);
+CREATE INDEX IF NOT EXISTS idx_iris_pending_due ON iris_pending_calls(status, call_after);
