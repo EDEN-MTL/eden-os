@@ -6,7 +6,19 @@ const client = new Anthropic({
 
 export interface ChatMessage {
   role: "user" | "assistant";
-  content: string;
+  // A plain string for every agent that doesn't use tools (all of them,
+  // today, except Forge) — content blocks only appear in the scratch
+  // history a tool-use loop builds for itself. Widening this rather than
+  // introducing a second message type keeps every existing agent's code
+  // unchanged: they only ever push strings, and the SDK accepts both
+  // shapes on the same field.
+  content: string | Anthropic.MessageParam["content"];
+}
+
+export interface ToolDef {
+  name: string;
+  description: string;
+  input_schema: Anthropic.Tool["input_schema"];
 }
 
 /**
@@ -45,6 +57,30 @@ export async function chat(
     console.error("[CLAUDE] Error:", error);
     throw error;
   }
+}
+
+/**
+ * Same call as `chat()`, but with tools attached and the raw SDK message
+ * returned instead of flattened text — the caller (a tool-use loop) needs
+ * `stop_reason` and the individual content blocks (text vs tool_use) to
+ * decide whether to execute a tool and continue, or stop.
+ */
+export async function chatWithTools(
+  systemPrompt: string,
+  messages: ChatMessage[],
+  tools: ToolDef[],
+  options: { maxTokens?: number; temperature?: number } = {}
+): Promise<Anthropic.Message> {
+  const { maxTokens = 1536, temperature = 0.6 } = options;
+
+  return client.messages.create({
+    model: "claude-sonnet-4-6",
+    max_tokens: maxTokens,
+    temperature,
+    system: systemPrompt,
+    tools: tools.map((t) => ({ name: t.name, description: t.description, input_schema: t.input_schema })),
+    messages: messages.map((m) => ({ role: m.role, content: m.content }) as Anthropic.MessageParam),
+  });
 }
 
 /**
