@@ -69,4 +69,11 @@ describe("buildCallPayload", () => {
     expect(payload.assistant.voice.voiceId).toBe("Neha");
     expect(payload.assistant.serverUrl).toBe("https://example.com/webhooks/vapi");
   });
+
+  it("enables voicemail detection and sets a real message, not just talking into the machine", () => {
+    const payload = buildCallPayload(BASE_PARAMS, VAPI_CONFIG);
+    expect(payload.assistant.voicemailDetection).toEqual({ provider: "vapi" });
+    expect(payload.assistant.voicemailMessage).toContain("Iris");
+    expect(payload.assistant.voicemailMessage).toContain(BASE_PARAMS.brandName);
+  });
 });

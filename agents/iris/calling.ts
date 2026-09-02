@@ -13,19 +13,17 @@
  *      otherwise).
  * There is no parameter that skips either check.
  *
- * Nothing in this codebase calls placeCall() automatically yet — the
- * lead.enriched subscriber in agents/iris/index.ts still only logs what it
- * WOULD do (Vapi wasn't wired when that comment was written; it still isn't
- * wired to real leads now that Vapi exists — connecting a real automatic
- * dial sequence is a separate, deliberate change). The only caller today is
- * scripts/test-iris-call.ts, run by hand against a number the operator
- * controls.
+ * Called two ways: scripts/test-iris-call.ts (by hand, against a number the
+ * operator controls) and agents/iris/dial-pending.ts (the real automatic
+ * path — a lead.enriched event queues a delayed dial, a cron job resolves
+ * it here once a fresh re-check confirms the lead still hasn't been
+ * touched). Both go through the same two gates below either way.
  */
 import { createCall, getVapiEnvConfig, CreateCallPayload, VapiCallResult } from "../../shared/vapi";
 import { query } from "../../shared/db";
 import { isCallingEnabled } from "./calling-settings";
 import { CallIntent } from "./qualification";
-import { CALL_OPENING_GREETING, callOpeningContextLine } from "./scripts";
+import { buildVoicemailMessage, CALL_OPENING_GREETING, callOpeningContextLine } from "./scripts";
 
 export class CallingDisabledError extends Error {}
 
@@ -74,6 +72,11 @@ export function buildCallPayload(
         voiceId: vapiConfig.voiceId,
       },
       serverUrl: vapiConfig.serverUrl,
+      // Without this, Vapi has no way to tell the call apart from a live
+      // pickup — Iris just talks into the machine as if a person answered,
+      // which is exactly what happened testing against this number twice.
+      voicemailDetection: { provider: "vapi" },
+      voicemailMessage: buildVoicemailMessage(params.brandName),
     },
   };
 }

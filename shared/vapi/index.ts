@@ -20,6 +20,21 @@ export interface VapiAssistantConfig {
     voiceId: string;
   };
   serverUrl?: string;
+  /**
+   * Vapi's own detection ("vapi" provider) — per their docs, combines audio
+   * analysis and transcription to catch voicemail within the first few
+   * seconds, and hands off cleanly if a real person picks up mid-greeting.
+   * Paired with voicemailMessage below: without it, Iris just talks into
+   * the machine as if a person answered live (exactly what's happened
+   * twice already testing against a brand-new number).
+   */
+  voicemailDetection?: {
+    provider: "vapi";
+    backoffPlan?: { startAtSeconds?: number; frequencySeconds?: number; maxRetries?: number };
+    beepMaxAwaitSeconds?: number;
+  };
+  /** What Iris actually leaves on voicemail once detected — see scripts.ts's buildVoicemailMessage. */
+  voicemailMessage?: string;
 }
 
 export interface CreateCallPayload {

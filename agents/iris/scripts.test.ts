@@ -3,6 +3,7 @@ import {
   AGENT_UNAVAILABLE_FOLLOW_UP,
   AGENT_UNAVAILABLE_LINE,
   buildLeadQualificationPrompt,
+  buildVoicemailMessage,
   BUYER_QUESTIONS,
   CALL_OPENING_GREETING,
   callbackRecapLine,
@@ -259,5 +260,19 @@ describe("callbackRecapLine", () => {
   it("states the buyer goal for buyer and upgrading intents", () => {
     expect(callbackRecapLine("today at 7pm", null, "buyer")).toContain("find the right home");
     expect(callbackRecapLine("today at 7pm", null, "upgrading")).toContain("find the right home");
+  });
+});
+
+describe("buildVoicemailMessage", () => {
+  it("identifies Iris by name and uses the brand it's given, not a hardcoded one", () => {
+    const message = buildVoicemailMessage("Matama Floors");
+    expect(message).toContain("Iris");
+    expect(message).toContain("Matama Floors");
+  });
+
+  it("points to a text follow-up rather than promising a specific callback time", () => {
+    const message = buildVoicemailMessage("3 Percent East Coast");
+    expect(message).toMatch(/text/i);
+    expect(message).not.toMatch(/\d{1,2}(:\d{2})?\s*(am|pm)/i);
   });
 });

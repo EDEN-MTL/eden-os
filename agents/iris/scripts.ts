@@ -323,3 +323,15 @@ then offer two concrete times rather than an open question:
 Never invent a location, calendar id, or field key that isn't in this
 client's config. Be warm, concise, and match the lead's energy.`;
 }
+
+/**
+ * Left on the lead's voicemail when Vapi's voicemail detection fires —
+ * see agents/iris/calling.ts's voicemailDetection config. Short and
+ * self-contained on purpose: unlike a live call, there's no back-and-forth
+ * to react to, so this can't reference anything the lead hasn't said yet.
+ * Points them to a text follow-up rather than promising a specific callback
+ * time, since nothing has actually scheduled one at this point.
+ */
+export function buildVoicemailMessage(brandName: string): string {
+  return `Hi, this is Iris calling from ${brandName}. Sorry I missed you — I'll follow up by text shortly, or feel free to call this number back anytime. Thanks, and have a great day!`;
+}
