@@ -4,12 +4,8 @@
  * data and Meta ad performance (via the same attribution/metrics engine
  * Forge already built), and the pending-approval queue for that client's
  * ads.
- *
- * "eden" (Eden's own growth account) deliberately doesn't appear here —
- * it has no config/clients/eden.json, since this page is about the
- * clients Eden manages for others, not Eden itself.
  */
-import { readFileSync, readdirSync } from "fs";
+import { existsSync, readFileSync, readdirSync, writeFileSync } from "fs";
 import { join } from "path";
 import { Request, Response, Router } from "express";
 import { query } from "../shared/db";
@@ -27,6 +23,7 @@ const CLIENTS_DIR = join(process.cwd(), "config", "clients");
 interface ClientConfigFile {
   clientId: string;
   clientName: string;
+  industry?: string;
   ghl?: { locationId?: string; pipelineId?: string; calendarId?: string };
   meta?: { adAccountId?: string; pageId?: string };
   forge?: { cplThreshold?: number; roasTarget?: number; dailyBudgetCap?: number };
@@ -52,6 +49,17 @@ async function integrationStatus(clientId: string) {
     query("SELECT 1 FROM ghl_credentials WHERE client_id = $1", [clientId]),
   ]);
   return { metaConfigured: meta.length > 0, ghlConfigured: ghl.length > 0 };
+}
+
+/**
+ * clientId becomes a filename in POST /. path.join normalizes ".."
+ * segments, it does NOT reject them — join("/a/b", "../../etc/passwd")
+ * resolves to "/etc/passwd" — so this is the only thing standing between
+ * an arbitrary clientId and writing outside config/clients/ entirely.
+ * Exported for direct unit testing.
+ */
+export function isValidClientId(clientId: string): boolean {
+  return /^[a-z0-9][a-z0-9-]*$/.test(clientId);
 }
 
 function last30Days(): { since: string; until: string } {
@@ -103,6 +111,39 @@ export function createClientsRouter(): Router {
       })
     );
     res.json({ clients });
+  });
+
+  /**
+   * Creates config/clients/<clientId>.json — deliberately minimal
+   * (clientId, clientName, optional industry). Meta/GHL credentials go in
+   * separately via the Settings page (they're secrets, live-validated
+   * against the real APIs, and stored in Postgres, not this file), and
+   * Forge's per-client rule thresholds are a deliberate tuning decision
+   * made once there's real spend/lead data to base them on — see the
+   * "_comment" fields throughout the existing client configs. A client
+   * with just these two fields is already safe: every consumer of this
+   * file treats meta/ghl/forge as optional and degrades gracefully.
+   */
+  router.post("/", async (req: Request, res: Response) => {
+    const { clientId, clientName, industry } = req.body;
+
+    if (typeof clientId !== "string" || typeof clientName !== "string" || !clientId.trim() || !clientName.trim()) {
+      return res.status(400).json({ error: "clientId and clientName are both required" });
+    }
+    if (!isValidClientId(clientId)) {
+      return res.status(400).json({ error: "clientId must be lowercase letters, numbers, and hyphens only, and start with a letter or number" });
+    }
+
+    const filePath = join(CLIENTS_DIR, `${clientId}.json`);
+    if (existsSync(filePath)) {
+      return res.status(409).json({ error: `A client with id "${clientId}" already exists` });
+    }
+
+    const config: ClientConfigFile = { clientId, clientName: clientName.trim() };
+    if (typeof industry === "string" && industry.trim()) config.industry = industry.trim();
+
+    writeFileSync(filePath, JSON.stringify(config, null, 2) + "\n");
+    res.status(201).json({ clientId, clientName: config.clientName });
   });
 
   router.get("/:clientId", async (req: Request, res: Response) => {
