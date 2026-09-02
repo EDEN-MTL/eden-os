@@ -1,5 +1,5 @@
 import { FormEvent, useEffect, useState } from "react";
-import { getIntegrationsStatus, IntegrationsStatus, saveGhlCredentials, saveMetaCredentials } from "../api";
+import { ClientSummary, getClients, getIntegrationsStatus, IntegrationsStatus, saveGhlCredentials, saveMetaCredentials } from "../api";
 
 type SaveState = "idle" | "saving" | "success" | "error";
 
@@ -75,6 +75,41 @@ function Field({
   );
 }
 
+/**
+ * Every client with a config/clients/<id>.json shows up here, configured or
+ * not — this is deliberately the same list GET /api/clients reads off disk,
+ * not just the ones with credentials already saved. Onboarding a brand new
+ * client means picking it here before anything else about it exists yet.
+ */
+function ClientPicker({
+  clients,
+  selectedClientId,
+  onChange,
+}: {
+  clients: ClientSummary[];
+  selectedClientId: string;
+  onChange: (clientId: string) => void;
+}) {
+  return (
+    <div style={{ marginBottom: 20, maxWidth: 320 }}>
+      <label style={{ display: "block", fontSize: 11.5, letterSpacing: "0.14em", color: "rgba(120,180,215,.6)", marginBottom: 5 }}>
+        CLIENT
+      </label>
+      <select value={selectedClientId} onChange={(e) => onChange(e.target.value)} style={{ width: "100%" }}>
+        {!clients.some((c) => c.clientId === selectedClientId) && (
+          <option value={selectedClientId}>{selectedClientId}</option>
+        )}
+        {clients.map((c) => (
+          <option key={c.clientId} value={c.clientId}>
+            {c.clientName}
+            {c.configured ? " ✓" : ""}
+          </option>
+        ))}
+      </select>
+    </div>
+  );
+}
+
 function SaveButton({ state }: { state: SaveState }) {
   const label = { idle: "SAVE & VERIFY", saving: "VERIFYING...", success: "✓ SAVED", error: "RETRY" }[state];
   return (
@@ -98,6 +133,8 @@ export default function SettingsPage({
   clientName?: string;
   onBack?: () => void;
 }) {
+  const [clients, setClients] = useState<ClientSummary[]>([]);
+  const [selectedClientId, setSelectedClientId] = useState(clientId);
   const [status, setStatus] = useState<IntegrationsStatus | null>(null);
 
   const [metaFields, setMetaFields] = useState({ appId: "", appSecret: "", accessToken: "", adAccountId: "", pageId: "" });
@@ -109,9 +146,25 @@ export default function SettingsPage({
   const [ghlError, setGhlError] = useState<string | null>(null);
 
   useEffect(() => {
+    getClients().then(setClients).catch(() => setClients([]));
+  }, []);
+
+  useEffect(() => {
     setStatus(null);
-    getIntegrationsStatus(clientId).then(setStatus).catch(() => setStatus(null));
-  }, [clientId]);
+    getIntegrationsStatus(selectedClientId).then(setStatus).catch(() => setStatus(null));
+
+    // Switching clients mid-form would otherwise leave a previous client's
+    // typed-but-unsaved values, or a stale "✓ SAVED"/error state, sitting
+    // in the form for whoever's now selected.
+    setMetaFields({ appId: "", appSecret: "", accessToken: "", adAccountId: "", pageId: "" });
+    setMetaState("idle");
+    setMetaError(null);
+    setGhlFields({ apiKey: "", locationId: "", attributionPipelineName: "" });
+    setGhlState("idle");
+    setGhlError(null);
+  }, [selectedClientId]);
+
+  const selectedClientName = clients.find((c) => c.clientId === selectedClientId)?.clientName || clientName;
 
   async function submitMeta(e: FormEvent) {
     e.preventDefault();
@@ -123,11 +176,12 @@ export default function SettingsPage({
           ...metaFields,
           pageId: metaFields.pageId || undefined,
         },
-        clientId
+        selectedClientId
       );
       setMetaState("success");
       setMetaFields({ appId: "", appSecret: "", accessToken: "", adAccountId: "", pageId: "" });
       setStatus((s) => (s ? { ...s, meta: { configured: true } } : s));
+      setClients((cs) => cs.map((c) => (c.clientId === selectedClientId ? { ...c, metaConfigured: true, configured: c.ghlConfigured } : c)));
     } catch (err) {
       setMetaState("error");
       setMetaError(err instanceof Error ? err.message : "Failed to save");
@@ -144,11 +198,12 @@ export default function SettingsPage({
           ...ghlFields,
           attributionPipelineName: ghlFields.attributionPipelineName || undefined,
         },
-        clientId
+        selectedClientId
       );
       setGhlState("success");
       setGhlFields({ apiKey: "", locationId: "", attributionPipelineName: "" });
       setStatus((s) => (s ? { ...s, ghl: { configured: true } } : s));
+      setClients((cs) => cs.map((c) => (c.clientId === selectedClientId ? { ...c, ghlConfigured: true, configured: c.metaConfigured } : c)));
     } catch (err) {
       setGhlState("error");
       setGhlError(err instanceof Error ? err.message : "Failed to save");
@@ -163,9 +218,11 @@ export default function SettingsPage({
             ← BACK
           </button>
         )}
-        <div className="module-eyebrow">{clientName ? `${clientName.toUpperCase()} · INTEGRATIONS` : "FORGE · INTEGRATIONS"}</div>
+        <div className="module-eyebrow">{selectedClientName ? `${selectedClientName.toUpperCase()} · INTEGRATIONS` : "FORGE · INTEGRATIONS"}</div>
         <div className="module-title">SETTINGS</div>
         <div className="module-title-line" />
+
+        <ClientPicker clients={clients} selectedClientId={selectedClientId} onChange={setSelectedClientId} />
 
         <div style={{ display: "flex", flexDirection: "column", gap: 24 }}>
           <IntegrationCard title="META ADS" configured={status?.meta.configured ?? null}>
