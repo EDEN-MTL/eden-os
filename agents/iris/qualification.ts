@@ -52,13 +52,21 @@ export interface IrisConfig {
    */
   transferNumbers: { buyer: string; seller: string };
   /**
-   * The dedicated ISA quick-callback calendar (iris.callbacks.calendarId in
-   * client config) — zero minimum notice, 15-min slots, NOT the buyer/
-   * seller consultation calendars above (those need real advance notice).
-   * This is what the book_appointment tool books when a live transfer
-   * fails; see webhooks/vapi-tools.ts.
+   * Single write target for the callback note (iris.callbacks.notesFieldKey
+   * in client config) — same field scout.fields.isaNotes reads from, but
+   * named separately here on purpose: that's a read-priority list (several
+   * historical field names), while this is the one specific field Iris
+   * writes to, same split as writeFields below vs scout.fields.
+   * This is NOT the "never write prose into isa_notes" field from the
+   * qualification write-up — Jacob's brief is explicit that a callback
+   * request note IS meant to land here, since it becomes client-facing
+   * output, not raw Q&A prose. Mark, 2026-09-03: no GHL calendar involved
+   * here anymore — a requested callback is a note plus Iris herself
+   * re-dialing at that time (see dial-pending.ts's is_explicit_callback),
+   * not a booked calendar slot. See webhooks/vapi-tools.ts's
+   * handleScheduleCallback.
    */
-  callbackCalendarId: string;
+  callbackNotesFieldKey: string;
   writeFields: IrisWriteFields;
   outreachCadence: OutreachCadenceConfig;
 }

@@ -93,24 +93,28 @@ export async function createContact(
 export async function updateContact(
   contactId: string,
   data: Record<string, any>,
-  locationId?: string
+  locationId?: string,
+  apiKey?: string
 ): Promise<any> {
   return ghlRequest(`/contacts/${contactId}`, {
     method: "PUT",
     body: data,
     locationId,
+    apiKey,
   });
 }
 
 export async function addContactTags(
   contactId: string,
   tags: string[],
-  locationId?: string
+  locationId?: string,
+  apiKey?: string
 ): Promise<any> {
   return ghlRequest(`/contacts/${contactId}/tags`, {
     method: "POST",
     body: { tags },
     locationId,
+    apiKey,
   });
 }
 

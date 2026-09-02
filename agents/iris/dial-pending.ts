@@ -16,7 +16,7 @@
  * stop-already-contacted, no special-casing needed for "did they answer."
  */
 import { query } from "../../shared/db";
-import { recheckFirstTouch } from "../scout";
+import { recheckFirstTouch, refreshLead } from "../scout";
 import { NormalisedLead } from "../scout/intake";
 import { loadIrisConfig, loadClientBranding } from "./index";
 import { buildLeadQualificationPrompt } from "./scripts";
@@ -41,6 +41,7 @@ interface PendingCallRow {
   lead: NormalisedLead;
   attempts_made: number;
   created_at: Date;
+  is_explicit_callback: boolean;
 }
 
 /** Ends the sequence for this row — no further attempts will be scheduled. */
@@ -62,8 +63,6 @@ async function reschedule(id: number, attemptsMade: number, callAfter: Date, las
 }
 
 async function resolveOne(row: PendingCallRow): Promise<void> {
-  const lead = row.lead;
-
   const config = loadIrisConfig(row.client_id);
   const branding = loadClientBranding(row.client_id);
   if (!config || !branding) {
@@ -71,19 +70,42 @@ async function resolveOne(row: PendingCallRow): Promise<void> {
     return;
   }
 
-  // Fails closed by design (see recheckFirstTouch's own doc comment): both
-  // "definitely already touched" and "couldn't verify" stop the sequence.
-  // The cost of wrongly stopping is the lead doesn't get another attempt
-  // this round; the cost of wrongly calling is a real person phoned twice
-  // by a bot, or after they've already been qualified by someone else.
-  const stillFirstTouch = await recheckFirstTouch(row.contact_id, row.client_id);
-  if (stillFirstTouch !== true) {
-    await finish(
-      row.id,
-      "skipped",
-      stillFirstTouch === false ? "already touched since queued" : "could not verify contact state"
-    );
-    return;
+  let lead: NormalisedLead;
+
+  if (row.is_explicit_callback) {
+    // A lead-requested callback bypasses the firstTouch gate on purpose —
+    // see is_explicit_callback's schema comment: the callback note Iris
+    // already wrote into isa_notes flips firstTouch false, which would
+    // otherwise cause the very callback we promised to be skipped as
+    // "already touched". Gate on `qualified` instead, which isa_notes
+    // doesn't affect, and refetch fresh rather than trust the snapshot
+    // taken when the callback was scheduled (could be days old by now).
+    const fresh = await refreshLead(row.contact_id, row.client_id);
+    if (!fresh) {
+      await finish(row.id, "skipped", "could not verify contact state before honoring callback");
+      return;
+    }
+    if (fresh.qualified) {
+      await finish(row.id, "skipped", "already qualified since the callback was requested");
+      return;
+    }
+    lead = fresh;
+  } else {
+    // Fails closed by design (see recheckFirstTouch's own doc comment): both
+    // "definitely already touched" and "couldn't verify" stop the sequence.
+    // The cost of wrongly stopping is the lead doesn't get another attempt
+    // this round; the cost of wrongly calling is a real person phoned twice
+    // by a bot, or after they've already been qualified by someone else.
+    const stillFirstTouch = await recheckFirstTouch(row.contact_id, row.client_id);
+    if (stillFirstTouch !== true) {
+      await finish(
+        row.id,
+        "skipped",
+        stillFirstTouch === false ? "already touched since queued" : "could not verify contact state"
+      );
+      return;
+    }
+    lead = row.lead;
   }
 
   if (!lead.phone) {
@@ -110,10 +132,16 @@ async function resolveOne(row: PendingCallRow): Promise<void> {
         Boolean(process.env.VAPI_SERVER_URL)
       ),
       transferNumber: transferNumberForIntent(config, lead.intent) ?? undefined,
-      callbackCalendarId: config.callbackCalendarId,
       contactId: row.contact_id,
       triggeredBy: "automatic",
     });
+
+    if (row.is_explicit_callback) {
+      // One-shot: this row's job was exactly this one promised callback,
+      // not an ongoing cadence — never reschedule it further.
+      await finish(row.id, "placed", result.id);
+      return;
+    }
 
     // Decided purely on attempt count + a fresh touch check, not on
     // whether THIS call was answered — see the module comment above for
@@ -144,10 +172,37 @@ async function resolveOne(row: PendingCallRow): Promise<void> {
   }
 }
 
+/**
+ * Called by webhooks/vapi-tools.ts's schedule_callback tool handler, mid
+ * live call, when a lead agrees to a specific callback time. Upserts the
+ * SAME iris_pending_calls row this contact already has — UNIQUE(client_id,
+ * contact_id) means every contact ever queued has exactly one, and it's
+ * never deleted, only updated in place — so runDialPendingCalls picks this
+ * up at the requested time via the normal cron, same as any other row.
+ *
+ * Returns false without writing anything when the lead can't be refreshed
+ * right now — the caller (webhooks/vapi-tools.ts) must not tell the lead a
+ * callback is scheduled when it isn't.
+ */
+export async function scheduleExplicitCallback(clientId: string, contactId: string, callbackTime: Date): Promise<boolean> {
+  const lead = await refreshLead(contactId, clientId);
+  if (!lead) return false;
+
+  await query(
+    `INSERT INTO iris_pending_calls (client_id, contact_id, lead, call_after, status, is_explicit_callback)
+     VALUES ($1, $2, $3, $4, 'pending', true)
+     ON CONFLICT (client_id, contact_id) DO UPDATE
+     SET lead = EXCLUDED.lead, call_after = EXCLUDED.call_after, status = 'pending',
+         is_explicit_callback = true, resolution_reason = 'lead requested callback', resolved_at = NULL`,
+    [clientId, contactId, JSON.stringify(lead), callbackTime]
+  );
+  return true;
+}
+
 /** Entry point called by the scheduler. Each row's failure is isolated — one bad row must not block the rest. */
 export async function runDialPendingCalls(): Promise<void> {
   const due = await query<PendingCallRow>(
-    `SELECT id, client_id, contact_id, lead, attempts_made, created_at FROM iris_pending_calls
+    `SELECT id, client_id, contact_id, lead, attempts_made, created_at, is_explicit_callback FROM iris_pending_calls
      WHERE status = 'pending' AND call_after <= now()
      ORDER BY call_after ASC
      LIMIT 25`

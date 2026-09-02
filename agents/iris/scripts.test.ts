@@ -177,7 +177,7 @@ const IRIS_CONFIG: IrisConfig = {
   warmScoreThreshold: 40,
   calendars: { buyer: "buyer-cal", seller: "seller-cal" },
   transferNumbers: { buyer: "+17097058841", seller: "+17097059439" },
-  callbackCalendarId: "callback-cal",
+  callbackNotesFieldKey: "contact.isa_notes",
   writeFields: {
     timeline: "contact.lf_timeframe",
     budget: "contact.lf_budget",
@@ -242,17 +242,21 @@ describe("buildLeadQualificationPrompt", () => {
     expect(prompt).toContain(EDGE_CASE_RESPONSES.dontKnowAnswer);
   });
 
-  it("tells Iris to actually invoke the tools when booking tools are available", () => {
+  it("tells Iris to actually invoke schedule_callback when the tool is available", () => {
     const prompt = buildLeadQualificationPrompt(IRIS_CONFIG, BLANK_LEAD, "3 Percent East Coast", "St. John's", true);
-    expect(prompt).toContain("check_availability");
-    expect(prompt).toContain("book_appointment");
-    expect(prompt).not.toMatch(/do not have a working booking tool/i);
+    expect(prompt).toContain("schedule_callback");
+    expect(prompt).not.toMatch(/do not have a working callback-scheduling tool/i);
   });
 
-  it("tells Iris NOT to claim a booking when the tools aren't wired up", () => {
+  it("tells Iris NOT to claim a scheduled callback when the tool isn't wired up", () => {
     const prompt = buildLeadQualificationPrompt(IRIS_CONFIG, BLANK_LEAD, "3 Percent East Coast", "St. John's", false);
-    expect(prompt).toMatch(/do not have a working booking tool/i);
-    expect(prompt).not.toContain("check_availability");
+    expect(prompt).toMatch(/do not have a working callback-scheduling tool/i);
+    expect(prompt).not.toContain("schedule_callback");
+  });
+
+  it("gives Iris the current date and time so she can resolve relative callback requests", () => {
+    const prompt = buildLeadQualificationPrompt(IRIS_CONFIG, BLANK_LEAD, "3 Percent East Coast", "St. John's", false);
+    expect(prompt).toMatch(/Right now it is/);
   });
 });
 

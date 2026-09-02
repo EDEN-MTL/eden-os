@@ -50,13 +50,6 @@ export interface PlaceCallParams {
    * no real lead or intent to transfer.
    */
   transferNumber?: string;
-  /**
-   * The ISA quick-callback calendar (IrisConfig.callbackCalendarId), for
-   * the check_availability/book_appointment tools. Only wired when this,
-   * contactId, AND vapiConfig.serverUrl are all present — the tools call
-   * back to our own server, which only exists once deployed.
-   */
-  callbackCalendarId?: string;
 }
 
 /**
@@ -121,42 +114,36 @@ export function buildCallPayload(
     });
   }
 
-  if (vapiConfig.serverUrl && params.contactId && params.callbackCalendarId) {
-    const base = `${vapiConfig.serverUrl}/tools`;
+  if (vapiConfig.serverUrl && params.contactId) {
     const qs = new URLSearchParams({
       clientId: params.clientId,
       contactId: params.contactId,
-      calendarId: params.callbackCalendarId,
     }).toString();
 
     tools.push({
       type: "function",
       function: {
-        name: "check_availability",
+        name: "schedule_callback",
         description:
-          "Gets real open callback times for this lead. Always call this before offering any time — " +
-          "never invent or guess a time yourself.",
-        parameters: { type: "object", properties: {} },
-      },
-      server: { url: `${base}/check-availability?${qs}` },
-    });
-    tools.push({
-      type: "function",
-      function: {
-        name: "book_appointment",
-        description: "Books the exact callback time the lead chose from check_availability's results.",
+          "Records that this lead asked to be called back at a specific time. Only call this once you " +
+          "and the lead have agreed on a concrete day and time — never a vague one. Leaves a note on the " +
+          "lead's record and schedules a real follow-up call for that exact moment; it does not book a " +
+          "calendar appointment.",
         parameters: {
           type: "object",
           properties: {
-            startTime: {
+            callbackTime: {
               type: "string",
-              description: "The exact ISO 8601 start time from check_availability's results that the lead picked.",
+              description:
+                "The exact moment the lead agreed to, as an ISO 8601 timestamp, computed relative to the " +
+                "current date and time given to you at the top of this prompt — never a bare time like " +
+                "'2pm' with no date, and never earlier than a few minutes from now.",
             },
           },
-          required: ["startTime"],
+          required: ["callbackTime"],
         },
       },
-      server: { url: `${base}/book-appointment?${qs}` },
+      server: { url: `${vapiConfig.serverUrl}/tools/schedule-callback?${qs}` },
     });
   }
 

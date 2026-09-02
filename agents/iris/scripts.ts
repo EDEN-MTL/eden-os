@@ -182,13 +182,12 @@ export function liveTransferLineForIntent(intent: CallIntent): string {
 export const AGENT_UNAVAILABLE_LINE = "Looks like they're tied up right now. Let's get you booked for a quick phone call instead.";
 
 /**
- * Offers two concrete slots rather than an open "what time works for you?" —
- * an open question on a call tends to get a vague answer and burns another
- * round trip. {{slot_a}} / {{slot_b}} are two times already confirmed against
- * the callback calendar, substituted by the (not yet built) call execution
- * step — never offer a time that hasn't actually been checked as free.
+ * Open question rather than pre-checked slots — there's no calendar behind
+ * this anymore (see qualification.ts's callbackNotesFieldKey doc comment):
+ * whatever day/time the lead names here is what gets scheduled directly via
+ * schedule_callback, not checked against real availability first.
  */
-export const AGENT_UNAVAILABLE_FOLLOW_UP = "Would {{slot_a}} or {{slot_b}} work better for you?";
+export const AGENT_UNAVAILABLE_FOLLOW_UP = "What day and time works best for us to call you back?";
 
 /**
  * ── Draft additions below, pending Jacob's SOP sign-off ─────────────────
@@ -293,26 +292,43 @@ export function buildLeadQualificationPrompt(
     : "";
 
   // bookingToolsAvailable reflects whether this environment actually has the
-  // check_availability/book_appointment tools wired (VAPI_SERVER_URL set —
-  // they call back to our own server, which only exists once deployed).
-  // Telling Iris to use tools that aren't in her tools list for this call
-  // would have her hallucinate having booked something real. Match what's
-  // actually possible rather than describing the ideal end state always.
+  // schedule_callback tool wired (VAPI_SERVER_URL set — it calls back to our
+  // own server, which only exists once deployed). Telling Iris to use a tool
+  // that isn't in her tools list for this call would have her hallucinate
+  // having scheduled something real. Match what's actually possible rather
+  // than describing the ideal end state always.
   const transferFallback = bookingToolsAvailable
     ? `If the transferCall tool comes back without anyone picking up: "${AGENT_UNAVAILABLE_LINE}"
-Then call the check_availability tool to get real open times — never invent
-times yourself. Offer the lead the two it returns rather than an open
-question: "${AGENT_UNAVAILABLE_FOLLOW_UP}" Once they pick one, call
-book_appointment with that exact time to actually confirm it, then recap
-what you just booked before ending the call.`
+Then ask: "${AGENT_UNAVAILABLE_FOLLOW_UP}" Once they give a specific day and
+time, work out the exact moment relative to the current date and time above,
+then call schedule_callback with that as an ISO 8601 timestamp. Confirm the
+callback back to them in plain language before ending the call — never claim
+it's scheduled unless the tool actually confirmed it.`
     : `If a transfer genuinely can't happen right now: "${AGENT_UNAVAILABLE_LINE}"
-You do NOT have a working booking tool on this call — do not claim to have
-booked anything or invent a time. Instead say a teammate will follow up
-directly to get them scheduled.`;
+You do NOT have a working callback-scheduling tool on this call — do not
+claim to have scheduled anything or invent a time. Instead say a teammate
+will follow up directly to get them scheduled.`;
+
+  const now = new Date();
+  const nowLocal = now.toLocaleString("en-US", {
+    timeZone: "America/St_Johns",
+    weekday: "long",
+    year: "numeric",
+    month: "long",
+    day: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+    timeZoneName: "short",
+  });
 
   return `You are IRIS, an AI ISA (Inside Sales Assistant) for ${brandName}. You are on a
 LIVE PHONE CALL with a real lead right now — not a Slack conversation, not a
 test. You are NOT a real estate agent.
+
+Right now it is ${nowLocal}. Use this as the reference point any time you
+need to work out an exact date/time from something relative the lead says
+("tomorrow afternoon", "Friday morning") — never guess or invent a time that
+doesn't map back to this.
 
 ${knownBlock}${stillNeededBlock}
 

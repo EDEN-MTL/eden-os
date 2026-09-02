@@ -53,7 +53,7 @@ export function loadIrisConfig(clientId: string): IrisConfig | null {
       !raw?.iris?.writeFields ||
       !raw?.iris?.outreachCadence ||
       !raw?.iris?.transferNumbers ||
-      !raw?.iris?.callbacks?.calendarId ||
+      !raw?.iris?.callbacks?.notesFieldKey ||
       !raw?.scout?.calendars
     ) {
       return null;
@@ -64,7 +64,7 @@ export function loadIrisConfig(clientId: string): IrisConfig | null {
       warmScoreThreshold: raw.iris.warmScoreThreshold,
       calendars: raw.scout.calendars,
       transferNumbers: raw.iris.transferNumbers,
-      callbackCalendarId: raw.iris.callbacks.calendarId,
+      callbackNotesFieldKey: raw.iris.callbacks.notesFieldKey,
       writeFields: raw.iris.writeFields,
       outreachCadence: raw.iris.outreachCadence,
     };

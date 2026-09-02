@@ -75,8 +75,8 @@ export interface VapiTransferCallTool {
 /**
  * A custom function tool — Vapi calls back to our own server (POST to
  * server.url) when the assistant invokes it, and expects
- * {results: [{toolCallId, result}]} back. Used for check_availability and
- * book_appointment; see webhooks/vapi-tools.ts for the server side.
+ * {results: [{toolCallId, result}]} back. Used for schedule_callback; see
+ * webhooks/vapi-tools.ts for the server side.
  */
 export interface VapiFunctionTool {
   type: "function";

@@ -131,26 +131,28 @@ export function rescoreAfterContact(payload: any, clientId: string): NormalisedL
 }
 
 /**
- * Fresh, live re-derivation of firstTouch for one contact — NOT from the
- * webhook payload Scout saw at intake (which goes stale the moment the human
- * ISA touches the lead), but from a real-time GET against GHL. This exists
- * for Iris's delayed-dial path: cadence.ts's whole reason for taking a fresh
- * check as an input rather than caching it is that the human ISA might reach
- * a lead in the minutes between lead.enriched firing and Iris actually
- * dialing.
+ * Fresh, live re-derivation of a lead — NOT from the webhook payload Scout
+ * saw at intake (which goes stale the moment the human ISA touches the
+ * lead, or Iris herself does), but from a real-time GET against GHL. This
+ * exists for Iris's delayed-dial path: cadence.ts's whole reason for taking
+ * a fresh check as an input rather than caching it is that the human ISA
+ * might reach a lead in the minutes between lead.enriched firing and Iris
+ * actually dialing — and dial-pending.ts's explicit-callback path needs the
+ * same freshness for `qualified`, since scheduling that dial only checked
+ * firstTouch which the callback note itself will have since flipped false.
  *
  * Returns null (never throws) when the client isn't configured for this or
  * the GHL call fails — callers should treat null the same as "already
- * touched": isFirstTouch's own doc comment is explicit that failing closed
- * is correct here ("the cost of wrongly calling one is a real person phoned
- * twice by a bot").
+ * touched"/"already qualified": isFirstTouch's own doc comment is explicit
+ * that failing closed is correct here ("the cost of wrongly calling one is
+ * a real person phoned twice by a bot").
  *
  * contact.pipelineStageId is not populated by a plain contact GET (stage
  * lives on the Opportunity, not the Contact) — isFirstTouch degrades
  * correctly when stageId is absent, falling back to tags + ISA notes, which
  * its own comment already documents as sufficient on their own.
  */
-export async function recheckFirstTouch(contactId: string, clientId: string): Promise<boolean | null> {
+export async function refreshLead(contactId: string, clientId: string): Promise<NormalisedLead | null> {
   try {
     const config = loadScoutConfig(clientId);
     const ghlConfig = await getGhlConfig(clientId);
@@ -161,12 +163,17 @@ export async function recheckFirstTouch(contactId: string, clientId: string): Pr
     const defs = await getCustomFieldDefs(ghlConfig.locationId, ghlConfig.apiKey);
     const keyToId = buildKeyToId(defs);
 
-    const lead = normaliseLead(contact, config, keyToId);
-    return lead.firstTouch;
+    return normaliseLead(contact, config, keyToId);
   } catch (error) {
-    console.error(`[SCT] recheckFirstTouch failed for ${contactId}:`, error instanceof Error ? error.message : error);
+    console.error(`[SCT] refreshLead failed for ${contactId}:`, error instanceof Error ? error.message : error);
     return null;
   }
+}
+
+/** Thin wrapper over refreshLead for callers that only care about firstTouch — see refreshLead's doc comment. */
+export async function recheckFirstTouch(contactId: string, clientId: string): Promise<boolean | null> {
+  const lead = await refreshLead(contactId, clientId);
+  return lead ? lead.firstTouch : null;
 }
 
 function logLead(lead: NormalisedLead, phase: string) {

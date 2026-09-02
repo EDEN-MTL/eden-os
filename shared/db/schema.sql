@@ -405,6 +405,14 @@ CREATE TABLE IF NOT EXISTS iris_pending_calls (
     -- the re-scheduling UPDATE in dial-pending.ts) doubles as the sequence
     -- start that agents/iris/cadence.ts's nextAttemptTime anchors day 1 to.
     attempts_made INTEGER NOT NULL DEFAULT 0,
+    -- Set by the schedule_callback tool (webhooks/vapi-tools.ts) when a lead
+    -- asks Iris to call back at a specific time, mid-call. dial-pending.ts's
+    -- resolveOne() skips the normal firstTouch gate for these rows — writing
+    -- the callback note into isa_notes flips firstTouch false immediately,
+    -- which would otherwise cause the very dial we just promised to be
+    -- skipped as "already touched". Gated on `qualified` instead, which
+    -- isa_notes doesn't affect.
+    is_explicit_callback BOOLEAN NOT NULL DEFAULT FALSE,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     resolved_at TIMESTAMPTZ,
     UNIQUE (client_id, contact_id)
@@ -412,4 +420,5 @@ CREATE TABLE IF NOT EXISTS iris_pending_calls (
 -- IF NOT EXISTS create above won't add this column to a table that already
 -- exists from before the multi-day cadence was built.
 ALTER TABLE iris_pending_calls ADD COLUMN IF NOT EXISTS attempts_made INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE iris_pending_calls ADD COLUMN IF NOT EXISTS is_explicit_callback BOOLEAN NOT NULL DEFAULT FALSE;
 CREATE INDEX IF NOT EXISTS idx_iris_pending_due ON iris_pending_calls(status, call_after);

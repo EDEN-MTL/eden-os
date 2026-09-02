@@ -24,7 +24,7 @@ const config: IrisConfig = {
   warmScoreThreshold: 40,
   calendars: { buyer: "4Eyz51DOI7TY78gRgBU3", seller: "vbsoYjk2Q6nI66q8u8to" },
   transferNumbers: { buyer: "+17097058841", seller: "+17097059439" },
-  callbackCalendarId: "callback-cal",
+  callbackNotesFieldKey: "contact.isa_notes",
   writeFields: {
     timeline: "contact.lf_timeframe",
     budget: "contact.lf_budget",

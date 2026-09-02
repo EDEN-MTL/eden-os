@@ -77,7 +77,7 @@ describe("buildCallPayload", () => {
     expect(payload.assistant.voicemailMessage).toContain(BASE_PARAMS.brandName);
   });
 
-  it("wires no tools at all when nothing (transferNumber, contactId, callbackCalendarId) is given", () => {
+  it("wires no tools at all when nothing (transferNumber, contactId) is given", () => {
     const payload = buildCallPayload(BASE_PARAMS, VAPI_CONFIG);
     expect(payload.assistant.tools).toBeUndefined();
   });
@@ -117,44 +117,39 @@ describe("buildCallPayload", () => {
     });
   });
 
-  describe("check_availability / book_appointment tools", () => {
-    const withBookingParams: PlaceCallParams = {
-      ...BASE_PARAMS,
-      contactId: "contact-1",
-      callbackCalendarId: "callback-cal-1",
-    };
+  describe("schedule_callback tool", () => {
+    const withContactId: PlaceCallParams = { ...BASE_PARAMS, contactId: "contact-1" };
 
-    it("are added only when serverUrl, contactId, AND callbackCalendarId are all present", () => {
-      const payload = buildCallPayload(withBookingParams, VAPI_CONFIG);
+    it("is added only when serverUrl AND contactId are both present", () => {
+      const payload = buildCallPayload(withContactId, VAPI_CONFIG);
       const names = payload.assistant.tools?.filter((t) => t.type === "function").map((t) => (t.type === "function" ? t.function.name : ""));
-      expect(names).toEqual(["check_availability", "book_appointment"]);
+      expect(names).toEqual(["schedule_callback"]);
     });
 
-    it("are omitted when serverUrl is unset, even with contactId and callbackCalendarId given", () => {
-      const payload = buildCallPayload(withBookingParams, { ...VAPI_CONFIG, serverUrl: undefined });
+    it("is omitted when serverUrl is unset, even with contactId given", () => {
+      const payload = buildCallPayload(withContactId, { ...VAPI_CONFIG, serverUrl: undefined });
       expect(payload.assistant.tools?.some((t) => t.type === "function")).toBeFalsy();
     });
 
-    it("are omitted when contactId is missing", () => {
-      const payload = buildCallPayload({ ...withBookingParams, contactId: undefined }, VAPI_CONFIG);
+    it("is omitted when contactId is missing", () => {
+      const payload = buildCallPayload(BASE_PARAMS, VAPI_CONFIG);
       expect(payload.assistant.tools?.some((t) => t.type === "function")).toBeFalsy();
     });
 
-    it("bake clientId, contactId, and calendarId into each tool's server URL as query params", () => {
-      const payload = buildCallPayload(withBookingParams, VAPI_CONFIG);
-      const checkTool = payload.assistant.tools?.find((t) => t.type === "function" && t.function.name === "check_availability");
-      if (checkTool?.type !== "function") throw new Error("expected function tool");
-      const url = new URL(checkTool.server.url);
+    it("bakes clientId and contactId into the tool's server URL as query params", () => {
+      const payload = buildCallPayload(withContactId, VAPI_CONFIG);
+      const tool = payload.assistant.tools?.find((t) => t.type === "function" && t.function.name === "schedule_callback");
+      if (tool?.type !== "function") throw new Error("expected function tool");
+      const url = new URL(tool.server.url);
       expect(url.searchParams.get("clientId")).toBe("3-percent-east-coast");
       expect(url.searchParams.get("contactId")).toBe("contact-1");
-      expect(url.searchParams.get("calendarId")).toBe("callback-cal-1");
     });
 
-    it("book_appointment requires a startTime argument from the model", () => {
-      const payload = buildCallPayload(withBookingParams, VAPI_CONFIG);
-      const bookTool = payload.assistant.tools?.find((t) => t.type === "function" && t.function.name === "book_appointment");
-      if (bookTool?.type !== "function") throw new Error("expected function tool");
-      expect(bookTool.function.parameters.required).toEqual(["startTime"]);
+    it("requires a callbackTime argument from the model", () => {
+      const payload = buildCallPayload(withContactId, VAPI_CONFIG);
+      const tool = payload.assistant.tools?.find((t) => t.type === "function" && t.function.name === "schedule_callback");
+      if (tool?.type !== "function") throw new Error("expected function tool");
+      expect(tool.function.parameters.required).toEqual(["callbackTime"]);
     });
   });
 });

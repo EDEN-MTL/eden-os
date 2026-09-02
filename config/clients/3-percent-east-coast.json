@@ -78,18 +78,10 @@
       "preApprovedNote": "Written as the actual financing value — cash / pre-approved / in-progress / not-approved — not a yes/no. See agents/scout/isa-notes.ts Financing type."
     },
     "callbacks": {
-      "_comment": "Iris books its own callbacks. GHL calendar creation IS permitted on this token (POST /calendars/ returns 400 for a missing body, not 401), so this can be provisioned programmatically once the owner and calling hours are confirmed.",
-      "calendarKey": "callback",
-      "writeContactNote": true,
-      "writeContactNoteReason": "Jacob, 2026-08-25: Iris must leave notes on the contact as well as booking the slot. The ISA notes content is sent to the client as the appointment brief, so it is client-facing output, not just internal record-keeping. This also matters to Scout: ISA notes are one of the signals isFirstTouch uses to tell that a lead has genuinely been spoken to.",
-      "calendarId": "buxIQTE3TkpVpjrYBaRc",
-      "calendarName": "3% REC - ISA Callback (Iris)",
-      "settings": "15-min slots, 08:00-21:00 all seven days, zero minimum notice, bookable 30 days out.",
-      "noticeReason": "Minimum notice is 0, against 3 hours on the consultation calendars. A lead who asks to be called back this afternoon has to be bookable this afternoon.",
-      "timezoneNote": "The location timezone is America/St_Johns — UTC-02:30, a half-hour offset that is a classic source of scheduling bugs. Slots come back from GHL already stamped -02:30, so Iris should pass GHL's own timestamps through rather than computing the offset itself.",
-      "ownerTodo": "OWNED BY JACOB'S USER (pGxXyOG6FV3nEXdA9Kt2) as a temporary measure so Iris development is not blocked. It must be reassigned to a dedicated Iris user — account creation is Jacob's to do. This is not cosmetic: as a round_robin calendar it inherits the owner's real availability, so today it offers only 10 slots and tomorrow starts at 09:45 instead of 08:00 because Jacob has other commitments. Reassigning frees the full 08:00-21:00 window. The calendar id does not change, so nothing downstream breaks.",
-      "calendarType": "personal",
-      "calendarTypeNote": "calendarType is IMMUTABLE after creation. A PUT changing round_robin to personal returned 200 and silently did nothing — the field simply came back unchanged, with no error. The calendar had to be recreated, which is why the id changed once (uO9ilBEtfhr7BBE7e9qJ was deleted after confirming it held zero appointments). Worth knowing before anyone tries to 'fix' a calendar type in place."
+      "_comment": "Mark, 2026-09-03: no GHL calendar involved here anymore. When a lead asks to be called back at a specific time, Iris writes a note (notesFieldKey below) and the system itself re-dials at that time — see agents/iris/dial-pending.ts's is_explicit_callback and webhooks/vapi-tools.ts's handleScheduleCallback. Superseded the GHL-calendar-booking design below the fold on 2026-09-02, which is on hold, not deleted — see calendarNote.",
+      "notesFieldKey": "contact.isa_notes",
+      "notesFieldKeyNote": "Same underlying field as scout.fields.isaNotes below, but named separately here as a single write target (not a read-priority list) — see IrisConfig.callbackNotesFieldKey.",
+      "calendarNote": "3% REC - ISA Callback (Iris), id buxIQTE3TkpVpjrYBaRc, still exists in GHL (currently inactive) from the earlier calendar-booking design. Nothing in code reads it anymore — left as-is rather than deleted in case the calendar-booking approach comes back."
     },
     "outreachCadence": {
       "_comment": "Jacob, 2026-08-25: Iris calls new leads morning and afternoon for the first 3-4 days trying to reach them. Iris owns this cadence internally — Scout fires ONCE per lead and does not trigger per attempt. scout.touchedTags gates whether a sequence STARTS, not each call.",
@@ -99,7 +91,7 @@
       "recheckReason": "The human ISA is on until the end of the month, so both they and Iris may work the same lead. Iris must re-check the contact before EVERY attempt, not just at sequence start, or a lead the ISA already spoke to on day 2 keeps getting called on days 3 and 4."
     },
     "transferNumbers": {
-      "_comment": "Mark, 2026-09-02: two ring-group numbers, one per intent — every agent under the number rings simultaneously, first pickup wins, ringing stops for everyone else. Used for Vapi's live-transfer tool; separate from scout.calendars (buyer/seller consultation booking) and callbacks.calendarId (the ISA quick-callback fallback) above.",
+      "_comment": "Mark, 2026-09-02: two ring-group numbers, one per intent — every agent under the number rings simultaneously, first pickup wins, ringing stops for everyone else. Used for Vapi's live-transfer tool; separate from scout.calendars (buyer/seller consultation booking) and callbacks.calendarIds (the ISA quick-callback fallback, also buyer/seller) above.",
       "buyer": "+17097058841",
       "seller": "+17097059439"
     }
