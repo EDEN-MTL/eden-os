@@ -45,6 +45,20 @@ export interface IrisConfig {
   hotScoreThreshold: number;
   warmScoreThreshold: number;
   calendars: { buyer: string; seller: string };
+  /**
+   * Real ring-group numbers, one agent pool per intent — everyone under the
+   * number rings simultaneously, first pickup wins (Mark's description).
+   * Used by Vapi's transferCall tool; see calling.ts's buildCallPayload.
+   */
+  transferNumbers: { buyer: string; seller: string };
+  /**
+   * The dedicated ISA quick-callback calendar (iris.callbacks.calendarId in
+   * client config) — zero minimum notice, 15-min slots, NOT the buyer/
+   * seller consultation calendars above (those need real advance notice).
+   * This is what the book_appointment tool books when a live transfer
+   * fails; see webhooks/vapi-tools.ts.
+   */
+  callbackCalendarId: string;
   writeFields: IrisWriteFields;
   outreachCadence: OutreachCadenceConfig;
 }
@@ -177,6 +191,13 @@ export function decideOutcome(config: IrisConfig, score: number): QualificationO
 export function calendarForIntent(config: IrisConfig, intent: CallIntent): string | null {
   if (intent === "seller" || intent === "downsize") return config.calendars.seller;
   if (intent === "buyer" || intent === "upgrading") return config.calendars.buyer;
+  return null;
+}
+
+/** Same buyer/seller-first-transaction mapping as calendarForIntent, for the ring-group transfer number instead of the booking calendar. */
+export function transferNumberForIntent(config: IrisConfig, intent: CallIntent): string | null {
+  if (intent === "seller" || intent === "downsize") return config.transferNumbers.seller;
+  if (intent === "buyer" || intent === "upgrading") return config.transferNumbers.buyer;
   return null;
 }
 

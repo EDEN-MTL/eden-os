@@ -35,7 +35,64 @@ export interface VapiAssistantConfig {
   };
   /** What Iris actually leaves on voicemail once detected — see scripts.ts's buildVoicemailMessage. */
   voicemailMessage?: string;
+  tools?: VapiTool[];
 }
+
+/**
+ * Live-transfers the call to a real phone number. "warm-transfer-experimental"
+ * is the one documented mode with a transferAssistant — a small separate
+ * model that briefs whoever picks up before connecting them (the actual
+ * "warm" part) — and, combined with fallbackPlan.endCallEnabled: false,
+ * reliably returns control to Iris if nobody answers (plain
+ * "warm-transfer-say-summary" does not resume the assistant on a failed
+ * transfer per Vapi's own docs and community reports). See
+ * agents/iris/calling.ts's buildCallPayload.
+ */
+export interface VapiTransferCallTool {
+  type: "transferCall";
+  destinations: {
+    type: "number";
+    number: string;
+    description: string;
+    transferPlan: {
+      mode: "warm-transfer-experimental";
+      transferAssistant: {
+        firstMessage: string;
+        firstMessageMode: "assistant-speaks-first";
+        maxDurationSeconds: number;
+        silenceTimeoutSeconds: number;
+        model: {
+          provider: string;
+          model: string;
+          messages: { role: "system"; content: string }[];
+        };
+      };
+      fallbackPlan: { message: string; endCallEnabled: false };
+    };
+  }[];
+}
+
+/**
+ * A custom function tool — Vapi calls back to our own server (POST to
+ * server.url) when the assistant invokes it, and expects
+ * {results: [{toolCallId, result}]} back. Used for check_availability and
+ * book_appointment; see webhooks/vapi-tools.ts for the server side.
+ */
+export interface VapiFunctionTool {
+  type: "function";
+  function: {
+    name: string;
+    description: string;
+    parameters: {
+      type: "object";
+      properties: Record<string, { type: string; description: string }>;
+      required?: string[];
+    };
+  };
+  server: { url: string; secret?: string };
+}
+
+export type VapiTool = VapiTransferCallTool | VapiFunctionTool;
 
 export interface CreateCallPayload {
   phoneNumberId: string;

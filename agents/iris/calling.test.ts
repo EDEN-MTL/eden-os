@@ -76,4 +76,85 @@ describe("buildCallPayload", () => {
     expect(payload.assistant.voicemailMessage).toContain("Iris");
     expect(payload.assistant.voicemailMessage).toContain(BASE_PARAMS.brandName);
   });
+
+  it("wires no tools at all when nothing (transferNumber, contactId, callbackCalendarId) is given", () => {
+    const payload = buildCallPayload(BASE_PARAMS, VAPI_CONFIG);
+    expect(payload.assistant.tools).toBeUndefined();
+  });
+
+  describe("transferCall tool", () => {
+    it("is added when a transferNumber is given, using warm-transfer-experimental with a non-ending fallback", () => {
+      const payload = buildCallPayload({ ...BASE_PARAMS, transferNumber: "+17097058841" }, VAPI_CONFIG);
+      const tool = payload.assistant.tools?.find((t) => t.type === "transferCall");
+      expect(tool).toBeDefined();
+      if (tool?.type !== "transferCall") throw new Error("expected transferCall tool");
+      expect(tool.destinations[0].number).toBe("+17097058841");
+      expect(tool.destinations[0].transferPlan.mode).toBe("warm-transfer-experimental");
+      expect(tool.destinations[0].transferPlan.fallbackPlan.endCallEnabled).toBe(false);
+    });
+
+    it("briefs the receiving agent as 'seller' for seller/downsize intent and 'buyer' for buyer/upgrading", () => {
+      const sellerPayload = buildCallPayload(
+        { ...BASE_PARAMS, intent: "seller", transferNumber: "+17097059439" },
+        VAPI_CONFIG
+      );
+      const buyerPayload = buildCallPayload(
+        { ...BASE_PARAMS, intent: "buyer", transferNumber: "+17097058841" },
+        VAPI_CONFIG
+      );
+      const sellerTool = sellerPayload.assistant.tools?.find((t) => t.type === "transferCall");
+      const buyerTool = buyerPayload.assistant.tools?.find((t) => t.type === "transferCall");
+      if (sellerTool?.type !== "transferCall" || buyerTool?.type !== "transferCall") {
+        throw new Error("expected transferCall tools");
+      }
+      expect(sellerTool.destinations[0].transferPlan.transferAssistant.firstMessage).toMatch(/seller lead/);
+      expect(buyerTool.destinations[0].transferPlan.transferAssistant.firstMessage).toMatch(/buyer lead/);
+    });
+
+    it("is omitted when no transferNumber is given", () => {
+      const payload = buildCallPayload(BASE_PARAMS, VAPI_CONFIG);
+      expect(payload.assistant.tools?.find((t) => t.type === "transferCall")).toBeUndefined();
+    });
+  });
+
+  describe("check_availability / book_appointment tools", () => {
+    const withBookingParams: PlaceCallParams = {
+      ...BASE_PARAMS,
+      contactId: "contact-1",
+      callbackCalendarId: "callback-cal-1",
+    };
+
+    it("are added only when serverUrl, contactId, AND callbackCalendarId are all present", () => {
+      const payload = buildCallPayload(withBookingParams, VAPI_CONFIG);
+      const names = payload.assistant.tools?.filter((t) => t.type === "function").map((t) => (t.type === "function" ? t.function.name : ""));
+      expect(names).toEqual(["check_availability", "book_appointment"]);
+    });
+
+    it("are omitted when serverUrl is unset, even with contactId and callbackCalendarId given", () => {
+      const payload = buildCallPayload(withBookingParams, { ...VAPI_CONFIG, serverUrl: undefined });
+      expect(payload.assistant.tools?.some((t) => t.type === "function")).toBeFalsy();
+    });
+
+    it("are omitted when contactId is missing", () => {
+      const payload = buildCallPayload({ ...withBookingParams, contactId: undefined }, VAPI_CONFIG);
+      expect(payload.assistant.tools?.some((t) => t.type === "function")).toBeFalsy();
+    });
+
+    it("bake clientId, contactId, and calendarId into each tool's server URL as query params", () => {
+      const payload = buildCallPayload(withBookingParams, VAPI_CONFIG);
+      const checkTool = payload.assistant.tools?.find((t) => t.type === "function" && t.function.name === "check_availability");
+      if (checkTool?.type !== "function") throw new Error("expected function tool");
+      const url = new URL(checkTool.server.url);
+      expect(url.searchParams.get("clientId")).toBe("3-percent-east-coast");
+      expect(url.searchParams.get("contactId")).toBe("contact-1");
+      expect(url.searchParams.get("calendarId")).toBe("callback-cal-1");
+    });
+
+    it("book_appointment requires a startTime argument from the model", () => {
+      const payload = buildCallPayload(withBookingParams, VAPI_CONFIG);
+      const bookTool = payload.assistant.tools?.find((t) => t.type === "function" && t.function.name === "book_appointment");
+      if (bookTool?.type !== "function") throw new Error("expected function tool");
+      expect(bookTool.function.parameters.required).toEqual(["startTime"]);
+    });
+  });
 });

@@ -176,6 +176,8 @@ const IRIS_CONFIG: IrisConfig = {
   hotScoreThreshold: 75,
   warmScoreThreshold: 40,
   calendars: { buyer: "buyer-cal", seller: "seller-cal" },
+  transferNumbers: { buyer: "+17097058841", seller: "+17097059439" },
+  callbackCalendarId: "callback-cal",
   writeFields: {
     timeline: "contact.lf_timeframe",
     budget: "contact.lf_budget",
@@ -208,7 +210,7 @@ const BLANK_LEAD: NormalisedLead = {
 
 describe("buildLeadQualificationPrompt", () => {
   it("lists every question as still needed when nothing is known yet", () => {
-    const prompt = buildLeadQualificationPrompt(IRIS_CONFIG, BLANK_LEAD, "3 Percent East Coast", "St. John's");
+    const prompt = buildLeadQualificationPrompt(IRIS_CONFIG, BLANK_LEAD, "3 Percent East Coast", "St. John's", false);
     expect(prompt).toContain("Nothing yet — this is a cold first contact.");
     for (const q of IRIS_CONFIG.questions) {
       expect(prompt).toContain(q);
@@ -217,27 +219,40 @@ describe("buildLeadQualificationPrompt", () => {
 
   it("marks a known answer as already-known and drops it from what's still needed", () => {
     const lead: NormalisedLead = { ...BLANK_LEAD, intent: "seller", timeline: "3-6 months" };
-    const prompt = buildLeadQualificationPrompt(IRIS_CONFIG, lead, "3 Percent East Coast", "St. John's");
+    const prompt = buildLeadQualificationPrompt(IRIS_CONFIG, lead, "3 Percent East Coast", "St. John's", false);
     expect(prompt).toMatch(/Intent: seller — already known, do NOT ask again/);
     expect(prompt).toMatch(/Timeline: 3-6 months — already known, do NOT ask again/);
   });
 
   it("skips the financing question for a seller, matching qualification.ts's nextQuestion behavior", () => {
     const lead: NormalisedLead = { ...BLANK_LEAD, intent: "seller" };
-    const prompt = buildLeadQualificationPrompt(IRIS_CONFIG, lead, "3 Percent East Coast", "St. John's");
+    const prompt = buildLeadQualificationPrompt(IRIS_CONFIG, lead, "3 Percent East Coast", "St. John's", false);
     expect(prompt).not.toContain(IRIS_CONFIG.questions[3]);
   });
 
   it("uses the city and brand it's given rather than a hardcoded one", () => {
-    const prompt = buildLeadQualificationPrompt(IRIS_CONFIG, BLANK_LEAD, "Matama Floors", "Montreal");
+    const prompt = buildLeadQualificationPrompt(IRIS_CONFIG, BLANK_LEAD, "Matama Floors", "Montreal", false);
     expect(prompt).toContain("Matama Floors");
     expect(prompt).toContain("Montreal only");
   });
 
   it("never claims to be human, pulling the real approved wording rather than inventing new lines", () => {
-    const prompt = buildLeadQualificationPrompt(IRIS_CONFIG, BLANK_LEAD, "3 Percent East Coast", "St. John's");
+    const prompt = buildLeadQualificationPrompt(IRIS_CONFIG, BLANK_LEAD, "3 Percent East Coast", "St. John's", false);
     expect(prompt).toContain(EDGE_CASE_RESPONSES.isRealPerson[0]);
     expect(prompt).toContain(EDGE_CASE_RESPONSES.dontKnowAnswer);
+  });
+
+  it("tells Iris to actually invoke the tools when booking tools are available", () => {
+    const prompt = buildLeadQualificationPrompt(IRIS_CONFIG, BLANK_LEAD, "3 Percent East Coast", "St. John's", true);
+    expect(prompt).toContain("check_availability");
+    expect(prompt).toContain("book_appointment");
+    expect(prompt).not.toMatch(/do not have a working booking tool/i);
+  });
+
+  it("tells Iris NOT to claim a booking when the tools aren't wired up", () => {
+    const prompt = buildLeadQualificationPrompt(IRIS_CONFIG, BLANK_LEAD, "3 Percent East Coast", "St. John's", false);
+    expect(prompt).toMatch(/do not have a working booking tool/i);
+    expect(prompt).not.toContain("check_availability");
   });
 });
 

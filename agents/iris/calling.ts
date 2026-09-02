@@ -19,11 +19,16 @@
  * it here once a fresh re-check confirms the lead still hasn't been
  * touched). Both go through the same two gates below either way.
  */
-import { createCall, getVapiEnvConfig, CreateCallPayload, VapiCallResult } from "../../shared/vapi";
+import { createCall, getVapiEnvConfig, CreateCallPayload, VapiCallResult, VapiTool } from "../../shared/vapi";
 import { query } from "../../shared/db";
 import { isCallingEnabled } from "./calling-settings";
 import { CallIntent } from "./qualification";
-import { buildVoicemailMessage, CALL_OPENING_GREETING, callOpeningContextLine } from "./scripts";
+import {
+  AGENT_UNAVAILABLE_LINE,
+  buildVoicemailMessage,
+  CALL_OPENING_GREETING,
+  callOpeningContextLine,
+} from "./scripts";
 
 export class CallingDisabledError extends Error {}
 
@@ -38,6 +43,20 @@ export interface PlaceCallParams {
   systemPrompt: string;
   contactId?: string;
   triggeredBy?: "manual" | "automatic";
+  /**
+   * Real ring-group number for this call's intent (qualification.ts's
+   * transferNumberForIntent). Omit to skip wiring the transferCall tool
+   * entirely — e.g. scripts/test-iris-call.ts's bare connectivity test has
+   * no real lead or intent to transfer.
+   */
+  transferNumber?: string;
+  /**
+   * The ISA quick-callback calendar (IrisConfig.callbackCalendarId), for
+   * the check_availability/book_appointment tools. Only wired when this,
+   * contactId, AND vapiConfig.serverUrl are all present — the tools call
+   * back to our own server, which only exists once deployed.
+   */
+  callbackCalendarId?: string;
 }
 
 /**
@@ -56,6 +75,90 @@ export function buildCallPayload(
   );
   const contextLine = callOpeningContextLine(params.intent, params.city, params.leadSource);
   const firstMessage = contextLine ? `${greeting} ${contextLine}` : greeting;
+
+  const tools: VapiTool[] = [];
+
+  if (params.transferNumber) {
+    const audience = params.intent === "seller" || params.intent === "downsize" ? "seller" : "buyer";
+    tools.push({
+      type: "transferCall",
+      destinations: [
+        {
+          type: "number",
+          number: params.transferNumber,
+          description: `Transfer to the ${audience} team once the lead is qualified and ready to talk to a real agent.`,
+          transferPlan: {
+            mode: "warm-transfer-experimental",
+            transferAssistant: {
+              firstMessage: `Hi, I have a ${audience} lead${
+                params.firstName !== "there" ? ` (${params.firstName})` : ""
+              } on the line, ready to talk. Are you available to take the call?`,
+              firstMessageMode: "assistant-speaks-first",
+              maxDurationSeconds: 120,
+              silenceTimeoutSeconds: 30,
+              model: {
+                provider: vapiConfig.modelProvider,
+                model: vapiConfig.modelName,
+                messages: [
+                  {
+                    role: "system",
+                    content:
+                      "Confirm a human operator is ready to take this call. Use transferSuccessful once " +
+                      "they accept. Use transferCancel for voicemail, no answer, or a declined transfer. " +
+                      "Keep this brief and focused only on confirming the handoff.",
+                  },
+                ],
+              },
+            },
+            // endCallEnabled: false is what returns control to Iris (rather
+            // than ending the call) if nobody in the ring group picks up —
+            // see shared/vapi's VapiTransferCallTool doc comment for why
+            // this specific mode/field combination, not a simpler one.
+            fallbackPlan: { message: AGENT_UNAVAILABLE_LINE, endCallEnabled: false },
+          },
+        },
+      ],
+    });
+  }
+
+  if (vapiConfig.serverUrl && params.contactId && params.callbackCalendarId) {
+    const base = `${vapiConfig.serverUrl}/tools`;
+    const qs = new URLSearchParams({
+      clientId: params.clientId,
+      contactId: params.contactId,
+      calendarId: params.callbackCalendarId,
+    }).toString();
+
+    tools.push({
+      type: "function",
+      function: {
+        name: "check_availability",
+        description:
+          "Gets real open callback times for this lead. Always call this before offering any time — " +
+          "never invent or guess a time yourself.",
+        parameters: { type: "object", properties: {} },
+      },
+      server: { url: `${base}/check-availability?${qs}` },
+    });
+    tools.push({
+      type: "function",
+      function: {
+        name: "book_appointment",
+        description: "Books the exact callback time the lead chose from check_availability's results.",
+        parameters: {
+          type: "object",
+          properties: {
+            startTime: {
+              type: "string",
+              description: "The exact ISO 8601 start time from check_availability's results that the lead picked.",
+            },
+          },
+          required: ["startTime"],
+        },
+      },
+      server: { url: `${base}/book-appointment?${qs}` },
+    });
+  }
 
   return {
     phoneNumberId: vapiConfig.phoneNumberId,
@@ -77,6 +180,7 @@ export function buildCallPayload(
       // which is exactly what happened testing against this number twice.
       voicemailDetection: { provider: "vapi" },
       voicemailMessage: buildVoicemailMessage(params.brandName),
+      tools: tools.length > 0 ? tools : undefined,
     },
   };
 }

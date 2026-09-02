@@ -362,11 +362,12 @@ export async function getCalendarSlots(
   calendarId: string,
   startDate: string,
   endDate: string,
-  locationId?: string
+  locationId?: string,
+  apiKey?: string
 ): Promise<any> {
   return ghlRequest(
     `/calendars/${calendarId}/free-slots?startDate=${startDate}&endDate=${endDate}`,
-    { locationId }
+    { locationId, apiKey }
   );
 }
 
@@ -379,12 +380,14 @@ export async function createAppointment(
     title?: string;
     notes?: string;
   },
-  locationId?: string
+  locationId?: string,
+  apiKey?: string
 ): Promise<any> {
   return ghlRequest(`/calendars/events/appointments`, {
     method: "POST",
     body: { calendarId, ...data },
     locationId,
+    apiKey,
   });
 }
 

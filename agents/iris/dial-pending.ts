@@ -22,6 +22,7 @@ import { loadIrisConfig, loadClientBranding } from "./index";
 import { buildLeadQualificationPrompt } from "./scripts";
 import { placeCall, CallingDisabledError } from "./calling";
 import { decideNextAttempt, nextAttemptTime } from "./cadence";
+import { transferNumberForIntent } from "./qualification";
 
 /**
  * Client timezone for cadence slot times (10am/2pm local — see
@@ -101,7 +102,15 @@ async function resolveOne(row: PendingCallRow): Promise<void> {
       firstName: lead.name?.split(" ")[0] || "there",
       intent: lead.intent,
       leadSource: lead.leadSource,
-      systemPrompt: buildLeadQualificationPrompt(config, lead, branding.brandName, branding.city),
+      systemPrompt: buildLeadQualificationPrompt(
+        config,
+        lead,
+        branding.brandName,
+        branding.city,
+        Boolean(process.env.VAPI_SERVER_URL)
+      ),
+      transferNumber: transferNumberForIntent(config, lead.intent) ?? undefined,
+      callbackCalendarId: config.callbackCalendarId,
       contactId: row.contact_id,
       triggeredBy: "automatic",
     });

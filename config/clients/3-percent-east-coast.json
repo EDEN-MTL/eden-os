@@ -97,6 +97,11 @@
       "days": 4,
       "recheckBeforeEachAttempt": true,
       "recheckReason": "The human ISA is on until the end of the month, so both they and Iris may work the same lead. Iris must re-check the contact before EVERY attempt, not just at sequence start, or a lead the ISA already spoke to on day 2 keeps getting called on days 3 and 4."
+    },
+    "transferNumbers": {
+      "_comment": "Mark, 2026-09-02: two ring-group numbers, one per intent — every agent under the number rings simultaneously, first pickup wins, ringing stops for everyone else. Used for Vapi's live-transfer tool; separate from scout.calendars (buyer/seller consultation booking) and callbacks.calendarId (the ISA quick-callback fallback) above.",
+      "buyer": "+17097058841",
+      "seller": "+17097059439"
     }
   },
   "slack": {

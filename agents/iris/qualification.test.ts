@@ -10,6 +10,7 @@ import {
   qualify,
   QualificationAnswers,
   scoreQualification,
+  transferNumberForIntent,
 } from "./qualification";
 
 const config: IrisConfig = {
@@ -22,6 +23,8 @@ const config: IrisConfig = {
   hotScoreThreshold: 75,
   warmScoreThreshold: 40,
   calendars: { buyer: "4Eyz51DOI7TY78gRgBU3", seller: "vbsoYjk2Q6nI66q8u8to" },
+  transferNumbers: { buyer: "+17097058841", seller: "+17097059439" },
+  callbackCalendarId: "callback-cal",
   writeFields: {
     timeline: "contact.lf_timeframe",
     budget: "contact.lf_budget",
@@ -167,6 +170,22 @@ describe("calendarForIntent", () => {
 
   it("has no calendar for unknown intent", () => {
     expect(calendarForIntent(config, "unknown")).toBeNull();
+  });
+});
+
+describe("transferNumberForIntent", () => {
+  it("routes buyer and upgrading intents to the buyer ring group", () => {
+    expect(transferNumberForIntent(config, "buyer")).toBe(config.transferNumbers.buyer);
+    expect(transferNumberForIntent(config, "upgrading")).toBe(config.transferNumbers.buyer);
+  });
+
+  it("routes seller and downsize intents to the seller ring group", () => {
+    expect(transferNumberForIntent(config, "seller")).toBe(config.transferNumbers.seller);
+    expect(transferNumberForIntent(config, "downsize")).toBe(config.transferNumbers.seller);
+  });
+
+  it("has no transfer number for unknown intent", () => {
+    expect(transferNumberForIntent(config, "unknown")).toBeNull();
   });
 });
 

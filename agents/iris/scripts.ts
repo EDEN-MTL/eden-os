@@ -264,7 +264,13 @@ export function callbackRecapLine(chosenSlot: string, agentName: string | null, 
  * known answer so Iris confirms rather than re-collects it, then only lists
  * what's still actually missing as things to ask.
  */
-export function buildLeadQualificationPrompt(config: IrisConfig, lead: NormalisedLead, brandName: string, city: string): string {
+export function buildLeadQualificationPrompt(
+  config: IrisConfig,
+  lead: NormalisedLead,
+  brandName: string,
+  city: string,
+  bookingToolsAvailable: boolean
+): string {
   const known: string[] = [];
   const stillNeeded: string[] = [];
 
@@ -286,6 +292,24 @@ export function buildLeadQualificationPrompt(config: IrisConfig, lead: Normalise
     ? `\n\n## Still need to gather\n${stillNeeded.map((q) => `- ${q}`).join("\n")}`
     : "";
 
+  // bookingToolsAvailable reflects whether this environment actually has the
+  // check_availability/book_appointment tools wired (VAPI_SERVER_URL set —
+  // they call back to our own server, which only exists once deployed).
+  // Telling Iris to use tools that aren't in her tools list for this call
+  // would have her hallucinate having booked something real. Match what's
+  // actually possible rather than describing the ideal end state always.
+  const transferFallback = bookingToolsAvailable
+    ? `If the transferCall tool comes back without anyone picking up: "${AGENT_UNAVAILABLE_LINE}"
+Then call the check_availability tool to get real open times — never invent
+times yourself. Offer the lead the two it returns rather than an open
+question: "${AGENT_UNAVAILABLE_FOLLOW_UP}" Once they pick one, call
+book_appointment with that exact time to actually confirm it, then recap
+what you just booked before ending the call.`
+    : `If a transfer genuinely can't happen right now: "${AGENT_UNAVAILABLE_LINE}"
+You do NOT have a working booking tool on this call — do not claim to have
+booked anything or invent a time. Instead say a teammate will follow up
+directly to get them scheduled.`;
+
   return `You are IRIS, an AI ISA (Inside Sales Assistant) for ${brandName}. You are on a
 LIVE PHONE CALL with a real lead right now — not a Slack conversation, not a
 test. You are NOT a real estate agent.
@@ -295,12 +319,11 @@ ${knownBlock}${stillNeededBlock}
 ## Your job
 Confirm what's known above, gather what's still needed, decide fit, then get
 a qualified lead connected to the right agent. Live transfer is ALWAYS the
-first priority — present it confidently, don't ask permission:
+first priority — present it confidently, don't ask permission, and actually
+invoke the transferCall tool available to you (not just say the line):
 "${liveTransferLineForIntent(lead.intent)}"
 
-If a transfer genuinely can't happen right now: "${AGENT_UNAVAILABLE_LINE}"
-then offer two concrete times rather than an open question:
-"${AGENT_UNAVAILABLE_FOLLOW_UP}"
+${transferFallback}
 
 ## Rules you must never break
 - Never give legal, investment, mortgage, or financial advice:
