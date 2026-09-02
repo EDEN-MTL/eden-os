@@ -190,6 +190,23 @@ export async function getClients(): Promise<ClientSummary[]> {
   return data.clients;
 }
 
+/**
+ * Creates config/clients/<clientId>.json. Deliberately minimal — Meta/GHL
+ * credentials go in separately via saveMetaCredentials/saveGhlCredentials
+ * once the client exists.
+ */
+export async function createClient(fields: { clientId: string; clientName: string; industry?: string }): Promise<void> {
+  const res = await fetch(`${API_BASE}/api/clients`, {
+    method: "POST",
+    headers: authHeaders({ "Content-Type": "application/json" }),
+    body: JSON.stringify(fields),
+  });
+  if (!res.ok) {
+    const data = await res.json().catch(() => ({}));
+    throw new Error(data.error || `Failed to create client: ${res.status}`);
+  }
+}
+
 export async function getClientDetail(clientId: string): Promise<ClientDetail> {
   const res = await fetch(`${API_BASE}/api/clients/${clientId}`, { headers: authHeaders() });
   if (!res.ok) throw new Error(`Failed to load client: ${res.status}`);
