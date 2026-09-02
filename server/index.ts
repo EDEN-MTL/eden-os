@@ -24,6 +24,10 @@ const PORT = process.env.PORT || 3000;
 // ─── Middleware ───
 app.use(
   express.json({
+    // 12mb, not the 100kb default — a base64-encoded chat attachment
+    // (images, PDFs) inflates ~33% over its raw bytes; chat-api.ts caps the
+    // decoded file itself at 8MB, this just has to fit the encoded form.
+    limit: "12mb",
     verify: (req, _res, buf) => {
       (req as express.Request & { rawBody: Buffer }).rawBody = buf;
     },

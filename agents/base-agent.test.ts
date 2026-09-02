@@ -3,6 +3,15 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 vi.mock("../shared/claude", () => ({
   chat: vi.fn(),
   chatWithTools: vi.fn(),
+  // A trivial but faithful stand-in for the real block-builder — just
+  // enough shape (type + a data field derived from the input) for tests to
+  // assert the right attachment reached chat() without needing the real
+  // Anthropic SDK types.
+  attachmentToBlock: vi.fn((attachment: { data: Buffer; mediaType: string }) => ({
+    type: attachment.mediaType === "application/pdf" ? "document" : "image",
+    mediaType: attachment.mediaType,
+    data: attachment.data.toString("base64"),
+  })),
 }));
 vi.mock("../shared/slack", () => ({
   sendMessage: vi.fn(),
@@ -104,6 +113,40 @@ describe("BaseAgent.generateReply — no tools (every existing agent)", () => {
     expect(reply).toBe("still answered");
     const messagesSent = vi.mocked(chat).mock.calls[0][1];
     expect(messagesSent).toEqual([{ role: "user", content: "hi" }]);
+  });
+
+  it("sends an attachment as a content block for this turn, but persists only a text marker", async () => {
+    vi.mocked(chat).mockResolvedValueOnce("nice chart");
+
+    const agent = new PlainAgent();
+    const attachment = { data: Buffer.from("fake-image-bytes"), mediaType: "image/png" as const, filename: "spend.png" };
+    const reply = await agent.generateReply("key-attach", "what does this show?", undefined, attachment);
+
+    expect(reply).toBe("nice chart");
+    const messagesSent = vi.mocked(chat).mock.calls[0][1];
+    expect(messagesSent).toEqual([
+      {
+        role: "user",
+        content: [
+          { type: "image", mediaType: "image/png", data: Buffer.from("fake-image-bytes").toString("base64") },
+          { type: "text", text: "what does this show?" },
+        ],
+      },
+    ]);
+
+    // The durable store gets a marker, never the file bytes — an attachment
+    // is scratch input for this turn, not something worth replaying (and
+    // paying tokens for) on every future turn.
+    expect(vi.mocked(appendHistory).mock.calls).toEqual([
+      ["eden", "key-attach", "user", "what does this show?\n[attached: spend.png]"],
+      ["eden", "key-attach", "assistant", "nice chart"],
+    ]);
+
+    // A later turn in the same thread only ever sees that plain-text marker.
+    vi.mocked(chat).mockResolvedValueOnce("follow-up reply");
+    await agent.generateReply("key-attach", "and now?");
+    const secondMessages = vi.mocked(chat).mock.calls[1][1];
+    expect(secondMessages[0]).toEqual({ role: "user", content: "what does this show?\n[attached: spend.png]" });
   });
 });
 

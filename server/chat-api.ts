@@ -1,4 +1,5 @@
 import { Request, Response, Router } from "express";
+import { Attachment, AttachmentMediaType } from "../shared/claude";
 import { AgentId } from "../shared/types";
 import { edenBrain } from "../agents/eden-brain";
 import { scoutAgent } from "../agents/scout";
@@ -24,6 +25,36 @@ const agents: Record<AgentId, BaseAgent> = {
 };
 
 const VALID_AGENT_IDS = new Set(Object.keys(agents));
+
+const ALLOWED_ATTACHMENT_TYPES: ReadonlySet<string> = new Set([
+  "image/png",
+  "image/jpeg",
+  "image/webp",
+  "image/gif",
+  "application/pdf",
+]);
+
+// Decoded-bytes cap, not base64-string length — keeps this in step with
+// whatever the express.json() body limit allows for the ~33% base64 overhead.
+const MAX_ATTACHMENT_BYTES = 8 * 1024 * 1024;
+
+interface RawAttachment {
+  data: string;
+  mediaType: string;
+  filename?: string;
+}
+
+/** Returns null (rather than throwing) for a caller-facing 400, not a 500. Exported for direct unit testing. */
+export function parseAttachment(raw: unknown): Attachment | null {
+  if (!raw || typeof raw !== "object") return null;
+  const { data, mediaType, filename } = raw as RawAttachment;
+  if (typeof data !== "string" || !ALLOWED_ATTACHMENT_TYPES.has(mediaType)) return null;
+
+  const buffer = Buffer.from(data, "base64");
+  if (buffer.length === 0 || buffer.length > MAX_ATTACHMENT_BYTES) return null;
+
+  return { data: buffer, mediaType: mediaType as AttachmentMediaType, filename: typeof filename === "string" ? filename : undefined };
+}
 
 /**
  * HTTP chat API for the eden-command-ui dashboard — lets the frontend
@@ -56,7 +87,7 @@ export function createChatRouter(): Router {
 
   router.post("/:agentId", async (req: Request, res: Response) => {
     const { agentId } = req.params;
-    const { message, sessionId } = req.body;
+    const { message, sessionId, attachment: rawAttachment } = req.body;
 
     if (typeof agentId !== "string" || !VALID_AGENT_IDS.has(agentId)) {
       return res.status(404).json({ error: `Unknown agent: ${agentId}` });
@@ -65,11 +96,20 @@ export function createChatRouter(): Router {
       return res.status(400).json({ error: "Missing 'message' string in body" });
     }
 
+    let attachment: Attachment | undefined;
+    if (rawAttachment !== undefined) {
+      const parsed = parseAttachment(rawAttachment);
+      if (!parsed) {
+        return res.status(400).json({ error: "Invalid attachment — unsupported type, unreadable data, or over the 8MB limit" });
+      }
+      attachment = parsed;
+    }
+
     const agent = agents[agentId as AgentId];
     const historyKey = `web:${sessionId || "anonymous"}`;
 
     try {
-      const reply = await agent.generateReply(historyKey, message);
+      const reply = await agent.generateReply(historyKey, message, undefined, attachment);
       res.json({ reply, agentId });
     } catch (error) {
       console.error(`[CHAT-API] Error from ${agentId}:`, error);

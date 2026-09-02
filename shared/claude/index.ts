@@ -21,6 +21,30 @@ export interface ToolDef {
   input_schema: Anthropic.Tool["input_schema"];
 }
 
+export type AttachmentMediaType = "image/png" | "image/jpeg" | "image/webp" | "image/gif" | "application/pdf";
+
+export interface Attachment {
+  data: Buffer;
+  mediaType: AttachmentMediaType;
+  filename?: string;
+}
+
+/** Turns an uploaded file into the content block Claude expects for its type. */
+export function attachmentToBlock(attachment: Attachment): Anthropic.ContentBlockParam {
+  const base64 = attachment.data.toString("base64");
+  if (attachment.mediaType === "application/pdf") {
+    return {
+      type: "document",
+      source: { type: "base64", media_type: "application/pdf", data: base64 },
+      title: attachment.filename,
+    };
+  }
+  return {
+    type: "image",
+    source: { type: "base64", media_type: attachment.mediaType, data: base64 },
+  };
+}
+
 /**
  * Send a message to Claude with an agent's system prompt.
  * Each agent calls this with their own system prompt and conversation history.
