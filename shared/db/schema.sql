@@ -379,3 +379,17 @@ CREATE TABLE IF NOT EXISTS agent_conversations (
     created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 CREATE INDEX IF NOT EXISTS idx_agent_conversations_lookup ON agent_conversations(agent_id, history_key, id);
+
+-- Durable, cross-conversation notes. agent_conversations is deliberately
+-- scoped per thread (so an unrelated client's chat doesn't leak into this
+-- one) — a note is the opposite: something explicitly asked to be
+-- remembered everywhere, in any channel or dashboard session, for as long
+-- as this agent exists. Written via a save_note tool every agent gets for
+-- free from BaseAgent, not something any one agent opts into.
+CREATE TABLE IF NOT EXISTS agent_notes (
+    id BIGSERIAL PRIMARY KEY,
+    agent_id TEXT NOT NULL,
+    note TEXT NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_agent_notes_lookup ON agent_notes(agent_id, id);
