@@ -401,8 +401,15 @@ CREATE TABLE IF NOT EXISTS iris_pending_calls (
     call_after TIMESTAMPTZ NOT NULL,
     status TEXT NOT NULL DEFAULT 'pending', -- pending | placed | skipped | failed
     resolution_reason TEXT, -- why it was skipped/failed, or the Vapi call id if placed
+    -- Attempts already placed for this lead. created_at (never touched by
+    -- the re-scheduling UPDATE in dial-pending.ts) doubles as the sequence
+    -- start that agents/iris/cadence.ts's nextAttemptTime anchors day 1 to.
+    attempts_made INTEGER NOT NULL DEFAULT 0,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     resolved_at TIMESTAMPTZ,
     UNIQUE (client_id, contact_id)
 );
+-- IF NOT EXISTS create above won't add this column to a table that already
+-- exists from before the multi-day cadence was built.
+ALTER TABLE iris_pending_calls ADD COLUMN IF NOT EXISTS attempts_made INTEGER NOT NULL DEFAULT 0;
 CREATE INDEX IF NOT EXISTS idx_iris_pending_due ON iris_pending_calls(status, call_after);

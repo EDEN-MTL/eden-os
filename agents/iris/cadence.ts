@@ -14,9 +14,12 @@
  * that fresh check as an input rather than caching it, so it can't go stale.
  *
  * Kept free of I/O, same as qualification.ts: no scheduler, no timers, no
- * GHL calls. There is nothing to schedule execution of yet, since calling
- * itself isn't wired up — this is the decision Iris's caller makes at each
- * attempt, once Vapi exists to act on it.
+ * GHL calls — nextAttemptTime takes the sequence start as a plain Date
+ * rather than computing "now" itself, and decideNextAttempt takes the fresh
+ * touch check as a parameter rather than fetching it. The actual scheduling
+ * (inserting/updating rows, running on a cron) lives in
+ * agents/iris/dial-pending.ts, which calls into this module for the
+ * decisions rather than duplicating them.
  */
 import { OutreachCadenceConfig } from "./qualification";
 
@@ -75,4 +78,67 @@ export function decideNextAttempt(
   if (attemptsMade >= totalAttempts(cadence)) return "sequence-exhausted";
   if (cadence.recheckBeforeEachAttempt && !freshLead.firstTouch) return "stop-already-contacted";
   return "attempt";
+}
+
+/**
+ * Clock-hour slots within a day, 24h format, used for attempt 2 onward.
+ * Sized to attemptsPerDay: the current config (2/day) maps directly to
+ * "morning and afternoon" per the SOP; a different attemptsPerDay spreads
+ * evenly across the same 9am-5pm window rather than guessing new fixed
+ * hours out of nowhere.
+ */
+function slotHours(attemptsPerDay: number): number[] {
+  if (attemptsPerDay === 2) return [10, 14];
+  if (attemptsPerDay === 1) return [10];
+  const start = 9;
+  const end = 17;
+  const step = (end - start) / (attemptsPerDay - 1);
+  return Array.from({ length: attemptsPerDay }, (_, i) => Math.round(start + i * step));
+}
+
+/**
+ * Converts a wall-clock hour on a given date, in a given IANA timezone, to
+ * the correct UTC instant — DST-safe and half-hour-offset-safe. No library:
+ * compares how the same UTC instant renders in the target zone vs UTC
+ * itself, and corrects by the difference. This exists because
+ * config/clients/3-percent-east-coast.json's own comments flag
+ * America/St_Johns (UTC-02:30, a half-hour offset) as "a classic source of
+ * scheduling bugs" — getting this wrong would silently call at the wrong
+ * time, not throw.
+ */
+function zonedHourToUtc(year: number, monthIndex: number, day: number, hour: number, timeZone: string): Date {
+  const asIfUtc = Date.UTC(year, monthIndex, day, hour, 0, 0);
+  const probe = new Date(asIfUtc);
+  const renderedInZone = new Date(probe.toLocaleString("en-US", { timeZone }));
+  const renderedInUtc = new Date(probe.toLocaleString("en-US", { timeZone: "UTC" }));
+  const offsetMs = renderedInUtc.getTime() - renderedInZone.getTime();
+  return new Date(asIfUtc + offsetMs);
+}
+
+/**
+ * Wall-clock time for a given attempt, in the client's timezone. Attempt 1
+ * always returns null — it's the immediate ~5-minute-after-intake dial
+ * (agents/iris/index.ts's CALL_DELAY_MINUTES), not a fixed clock slot, so
+ * its timing is decided elsewhere. Attempt 2 onward lands on slotHours()
+ * for that attempt's day, counting the day sequenceStart falls on (in
+ * timeZone) as day 1.
+ */
+export function nextAttemptTime(
+  cadence: OutreachCadenceConfig,
+  attemptNumber: number,
+  sequenceStart: Date,
+  timeZone: string
+): Date | null {
+  if (attemptNumber <= 1) return null;
+  const attempt = describeAttempt(cadence, attemptNumber);
+  if (!attempt) return null;
+
+  const startInZone = new Date(sequenceStart.toLocaleString("en-US", { timeZone }));
+  const target = new Date(startInZone);
+  target.setDate(target.getDate() + (attempt.day - 1));
+
+  const hours = slotHours(cadence.attemptsPerDay);
+  const hour = hours[attempt.slotOfDay - 1] ?? hours[hours.length - 1];
+
+  return zonedHourToUtc(target.getFullYear(), target.getMonth(), target.getDate(), hour, timeZone);
 }

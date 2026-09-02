@@ -100,17 +100,18 @@ const CALL_DELAY_MINUTES = 5;
  * resolved (not a raw GHL locationId) and firstTouch: true only when nobody
  * has engaged the lead yet — see agents/scout/intake.ts's isFirstTouch.
  *
- * Does NOT dial here, and does not even place the first attempt of the full
- * 2-per-day/3-4-day cadence (agents/iris/cadence.ts) yet — persisting
- * attempts across days is still real future work. What this does do: queue
- * a single delayed first dial, CALL_DELAY_MINUTES out, so the GHL SMS
- * automation gets a head start before Iris calls on top of it. Whether that
- * dial actually happens is decided later, at resolution time (see
- * agents/iris/dial-pending.ts), by a FRESH re-check — not the firstTouch
- * value captured here, which can go stale in those 5 minutes if the human
- * ISA reaches the lead first. ON CONFLICT DO NOTHING because a second
- * lead.enriched for a contact that already has a pending dial should not
- * queue a duplicate.
+ * Does NOT dial here — only queues attempt 1, CALL_DELAY_MINUTES out, so the
+ * GHL SMS automation gets a head start before Iris calls on top of it.
+ * Whether that dial (and each one after it) actually happens is decided at
+ * resolution time (agents/iris/dial-pending.ts) by a FRESH re-check, not
+ * the firstTouch value captured here, which can go stale in those 5
+ * minutes if the human ISA reaches the lead first. dial-pending.ts owns
+ * the rest of the 2-per-day/3-4-day cadence itself from there — it
+ * reschedules this same row for the next attempt after each one, using
+ * cadence.ts's decideNextAttempt/nextAttemptTime, until the lead is
+ * touched or the sequence runs out. ON CONFLICT DO NOTHING because a
+ * second lead.enriched for a contact that already has a pending dial
+ * should not queue a duplicate sequence.
  */
 eventBus.subscribe("lead.enriched", async (event) => {
   const config = loadIrisConfig(event.clientId);
