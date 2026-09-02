@@ -1,5 +1,6 @@
 import { Request, Response, Router } from "express";
 import { Attachment, AttachmentMediaType } from "../shared/claude";
+import { timingSafeStringEqual } from "../shared/security";
 import { AgentId } from "../shared/types";
 import { edenBrain } from "../agents/eden-brain";
 import { scoutAgent } from "../agents/scout";
@@ -79,7 +80,7 @@ export function createChatRouter(): Router {
       return next();
     }
     const providedKey = req.headers["x-dashboard-key"];
-    if (providedKey !== requiredKey) {
+    if (typeof providedKey !== "string" || !timingSafeStringEqual(providedKey, requiredKey)) {
       return res.status(401).json({ error: "Invalid or missing dashboard key" });
     }
     next();

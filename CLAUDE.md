@@ -6,7 +6,7 @@ TypeScript monorepo, Express API, Vite/React dashboard, Postgres on Render.
 ## Commands
 
 ```bash
-npm test              # vitest, 128 tests — must stay green
+npm test              # vitest — must stay green
 npx tsc --noEmit -p . # typecheck; run before every commit
 npm run dev           # API on :3000 (or PORT)
 ```
@@ -21,9 +21,17 @@ Branch from `dev`, PR into `dev`, promote `dev` → `main` to deploy.
 
 ```
 agents/<name>/index.ts   one agent; extends BaseAgent, exports a singleton
+shared/db/               Postgres pool + schema.sql (applied idempotently on boot)
+shared/claude/           Anthropic SDK wrapper — chat, tool loop, attachments
+shared/conversation-memory/  durable per-thread chat history (Postgres-backed)
+shared/agent-notes/      durable cross-conversation notes — save_note tool, every agent gets it
 shared/ghl/              GoHighLevel client
 shared/meta/             Meta Ads client + compliance gate
+shared/slack/            Slack client + per-agent bot config
+shared/security/         constant-time secret comparison — use for any API-key/signature check
 shared/events/           in-process event bus (typed in shared/types)
+shared/scheduler/        cron jobs (hourly Meta sync, weekly Lens report)
+shared/tts/              text-to-speech proxy (ElevenLabs) for the dashboard's voice reply
 config/clients/<id>.json per-client config — ALL client specifics live here
 server/                  Express routers
 webhooks/                inbound webhook handlers

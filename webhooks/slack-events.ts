@@ -29,9 +29,11 @@ const agents: Record<AgentId, BaseAgent> = {
 };
 
 /**
- * Verify that a request actually came from Slack.
+ * Verify that a request actually came from Slack. Exported for direct unit
+ * testing (the length-mismatch/DoS regression in particular can't be
+ * exercised through the full route without a real Express req/res cycle).
  */
-function verifySlackSignature(
+export function verifySlackSignature(
   signingSecret: string,
   req: Request
 ): boolean {
@@ -53,10 +55,21 @@ function verifySlackSignature(
       .update(sigBaseString)
       .digest("hex");
 
-  return crypto.timingSafeEqual(
-    Buffer.from(mySignature),
-    Buffer.from(signature)
-  );
+  const expected = Buffer.from(mySignature);
+  const provided = Buffer.from(signature);
+
+  // crypto.timingSafeEqual throws RangeError on a byte-length mismatch
+  // instead of returning false — and x-slack-signature is an
+  // attacker-controlled header, so any request with a signature of the
+  // "wrong" length (trivial to send, no secret required) hit this
+  // uncaught inside an async Express handler. Express 4 doesn't catch a
+  // rejected promise from an async route handler, so that became an
+  // unhandled rejection — which crashes the whole process by default on
+  // this Node version, taking down every agent's webhook and the
+  // dashboard API with it. A pre-auth, no-secret-needed DoS.
+  if (expected.length !== provided.length) return false;
+
+  return crypto.timingSafeEqual(expected, provided);
 }
 
 /**
