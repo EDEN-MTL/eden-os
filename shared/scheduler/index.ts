@@ -17,6 +17,7 @@ import { query } from "../db";
 import { getMetaConfig, MetaClient } from "../meta";
 import { syncMetaPerformance } from "../../agents/forge/ads/sync";
 import { computeWeeklyTotals, formatAllClientsReport, WeeklyTotals } from "../../agents/lens/report";
+import { runDialPendingCalls } from "../../agents/iris/dial-pending";
 import { sendMessage } from "../slack";
 
 const TIMEZONE = "America/Toronto";
@@ -97,5 +98,9 @@ export function startScheduler(): void {
   // so an overlapping "last_7d" window each hour doesn't double-count.
   cron.schedule("0 * * * *", runMetaSync, { timezone: TIMEZONE });
   cron.schedule("0 8 * * 1", runWeeklyLensReport, { timezone: TIMEZONE });
-  console.log("[SCHEDULER] hourly Meta sync and weekly Lens report (Mon 08:00) scheduled");
+  // Every minute, not hourly — this is resolving a 5-minute wait
+  // (agents/iris/index.ts's CALL_DELAY_MINUTES), so it needs to actually
+  // catch rows close to when they become due, not up to an hour late.
+  cron.schedule("* * * * *", runDialPendingCalls, { timezone: TIMEZONE });
+  console.log("[SCHEDULER] hourly Meta sync, weekly Lens report (Mon 08:00), and per-minute Iris dial queue scheduled");
 }

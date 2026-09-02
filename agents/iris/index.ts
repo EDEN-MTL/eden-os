@@ -4,7 +4,7 @@ import { BaseAgent } from "../base-agent";
 import { eventBus } from "../../shared/events";
 import { NormalisedLead } from "../scout/intake";
 import { IrisConfig } from "./qualification";
-import { totalAttempts } from "./cadence";
+import { query } from "../../shared/db";
 
 class IrisAgent extends BaseAgent {
   constructor() {
@@ -86,7 +86,7 @@ specific, the way a sharp ISA reports to their broker.`;
 export const irisAgent = new IrisAgent();
 
 /** Per-client qualification config: iris.* merged with scout's calendars. */
-function loadIrisConfig(clientId: string): IrisConfig | null {
+export function loadIrisConfig(clientId: string): IrisConfig | null {
   try {
     const raw = JSON.parse(
       readFileSync(join(process.cwd(), "config", "clients", `${clientId}.json`), "utf-8")
@@ -95,6 +95,8 @@ function loadIrisConfig(clientId: string): IrisConfig | null {
       !raw?.iris?.qualificationQuestions ||
       !raw?.iris?.writeFields ||
       !raw?.iris?.outreachCadence ||
+      !raw?.iris?.transferNumbers ||
+      !raw?.iris?.callbacks?.notesFieldKey ||
       !raw?.scout?.calendars
     ) {
       return null;
@@ -104,6 +106,8 @@ function loadIrisConfig(clientId: string): IrisConfig | null {
       hotScoreThreshold: raw.iris.hotScoreThreshold,
       warmScoreThreshold: raw.iris.warmScoreThreshold,
       calendars: raw.scout.calendars,
+      transferNumbers: raw.iris.transferNumbers,
+      callbackNotesFieldKey: raw.iris.callbacks.notesFieldKey,
       writeFields: raw.iris.writeFields,
       outreachCadence: raw.iris.outreachCadence,
     };
@@ -112,6 +116,30 @@ function loadIrisConfig(clientId: string): IrisConfig | null {
   }
 }
 
+/** Brand name + service city, for the opener line and out-of-area responses. */
+export function loadClientBranding(clientId: string): { brandName: string; city: string } | null {
+  try {
+    const raw = JSON.parse(
+      readFileSync(join(process.cwd(), "config", "clients", `${clientId}.json`), "utf-8")
+    );
+    if (!raw?.clientName || !raw?.market?.city) return null;
+    return { brandName: raw.clientName, city: raw.market.city };
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * How long to wait after a lead comes in before Iris actually dials —
+ * Mark's requirement: the GHL SMS automation needs time to actually send
+ * before Iris calls on top of it, or the lead gets a call before the text
+ * that was supposed to precede it. 5 minutes is a fixed wait, not a delivery
+ * confirmation — GHL doesn't expose an SMS-delivered webhook this system
+ * currently listens for, so this is the practical proxy for "the text has
+ * almost certainly gone out by now."
+ */
+const CALL_DELAY_MINUTES = 5;
+
 // ─── Event Subscriptions ───
 
 /**
@@ -119,16 +147,20 @@ function loadIrisConfig(clientId: string): IrisConfig | null {
  * resolved (not a raw GHL locationId) and firstTouch: true only when nobody
  * has engaged the lead yet — see agents/scout/intake.ts's isFirstTouch.
  *
- * This only proves the subscription and config resolution end to end, and
- * logs the outreach sequence Iris would open. It does not place calls or
- * write to GHL: Vapi isn't wired up, and per the build brief, the specific
- * per-minute cost needs to be confirmed with Jacob before anything billable
- * runs — a "build Iris" go-ahead is not cost approval. Actually placing the
- * 2-per-day/3-4-day sequence (agents/iris/cadence.ts) needs somewhere to
- * persist attempts-made across days, which doesn't exist yet either — there
- * is nothing to schedule execution of until calling itself exists.
+ * Does NOT dial here — only queues attempt 1, CALL_DELAY_MINUTES out, so the
+ * GHL SMS automation gets a head start before Iris calls on top of it.
+ * Whether that dial (and each one after it) actually happens is decided at
+ * resolution time (agents/iris/dial-pending.ts) by a FRESH re-check, not
+ * the firstTouch value captured here, which can go stale in those 5
+ * minutes if the human ISA reaches the lead first. dial-pending.ts owns
+ * the rest of the 2-per-day/3-4-day cadence itself from there — it
+ * reschedules this same row for the next attempt after each one, using
+ * cadence.ts's decideNextAttempt/nextAttemptTime, until the lead is
+ * touched or the sequence runs out. ON CONFLICT DO NOTHING because a
+ * second lead.enriched for a contact that already has a pending dial
+ * should not queue a duplicate sequence.
  */
-eventBus.subscribe("lead.enriched", (event) => {
+eventBus.subscribe("lead.enriched", async (event) => {
   const config = loadIrisConfig(event.clientId);
   const lead = event.data as unknown as NormalisedLead;
 
@@ -145,10 +177,18 @@ eventBus.subscribe("lead.enriched", (event) => {
     return;
   }
 
-  const { attemptsPerDay, days } = config.outreachCadence;
-  console.log(
-    `[IRS] Would open a ${totalAttempts(config.outreachCadence)}-attempt outreach sequence ` +
-      `(${attemptsPerDay}/day over ${days} days) for ${lead.name || lead.contactId} (${lead.phone}) ` +
-      `— Vapi not wired yet.`
-  );
+  try {
+    await query(
+      `INSERT INTO iris_pending_calls (client_id, contact_id, lead, call_after)
+       VALUES ($1, $2, $3, now() + interval '${CALL_DELAY_MINUTES} minutes')
+       ON CONFLICT (client_id, contact_id) DO NOTHING`,
+      [event.clientId, lead.contactId, JSON.stringify(lead)]
+    );
+    console.log(
+      `[IRS] Queued a dial for ${lead.name || lead.contactId} (${lead.phone}) in ${CALL_DELAY_MINUTES} minutes ` +
+        `— waiting for the GHL SMS automation to send first.`
+    );
+  } catch (error) {
+    console.error(`[IRS] Failed to queue dial for ${lead.contactId}:`, error instanceof Error ? error.message : error);
+  }
 });

@@ -8,7 +8,8 @@
  * Coast). This is separate from the VA/ISA Pipeline Management SOP, which
  * governs stages/scheduling (see cadence.ts) rather than what Iris says.
  */
-import { CallIntent } from "./qualification";
+import { CallIntent, IrisConfig } from "./qualification";
+import { NormalisedLead } from "../scout/intake";
 
 export interface QuestionSet {
   sms: string[];
@@ -179,4 +180,197 @@ export function liveTransferLineForIntent(intent: CallIntent): string {
 
 /** Fallback when the live transfer can't be completed — booking, not the first choice. */
 export const AGENT_UNAVAILABLE_LINE = "Looks like they're tied up right now. Let's get you booked for a quick phone call instead.";
-export const AGENT_UNAVAILABLE_FOLLOW_UP = "Are there any specific times that work best for you?";
+
+/**
+ * Open question rather than pre-checked slots — there's no calendar behind
+ * this anymore (see qualification.ts's callbackNotesFieldKey doc comment):
+ * whatever day/time the lead names here is what gets scheduled directly via
+ * schedule_callback, not checked against real availability first.
+ */
+export const AGENT_UNAVAILABLE_FOLLOW_UP = "What day and time works best for us to call you back?";
+
+/**
+ * ── Draft additions below, pending Jacob's SOP sign-off ─────────────────
+ * Reverse-engineered from 5 real ISA call recordings (transcribed
+ * 2026-09-01), not from the written SOP — it doesn't cover an opener, the
+ * agent-unavailable slot offer above, or a closing recap yet. Being in this
+ * file does not mean approved for this block specifically; treat as
+ * proposed wording until confirmed.
+ */
+
+/** Opens with who's calling, not just what it's about — matches every real call reviewed. */
+export const CALL_OPENING_GREETING = "Hi {{first_name}}, this is Iris with {{brand_name}}. How are you doing today?";
+
+/**
+ * Ties the call to why the lead is actually being contacted instead of a
+ * cold, context-free opener. Returns null when intent is "unknown" or there
+ * is nothing true to reference yet — never invent a reason for the call.
+ * leadSource is passed through as-is (e.g. NormalisedLead.leadSource); most
+ * leads carry no ad attribution yet (see Scout's system prompt), so this is
+ * commonly null and the source clause is simply omitted.
+ */
+export function callOpeningContextLine(
+  intent: CallIntent,
+  city: string,
+  leadSource: string | null
+): string | null {
+  const subject =
+    intent === "seller"
+      ? `the house you're looking at selling in ${city}`
+      : intent === "buyer"
+        ? "the home you're looking to buy"
+        : intent === "downsize"
+          ? "downsizing your home"
+          : intent === "upgrading"
+            ? "upgrading your home"
+            : null;
+  if (!subject) return null;
+  return leadSource
+    ? `I'm calling about ${subject} — I saw you reached out through ${leadSource} a little while ago.`
+    : `I'm calling about ${subject}.`;
+}
+
+/**
+ * Closes the loop with a recap — who, when, why — instead of ending right
+ * after the last answer. agentName comes from routing (RoutingRule.agentName
+ * in client config) once a lead is actually assigned; Iris must never invent
+ * a name, so pass null until routing has genuinely picked someone.
+ */
+export function callbackRecapLine(chosenSlot: string, agentName: string | null, intent: CallIntent): string {
+  const who = agentName ? `from ${agentName}` : "from one of our team";
+  const goal =
+    intent === "seller" || intent === "downsize"
+      ? "help you sell this house"
+      : intent === "buyer" || intent === "upgrading"
+        ? "help you find the right home"
+        : "help you out";
+  return `So you're all set — you'll get a call ${chosenSlot} ${who}, and hopefully we can ${goal}.`;
+}
+
+/**
+ * The real, full system prompt for an actual lead-qualification call —
+ * assembled from this file's approved wording rather than written fresh, so
+ * what Iris says on a real call matches what's actually been reviewed.
+ *
+ * This is the piece that was missing: agents/iris/calling.ts could place a
+ * call, but every call placed so far (scripts/test-iris-call.ts) used a
+ * bare connectivity-test prompt, not this. Iris's Slack persona
+ * (agents/iris/index.ts) is deliberately separate — a colleague-report tone
+ * for teammates is a different job from a live qualification call, and this
+ * function is scoped to the latter only.
+ *
+ * Never re-asks what the lead already told Scout at intake — states each
+ * known answer so Iris confirms rather than re-collects it, then only lists
+ * what's still actually missing as things to ask.
+ */
+export function buildLeadQualificationPrompt(
+  config: IrisConfig,
+  lead: NormalisedLead,
+  brandName: string,
+  city: string,
+  bookingToolsAvailable: boolean
+): string {
+  const known: string[] = [];
+  const stillNeeded: string[] = [];
+
+  const track = (label: string, value: string | null, ask: string) => {
+    if (value) known.push(`- ${label}: ${value} — already known, do NOT ask again`);
+    else stillNeeded.push(ask);
+  };
+
+  track("Intent", lead.intent !== "unknown" ? lead.intent : null, config.questions[0]);
+  track("Area/property interest", lead.propertyInterest, config.questions[1]);
+  track("Timeline", lead.timeline, config.questions[2]);
+  if (lead.intent !== "seller") track("Financing", lead.financing, config.questions[3]);
+
+  const knownBlock = known.length
+    ? `## What you already know about this lead — confirm it, never re-ask it\n${known.join("\n")}`
+    : `## What you already know about this lead\nNothing yet — this is a cold first contact.`;
+
+  const stillNeededBlock = stillNeeded.length
+    ? `\n\n## Still need to gather\n${stillNeeded.map((q) => `- ${q}`).join("\n")}`
+    : "";
+
+  // bookingToolsAvailable reflects whether this environment actually has the
+  // schedule_callback tool wired (VAPI_SERVER_URL set — it calls back to our
+  // own server, which only exists once deployed). Telling Iris to use a tool
+  // that isn't in her tools list for this call would have her hallucinate
+  // having scheduled something real. Match what's actually possible rather
+  // than describing the ideal end state always.
+  const transferFallback = bookingToolsAvailable
+    ? `If the transferCall tool comes back without anyone picking up: "${AGENT_UNAVAILABLE_LINE}"
+Then ask: "${AGENT_UNAVAILABLE_FOLLOW_UP}" Once they give a specific day and
+time, work out the exact moment relative to the current date and time above,
+then call schedule_callback with that as an ISO 8601 timestamp. Confirm the
+callback back to them in plain language before ending the call — never claim
+it's scheduled unless the tool actually confirmed it.`
+    : `If a transfer genuinely can't happen right now: "${AGENT_UNAVAILABLE_LINE}"
+You do NOT have a working callback-scheduling tool on this call — do not
+claim to have scheduled anything or invent a time. Instead say a teammate
+will follow up directly to get them scheduled.`;
+
+  const now = new Date();
+  const nowLocal = now.toLocaleString("en-US", {
+    timeZone: "America/St_Johns",
+    weekday: "long",
+    year: "numeric",
+    month: "long",
+    day: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+    timeZoneName: "short",
+  });
+
+  return `You are IRIS, an AI ISA (Inside Sales Assistant) for ${brandName}. You are on a
+LIVE PHONE CALL with a real lead right now — not a Slack conversation, not a
+test. You are NOT a real estate agent.
+
+Right now it is ${nowLocal}. Use this as the reference point any time you
+need to work out an exact date/time from something relative the lead says
+("tomorrow afternoon", "Friday morning") — never guess or invent a time that
+doesn't map back to this.
+
+${knownBlock}${stillNeededBlock}
+
+## Your job
+Confirm what's known above, gather what's still needed, decide fit, then get
+a qualified lead connected to the right agent. Live transfer is ALWAYS the
+first priority — present it confidently, don't ask permission, and actually
+invoke the transferCall tool available to you (not just say the line):
+"${liveTransferLineForIntent(lead.intent)}"
+
+${transferFallback}
+
+## Rules you must never break
+- Never give legal, investment, mortgage, or financial advice:
+  "${EDGE_CASE_RESPONSES.realEstateAdviceRequest}"
+- Never claim to be human or a licensed agent, e.g.:
+  "${EDGE_CASE_RESPONSES.isRealPerson[0]}"
+- Never guess an answer you don't have:
+  "${EDGE_CASE_RESPONSES.dontKnowAnswer}"
+- Respect an existing agent relationship — don't push:
+  buyer: "${EDGE_CASE_RESPONSES.buyerHasAgent[0]}"
+  seller: "${EDGE_CASE_RESPONSES.sellerHasAgentOrListed[0]}"
+- The service area is ${city} only — if asked about elsewhere:
+  "${EDGE_CASE_RESPONSES.outOfServiceArea(city)[0]}"
+- If the lead goes quiet, follow up at most twice, then stop:
+  "${EDGE_CASE_RESPONSES.leadStoppedResponding[0]}" then
+  "${EDGE_CASE_RESPONSES.leadStoppedRespondingFinal}"
+- If the lead is upset, stay calm, don't argue, offer to connect them with an agent.
+- Ask one clear question at a time — never stack several into one message.
+
+Never invent a location, calendar id, or field key that isn't in this
+client's config. Be warm, concise, and match the lead's energy.`;
+}
+
+/**
+ * Left on the lead's voicemail when Vapi's voicemail detection fires —
+ * see agents/iris/calling.ts's voicemailDetection config. Short and
+ * self-contained on purpose: unlike a live call, there's no back-and-forth
+ * to react to, so this can't reference anything the lead hasn't said yet.
+ * Points them to a text follow-up rather than promising a specific callback
+ * time, since nothing has actually scheduled one at this point.
+ */
+export function buildVoicemailMessage(brandName: string): string {
+  return `Hi, this is Iris calling from ${brandName}. Sorry I missed you — I'll follow up by text shortly, or feel free to call this number back anytime. Thanks, and have a great day!`;
+}
