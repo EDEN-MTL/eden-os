@@ -6,12 +6,12 @@ const client = new Anthropic({
 
 export interface ChatMessage {
   role: "user" | "assistant";
-  // A plain string for every agent that doesn't use tools (all of them,
-  // today, except Forge) — content blocks only appear in the scratch
-  // history a tool-use loop builds for itself. Widening this rather than
-  // introducing a second message type keeps every existing agent's code
-  // unchanged: they only ever push strings, and the SDK accepts both
-  // shapes on the same field.
+  // Persisted history is always a plain string — content blocks only ever
+  // appear in the scratch working array a tool-use loop builds for itself
+  // (every agent runs one now, via BaseAgent's save_note) or as an
+  // attachment on the current turn. Widening this rather than introducing
+  // a second message type keeps loadHistory's callers unchanged: they only
+  // ever push strings, and the SDK accepts both shapes on the same field.
   content: string | Anthropic.MessageParam["content"];
 }
 
