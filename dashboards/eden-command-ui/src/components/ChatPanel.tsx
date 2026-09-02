@@ -15,6 +15,33 @@ const SUGGESTIONS = ["System status", "Ad performance", "Brainstorm campaign", "
 const ACCEPTED_ATTACHMENT_TYPES = "image/png,image/jpeg,image/webp,image/gif,application/pdf";
 const MAX_ATTACHMENT_BYTES = 8 * 1024 * 1024; // matches server/chat-api.ts's decoded-size cap
 
+const SESSION_STORAGE_KEY = "eden-chat-session-id";
+
+/**
+ * A random id would normally be fine to mint fresh per mount, but ChatPanel
+ * only renders inside the COMMAND tab's own branch of App.tsx — switching to
+ * any other tab and back unmounts and remounts it. A plain useRef() default
+ * meant every tab switch (not just a real page reload) silently started a
+ * brand-new history_key server-side, so the agent's actual memory (backed by
+ * agent_conversations) never had a chance to be read back. Persisting the id
+ * in localStorage keeps it the same across remounts, reloads, and restarts.
+ */
+function getOrCreateSessionId(): string {
+  try {
+    const existing = localStorage.getItem(SESSION_STORAGE_KEY);
+    if (existing) return existing;
+  } catch {
+    // localStorage unavailable (private browsing, blocked) — fall through
+  }
+  const fresh = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+  try {
+    localStorage.setItem(SESSION_STORAGE_KEY, fresh);
+  } catch {
+    // best effort — conversation just won't survive a remount this time
+  }
+  return fresh;
+}
+
 export default function ChatPanel({
   selectedAgent,
   onVoiceLevelChange,
@@ -28,7 +55,7 @@ export default function ChatPanel({
   const [pending, setPending] = useState(false);
   const [pendingFile, setPendingFile] = useState<File | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
-  const sessionId = useRef(`${Date.now()}-${Math.random().toString(36).slice(2)}`);
+  const sessionId = useRef(getOrCreateSessionId());
   const { play, stop, level, speaking } = useVoicePlayer();
   const agent = agentByCode(selectedAgent);
 
