@@ -393,3 +393,63 @@ CREATE TABLE IF NOT EXISTS agent_notes (
     created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 CREATE INDEX IF NOT EXISTS idx_agent_notes_lookup ON agent_notes(agent_id, id);
+
+-- One row per Vapi call Iris places, keyed by Vapi's own call id so the
+-- end-of-call-report webhook can update the row it started (placeTestCall
+-- inserts 'initiated'; the webhook fills in the rest once the call ends).
+-- contact_id is nullable because the first real usage of this table is
+-- manual test calls (scripts/test-iris-call.ts) that aren't tied to a real
+-- GHL lead at all.
+CREATE TABLE IF NOT EXISTS iris_call_log (
+    id BIGSERIAL PRIMARY KEY,
+    client_id TEXT NOT NULL DEFAULT 'eden',
+    vapi_call_id TEXT NOT NULL UNIQUE,
+    contact_id TEXT,
+    phone TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'initiated', -- initiated | ended | failed
+    ended_reason TEXT,
+    transcript TEXT,
+    triggered_by TEXT NOT NULL DEFAULT 'manual', -- manual | automatic
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    ended_at TIMESTAMPTZ,
+    raw JSONB
+);
+CREATE INDEX IF NOT EXISTS idx_iris_call_log_client ON iris_call_log(client_id, created_at DESC);
+
+-- A lead.enriched event doesn't dial immediately — it schedules a dial for
+-- ~5 minutes later, giving the initial GHL SMS automation time to actually
+-- send before Iris calls on top of it (Mark's requirement: never call before
+-- confirming the text landed). A cron job (shared/scheduler) picks up rows
+-- once due. UNIQUE(client_id, contact_id) means at most one pending dial per
+-- lead at a time — a second lead.enriched for the same contact while one is
+-- already pending is a no-op insert (ON CONFLICT DO NOTHING), not a second
+-- call queued.
+CREATE TABLE IF NOT EXISTS iris_pending_calls (
+    id BIGSERIAL PRIMARY KEY,
+    client_id TEXT NOT NULL,
+    contact_id TEXT NOT NULL,
+    lead JSONB NOT NULL, -- the NormalisedLead captured at lead.enriched time
+    call_after TIMESTAMPTZ NOT NULL,
+    status TEXT NOT NULL DEFAULT 'pending', -- pending | placed | skipped | failed
+    resolution_reason TEXT, -- why it was skipped/failed, or the Vapi call id if placed
+    -- Attempts already placed for this lead. created_at (never touched by
+    -- the re-scheduling UPDATE in dial-pending.ts) doubles as the sequence
+    -- start that agents/iris/cadence.ts's nextAttemptTime anchors day 1 to.
+    attempts_made INTEGER NOT NULL DEFAULT 0,
+    -- Set by the schedule_callback tool (webhooks/vapi-tools.ts) when a lead
+    -- asks Iris to call back at a specific time, mid-call. dial-pending.ts's
+    -- resolveOne() skips the normal firstTouch gate for these rows — writing
+    -- the callback note into isa_notes flips firstTouch false immediately,
+    -- which would otherwise cause the very dial we just promised to be
+    -- skipped as "already touched". Gated on `qualified` instead, which
+    -- isa_notes doesn't affect.
+    is_explicit_callback BOOLEAN NOT NULL DEFAULT FALSE,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    resolved_at TIMESTAMPTZ,
+    UNIQUE (client_id, contact_id)
+);
+-- IF NOT EXISTS create above won't add this column to a table that already
+-- exists from before the multi-day cadence was built.
+ALTER TABLE iris_pending_calls ADD COLUMN IF NOT EXISTS attempts_made INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE iris_pending_calls ADD COLUMN IF NOT EXISTS is_explicit_callback BOOLEAN NOT NULL DEFAULT FALSE;
+CREATE INDEX IF NOT EXISTS idx_iris_pending_due ON iris_pending_calls(status, call_after);

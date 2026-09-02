@@ -45,6 +45,28 @@ export interface IrisConfig {
   hotScoreThreshold: number;
   warmScoreThreshold: number;
   calendars: { buyer: string; seller: string };
+  /**
+   * Real ring-group numbers, one agent pool per intent — everyone under the
+   * number rings simultaneously, first pickup wins (Mark's description).
+   * Used by Vapi's transferCall tool; see calling.ts's buildCallPayload.
+   */
+  transferNumbers: { buyer: string; seller: string };
+  /**
+   * Single write target for the callback note (iris.callbacks.notesFieldKey
+   * in client config) — same field scout.fields.isaNotes reads from, but
+   * named separately here on purpose: that's a read-priority list (several
+   * historical field names), while this is the one specific field Iris
+   * writes to, same split as writeFields below vs scout.fields.
+   * This is NOT the "never write prose into isa_notes" field from the
+   * qualification write-up — Jacob's brief is explicit that a callback
+   * request note IS meant to land here, since it becomes client-facing
+   * output, not raw Q&A prose. Mark, 2026-09-03: no GHL calendar involved
+   * here anymore — a requested callback is a note plus Iris herself
+   * re-dialing at that time (see dial-pending.ts's is_explicit_callback),
+   * not a booked calendar slot. See webhooks/vapi-tools.ts's
+   * handleScheduleCallback.
+   */
+  callbackNotesFieldKey: string;
   writeFields: IrisWriteFields;
   outreachCadence: OutreachCadenceConfig;
 }
@@ -177,6 +199,13 @@ export function decideOutcome(config: IrisConfig, score: number): QualificationO
 export function calendarForIntent(config: IrisConfig, intent: CallIntent): string | null {
   if (intent === "seller" || intent === "downsize") return config.calendars.seller;
   if (intent === "buyer" || intent === "upgrading") return config.calendars.buyer;
+  return null;
+}
+
+/** Same buyer/seller-first-transaction mapping as calendarForIntent, for the ring-group transfer number instead of the booking calendar. */
+export function transferNumberForIntent(config: IrisConfig, intent: CallIntent): string | null {
+  if (intent === "seller" || intent === "downsize") return config.transferNumbers.seller;
+  if (intent === "buyer" || intent === "upgrading") return config.transferNumbers.buyer;
   return null;
 }
 
