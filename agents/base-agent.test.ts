@@ -73,6 +73,22 @@ beforeEach(() => {
 });
 
 describe("BaseAgent.generateReply — no tools (every existing agent)", () => {
+  it("tells the model it has durable memory of this thread, so it doesn't deny the capability if asked", async () => {
+    // Live symptom this guards against: Forge, asked "can you remember
+    // things?", answered from its own generic training (an LLM has no
+    // memory) and denied a capability the system actually has. Nothing in
+    // any agent's own getSystemPrompt() says otherwise, so the correction
+    // has to be appended here, uniformly, rather than per agent.
+    vi.mocked(chat).mockResolvedValueOnce("sure do");
+
+    const agent = new PlainAgent();
+    await agent.generateReply("key-memory-aware", "can you remember things?");
+
+    const systemPromptSent = vi.mocked(chat).mock.calls[0][0];
+    expect(systemPromptSent).toContain("plain"); // the agent's own prompt is still present
+    expect(systemPromptSent.toLowerCase()).toMatch(/saved durably|reloaded on every message/);
+  });
+
   it("loads history from the durable store, calls plain chat(), and persists both turns in order", async () => {
     vi.mocked(chat).mockResolvedValueOnce("hello back");
 
