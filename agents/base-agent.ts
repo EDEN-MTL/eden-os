@@ -110,7 +110,13 @@ export abstract class BaseAgent {
       console.error(`[${this.code}] Failed to load conversation history:`, error);
       return [];
     });
-    const systemPrompt = this.getSystemPrompt(context);
+    // Without this, a model asked "do you remember things?" falls back on
+    // its own generic training (an LLM has no memory) and confidently
+    // denies a capability the system actually has — exactly what happened
+    // live: Forge told Jacob it forgets everything, despite history above
+    // this turn proving otherwise. Appended here, not baked into any one
+    // agent's getSystemPrompt(), so every agent inherits the correction.
+    const systemPrompt = `${this.getSystemPrompt(context)}\n\nYour conversation with this specific person, in this specific channel/DM/thread, is saved durably and reloaded on every message here — including across restarts and deploys. If asked whether you remember things, the honest answer is yes for this ongoing conversation (the messages above this one, if any, are it). You do NOT have access to conversations happening in a different channel, thread, or DM.`;
     const tools = this.getTools();
 
     const userContent: ChatMessage["content"] = attachment
