@@ -1,6 +1,7 @@
 import { Request, Response, Router } from "express";
 
 import { speakable } from "../shared/tts/speakable";
+import { timingSafeStringEqual } from "../shared/security";
 
 const ELEVENLABS_TTS_URL = "https://api.elevenlabs.io/v1/text-to-speech";
 
@@ -44,7 +45,8 @@ export function createTtsRouter(): Router {
   router.use((req: Request, res: Response, next) => {
     const requiredKey = process.env.DASHBOARD_API_KEY;
     if (!requiredKey) return next();
-    if (req.headers["x-dashboard-key"] !== requiredKey) {
+    const providedKey = req.headers["x-dashboard-key"];
+    if (typeof providedKey !== "string" || !timingSafeStringEqual(providedKey, requiredKey)) {
       return res.status(401).json({ error: "Invalid or missing dashboard key" });
     }
     next();

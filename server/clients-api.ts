@@ -13,6 +13,7 @@ import { readFileSync, readdirSync } from "fs";
 import { join } from "path";
 import { Request, Response, Router } from "express";
 import { query } from "../shared/db";
+import { timingSafeStringEqual } from "../shared/security";
 import { getMetaConfig, MetaClient, MetaAPIError } from "../shared/meta";
 import { ComplianceError } from "../shared/meta/compliance";
 import { attributionReport } from "../agents/forge/ads/attribution";
@@ -74,7 +75,8 @@ export function createClientsRouter(): Router {
   router.use((req: Request, res: Response, next) => {
     const requiredKey = process.env.DASHBOARD_API_KEY;
     if (!requiredKey) return next();
-    if (req.headers["x-dashboard-key"] !== requiredKey) {
+    const providedKey = req.headers["x-dashboard-key"];
+    if (typeof providedKey !== "string" || !timingSafeStringEqual(providedKey, requiredKey)) {
       return res.status(401).json({ error: "Invalid or missing dashboard key" });
     }
     next();

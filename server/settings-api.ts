@@ -7,6 +7,7 @@
  */
 import { Request, Response, Router } from "express";
 import { query } from "../shared/db";
+import { timingSafeStringEqual } from "../shared/security";
 import { MetaAPIError, MetaClient } from "../shared/meta";
 import { getCustomFieldDefs } from "../shared/ghl";
 
@@ -25,7 +26,8 @@ export function createSettingsRouter(): Router {
   router.use((req: Request, res: Response, next) => {
     const requiredKey = process.env.DASHBOARD_API_KEY;
     if (!requiredKey) return next();
-    if (req.headers["x-dashboard-key"] !== requiredKey) {
+    const providedKey = req.headers["x-dashboard-key"];
+    if (typeof providedKey !== "string" || !timingSafeStringEqual(providedKey, requiredKey)) {
       return res.status(401).json({ error: "Invalid or missing dashboard key" });
     }
     next();
