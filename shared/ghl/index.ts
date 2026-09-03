@@ -52,9 +52,10 @@ async function ghlRequest(
 
 export async function getContact(
   contactId: string,
-  locationId?: string
+  locationId?: string,
+  apiKey?: string
 ): Promise<any> {
-  return ghlRequest(`/contacts/${contactId}`, { locationId });
+  return ghlRequest(`/contacts/${contactId}`, { locationId, apiKey });
 }
 
 export async function searchContacts(
@@ -92,24 +93,28 @@ export async function createContact(
 export async function updateContact(
   contactId: string,
   data: Record<string, any>,
-  locationId?: string
+  locationId?: string,
+  apiKey?: string
 ): Promise<any> {
   return ghlRequest(`/contacts/${contactId}`, {
     method: "PUT",
     body: data,
     locationId,
+    apiKey,
   });
 }
 
 export async function addContactTags(
   contactId: string,
   tags: string[],
-  locationId?: string
+  locationId?: string,
+  apiKey?: string
 ): Promise<any> {
   return ghlRequest(`/contacts/${contactId}/tags`, {
     method: "POST",
     body: { tags },
     locationId,
+    apiKey,
   });
 }
 
@@ -361,11 +366,12 @@ export async function getCalendarSlots(
   calendarId: string,
   startDate: string,
   endDate: string,
-  locationId?: string
+  locationId?: string,
+  apiKey?: string
 ): Promise<any> {
   return ghlRequest(
     `/calendars/${calendarId}/free-slots?startDate=${startDate}&endDate=${endDate}`,
-    { locationId }
+    { locationId, apiKey }
   );
 }
 
@@ -378,12 +384,14 @@ export async function createAppointment(
     title?: string;
     notes?: string;
   },
-  locationId?: string
+  locationId?: string,
+  apiKey?: string
 ): Promise<any> {
   return ghlRequest(`/calendars/events/appointments`, {
     method: "POST",
     body: { calendarId, ...data },
     locationId,
+    apiKey,
   });
 }
 

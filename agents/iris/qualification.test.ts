@@ -10,18 +10,22 @@ import {
   qualify,
   QualificationAnswers,
   scoreQualification,
+  transferNumberForIntent,
 } from "./qualification";
 
 const config: IrisConfig = {
   questions: [
     "Are you looking to buy or sell?",
     "What area are you interested in?",
+    "What type of home are you looking for, and how many bedrooms and bathrooms do you need?",
     "What's your timeline?",
     "Are you pre-approved? What's your budget range?",
   ],
   hotScoreThreshold: 75,
   warmScoreThreshold: 40,
   calendars: { buyer: "4Eyz51DOI7TY78gRgBU3", seller: "vbsoYjk2Q6nI66q8u8to" },
+  transferNumbers: { buyer: "+17097058841", seller: "+17097059439" },
+  callbackNotesFieldKey: "contact.isa_notes",
   writeFields: {
     timeline: "contact.lf_timeframe",
     budget: "contact.lf_budget",
@@ -32,21 +36,36 @@ const config: IrisConfig = {
 };
 
 describe("nextQuestion / isComplete", () => {
-  it("asks in order: intent, area, timeline, financing", () => {
+  it("asks in order: intent, area, property details, timeline, financing", () => {
     expect(nextQuestion(config, BLANK_ANSWERS)).toBe(config.questions[0]);
     expect(nextQuestion(config, { ...BLANK_ANSWERS, intent: "buyer" })).toBe(config.questions[1]);
     expect(nextQuestion(config, { ...BLANK_ANSWERS, intent: "buyer", area: "Mount Pearl" })).toBe(
       config.questions[2]
     );
     expect(
-      nextQuestion(config, { ...BLANK_ANSWERS, intent: "buyer", area: "Mount Pearl", timeline: "ASAP" })
+      nextQuestion(config, {
+        ...BLANK_ANSWERS,
+        intent: "buyer",
+        area: "Mount Pearl",
+        propertyDetails: "3 bed, 2 bath",
+      })
     ).toBe(config.questions[3]);
+    expect(
+      nextQuestion(config, {
+        ...BLANK_ANSWERS,
+        intent: "buyer",
+        area: "Mount Pearl",
+        propertyDetails: "3 bed, 2 bath",
+        timeline: "ASAP",
+      })
+    ).toBe(config.questions[4]);
   });
 
   it("is complete once every applicable question has an answer", () => {
     const answers: QualificationAnswers = {
       intent: "buyer",
       area: "Mount Pearl",
+      propertyDetails: "3 bed, 2 bath",
       timeline: "ASAP",
       financing: "pre-approved",
       budget: "$450,000",
@@ -63,6 +82,7 @@ describe("nextQuestion / isComplete", () => {
     const answers: QualificationAnswers = {
       intent: "seller",
       area: "Downtown St. John's",
+      propertyDetails: "3 bed bungalow",
       timeline: "1-4 Months",
       financing: null,
       budget: null,
@@ -76,17 +96,18 @@ describe("nextQuestion / isComplete", () => {
       const answers: QualificationAnswers = {
         intent,
         area: "St. John's",
+        propertyDetails: "3 bed, 2 bath",
         timeline: "ASAP",
         financing: null,
         budget: null,
       };
-      expect(nextQuestion(config, answers)).toBe(config.questions[3]);
+      expect(nextQuestion(config, answers)).toBe(config.questions[4]);
     }
   });
 
   it("throws rather than silently mis-mapping when the question count doesn't match", () => {
     const badConfig: IrisConfig = { ...config, questions: [...config.questions, "One more?"] };
-    expect(() => nextQuestion(badConfig, BLANK_ANSWERS)).toThrow(/expects 4 qualification questions/);
+    expect(() => nextQuestion(badConfig, BLANK_ANSWERS)).toThrow(/expects 5 qualification questions/);
   });
 });
 
@@ -95,6 +116,7 @@ describe("scoreQualification", () => {
     const { score } = scoreQualification({
       intent: "buyer",
       area: "Mount Pearl",
+      propertyDetails: "3 bed, 2 bath",
       timeline: "ASAP",
       financing: "cash",
       budget: "$450,000",
@@ -107,6 +129,7 @@ describe("scoreQualification", () => {
     const { score } = scoreQualification({
       intent: "buyer",
       area: "unsure",
+      propertyDetails: null,
       timeline: "12+ months",
       financing: "not-approved",
       budget: null,
@@ -121,14 +144,14 @@ describe("scoreQualification", () => {
    * merely pre-approved, let alone as a negative.
    */
   it("scores a cash buyer higher than an otherwise-identical pre-approved buyer", () => {
-    const base = { intent: "buyer" as const, area: "x", timeline: "ASAP", budget: "$400,000" };
+    const base = { intent: "buyer" as const, area: "x", propertyDetails: null, timeline: "ASAP", budget: "$400,000" };
     const cash = scoreQualification({ ...base, financing: "cash" }).score;
     const preApproved = scoreQualification({ ...base, financing: "pre-approved" }).score;
     expect(cash).toBeGreaterThan(preApproved);
   });
 
   it("scores financing in-progress between pre-approved and not-approved", () => {
-    const base = { intent: "buyer" as const, area: "x", timeline: "ASAP", budget: "$400,000" };
+    const base = { intent: "buyer" as const, area: "x", propertyDetails: null, timeline: "ASAP", budget: "$400,000" };
     const preApproved = scoreQualification({ ...base, financing: "pre-approved" }).score;
     const inProgress = scoreQualification({ ...base, financing: "in-progress" }).score;
     const notApproved = scoreQualification({ ...base, financing: "not-approved" }).score;
@@ -138,14 +161,16 @@ describe("scoreQualification", () => {
 });
 
 describe("decideOutcome", () => {
-  it("books at or above the hot threshold", () => {
-    expect(decideOutcome(config, 75)).toBe("book");
-    expect(decideOutcome(config, 95)).toBe("book");
-  });
-
-  it("transfers between the warm and hot thresholds", () => {
+  /**
+   * Per the VA/ISA pipeline SOP: live transfer is attempted for EVERY
+   * qualified lead, regardless of how high the score is — there is no tier
+   * that skips straight to booking. hotScoreThreshold is intentionally
+   * unused here.
+   */
+  it("transfers at or above the warm threshold, however high the score goes", () => {
     expect(decideOutcome(config, 40)).toBe("transfer");
-    expect(decideOutcome(config, 74)).toBe("transfer");
+    expect(decideOutcome(config, 75)).toBe("transfer");
+    expect(decideOutcome(config, 95)).toBe("transfer");
   });
 
   it("nurtures below the warm threshold", () => {
@@ -170,25 +195,46 @@ describe("calendarForIntent", () => {
   });
 });
 
+describe("transferNumberForIntent", () => {
+  it("routes buyer and upgrading intents to the buyer ring group", () => {
+    expect(transferNumberForIntent(config, "buyer")).toBe(config.transferNumbers.buyer);
+    expect(transferNumberForIntent(config, "upgrading")).toBe(config.transferNumbers.buyer);
+  });
+
+  it("routes seller and downsize intents to the seller ring group", () => {
+    expect(transferNumberForIntent(config, "seller")).toBe(config.transferNumbers.seller);
+    expect(transferNumberForIntent(config, "downsize")).toBe(config.transferNumbers.seller);
+  });
+
+  it("has no transfer number for unknown intent", () => {
+    expect(transferNumberForIntent(config, "unknown")).toBeNull();
+  });
+});
+
 describe("qualify", () => {
-  it("books a hot cash buyer onto the buyer calendar and tags appt booked", () => {
+  /**
+   * The SOP's core rule: ANY qualified lead gets "transfer" — a top score
+   * gets the exact same outcome as a lead that just barely cleared the bar.
+   * There is no separate "good enough to book directly" tier.
+   */
+  it("transfers a hot cash buyer, same outcome as any other qualified lead", () => {
     const result = qualify(config, {
       intent: "buyer",
       area: "Mount Pearl",
+      propertyDetails: "3 bed, 2 bath",
       timeline: "ASAP",
       financing: "cash",
       budget: "$450,000",
     });
     expect(result.score).toBe(95);
-    expect(result.outcome).toBe("book");
-    expect(result.calendarId).toBe(config.calendars.buyer);
-    expect(result.tag).toBe("appt booked");
+    expect(result.outcome).toBe("transfer");
   });
 
-  it("nurtures a seller with no financing signal and books no calendar slot", () => {
+  it("nurtures a seller with no financing signal", () => {
     const result = qualify(config, {
       intent: "seller",
       area: "St. John's",
+      propertyDetails: "3 bed bungalow",
       timeline: "1-4 Months",
       financing: null,
       budget: null,
@@ -196,14 +242,13 @@ describe("qualify", () => {
     // +18 near-term timeline (parsed to 1 month), +10 intent known, +5 phone (in-call) = 33
     expect(result.score).toBe(33);
     expect(result.outcome).toBe("nurture");
-    expect(result.calendarId).toBeNull();
-    expect(result.tag).toBeNull();
   });
 
-  it("transfers a mid-score lead without booking a calendar slot", () => {
+  it("transfers a lead that just clears the warm threshold", () => {
     const result = qualify(config, {
       intent: "buyer",
       area: "Mount Pearl",
+      propertyDetails: "3 bed, 2 bath",
       timeline: "1-4 Months",
       financing: null,
       budget: "$300,000",
@@ -211,8 +256,6 @@ describe("qualify", () => {
     // +18 near-term timeline, +10 budget, +10 intent known, +5 phone (in-call) = 43
     expect(result.score).toBe(43);
     expect(result.outcome).toBe("transfer");
-    expect(result.calendarId).toBeNull();
-    expect(result.tag).toBe("live transferred");
   });
 });
 
@@ -224,7 +267,7 @@ describe("fieldWritesFor", () => {
    */
   it("writes the financing answer as its actual value, not a yes/no", () => {
     const writes = fieldWritesFor(
-      { intent: "buyer", area: "x", timeline: "ASAP", financing: "cash", budget: null },
+      { intent: "buyer", area: "x", propertyDetails: null, timeline: "ASAP", financing: "cash", budget: null },
       config.writeFields
     );
     expect(writes["contact.are_you_pre_approuved"]).toBe("cash");
@@ -232,7 +275,7 @@ describe("fieldWritesFor", () => {
 
   it("writes intent to the propertyInterest field as buyer/seller/downsize/upgrading", () => {
     const writes = fieldWritesFor(
-      { intent: "downsize", area: "x", timeline: "ASAP", financing: null, budget: null },
+      { intent: "downsize", area: "x", propertyDetails: null, timeline: "ASAP", financing: null, budget: null },
       config.writeFields
     );
     expect(writes["contact.lf_proprety"]).toBe("downsize");

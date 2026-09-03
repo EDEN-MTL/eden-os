@@ -36,15 +36,38 @@ export interface OutreachCadenceConfig {
 
 export interface IrisConfig {
   /**
-   * The four-question list in client config today. Per the Iris build
-   * brief, this is a placeholder — Jacob has a fuller qualification script
-   * that hasn't landed yet. assertQuestionShape() below fails loudly rather
-   * than silently mis-mapping answers if the shape changes.
+   * The five-question list in client config today (intent, area, property
+   * details, timeline, financing). Per the Iris build brief, this is a
+   * placeholder — Jacob has a fuller qualification script that hasn't
+   * landed yet. assertQuestionShape() below fails loudly rather than
+   * silently mis-mapping answers if the shape changes.
    */
   questions: string[];
   hotScoreThreshold: number;
   warmScoreThreshold: number;
   calendars: { buyer: string; seller: string };
+  /**
+   * Real ring-group numbers, one agent pool per intent — everyone under the
+   * number rings simultaneously, first pickup wins (Mark's description).
+   * Used by Vapi's transferCall tool; see calling.ts's buildCallPayload.
+   */
+  transferNumbers: { buyer: string; seller: string };
+  /**
+   * Single write target for the callback note (iris.callbacks.notesFieldKey
+   * in client config) — same field scout.fields.isaNotes reads from, but
+   * named separately here on purpose: that's a read-priority list (several
+   * historical field names), while this is the one specific field Iris
+   * writes to, same split as writeFields below vs scout.fields.
+   * This is NOT the "never write prose into isa_notes" field from the
+   * qualification write-up — Jacob's brief is explicit that a callback
+   * request note IS meant to land here, since it becomes client-facing
+   * output, not raw Q&A prose. Mark, 2026-09-03: no GHL calendar involved
+   * here anymore — a requested callback is a note plus Iris herself
+   * re-dialing at that time (see dial-pending.ts's is_explicit_callback),
+   * not a booked calendar slot. See webhooks/vapi-tools.ts's
+   * handleScheduleCallback.
+   */
+  callbackNotesFieldKey: string;
   writeFields: IrisWriteFields;
   outreachCadence: OutreachCadenceConfig;
 }
@@ -52,6 +75,8 @@ export interface IrisConfig {
 export interface QualificationAnswers {
   intent: CallIntent;
   area: string | null;
+  /** Property type + bedroom/bathroom count — Jacob's live feedback, 2026-09-04. */
+  propertyDetails: string | null;
   timeline: string | null;
   budget: string | null;
   /**
@@ -66,37 +91,45 @@ export interface QualificationAnswers {
 export const BLANK_ANSWERS: QualificationAnswers = {
   intent: "unknown",
   area: null,
+  propertyDetails: null,
   timeline: null,
   budget: null,
   financing: null,
 };
 
-export type QualificationOutcome = "book" | "transfer" | "nurture";
+/**
+ * Per the VA/ISA pipeline SOP: once a lead is qualified, live transfer is
+ * ALWAYS attempted first — there is no score tier that skips straight to
+ * booking. Booking only happens as the fallback when a transfer is
+ * attempted and no agent picks up, which depends on what actually happens
+ * on a real call — that decision belongs to the (not yet built) call
+ * execution step, not to this score-based module.
+ */
+export type QualificationOutcome = "transfer" | "nurture";
 
 export interface QualificationResult {
   answers: QualificationAnswers;
   score: number;
   scoreReasons: string[];
   outcome: QualificationOutcome;
-  calendarId: string | null;
-  tag: "appt booked" | "live transferred" | null;
 }
 
 /**
- * Positional concepts behind today's four placeholder questions: buy/sell,
- * area, timeline, financing+budget. There is no way to connect free-form
- * question text to structured fields other than position, since the
- * questions are plain strings in config — so this throws instead of
+ * Positional concepts behind today's five questions: buy/sell, area,
+ * property details (type + bed/bath, added per Jacob's 2026-09-04 live
+ * feedback), timeline, financing+budget. There is no way to connect
+ * free-form question text to structured fields other than position, since
+ * the questions are plain strings in config — so this throws instead of
  * silently mis-mapping if the question count ever changes.
  */
-const EXPECTED_QUESTION_COUNT = 4;
+const EXPECTED_QUESTION_COUNT = 5;
 
 function assertQuestionShape(questions: string[]): void {
   if (questions.length !== EXPECTED_QUESTION_COUNT) {
     throw new Error(
-      `Iris expects ${EXPECTED_QUESTION_COUNT} qualification questions (intent, area, timeline, ` +
-        `financing) but config supplied ${questions.length}. The positional mapping in ` +
-        `nextQuestion() needs updating before qualifying calls against this script.`
+      `Iris expects ${EXPECTED_QUESTION_COUNT} qualification questions (intent, area, property ` +
+        `details, timeline, financing) but config supplied ${questions.length}. The positional ` +
+        `mapping in nextQuestion() needs updating before qualifying calls against this script.`
     );
   }
 }
@@ -111,10 +144,11 @@ function assertQuestionShape(questions: string[]): void {
  */
 export function nextQuestion(config: IrisConfig, answers: QualificationAnswers): string | null {
   assertQuestionShape(config.questions);
-  const [intentQ, areaQ, timelineQ, financingQ] = config.questions;
+  const [intentQ, areaQ, propertyDetailsQ, timelineQ, financingQ] = config.questions;
 
   if (answers.intent === "unknown") return intentQ;
   if (answers.area === null) return areaQ;
+  if (answers.propertyDetails === null) return propertyDetailsQ;
   if (answers.timeline === null) return timelineQ;
   if (answers.intent !== "seller" && answers.financing === null) return financingQ;
   return null;
@@ -161,10 +195,14 @@ export function scoreQualification(answers: QualificationAnswers): { score: numb
   });
 }
 
+/**
+ * Single qualifying bar (warmScoreThreshold) — the SOP has no "hot enough to
+ * skip the agent" tier, so hotScoreThreshold isn't used here. It's left in
+ * client config for now in case it's still useful for something like call
+ * queue ordering, a separate concern from qualified-or-not.
+ */
 export function decideOutcome(config: IrisConfig, score: number): QualificationOutcome {
-  if (score >= config.hotScoreThreshold) return "book";
-  if (score >= config.warmScoreThreshold) return "transfer";
-  return "nurture";
+  return score >= config.warmScoreThreshold ? "transfer" : "nurture";
 }
 
 /**
@@ -173,10 +211,21 @@ export function decideOutcome(config: IrisConfig, score: number): QualificationO
  * hybrid — a downsizer has to list before they buy, an upgrader has to
  * qualify to buy before they list — so each routes to the calendar for the
  * transaction that has to happen first.
+ *
+ * Used by the (not yet built) transfer-fallback step, once a live transfer
+ * has actually been attempted and no agent picked up — not by qualify()
+ * below, since booking is no longer a score-time decision.
  */
 export function calendarForIntent(config: IrisConfig, intent: CallIntent): string | null {
   if (intent === "seller" || intent === "downsize") return config.calendars.seller;
   if (intent === "buyer" || intent === "upgrading") return config.calendars.buyer;
+  return null;
+}
+
+/** Same buyer/seller-first-transaction mapping as calendarForIntent, for the ring-group transfer number instead of the booking calendar. */
+export function transferNumberForIntent(config: IrisConfig, intent: CallIntent): string | null {
+  if (intent === "seller" || intent === "downsize") return config.transferNumbers.seller;
+  if (intent === "buyer" || intent === "upgrading") return config.transferNumbers.buyer;
   return null;
 }
 
@@ -187,10 +236,7 @@ export function calendarForIntent(config: IrisConfig, intent: CallIntent): strin
 export function qualify(config: IrisConfig, answers: QualificationAnswers): QualificationResult {
   const { score, reasons } = scoreQualification(answers);
   const outcome = decideOutcome(config, score);
-  const calendarId = outcome === "book" ? calendarForIntent(config, answers.intent) : null;
-  const tag = outcome === "book" ? "appt booked" : outcome === "transfer" ? "live transferred" : null;
-
-  return { answers, score, scoreReasons: reasons, outcome, calendarId, tag };
+  return { answers, score, scoreReasons: reasons, outcome };
 }
 
 /**
