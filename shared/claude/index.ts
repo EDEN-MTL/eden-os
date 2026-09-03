@@ -23,6 +23,30 @@ export interface ToolDef {
 
 export type AttachmentMediaType = "image/png" | "image/jpeg" | "image/webp" | "image/gif" | "application/pdf";
 
+// One list for every caller that accepts a file into a chat turn — the
+// dashboard's chat API and Slack's file-upload handling both need the exact
+// same allowlist, and a divergence between them would mean the same file
+// works from one surface and silently fails from the other.
+export const ALLOWED_ATTACHMENT_TYPES: ReadonlySet<string> = new Set<AttachmentMediaType>([
+  "image/png",
+  "image/jpeg",
+  "image/webp",
+  "image/gif",
+  "application/pdf",
+]);
+
+export function isAttachmentMediaType(mediaType: string): mediaType is AttachmentMediaType {
+  return ALLOWED_ATTACHMENT_TYPES.has(mediaType);
+}
+
+// Decoded-bytes cap, shared across every attachment entry point (dashboard
+// upload, Slack file download) so a file within Slack's own generous size
+// limits doesn't sail past what the rest of the system was ever tested
+// against — the dashboard path derived this from express.json()'s body
+// limit accounting for ~33% base64 overhead; Slack files arrive as raw
+// bytes with no such encoding, but the same ceiling still applies.
+export const MAX_ATTACHMENT_BYTES = 8 * 1024 * 1024;
+
 export interface Attachment {
   data: Buffer;
   mediaType: AttachmentMediaType;

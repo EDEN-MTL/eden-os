@@ -1,7 +1,7 @@
-import { Attachment, attachmentToBlock, chatWithTools, ChatMessage, ToolDef } from "../shared/claude";
+import { Attachment, attachmentToBlock, chatWithTools, ChatMessage, isAttachmentMediaType, MAX_ATTACHMENT_BYTES, ToolDef } from "../shared/claude";
 import { appendHistory, loadHistory } from "../shared/conversation-memory";
 import { loadNotes, saveNote } from "../shared/agent-notes";
-import { getUserRealName, sendMessage } from "../shared/slack";
+import { downloadFile, getUserRealName, sendMessage } from "../shared/slack";
 import { AgentId, SlackIncomingMessage } from "../shared/types";
 
 const MAX_TOOL_TURNS = 6;
@@ -117,9 +117,10 @@ export abstract class BaseAgent {
     // real, identifiable person, not an anonymous lead. getUserRealName never
     // throws (returns null on lookup failure), so this can't break a reply.
     const senderName = await getUserRealName(this.id, message.userId);
+    const attachment = await this.resolveSlackAttachment(message);
 
     try {
-      const response = await this.generateReply(historyKey, message.text, { senderName });
+      const response = await this.generateReply(historyKey, message.text, { senderName }, attachment);
       await this.respond(message, response);
     } catch (error) {
       console.error(`[${this.code}] Error generating response:`, error);
@@ -127,6 +128,35 @@ export abstract class BaseAgent {
         message,
         "Systems experiencing interference. Retrying..."
       );
+    }
+  }
+
+  /**
+   * Downloads the file (if any) attached to a Slack message into the same
+   * Attachment shape the dashboard's chat API already produces. Never
+   * throws — an unsupported type, a download failure, or an oversized file
+   * all degrade to "no attachment this turn" (logged, not silent) rather
+   * than failing the whole reply, same reasoning as getUserRealName.
+   */
+  private async resolveSlackAttachment(message: SlackIncomingMessage): Promise<Attachment | undefined> {
+    const file = message.file;
+    if (!file) return undefined;
+
+    if (!isAttachmentMediaType(file.mimetype)) {
+      console.warn(`[${this.code}] Ignoring Slack attachment of unsupported type: ${file.mimetype}`);
+      return undefined;
+    }
+
+    try {
+      const data = await downloadFile(this.id, file.url);
+      if (data.length === 0 || data.length > MAX_ATTACHMENT_BYTES) {
+        console.warn(`[${this.code}] Ignoring Slack attachment — ${data.length} bytes is outside the allowed range.`);
+        return undefined;
+      }
+      return { data, mediaType: file.mimetype, filename: file.name };
+    } catch (error) {
+      console.error(`[${this.code}] Failed to download Slack attachment:`, error);
+      return undefined;
     }
   }
 

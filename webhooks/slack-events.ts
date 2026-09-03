@@ -73,6 +73,20 @@ export function verifySlackSignature(
 }
 
 /**
+ * Pulls the first file (if any) off a Slack message event into the plain
+ * {url, mimetype, name} shape SlackIncomingMessage carries. Exported for
+ * direct unit testing — the fallback from url_private_download to
+ * url_private, and tolerating a missing/empty files array, are easy to get
+ * wrong silently since neither shows up until someone actually attaches a
+ * file in Slack.
+ */
+export function extractFileFromEvent(event: any): SlackIncomingMessage["file"] {
+  const firstFile = Array.isArray(event.files) ? event.files[0] : null;
+  if (!firstFile) return undefined;
+  return { url: firstFile.url_private_download || firstFile.url_private, mimetype: firstFile.mimetype, name: firstFile.name };
+}
+
+/**
  * Create the webhook handler for a specific agent.
  */
 function createAgentHandler(agentId: AgentId) {
@@ -105,6 +119,12 @@ function createAgentHandler(agentId: AgentId) {
       // Ignore message edits and deletes
       if (event.subtype === "message_changed" || event.subtype === "message_deleted") return;
 
+      // A message with a file attached carries it in event.files — only
+      // ever the first one is used, same one-attachment-per-turn contract
+      // as the dashboard's chat API. This is metadata only (the bot token
+      // needed to actually download it lives one layer up, in shared/slack).
+      const file = extractFileFromEvent(event);
+
       // Build the incoming message
       const message: SlackIncomingMessage = {
         agentId,
@@ -114,6 +134,7 @@ function createAgentHandler(agentId: AgentId) {
         threadTs: event.thread_ts || event.ts,
         isDM: event.channel_type === "im",
         timestamp: event.ts,
+        file,
       };
 
       // Route to the correct agent

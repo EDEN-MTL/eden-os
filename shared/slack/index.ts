@@ -68,6 +68,23 @@ export function getSigningSecret(agentId: AgentId): string {
 }
 
 /**
+ * Downloads a file a user uploaded in Slack. Slack's file urls
+ * (url_private/url_private_download on a message event's `files` entries)
+ * are NOT public — they 401 without the bot token that can see the
+ * channel, and that token isn't exposed by the WebClient instance itself,
+ * so this bypasses the Web API client entirely for a plain authenticated
+ * GET.
+ */
+export async function downloadFile(agentId: AgentId, url: string): Promise<Buffer> {
+  const config = agentConfigs.get(agentId);
+  if (!config?.token) throw new Error(`No Slack bot token for agent: ${agentId}`);
+
+  const res = await fetch(url, { headers: { Authorization: `Bearer ${config.token}` } });
+  if (!res.ok) throw new Error(`Failed to download Slack file (${res.status}): ${url}`);
+  return Buffer.from(await res.arrayBuffer());
+}
+
+/**
  * Send a message as a specific agent.
  */
 export async function sendMessage(
