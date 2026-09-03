@@ -143,7 +143,7 @@ export function buildCallPayload(
           required: ["callbackTime"],
         },
       },
-      server: { url: `${vapiConfig.serverUrl}/tools/schedule-callback?${qs}` },
+      server: { url: `${vapiConfig.serverUrl}/tools/schedule-callback?${qs}`, secret: vapiConfig.webhookSecret },
     });
   }
 
@@ -161,7 +161,7 @@ export function buildCallPayload(
         provider: vapiConfig.voiceProvider,
         voiceId: vapiConfig.voiceId,
       },
-      serverUrl: vapiConfig.serverUrl,
+      server: vapiConfig.serverUrl ? { url: vapiConfig.serverUrl, secret: vapiConfig.webhookSecret } : undefined,
       // Without this, Vapi has no way to tell the call apart from a live
       // pickup — Iris just talks into the machine as if a person answered,
       // which is exactly what happened testing against this number twice.

@@ -14,6 +14,7 @@ const VAPI_CONFIG = {
   voiceProvider: "vapi",
   voiceId: "Neha",
   serverUrl: "https://example.com/webhooks/vapi",
+  webhookSecret: "test-webhook-secret",
 };
 
 const BASE_PARAMS: PlaceCallParams = {
@@ -67,7 +68,7 @@ describe("buildCallPayload", () => {
     expect(payload.assistant.model.model).toBe("gpt-4.1-nano");
     expect(payload.assistant.voice.provider).toBe("vapi");
     expect(payload.assistant.voice.voiceId).toBe("Neha");
-    expect(payload.assistant.serverUrl).toBe("https://example.com/webhooks/vapi");
+    expect(payload.assistant.server).toEqual({ url: "https://example.com/webhooks/vapi", secret: "test-webhook-secret" });
   });
 
   it("enables voicemail detection and sets a real message, not just talking into the machine", () => {
@@ -143,6 +144,13 @@ describe("buildCallPayload", () => {
       const url = new URL(tool.server.url);
       expect(url.searchParams.get("clientId")).toBe("3-percent-east-coast");
       expect(url.searchParams.get("contactId")).toBe("contact-1");
+    });
+
+    it("attaches the webhook secret so Vapi actually sends X-Vapi-Secret back on this tool's callback", () => {
+      const payload = buildCallPayload(withContactId, VAPI_CONFIG);
+      const tool = payload.assistant.tools?.find((t) => t.type === "function" && t.function.name === "schedule_callback");
+      if (tool?.type !== "function") throw new Error("expected function tool");
+      expect(tool.server.secret).toBe("test-webhook-secret");
     });
 
     it("requires a callbackTime argument from the model", () => {

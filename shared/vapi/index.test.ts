@@ -45,4 +45,15 @@ describe("getVapiEnvConfig", () => {
     process.env.VAPI_SERVER_URL = "https://example.com/webhooks/vapi";
     expect(getVapiEnvConfig().serverUrl).toBe("https://example.com/webhooks/vapi");
   });
+
+  it("treats an unset VAPI_WEBHOOK_SECRET as undefined, not required", () => {
+    delete process.env.VAPI_WEBHOOK_SECRET;
+    expect(() => getVapiEnvConfig()).not.toThrow();
+    expect(getVapiEnvConfig().webhookSecret).toBeUndefined();
+  });
+
+  it("passes through a real VAPI_WEBHOOK_SECRET unchanged", () => {
+    process.env.VAPI_WEBHOOK_SECRET = "shh-its-a-secret";
+    expect(getVapiEnvConfig().webhookSecret).toBe("shh-its-a-secret");
+  });
 });

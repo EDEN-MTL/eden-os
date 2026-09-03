@@ -19,7 +19,20 @@ export interface VapiAssistantConfig {
     provider: string;
     voiceId: string;
   };
-  serverUrl?: string;
+  /**
+   * Vapi's actual field for this is `server` (an object), NOT the flat
+   * `serverUrl` string this code sent for a while — that string still
+   * routes the webhook to the right URL, but Vapi has nowhere to put a
+   * secret on it, so every end-of-call-report delivery came back with no
+   * X-Vapi-Secret header and got rejected by webhooks/vapi-webhook.ts's own
+   * check the moment VAPI_WEBHOOK_SECRET was actually set. Confirmed live:
+   * a real test call showed the webhook retried ~20 times, every one logged
+   * "Invalid or missing X-Vapi-Secret header". `secret` here is the
+   * documented (if now legacy, per Vapi's server-authentication docs)
+   * inline-secret pattern — simpler than provisioning a Vapi dashboard
+   * credential for this.
+   */
+  server?: { url: string; secret?: string };
   /**
    * Vapi's own detection ("vapi" provider) — per their docs, combines audio
    * analysis and transcription to catch voicemail within the first few
@@ -122,6 +135,7 @@ export function getVapiEnvConfig(): {
   voiceProvider: string;
   voiceId: string;
   serverUrl: string | undefined;
+  webhookSecret: string | undefined;
 } {
   const apiKey = process.env.VAPI_API_KEY;
   const phoneNumberId = process.env.VAPI_PHONE_NUMBER_ID;
@@ -155,6 +169,11 @@ export function getVapiEnvConfig(): {
     // ("must be a valid URL"), so normalize the unset case here rather
     // than passing "" through to the payload.
     serverUrl: process.env.VAPI_SERVER_URL || undefined,
+    // Optional by design, same as webhooks/vapi-webhook.ts's own check
+    // (`if (secret && ...)`) — lets local/early testing run without one.
+    // When it IS set, both sides must agree: this is what makes Vapi
+    // actually attach it as X-Vapi-Secret (see VapiAssistantConfig.server).
+    webhookSecret: process.env.VAPI_WEBHOOK_SECRET || undefined,
   };
 }
 
