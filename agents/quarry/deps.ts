@@ -9,7 +9,7 @@
  * pipeline is ever edited. Revisit only if volume actually makes that cost
  * matter.
  */
-import { getGhlConfig, sendEmail, sendMMS, sendSMS, updateOpportunityStage } from "../../shared/ghl";
+import { getGhlConfig, sendEmail, sendMMS, sendSMS, updateContact, updateOpportunityStage } from "../../shared/ghl";
 import { loadQuarryConfig } from "./config";
 import { resolvePipeline } from "./sync";
 import { EmailDeps, OutreachDeps } from "./outreach";
@@ -77,4 +77,34 @@ export async function buildEmailDeps(clientId = "eden"): Promise<EmailDeps> {
     moveStage: (opportunityId, stageName) => moveStageByName(ctx, opportunityId, stageName),
     wait: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
   };
+}
+
+/**
+ * Mirrors an email opt-out onto the GHL contact's own DND settings, so GHL
+ * itself will not let a future message reach this contact by email from
+ * anywhere else in the account — not just our own send path.
+ *
+ * UNVERIFIED against a live contact — inboundDndSettings' exact shape is
+ * inferred from HighLevel's contact API reference (a per-channel DND map),
+ * not exercised against a real account yet. Failure here is logged and
+ * swallowed on purpose: quarry_leads.email_opted_out is the flag canSendEmail
+ * actually checks, so a failed GHL mirror must never block or delay the
+ * unsubscribe itself.
+ */
+export async function markEmailOptOutInGhl(lead: {
+  clientId: string;
+  ghlContactId: string | null;
+}): Promise<void> {
+  if (!lead.ghlContactId) return;
+  try {
+    const ghlConfig = await getGhlConfig(lead.clientId);
+    if (!ghlConfig) return;
+    await updateContact(
+      lead.ghlContactId,
+      { inboundDndSettings: { Email: { status: "active" } } },
+      ghlConfig.locationId
+    );
+  } catch (error) {
+    console.warn(`[QRY] failed to mirror email opt-out to GHL for contact ${lead.ghlContactId}:`, error);
+  }
 }

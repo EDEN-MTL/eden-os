@@ -12,6 +12,7 @@
  * table.
  */
 import express, { Router } from "express";
+import { markEmailOptOutInGhl } from "../agents/quarry/deps";
 import { readImage } from "../agents/quarry/screenshot";
 import { unsubscribeByToken } from "../agents/quarry/store";
 
@@ -47,19 +48,29 @@ export function createQuarryRouter(): Router {
   // is an opaque UUID (see insertDiscovered), not the lead's numeric id, so
   // this route cannot be used to opt some OTHER lead out by editing the URL.
   router.get("/unsubscribe/:token", async (req, res) => {
-    const ok = await unsubscribeByToken(req.params.token).catch((error) => {
-      console.error("[QRY] unsubscribe failed:", error);
-      return null;
-    });
     res.setHeader("Content-Type", "text/html; charset=utf-8");
-    if (ok === null) {
+
+    // A real try/catch, not `.catch(() => null)` — unsubscribeByToken
+    // legitimately RETURNS null for "no matching token", which must show the
+    // same generic success page as a real match (never reveal token validity
+    // to an anonymous requester). Collapsing that into the same null a
+    // thrown error produces would 500 on a stale link instead.
+    let lead;
+    try {
+      lead = await unsubscribeByToken(req.params.token);
+    } catch (error) {
+      console.error("[QRY] unsubscribe failed:", error);
       res.status(500).send("<p>Something went wrong. Please try again later.</p>");
       return;
     }
-    // Same response whether the token matched or not — confirming a token is
-    // valid/invalid to an anonymous requester is not something this route
-    // should reveal either way.
+
     res.send("<p>You have been unsubscribed and will not receive further emails.</p>");
+
+    // Fires after the response is already sent — a slow or failing GHL call
+    // must never delay or break the unsubscribe confirmation itself. Our own
+    // email_opted_out flag (already set above) is what canSendEmail actually
+    // checks; this is a mirror for GHL's own systems, not a dependency.
+    if (lead?.ghlContactId) void markEmailOptOutInGhl(lead);
   });
 
   return router;

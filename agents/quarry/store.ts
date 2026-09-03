@@ -253,14 +253,19 @@ export async function getLeadByUnsubscribeToken(token: string): Promise<QuarryLe
   return rows[0] ? rowToLead(rows[0]) : null;
 }
 
-/** Marks a lead opted out of email by its unsubscribe token. Idempotent. */
-export async function unsubscribeByToken(token: string): Promise<boolean> {
-  const rows = await query<{ id: string }>(
+/**
+ * Marks a lead opted out of email by its unsubscribe token. Idempotent.
+ * Returns the full lead (not just a boolean) so the caller can mirror the
+ * opt-out onto the GHL contact too — that needs ghlContactId + clientId,
+ * which only the row itself carries.
+ */
+export async function unsubscribeByToken(token: string): Promise<QuarryLead | null> {
+  const rows = await query<LeadRow>(
     `UPDATE quarry_leads SET email_opted_out = true, updated_at = now()
-      WHERE email_unsubscribe_token = $1 RETURNING id`,
+      WHERE email_unsubscribe_token = $1 RETURNING *`,
     [token]
   );
-  return rows.length > 0;
+  return rows[0] ? rowToLead(rows[0]) : null;
 }
 
 export async function listLeads(
