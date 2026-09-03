@@ -196,9 +196,8 @@
         "_comment": "Cold email channel, added 2026-08-27. Reuses the exact same discovery/triage/enrichment as texting — \"scrape businesses in an area\" already happens in quarry.searches above; this just adds a second send channel for leads (mobile AND landline/VOIP) who have a published email. NOT wired to a live domain yet — fromDomain/fromAddress/physicalAddress are all blank on purpose. sendEmailBatch refuses to run until they are set; see EmailChannelNotConfiguredError in outreach.ts.",
         "fromDomain": "mail.helloedenmtl.com",
         "fromDomainNote": "Set 2026-09-02. A subdomain built specifically for sending, not the root domain — correct move, keeps a burned cold-email domain from ever touching Jacob's real business domain. STILL NEEDS: verifying this in GHL under Settings > Email Services (adds SPF/DKIM DNS records at wherever this domain is registered) before any send will actually deliver.",
-        "fromAddress": "",
-        "physicalAddress": "",
-        "physicalAddressNote": "CASL requires a real mailing address in every commercial email. Left blank deliberately — do not invent one. sendEmailBatch throws until this is set.",
+        "fromAddress": "jacob@mail.helloedenmtl.com",
+        "physicalAddress": "319 Rue Notre Dame, Repentigny, QC J6A 0C8",
         "dailySendCap": 15,
         "dailySendCapNote": "Deliberately low. A brand-new sending domain with no history gets flagged by spam filters almost immediately at real volume — inbox providers judge a domain by its early sending pattern, not just content. Ramp by roughly 50% a week (15 to ~25 to ~40) only after checking bounce/spam-complaint rates stay low; this number is a starting point; there is no auto-ramp built, it is a manual dial.",
         "minSendSpacingSeconds": 60,
@@ -215,7 +214,8 @@
           10
         ],
         "nudgeScheduleDaysNote": "Two touches now, not one — [4, 10] means a first nudge at day 4 with no reply, a second at day 10. Most cold-email replies reportedly land after the FIRST follow-up, not the initial send, so a single-touch sequence was leaving real replies on the table.",
-        "replyFixNote": "handleEmailReply now auto-sends the booking-link email (the new \"booking\" template) the moment someone replies positively — this is the fix for the exact failure mode in Jacob's old cold-SMS numbers: 342 people replied yes and almost none of them ever got a next step back. A positive reply must never just sit unanswered waiting for a human to notice."
+        "replyFixNote": "handleEmailReply now auto-sends the booking-link email (the new \"booking\" template) the moment someone replies positively — this is the fix for the exact failure mode in Jacob's old cold-SMS numbers: 342 people replied yes and almost none of them ever got a next step back. A positive reply must never just sit unanswered waiting for a human to notice.",
+        "fromAddressNote": "Personal (jacob@), not a generic alias (hello@/info@) — the copy is written in first person (\"I built...\", \"I noticed...\") and a From address that matches that consistently reads as a real person, not a mail-merge. Also generally performs better for cold email than a team alias."
       }
     },
     "ghlPipeline": {
