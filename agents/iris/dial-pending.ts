@@ -89,7 +89,18 @@ async function resolveOne(row: PendingCallRow): Promise<void> {
       await finish(row.id, "skipped", "already qualified since the callback was requested");
       return;
     }
-    lead = fresh;
+    // A plain contact fetch never carries pipelineStageId — stage lives on
+    // the Opportunity, not the Contact (same gap noted on isFirstTouch's
+    // stageId, but intent has no equivalent tag-based fallback) — so a
+    // fresh refetch's intent degrades to "unknown" even for a contact
+    // that's clearly buyer/seller. Confirmed live, 2026-09-04, against a
+    // real contact with no custom fields: refreshLead came back with
+    // intent "unknown" despite the "buyer lead" tag. Falling back to the
+    // originally-captured intent (never "unknown" by construction — see
+    // index.ts's lead.enriched handler) keeps transferNumberForIntent
+    // working for the callback dial instead of silently losing the
+    // transfer tool.
+    lead = { ...fresh, intent: fresh.intent !== "unknown" ? fresh.intent : row.lead.intent };
   } else {
     // Fails closed by design (see recheckFirstTouch's own doc comment): both
     // "definitely already touched" and "couldn't verify" stop the sequence.
