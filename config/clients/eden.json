@@ -150,8 +150,8 @@
     },
     "generation": {
       "generator": "lovable",
-      "bookingUrl": "",
-      "bookingUrlNote": "GHL calendar link for the call CTA in the pitch email. REQUIRED now, not optional — the pitch has no other link in it. IMPORTANT: set this calendar's minimum scheduling notice (in GHL, the calendar's own settings — look for something like \"minimum scheduling notice\" or \"appointments cannot be booked less than X in advance\") to however many days Jacob actually needs to build a site by hand before the call happens, e.g. 5-7 business days. Without that, someone could book tomorrow and there would be nothing ready to show them.",
+      "bookingUrl": "https://link.edenmtl.com/widget/bookings/eden-strategyyeofba",
+      "bookingUrlNote": "Confirmed with Jacob 2026-09-02 to be the \"EDEN - New Website Preview\" calendar he built by hand (the slug reads eden-strategy for unrelated historical reasons, not a mix-up with a different calendar). This is the ONLY link in the pitch email now, so a wrong value here silently breaks the entire funnel — see generation._comment below for the minimum-notice setting this depends on.",
       "_comment": "Module 4 (Lovable site generation) is PAUSED as of 2026-08-27 — Jacob is building sites by hand himself for now, using the lead time between a booked call and the call itself. previewUrl/previewImageUrl on a lead will stay empty until this resumes; nothing in the outreach flow depends on them anymore."
     },
     "outreach": {
