@@ -235,7 +235,7 @@ const BLANK_LEAD: NormalisedLead = {
 
 describe("buildLeadQualificationPrompt", () => {
   it("lists every question as still needed when nothing is known yet", () => {
-    const prompt = buildLeadQualificationPrompt(IRIS_CONFIG, BLANK_LEAD, "3 Percent East Coast", "St. John's", false);
+    const prompt = buildLeadQualificationPrompt(IRIS_CONFIG, BLANK_LEAD, "3 Percent East Coast", "St. John's", false, true);
     expect(prompt).toContain("Nothing yet — this is a cold first contact.");
     for (const q of IRIS_CONFIG.questions) {
       expect(prompt).toContain(q);
@@ -244,48 +244,48 @@ describe("buildLeadQualificationPrompt", () => {
 
   it("marks a known answer as already-known and drops it from what's still needed", () => {
     const lead: NormalisedLead = { ...BLANK_LEAD, intent: "seller", timeline: "3-6 months" };
-    const prompt = buildLeadQualificationPrompt(IRIS_CONFIG, lead, "3 Percent East Coast", "St. John's", false);
+    const prompt = buildLeadQualificationPrompt(IRIS_CONFIG, lead, "3 Percent East Coast", "St. John's", false, true);
     expect(prompt).toMatch(/Intent: seller — already known, do NOT ask again/);
     expect(prompt).toMatch(/Timeline: 3-6 months — already known, do NOT ask again/);
   });
 
   it("skips the financing question for a seller, matching qualification.ts's nextQuestion behavior", () => {
     const lead: NormalisedLead = { ...BLANK_LEAD, intent: "seller" };
-    const prompt = buildLeadQualificationPrompt(IRIS_CONFIG, lead, "3 Percent East Coast", "St. John's", false);
+    const prompt = buildLeadQualificationPrompt(IRIS_CONFIG, lead, "3 Percent East Coast", "St. John's", false, true);
     expect(prompt).not.toContain(IRIS_CONFIG.questions[4]);
   });
 
   it("always asks the property-details question — no GHL field captures it yet", () => {
-    const prompt = buildLeadQualificationPrompt(IRIS_CONFIG, BLANK_LEAD, "3 Percent East Coast", "St. John's", false);
+    const prompt = buildLeadQualificationPrompt(IRIS_CONFIG, BLANK_LEAD, "3 Percent East Coast", "St. John's", false, true);
     expect(prompt).toContain(IRIS_CONFIG.questions[2]);
   });
 
   it("uses the city and brand it's given rather than a hardcoded one", () => {
-    const prompt = buildLeadQualificationPrompt(IRIS_CONFIG, BLANK_LEAD, "Matama Floors", "Montreal", false);
+    const prompt = buildLeadQualificationPrompt(IRIS_CONFIG, BLANK_LEAD, "Matama Floors", "Montreal", false, true);
     expect(prompt).toContain("Matama Floors");
     expect(prompt).toContain("Montreal only");
   });
 
   it("never claims to be human, pulling the real approved wording (with the right brand) rather than inventing new lines", () => {
-    const prompt = buildLeadQualificationPrompt(IRIS_CONFIG, BLANK_LEAD, "3 Percent East Coast", "St. John's", false);
+    const prompt = buildLeadQualificationPrompt(IRIS_CONFIG, BLANK_LEAD, "3 Percent East Coast", "St. John's", false, true);
     expect(prompt).toContain(EDGE_CASE_RESPONSES.isRealPerson("3 Percent East Coast")[0]);
     expect(prompt).toContain(EDGE_CASE_RESPONSES.dontKnowAnswer);
   });
 
   it("tells Iris to actually invoke schedule_callback when the tool is available", () => {
-    const prompt = buildLeadQualificationPrompt(IRIS_CONFIG, BLANK_LEAD, "3 Percent East Coast", "St. John's", true);
+    const prompt = buildLeadQualificationPrompt(IRIS_CONFIG, BLANK_LEAD, "3 Percent East Coast", "St. John's", true, true);
     expect(prompt).toContain("schedule_callback");
     expect(prompt).not.toMatch(/do not have a working callback-scheduling tool/i);
   });
 
   it("tells Iris NOT to claim a scheduled callback when the tool isn't wired up", () => {
-    const prompt = buildLeadQualificationPrompt(IRIS_CONFIG, BLANK_LEAD, "3 Percent East Coast", "St. John's", false);
+    const prompt = buildLeadQualificationPrompt(IRIS_CONFIG, BLANK_LEAD, "3 Percent East Coast", "St. John's", false, true);
     expect(prompt).toMatch(/do not have a working callback-scheduling tool/i);
     expect(prompt).not.toContain("schedule_callback");
   });
 
   it("gives Iris the current date and time so she can resolve relative callback requests", () => {
-    const prompt = buildLeadQualificationPrompt(IRIS_CONFIG, BLANK_LEAD, "3 Percent East Coast", "St. John's", false);
+    const prompt = buildLeadQualificationPrompt(IRIS_CONFIG, BLANK_LEAD, "3 Percent East Coast", "St. John's", false, true);
     expect(prompt).toMatch(/Right now it is/);
   });
 
@@ -296,14 +296,41 @@ describe("buildLeadQualificationPrompt", () => {
    * These instructions sequence it into separate turns instead.
    */
   it("instructs Iris to wait for the name, then ask how they're doing, before anything else", () => {
-    const prompt = buildLeadQualificationPrompt(IRIS_CONFIG, BLANK_LEAD, "3 Percent East Coast", "St. John's", false);
+    const prompt = buildLeadQualificationPrompt(IRIS_CONFIG, BLANK_LEAD, "3 Percent East Coast", "St. John's", false, true);
     expect(prompt).toMatch(/wait for their answer/i);
     expect(prompt).toMatch(/ask how they're doing/i);
   });
 
   it("tells Iris never to stack more than one question into a turn", () => {
-    const prompt = buildLeadQualificationPrompt(IRIS_CONFIG, BLANK_LEAD, "3 Percent East Coast", "St. John's", false);
+    const prompt = buildLeadQualificationPrompt(IRIS_CONFIG, BLANK_LEAD, "3 Percent East Coast", "St. John's", false, true);
     expect(prompt).toMatch(/never stack more than one question/i);
+  });
+
+  /**
+   * Confirmed live, 2026-09-04: without this, Iris was unconditionally told
+   * to "always invoke the transferCall tool" even on a call where no such
+   * tool was ever wired in (no transferNumber resolved for this lead) — she
+   * said the transfer line and then had nothing to actually invoke.
+   */
+  describe("transferAvailable", () => {
+    it("tells Iris to invoke the transferCall tool when a transfer is available", () => {
+      const prompt = buildLeadQualificationPrompt(IRIS_CONFIG, BLANK_LEAD, "3 Percent East Coast", "St. John's", false, true);
+      expect(prompt).toMatch(/invoke the transferCall tool/i);
+      expect(prompt).not.toMatch(/do not have a live-transfer tool/i);
+    });
+
+    it("tells Iris she has no live-transfer tool, and never to claim one, when none is available", () => {
+      const prompt = buildLeadQualificationPrompt(IRIS_CONFIG, BLANK_LEAD, "3 Percent East Coast", "St. John's", false, false);
+      expect(prompt).toMatch(/do not have a live-transfer tool/i);
+      expect(prompt).not.toMatch(/invoke the transferCall tool/i);
+    });
+
+    it("still gives the scheduling fallback instructions regardless of transfer availability", () => {
+      const withTransfer = buildLeadQualificationPrompt(IRIS_CONFIG, BLANK_LEAD, "3 Percent East Coast", "St. John's", true, true);
+      const withoutTransfer = buildLeadQualificationPrompt(IRIS_CONFIG, BLANK_LEAD, "3 Percent East Coast", "St. John's", true, false);
+      expect(withTransfer).toContain("schedule_callback");
+      expect(withoutTransfer).toContain("schedule_callback");
+    });
   });
 });
 

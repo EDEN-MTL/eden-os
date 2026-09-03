@@ -174,7 +174,10 @@ export const EDGE_CASE_RESPONSES = {
  * calendarForIntent in qualification.ts.
  */
 export const LIVE_TRANSFER_LINES = {
-  buyer: "Perfect. Based on what you've shared, I'll connect you with one of our buyer agents now.",
+  // Jacob's live feedback, 2026-09-04: name the concrete benefit (seeing
+  // real listings), not just "connect you" — the seller/general lines are
+  // unchanged since he only gave feedback on the buyer case.
+  buyer: "Perfect. We'll connect you with one of our buyer agents to send over some available home options.",
   seller: "Sounds good. I'll connect you with one of our seller agents now.",
   general: "Perfect. I'll connect you with one of our agents now.",
 };
@@ -290,7 +293,8 @@ export function buildLeadQualificationPrompt(
   lead: NormalisedLead,
   brandName: string,
   city: string,
-  bookingToolsAvailable: boolean
+  bookingToolsAvailable: boolean,
+  transferAvailable: boolean
 ): string {
   const known: string[] = [];
   const stillNeeded: string[] = [];
@@ -327,17 +331,35 @@ export function buildLeadQualificationPrompt(
   // that isn't in her tools list for this call would have her hallucinate
   // having scheduled something real. Match what's actually possible rather
   // than describing the ideal end state always.
-  const transferFallback = bookingToolsAvailable
-    ? `If the transferCall tool comes back without anyone picking up: "${AGENT_UNAVAILABLE_LINE}"
-Then ask: "${AGENT_UNAVAILABLE_FOLLOW_UP}" Once they give a specific day and
+  const schedulingFallback = bookingToolsAvailable
+    ? `Then ask: "${AGENT_UNAVAILABLE_FOLLOW_UP}" Once they give a specific day and
 time, work out the exact moment relative to the current date and time above,
 then call schedule_callback with that as an ISO 8601 timestamp. Confirm the
 callback back to them in plain language before ending the call — never claim
 it's scheduled unless the tool actually confirmed it.`
-    : `If a transfer genuinely can't happen right now: "${AGENT_UNAVAILABLE_LINE}"
-You do NOT have a working callback-scheduling tool on this call — do not
+    : `You do NOT have a working callback-scheduling tool on this call — do not
 claim to have scheduled anything or invent a time. Instead say a teammate
 will follow up directly to get them scheduled.`;
+
+  // transferAvailable reflects whether transferNumber was actually resolved
+  // for this lead's intent (calling.ts only wires the transferCall tool
+  // when one was given). Confirmed live, 2026-09-04: without this check,
+  // Iris was unconditionally told to "always invoke the transferCall tool"
+  // even on a call where no such tool existed at all — she said the
+  // transfer line and then had nothing to actually invoke.
+  const transferSection = transferAvailable
+    ? `Live transfer is ALWAYS the first priority — present it confidently,
+don't ask permission, and actually invoke the transferCall tool available
+to you (not just say the line): "${liveTransferLineForIntent(lead.intent)}"
+
+If the transferCall tool comes back without anyone picking up: "${AGENT_UNAVAILABLE_LINE}"
+${schedulingFallback}`
+    : `You do NOT have a live-transfer tool on this call — never tell the lead
+you're connecting them to an agent or say the line normally used for that,
+since there is no way to actually do it here. Once you're ready to wrap up,
+transition in your own words toward getting them scheduled with an agent
+directly (something like "${AGENT_UNAVAILABLE_LINE}").
+${schedulingFallback}`;
 
   const now = new Date();
   const nowLocal = now.toLocaleString("en-US", {
@@ -376,12 +398,9 @@ answer before saying anything else. Once they respond:
 
 ## Your job
 Confirm what's known above, gather what's still needed, decide fit, then get
-a qualified lead connected to the right agent. Live transfer is ALWAYS the
-first priority — present it confidently, don't ask permission, and actually
-invoke the transferCall tool available to you (not just say the line):
-"${liveTransferLineForIntent(lead.intent)}"
+a qualified lead connected to the right agent.
 
-${transferFallback}
+${transferSection}
 
 ## Rules you must never break
 - Never give legal, investment, mortgage, or financial advice:

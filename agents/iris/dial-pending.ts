@@ -114,6 +114,7 @@ async function resolveOne(row: PendingCallRow): Promise<void> {
   }
 
   const attemptNumber = row.attempts_made + 1;
+  const transferNumber = transferNumberForIntent(config, lead.intent) ?? undefined;
 
   try {
     const result = await placeCall({
@@ -129,9 +130,10 @@ async function resolveOne(row: PendingCallRow): Promise<void> {
         lead,
         branding.brandName,
         branding.city,
-        Boolean(process.env.VAPI_SERVER_URL)
+        Boolean(process.env.VAPI_SERVER_URL),
+        Boolean(transferNumber)
       ),
-      transferNumber: transferNumberForIntent(config, lead.intent) ?? undefined,
+      transferNumber,
       contactId: row.contact_id,
       triggeredBy: "automatic",
     });
