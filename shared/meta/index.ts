@@ -155,7 +155,16 @@ export class MetaClient {
           await sleep(wait * 1000);
           continue;
         }
-        throw new MetaAPIError(`Meta API error on ${method} ${path}: ${err.message || JSON.stringify(payload)}`, payload);
+        const detail = [
+          err.message,
+          err.error_user_title,
+          err.error_user_msg,
+          err.error_subcode !== undefined ? `subcode ${err.error_subcode}` : null,
+          err.fbtrace_id ? `trace ${err.fbtrace_id}` : null,
+        ]
+          .filter(Boolean)
+          .join(" | ");
+        throw new MetaAPIError(`Meta API error on ${method} ${path}: ${detail || JSON.stringify(payload)}`, payload);
       }
       return payload;
     }
