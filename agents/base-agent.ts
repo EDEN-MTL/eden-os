@@ -68,8 +68,19 @@ export abstract class BaseAgent {
     return [];
   }
 
-  /** Override alongside getTools() to actually run a tool call. */
-  protected async executeTool(_name: string, _input: any): Promise<string> {
+  /**
+   * Override alongside getTools() to actually run a tool call.
+   *
+   * `attachment` is this turn's file, if any — the same one generateReply
+   * received, not something the model can supply as tool_use JSON input
+   * (there's no way to inline arbitrary bytes into a tool call). A tool
+   * whose job is "do something with the attached file" (uploading it
+   * somewhere, say) reads it from here rather than expecting the model to
+   * pass file contents as an argument. Unset on any turn without one, and
+   * on every tool call after the first within a turn that had one — it
+   * doesn't get consumed or cleared, just never regenerated mid-turn.
+   */
+  protected async executeTool(_name: string, _input: any, _attachment?: Attachment): Promise<string> {
     throw new Error(`${this.code} has no tools configured`);
   }
 
@@ -174,7 +185,7 @@ export abstract class BaseAgent {
     // answer), so unifying onto one code path doesn't silently change how
     // every other agent sounds.
     const genOptions = this.getTools().length === 0 ? { maxTokens: 1024, temperature: 0.7 } : {};
-    const reply = await this.runToolLoop(history, systemPrompt, tools, userContent, genOptions);
+    const reply = await this.runToolLoop(history, systemPrompt, tools, userContent, genOptions, attachment);
 
     // An attachment is scratch input for this turn only, like a
     // tool_use/tool_result exchange — replaying its raw bytes into every
@@ -216,7 +227,8 @@ export abstract class BaseAgent {
     systemPrompt: string,
     tools: ToolDef[],
     userContent: ChatMessage["content"],
-    options: { maxTokens?: number; temperature?: number } = {}
+    options: { maxTokens?: number; temperature?: number } = {},
+    attachment?: Attachment
   ): Promise<string> {
     let working: ChatMessage[] = [...priorHistory, { role: "user", content: userContent }];
     let finalText = "";
@@ -239,7 +251,8 @@ export abstract class BaseAgent {
           const call = tu as { id: string; name: string; input: any };
           let content: string;
           try {
-            content = call.name === "save_note" ? await this.executeSaveNote(call.input) : await this.executeTool(call.name, call.input);
+            content =
+              call.name === "save_note" ? await this.executeSaveNote(call.input) : await this.executeTool(call.name, call.input, attachment);
           } catch (error) {
             content = `Error: ${error instanceof Error ? error.message : String(error)}`;
           }
