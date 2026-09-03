@@ -18,11 +18,14 @@ vi.mock("../../shared/agent-notes", () => ({
   saveNote: vi.fn(async () => {}),
 }));
 
+const searchGeoLocationsMock = vi.fn();
 vi.mock("../../shared/meta", () => ({
   getMetaConfig: vi.fn(async () => ({
     appId: "app-id", appSecret: "app-secret", accessToken: "seed-token", adAccountId: "act_123", clientId: "eden",
   })),
-  MetaClient: vi.fn(),
+  MetaClient: class {
+    searchGeoLocations = searchGeoLocationsMock;
+  },
 }));
 vi.mock("./ads/actions", () => ({ MetaActions: vi.fn() }));
 
@@ -48,6 +51,37 @@ function endTurn(text: string) {
 
 beforeEach(() => {
   vi.clearAllMocks();
+});
+
+describe("Forge — search_ad_regions", () => {
+  it("resolves a place name via MetaClient.searchGeoLocations, defaulting to region", async () => {
+    searchGeoLocationsMock.mockResolvedValueOnce([{ key: "3847", name: "Texas", type: "region", country_code: "US" }]);
+    vi.mocked(chatWithTools)
+      .mockResolvedValueOnce({
+        content: [toolUseBlock("call_1", "search_ad_regions", { clientId: "eden", queryText: "Texas" })],
+        stop_reason: "tool_use",
+      } as any)
+      .mockResolvedValueOnce(endTurn("Texas resolves to region key 3847."));
+
+    const reply = await forgeAgent.generateReply("key6", "what's the region key for Texas");
+
+    expect(reply).toBe("Texas resolves to region key 3847.");
+    expect(searchGeoLocationsMock).toHaveBeenCalledWith("Texas", ["region"]);
+  });
+
+  it("passes an explicit locationType through instead of the region default", async () => {
+    searchGeoLocationsMock.mockResolvedValueOnce([{ key: "2418046", name: "Miami", type: "city" }]);
+    vi.mocked(chatWithTools)
+      .mockResolvedValueOnce({
+        content: [toolUseBlock("call_1", "search_ad_regions", { clientId: "eden", queryText: "Miami", locationType: "city" })],
+        stop_reason: "tool_use",
+      } as any)
+      .mockResolvedValueOnce(endTurn("Miami resolves to city key 2418046."));
+
+    await forgeAgent.generateReply("key7", "what's the city key for Miami");
+
+    expect(searchGeoLocationsMock).toHaveBeenCalledWith("Miami", ["city"]);
+  });
 });
 
 describe("Forge — upload_ad_image", () => {
