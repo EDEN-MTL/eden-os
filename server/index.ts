@@ -17,6 +17,7 @@ import { createChatRouter } from "./chat-api";
 import { createTtsRouter } from "./tts-api";
 import { createSettingsRouter } from "./settings-api";
 import { createClientsRouter } from "./clients-api";
+import { createQuarryRouter } from "./quarry-api";
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -60,6 +61,7 @@ app.use("/api/chat", createChatRouter());
 app.use("/api/tts", createTtsRouter());
 app.use("/api/settings", createSettingsRouter());
 app.use("/api/clients", createClientsRouter());
+app.use("/api/quarry", createQuarryRouter());
 
 // ─── Initialize & Start ───
 async function start() {

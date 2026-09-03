@@ -16,6 +16,8 @@ export interface SearchSpec {
 
 export interface QuarryConfig {
   enabled: boolean;
+  /** The GHL pipeline built by hand — see sync.ts, which resolves it by name. */
+  ghlPipeline: { name: string; stages: string[] };
   searches: SearchSpec[];
   discovery: { recheckAfterDays: number; maxLeadsPerRun: number };
   triage: {
@@ -25,6 +27,10 @@ export interface QuarryConfig {
     visionScoreThreshold: number;
   };
   phone: {
+    /** Off by default since 2026-08-27 — email is the primary channel and this
+     *  was the only thing gating SMS. Twilio is not called at all while this
+     *  is false; every lead's isMobile stays null. */
+    enabled: boolean;
     provider: string;
     cacheDays: number;
     voipPolicy: "holdout" | "reject" | "allow";
@@ -39,7 +45,30 @@ export interface QuarryConfig {
     positiveKeywords: string[];
     negativeKeywords: string[];
     templates: { screenshot: string; link: string; nudge: string };
+    email: EmailConfig;
   };
+}
+
+export interface EmailConfig {
+  fromDomain: string;
+  fromAddress: string;
+  /**
+   * The real mailing address CASL requires in every commercial email. Left
+   * unset means "not configured" — sendEmailBatch refuses to run rather than
+   * fabricate one or send a message missing it.
+   */
+  physicalAddress: string;
+  dailySendCap: number;
+  minSendSpacingSeconds: number;
+  jitterSeconds: number;
+  /**
+   * Days-since-pitch thresholds, one per touch — [4, 10] means a first nudge
+   * once 4 days have passed with no reply, a second once 10 have. Length of
+   * this array is the total number of nudges sent; emailNudgeCount on the
+   * lead tracks how many have gone out so far.
+   */
+  nudgeScheduleDays: number[];
+  templates: { subject: string; pitch: string; nudge: string; booking: string };
 }
 
 export function loadQuarryConfig(clientId = "eden"): QuarryConfig | null {
