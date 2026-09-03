@@ -73,7 +73,10 @@ describe("buildCallPayload", () => {
 
   it("enables voicemail detection and sets a real message, not just talking into the machine", () => {
     const payload = buildCallPayload(BASE_PARAMS, VAPI_CONFIG);
-    expect(payload.assistant.voicemailDetection).toEqual({ provider: "vapi" });
+    expect(payload.assistant.voicemailDetection).toEqual({
+      provider: "vapi",
+      backoffPlan: { startAtSeconds: 4, frequencySeconds: 4, maxRetries: 5 },
+    });
     expect(payload.assistant.voicemailMessage).toContain("Iris");
     expect(payload.assistant.voicemailMessage).toContain(BASE_PARAMS.brandName);
   });

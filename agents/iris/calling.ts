@@ -165,7 +165,16 @@ export function buildCallPayload(
       // Without this, Vapi has no way to tell the call apart from a live
       // pickup — Iris just talks into the machine as if a person answered,
       // which is exactly what happened testing against this number twice.
-      voicemailDetection: { provider: "vapi" },
+      //
+      // backoffPlan widens the default detection window (~2s/2.5s) to
+      // 4s/4s — confirmed live 2026-09-03: with the default timing, Vapi
+      // repeatedly flagged a real live pickup as voicemail mid-greeting
+      // (cut Iris off after "I'm calling about the home you—" and played
+      // the voicemail message instead), 4 times in a row against the same
+      // number. Per Vapi's own voicemail-detection docs, this exact
+      // false-positive pattern is known, and widening startAtSeconds/
+      // frequencySeconds to 3-4s is their documented fix.
+      voicemailDetection: { provider: "vapi", backoffPlan: { startAtSeconds: 4, frequencySeconds: 4, maxRetries: 5 } },
       voicemailMessage: buildVoicemailMessage(params.brandName),
       tools: tools.length > 0 ? tools : undefined,
     },
