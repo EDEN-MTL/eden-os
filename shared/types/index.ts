@@ -9,7 +9,8 @@ export type AgentId =
   | "muse"
   | "forge"
   | "lens"
-  | "nova";
+  | "nova"
+  | "quarry";
 
 export interface AgentConfig {
   id: AgentId;

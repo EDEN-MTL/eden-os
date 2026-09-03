@@ -452,6 +452,94 @@ export async function logSend(entry: {
 
 /** Sends today, for the daily cap. Failed sends are excluded — a message that
  *  never left should not consume the day's allowance. */
+export interface PipelineStats {
+  byApproval: Record<string, number>;
+  byStage: Record<string, number>;
+  qualified: number;
+  hasMobile: number;
+  hasEmail: number;
+  emailOptedOut: number;
+  smsRepliesTotal: number;
+  emailRepliesTotal: number;
+  sentTodaySms: number;
+  sentTodayEmail: number;
+}
+
+/**
+ * One aggregate snapshot for the Slack agent's stats tool. Deliberately
+ * scoped to what quarry_leads and quarry_send_log actually track — pipeline
+ * cards further downstream ("Call Booked", "Closed Won") are opportunity
+ * stages inside GHL itself, and nothing currently syncs a GHL stage change
+ * back onto pipeline_stage here (the /webhooks/ghl/opportunity route logs
+ * the event and stops). Reporting a booked/closed count from this table
+ * would look authoritative and be quietly wrong, so it isn't attempted —
+ * the agent says so plainly instead of guessing.
+ */
+export async function getPipelineStats(clientId = "eden"): Promise<PipelineStats> {
+  const [approvalRows, stageRows, flagRows, replyRows, sentTodayRows] = await Promise.all([
+    query<{ approval_status: string; count: string }>(
+      `SELECT approval_status, count(*) FROM quarry_leads WHERE client_id = $1 GROUP BY approval_status`,
+      [clientId]
+    ),
+    query<{ pipeline_stage: string | null; count: string }>(
+      `SELECT pipeline_stage, count(*) FROM quarry_leads WHERE client_id = $1 GROUP BY pipeline_stage`,
+      [clientId]
+    ),
+    query<{ qualified: string; has_mobile: string; has_email: string; email_opted_out: string }>(
+      `SELECT
+         count(*) FILTER (WHERE is_candidate) AS qualified,
+         count(*) FILTER (WHERE is_mobile) AS has_mobile,
+         count(*) FILTER (WHERE email IS NOT NULL AND NOT email_opted_out) AS has_email,
+         count(*) FILTER (WHERE email_opted_out) AS email_opted_out
+       FROM quarry_leads WHERE client_id = $1`,
+      [clientId]
+    ),
+    query<{ sms_replies: string; email_replies: string }>(
+      `SELECT
+         count(*) FILTER (WHERE replied_at IS NOT NULL) AS sms_replies,
+         count(*) FILTER (WHERE email_replied_at IS NOT NULL) AS email_replies
+       FROM quarry_leads WHERE client_id = $1`,
+      [clientId]
+    ),
+    query<{ step: string; count: string }>(
+      `SELECT step, count(*) FROM quarry_send_log
+        WHERE client_id = $1 AND error IS NULL AND sent_at > now() - interval '1 day'
+        GROUP BY step`,
+      [clientId]
+    ),
+  ]);
+
+  const byApproval: Record<string, number> = {};
+  for (const r of approvalRows) byApproval[r.approval_status] = Number(r.count);
+
+  const byStage: Record<string, number> = {};
+  for (const r of stageRows) byStage[r.pipeline_stage ?? "(none)"] = Number(r.count);
+
+  const flags = flagRows[0];
+  const replies = replyRows[0];
+
+  let sentTodaySms = 0;
+  let sentTodayEmail = 0;
+  for (const r of sentTodayRows) {
+    const n = Number(r.count);
+    if (r.step === "screenshot" || r.step === "link" || r.step === "nudge") sentTodaySms += n;
+    else sentTodayEmail += n;
+  }
+
+  return {
+    byApproval,
+    byStage,
+    qualified: Number(flags?.qualified ?? 0),
+    hasMobile: Number(flags?.has_mobile ?? 0),
+    hasEmail: Number(flags?.has_email ?? 0),
+    emailOptedOut: Number(flags?.email_opted_out ?? 0),
+    smsRepliesTotal: Number(replies?.sms_replies ?? 0),
+    emailRepliesTotal: Number(replies?.email_replies ?? 0),
+    sentTodaySms,
+    sentTodayEmail,
+  };
+}
+
 export async function sendsToday(clientId = "eden"): Promise<number> {
   const rows = await query<{ count: string }>(
     `SELECT count(*) AS count FROM quarry_send_log

@@ -11,6 +11,7 @@ import { museAgent } from "../agents/muse";
 import { forgeAgent } from "../agents/forge";
 import { lensAgent } from "../agents/lens";
 import { novaAgent } from "../agents/nova";
+import { quarryAgent } from "../agents/quarry";
 import { BaseAgent } from "../agents/base-agent";
 
 const agents: Record<AgentId, BaseAgent> = {
@@ -23,6 +24,7 @@ const agents: Record<AgentId, BaseAgent> = {
   forge: forgeAgent,
   lens: lensAgent,
   nova: novaAgent,
+  quarry: quarryAgent,
 };
 
 const VALID_AGENT_IDS = new Set(Object.keys(agents));
