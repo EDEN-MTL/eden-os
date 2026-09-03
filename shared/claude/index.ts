@@ -121,3 +121,48 @@ export async function ask(
 ): Promise<string> {
   return chat(systemPrompt, [{ role: "user", content: userMessage }], options);
 }
+
+/**
+ * Single-turn ask with an image attached.
+ *
+ * Used by Quarry to judge how dated a prospect's existing site LOOKS — the
+ * case no regex catches, where the markup is fine and the design is from
+ * 2009. Those are the best leads in the batch: the owner usually knows.
+ *
+ * Runs on claude-opus-5 rather than the sonnet id the chat agents use. This
+ * is a judgement call made once per lead on an image, not a conversational
+ * turn, and a wrong score here silently drops a qualified prospect.
+ */
+export async function askWithImage(
+  systemPrompt: string,
+  userMessage: string,
+  image: { data: Buffer; mediaType: "image/png" | "image/jpeg" | "image/webp" },
+  options: { maxTokens?: number } = {}
+): Promise<string> {
+  const response = await client.messages.create({
+    model: "claude-opus-5",
+    max_tokens: options.maxTokens ?? 1024,
+    system: systemPrompt,
+    messages: [
+      {
+        role: "user",
+        content: [
+          {
+            type: "image",
+            source: {
+              type: "base64",
+              media_type: image.mediaType,
+              data: image.data.toString("base64"),
+            },
+          },
+          { type: "text", text: userMessage },
+        ],
+      },
+    ],
+  });
+
+  return response.content
+    .filter((block): block is Anthropic.TextBlock => block.type === "text")
+    .map((block) => block.text)
+    .join("\n");
+}

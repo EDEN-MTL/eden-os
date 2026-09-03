@@ -29,7 +29,7 @@ export type QuarryStage =
   | "Closed Won"
   | "Lost/Nurture";
 
-export type SendStep = "screenshot" | "link" | "nudge";
+export type SendStep = "screenshot" | "link" | "nudge" | "email_pitch" | "email_nudge" | "email_booking";
 
 /** What Google Places gives us before any of our own analysis. */
 export interface PlacesResult {
@@ -145,6 +145,11 @@ export interface QuarryLead {
   holdoutReason: string | null;
   sentAt: string | null;
   repliedAt: string | null;
+  emailSentAt: string | null;
+  emailRepliedAt: string | null;
+  emailOptedOut: boolean;
+  emailNudgeCount: number;
+  emailUnsubscribeToken: string | null;
   lastLookupAt: string | null;
   createdAt: string;
   updatedAt: string;
