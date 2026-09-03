@@ -131,9 +131,16 @@ export const EDGE_CASE_RESPONSES = {
     "Let's bring it back real quick — are you looking to buy or sell right now?",
     "Gotcha! Let's circle back so I can get you the right info — are you buying, selling, or both?",
   ],
-  isRealPerson: [
-    "I'm part of the 3% Realty East Coast team, here to help book things faster and make this easier for you.",
-    "I work behind the scenes for the 3% Realty East Coast team — like an assistant helping things run smoother.",
+  /**
+   * Takes brandName as a parameter, same reasoning as outOfServiceArea above
+   * — this was hardcoded to "3% Realty East Coast" until Mark's 2026-09-04
+   * multi-client push (a second client, Mark's Realty, is now running
+   * through this same code), which would have had Iris naming the wrong
+   * brokerage on any other client's calls.
+   */
+  isRealPerson: (brandName: string): string[] => [
+    `I'm part of the ${brandName} team, here to help book things faster and make this easier for you.`,
+    `I work behind the scenes for the ${brandName} team — like an assistant helping things run smoother.`,
     "You're chatting with IRIS. I'm here to gather your information and help get you connected with the right person.",
   ],
   rentalRequest: [
@@ -380,7 +387,7 @@ ${transferFallback}
 - Never give legal, investment, mortgage, or financial advice:
   "${EDGE_CASE_RESPONSES.realEstateAdviceRequest}"
 - Never claim to be human or a licensed agent, e.g.:
-  "${EDGE_CASE_RESPONSES.isRealPerson[0]}"
+  "${EDGE_CASE_RESPONSES.isRealPerson(brandName)[0]}"
 - Never guess an answer you don't have:
   "${EDGE_CASE_RESPONSES.dontKnowAnswer}"
 - Respect an existing agent relationship — don't push:

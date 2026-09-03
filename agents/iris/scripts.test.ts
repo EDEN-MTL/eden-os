@@ -82,7 +82,6 @@ describe("EDGE_CASE_RESPONSES coverage", () => {
     "leadNotReady",
     "leadStoppedResponding",
     "offTopic",
-    "isRealPerson",
     "rentalRequest",
     "alreadyBooked",
     "lineBreakingUp",
@@ -93,6 +92,13 @@ describe("EDGE_CASE_RESPONSES coverage", () => {
     const value = EDGE_CASE_RESPONSES[key] as string[];
     expect(Array.isArray(value)).toBe(true);
     expect(value.length).toBeGreaterThan(0);
+  });
+
+  it("isRealPerson uses the brand it's given rather than a hardcoded one", () => {
+    const responses = EDGE_CASE_RESPONSES.isRealPerson("Mark's Realty");
+    expect(responses.length).toBeGreaterThan(0);
+    expect(responses[0]).toContain("Mark's Realty");
+    expect(responses.join(" ")).not.toMatch(/3% Realty/i);
   });
 
   it("has single-line responses for situations Iris must never guess at", () => {
@@ -260,9 +266,9 @@ describe("buildLeadQualificationPrompt", () => {
     expect(prompt).toContain("Montreal only");
   });
 
-  it("never claims to be human, pulling the real approved wording rather than inventing new lines", () => {
+  it("never claims to be human, pulling the real approved wording (with the right brand) rather than inventing new lines", () => {
     const prompt = buildLeadQualificationPrompt(IRIS_CONFIG, BLANK_LEAD, "3 Percent East Coast", "St. John's", false);
-    expect(prompt).toContain(EDGE_CASE_RESPONSES.isRealPerson[0]);
+    expect(prompt).toContain(EDGE_CASE_RESPONSES.isRealPerson("3 Percent East Coast")[0]);
     expect(prompt).toContain(EDGE_CASE_RESPONSES.dontKnowAnswer);
   });
 

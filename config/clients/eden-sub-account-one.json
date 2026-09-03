@@ -1,0 +1,88 @@
+{
+  "clientId": "eden-sub-account-one",
+  "clientName": "Mark's Realty",
+  "clientNameNote": "Mark, 2026-09-04: GHL location itself is named 'EDEN Sub Account one' (a fresh test sub-account, created 2026-09-03, snapshotId CEfbOOpCoOJQWAwQipLD) — the clientId slug is derived from that GHL name per Mark's instruction, but the brand Iris actually speaks as on calls is 'Mark's Realty', given explicitly for this test.",
+  "industry": "real-estate",
+  "market": {
+    "city": "Toronto",
+    "region": "ON",
+    "country": "CA",
+    "currency": "CAD",
+    "_comment": "GHL's own location record has timezone 'Pacific/Honolulu', which is almost certainly a snapshot default, not real — Toronto is America/Toronto. Not yet corrected in GHL itself since nothing in this codebase reads location.timezone from the GHL API directly."
+  },
+  "ghl": {
+    "locationId": "OR8vhhUj4TKPTQNF6yfA",
+    "attributionPipelineName": "1. Real Estate Pipeline",
+    "calendarId": "",
+    "outcomeStages": {
+      "_comment": "UNVERIFIED — copied from 3-percent-east-coast.json's pipeline shape since this is the same snapshot ('1. Real Estate Pipeline' with identical stage names), not confirmed against real deal data on this account (none exists yet — fresh test sub-account, zero contacts).",
+      "wonStages": ["Deal Closed"],
+      "lostStages": ["Not Qualified/Not Interested", "No-Show"],
+      "activeStages": ["Buyer Confirmed", "Seller Confirmed"]
+    },
+    "_credentialsNote": "Live GHL credentials are stored in the database (ghl_credentials), entered 2026-09-04 — not in this file."
+  },
+  "iris": {
+    "qualificationQuestions": [
+      "Are you looking to buy or sell?",
+      "What area are you interested in?",
+      "What type of home are you looking for, and how many bedrooms and bathrooms do you need?",
+      "What's your timeline?",
+      "Are you pre-approved? What's your budget range?"
+    ],
+    "hotScoreThreshold": 75,
+    "warmScoreThreshold": 40,
+    "writeFields": {
+      "_comment": "PLACEHOLDER field keys — this location has ZERO custom fields provisioned yet (confirmed live via GET /locations/{id}/customFields, 2026-09-04: empty result). fieldWritesFor() that would use these is not wired into the live call path yet either (see agents/iris/qualification.ts), so this doesn't block anything today, but these keys will not resolve to a real field until someone creates them on this location.",
+      "timeline": "contact.lf_timeframe",
+      "budget": "contact.lf_budget",
+      "propertyInterest": "contact.lf_proprety",
+      "preApproved": "contact.are_you_pre_approuved"
+    },
+    "callbacks": {
+      "_comment": "Same placeholder-field caveat as writeFields above. handleScheduleCallback (webhooks/vapi-tools.ts) degrades gracefully when this key doesn't resolve — the callback still gets scheduled and re-dialed, it just won't have a note attached to the contact until a real isa_notes-equivalent field exists here.",
+      "notesFieldKey": "contact.isa_notes"
+    },
+    "outreachCadence": {
+      "attemptsPerDay": 2,
+      "days": 4,
+      "recheckBeforeEachAttempt": true
+    },
+    "transferNumbers": {
+      "_comment": "Mark, 2026-09-04: buyer number given explicitly for this one test. No seller number given yet — placeholder below is deliberately not a real phone number so a seller-intent call can never accidentally reach an unintended destination; Vapi/Twilio will reject it outright rather than silently mis-dialing.",
+      "buyer": "+17097018814",
+      "seller": "TODO-no-seller-transfer-number-yet"
+    }
+  },
+  "slack": {
+    "clientChannel": ""
+  },
+  "scout": {
+    "_comment": "Pipeline id and stage ids verified live via GET /opportunities/pipelines, 2026-09-04 — real, not guessed. Everything else below (tags, field keys) is a placeholder: this is a fresh sub-account with zero contacts, so there is no live data yet to verify against, unlike 3-percent-east-coast.json's own _liveDataFindings.",
+    "pipelineId": "uRWGLKXpphgmcuR60MWW",
+    "pipelineName": "1. Real Estate Pipeline",
+    "intakeStages": {
+      "Buyer Leads": "e5393b26-5058-418c-be91-205e2c259c2e",
+      "Seller Leads": "7f0801f8-d349-42e1-9ee4-f43b44b2d180",
+      "Downsize Leads": "68e08468-eb23-4e77-97db-9ad7de8c2edb",
+      "Upgrading Leads": "8ba87c49-6d43-4e97-ae93-4127c2a7f69f"
+    },
+    "qualifiedTags": ["appt booked", "live transferred"],
+    "calendars": {
+      "buyer": "",
+      "seller": "",
+      "_comment": "No consultation calendars provisioned on this location yet."
+    },
+    "fields": {
+      "_comment": "PLACEHOLDER — no custom fields exist on this location yet (verified live, 2026-09-04). Scout's readField() degrades to null for all of these until real fields are created, same as an unpopulated field elsewhere in this codebase — it does not throw.",
+      "timeline": "contact.lf_timeframe",
+      "budget": "contact.lf_budget",
+      "propertyInterest": "contact.lf_proprety",
+      "preApproved": "contact.are_you_pre_approuved",
+      "isaNotes": "contact.isa_notes",
+      "leadSource": "contact.source"
+    },
+    "newLeadTags": ["buyer lead", "seller lead"],
+    "touchedTags": ["appt booked", "live transferred", "no show", "showed up", "connection made"]
+  }
+}
