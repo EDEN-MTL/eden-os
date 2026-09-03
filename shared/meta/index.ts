@@ -237,6 +237,19 @@ export class MetaClient {
   }
 
   /**
+   * Resolves a free-text place name (e.g. "Texas") into the {key, name,
+   * type, country_code} Meta needs for geo_locations.regions/cities/zips —
+   * a bare place name isn't a valid targeting value on its own, only these
+   * numeric keys are.
+   */
+  async searchGeoLocations(queryText: string, locationTypes: string[] = ["region"], limit = 5): Promise<any[]> {
+    const payload = await this.request("GET", "search", {
+      params: { type: "adgeolocation", q: queryText, location_types: JSON.stringify(locationTypes), limit: String(limit) },
+    });
+    return payload.data || [];
+  }
+
+  /**
    * level: campaign | adset | ad. Either pass datePreset or an explicit
    * since/until (YYYY-MM-DD) window — since/until wins. timeIncrement="1"
    * (the default) asks for one row per entity PER DAY, not aggregated
