@@ -10,23 +10,26 @@
  *
  * Scope of what's wired here, and what isn't yet:
  *   - Read: performance metrics, attribution, pending rule-engine actions.
- *   - Act: pause/resume, budget changes, creating a campaign or ad set.
- *     Every write goes through ActionExecutor.executeManual — the same
- *     audited path a human clicking a button in the dashboard would use.
- *     Jacob asking IS the approval; there's no separate confirmation step,
- *     same as the executor's own doc comment says for the dashboard case.
- *   - NOT wired: generating/uploading creative and attaching it to an ad.
- *     That pipeline (Gemini image gen -> Meta upload -> ad creative -> ad)
- *     is real and tested (agents/forge/creative/*.ts, ads/actions.ts) but
- *     pointless to expose here until chat can actually show Jacob the
- *     image — neither the dashboard panel nor Slack renders one today.
- *     Wiring it before that would mean Forge creating real ad objects
- *     around creative nobody reviewed. Fix the display gap first.
+ *   - Act: pause/resume, budget changes, creating a campaign, ad set, ad
+ *     creative, or ad. Every write goes through ActionExecutor.executeManual
+ *     — the same audited path a human clicking a button in the dashboard
+ *     would use. Jacob asking IS the approval; there's no separate
+ *     confirmation step, same as the executor's own doc comment says for
+ *     the dashboard case.
+ *   - Creative comes from an image Jacob attaches to the chat message
+ *     itself (upload_ad_image reads it off the turn's attachment, not off
+ *     tool_use JSON — there's no way to inline file bytes into a tool
+ *     call), NOT from Forge generating one. The Gemini generate-and-review
+ *     pipeline (agents/forge/creative/*.ts) is a separate, still-unwired
+ *     piece — this is "Jacob already has a finished image, get it live,"
+ *     not "make me an image."
+ *   - Every create_* tool (campaign, adset, ad) always lands PAUSED —
+ *     automation never puts something unreviewed live.
  */
 import { readFileSync, readdirSync } from "fs";
 import { join } from "path";
 import { BaseAgent } from "../base-agent";
-import { ToolDef } from "../../shared/claude";
+import { Attachment, ToolDef } from "../../shared/claude";
 import { getMetaConfig, MetaClient } from "../../shared/meta";
 import { computeMetrics } from "./ads/metrics";
 import { attributionReport } from "./ads/attribution";
@@ -213,6 +216,49 @@ const TOOLS: ToolDef[] = [
       required: ["clientId", "campaignId", "name", "optimizationGoal", "billingEvent", "targeting"],
     },
   },
+  {
+    name: "upload_ad_image",
+    description:
+      "Uploads the image attached to THIS exact message to Meta as ad creative material, validating it against Meta's image spec first, and returns an image hash. That hash is what create_ad_creative needs — this tool alone doesn't create anything visible. The image must be attached to the same message as this call; a file attached earlier in the conversation is not available here, so if nothing is attached, say so rather than guessing at a hash.",
+    input_schema: {
+      type: "object",
+      properties: { clientId: { type: "string" } },
+      required: ["clientId"],
+    },
+  },
+  {
+    name: "create_ad_creative",
+    description:
+      "Creates the actual ad content — image (via a hash from upload_ad_image), headline, body copy, and destination link — as a Meta ad creative object. This is not an ad by itself; pair it with create_ad. Ad creatives are immutable after creation (Meta rejects edits to anything but name/status), so a correction means creating a new one, not patching this one.",
+    input_schema: {
+      type: "object",
+      properties: {
+        clientId: { type: "string" },
+        name: { type: "string", description: "Internal label for this creative — not shown to viewers." },
+        imageHash: { type: "string", description: "From a prior upload_ad_image call in this conversation." },
+        headline: { type: "string", description: "Shown as the bold link title." },
+        primaryText: { type: "string", description: "The main ad copy, shown above the image." },
+        linkUrl: { type: "string", description: "Where a click goes — the landing page." },
+        callToActionType: { type: "string", description: "e.g. LEARN_MORE, SIGN_UP, GET_QUOTE. Defaults to LEARN_MORE." },
+        description: { type: "string", description: "Secondary line under the headline on feed placements. Optional." },
+      },
+      required: ["clientId", "name", "imageHash", "headline", "primaryText", "linkUrl"],
+    },
+  },
+  {
+    name: "create_ad",
+    description: "Creates the actual ad under an ad set, pointing at a previously created ad creative. Always lands PAUSED, same as create_campaign/create_adset.",
+    input_schema: {
+      type: "object",
+      properties: {
+        clientId: { type: "string" },
+        adsetId: { type: "string" },
+        name: { type: "string" },
+        creativeId: { type: "string", description: "From a prior create_ad_creative call." },
+      },
+      required: ["clientId", "adsetId", "name", "creativeId"],
+    },
+  },
 ];
 
 class ForgeAgent extends BaseAgent {
@@ -226,10 +272,11 @@ class ForgeAgent extends BaseAgent {
       .join("; ");
 
     return [
-      "You are Forge, EDEN's all-in-one media buyer. You have real, live tool access to Meta ad performance data, attribution, and the ability to pause/resume, change budgets, and create new campaigns and ad sets — you are not guessing or speaking in the abstract, you are looking at and acting on the actual account.",
+      "You are Forge, EDEN's all-in-one media buyer. You have real, live tool access to Meta ad performance data, attribution, and the ability to pause/resume, change budgets, and create new campaigns, ad sets, ad creatives, and ads — you are not guessing or speaking in the abstract, you are looking at and acting on the actual account.",
+      "Act like the media buyer you are, not an order-taker waiting for a fully-specified request. If Jacob hands you images and an offer but no copy, draft headline/primary text/CTA options yourself — grounded in the offer and images he's actually described, not generic filler — rather than waiting to be handed finished copy. Before building anything, run through what a real launch needs (objective and special ad category, targeting, budget structure, the creative, the landing page) and flag or ask about whatever's missing or looks off, instead of silently shipping something incomplete or refusing outright because one field wasn't spelled out. Use get_ad_performance/get_attribution_report to ground suggestions in what's actually worked for this client before, when there's history to draw on.",
       `Known clients: ${clients}. Call list_clients if a client is mentioned that isn't in that list, or ask Jacob which client he means if it's genuinely ambiguous — never assume.`,
-      "When Jacob asks you to do something that spends money or changes a live account (pause, resume, budget change, creating a campaign/ad set), just do it via the tool — him asking in this conversation is the approval, there's no separate confirmation step to wait for. New campaigns and ad sets always land PAUSED regardless, so nothing goes live from this alone.",
-      "You do NOT yet have a way to generate or attach creative (images/ad copy) to an ad through this chat — that pipeline exists but isn't wired here because chat can't display an image back to Jacob for review yet. If asked to build creative, say so plainly and point to the existing image-generation workflow instead of pretending to do it.",
+      "When Jacob asks you to do something that spends money or changes a live account (pause, resume, budget change, creating a campaign/adset/ad), just do it via the tool — him asking in this conversation is the approval, there's no separate confirmation step to wait for. Every create_* tool always lands PAUSED regardless, so nothing goes live from this alone — he still activates it himself once he's checked it over.",
+      "To get an image into a real ad: Jacob attaches the finished image to his chat message (you can't generate one yourself — that's a separate, unwired pipeline), then in order: upload_ad_image (only works on an image attached to that exact message, not one from earlier in the conversation), create_ad_creative with the resulting hash plus headline/copy/landing-page link, then create_ad with the resulting creative id under the ad set. If he hasn't attached anything and asks you to build creative, say so plainly rather than pretending to have an image.",
       "Cite real numbers from your tool calls, not estimates. If a tool call fails or a client has no Meta account configured, say that plainly rather than inventing a plausible-sounding answer.",
       "Respond concisely, like a sharp media buyer texting a client back — not a report.",
     ].join("\n\n");
@@ -239,7 +286,7 @@ class ForgeAgent extends BaseAgent {
     return TOOLS;
   }
 
-  protected async executeTool(name: string, input: any): Promise<string> {
+  protected async executeTool(name: string, input: any, attachment?: Attachment): Promise<string> {
     switch (name) {
       case "list_clients":
         return JSON.stringify(listClientConfigs());
@@ -319,6 +366,46 @@ class ForgeAgent extends BaseAgent {
               optimizationGoal: input.optimizationGoal, billingEvent: input.billingEvent,
               dailyBudgetCents: input.dailyBudgetCents, specialAdCategories: input.specialAdCategories,
             },
+            "jacob-via-chat"
+          )
+        );
+      }
+
+      case "upload_ad_image": {
+        if (!attachment) {
+          throw new Error("No image is attached to this message — attach the image file itself, then ask again in that same message.");
+        }
+        const executor = await requireExecutor(input.clientId);
+        return JSON.stringify(
+          await executor.executeManual(
+            "upload_image", "image", "", attachment.filename ?? null,
+            { filename: attachment.filename ?? `attachment.${attachment.mediaType.split("/")[1] ?? "bin"}`, file_bytes: attachment.data },
+            "jacob-via-chat"
+          )
+        );
+      }
+
+      case "create_ad_creative": {
+        const executor = await requireExecutor(input.clientId);
+        return JSON.stringify(
+          await executor.executeManual(
+            "create_ad_creative", "creative", "", input.name,
+            {
+              name: input.name, imageHash: input.imageHash, headline: input.headline,
+              primaryText: input.primaryText, linkUrl: input.linkUrl,
+              callToActionType: input.callToActionType, description: input.description,
+            },
+            "jacob-via-chat"
+          )
+        );
+      }
+
+      case "create_ad": {
+        const executor = await requireExecutor(input.clientId);
+        return JSON.stringify(
+          await executor.executeManual(
+            "create_ad", "ad", "", input.name,
+            { adset_id: input.adsetId, name: input.name, creative_id: input.creativeId },
             "jacob-via-chat"
           )
         );
