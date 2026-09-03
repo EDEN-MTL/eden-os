@@ -297,8 +297,24 @@ CREATE TABLE IF NOT EXISTS quarry_leads (
     -- Set when a lead is held out of the SMS path (landline/VOIP) so it can
     -- be worked by call or email instead of silently disappearing.
     holdout_reason TEXT,
+    -- sent_at/replied_at are the SMS-path timestamps (screenshot-first
+    -- sequence). Email got its own columns below rather than reusing these,
+    -- because a lead can now legitimately be worked by both channels and
+    -- one shared timestamp could not say which channel actually sent.
     sent_at TIMESTAMPTZ,
     replied_at TIMESTAMPTZ,
+    email_sent_at TIMESTAMPTZ,
+    email_replied_at TIMESTAMPTZ,
+    -- CASL requires every commercial email to honour opt-out. Scoped to the
+    -- EMAIL channel only — declining email does not silently opt someone out
+    -- of SMS too, since those are separate consent channels in practice.
+    email_opted_out BOOLEAN NOT NULL DEFAULT FALSE,
+    -- How many nudges have gone out, so a multi-touch sequence knows which
+    -- one is next due without re-deriving it from send_log every time.
+    email_nudge_count INTEGER NOT NULL DEFAULT 0,
+    -- Opaque, unguessable token for the public unsubscribe link. A sequential
+    -- lead id would let anyone opt any OTHER lead out by editing the URL.
+    email_unsubscribe_token TEXT,
     last_lookup_at TIMESTAMPTZ,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),

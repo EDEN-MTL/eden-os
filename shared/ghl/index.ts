@@ -362,6 +362,38 @@ export async function updateOpportunityStage(
 
 // ─── Calendar ───
 
+/**
+ * Creates a calendar. UNVERIFIED against a live POST — built from HighLevel's
+ * published Calendars API reference, not exercised against a real account
+ * yet (marketplace.gohighlevel.com/docs/ghl/calendars/create-calendar).
+ * `allowBookingAfter`/`allowBookingAfterUnit` is the minimum-scheduling-notice
+ * setting — e.g. {allowBookingAfter: 5, allowBookingAfterUnit: "days"} stops
+ * someone booking a slot sooner than 5 days out, which is the whole point
+ * when the person taking the call still has to build the site by hand in
+ * that gap.
+ */
+export async function createCalendar(
+  data: {
+    locationId: string;
+    name: string;
+    teamMembers: { userId: string }[];
+    slotDuration?: number;
+    slotDurationUnit?: "mins" | "hours";
+    allowBookingAfter?: number;
+    allowBookingAfterUnit?: "mins" | "hours" | "days" | "weeks" | "months";
+    eventTitle?: string;
+    description?: string;
+  },
+  apiKey?: string
+): Promise<any> {
+  return ghlRequest(`/calendars/`, {
+    method: "POST",
+    body: data,
+    apiKey,
+    locationId: data.locationId,
+  });
+}
+
 export async function getCalendarSlots(
   calendarId: string,
   startDate: string,
@@ -442,6 +474,37 @@ export async function sendMMS(
       contactId,
       message,
       attachments: attachmentUrls,
+    },
+    locationId,
+    apiKey,
+  });
+}
+
+/**
+ * Sends a commercial email. `html` must already carry a real unsubscribe link
+ * and sender identification — CASL requires both on every commercial
+ * electronic message, and GHL does not inject either for a raw conversations
+ * send the way its own email-marketing product would.
+ *
+ * UNVERIFIED against the live API — sending a real email needs a domain
+ * connected under GHL's Email Services first, which has not happened yet.
+ * Smoke-test this against one real send before trusting it for anything else,
+ * per the "verify against live data" rule in CLAUDE.md.
+ */
+export async function sendEmail(
+  contactId: string,
+  data: { subject: string; html: string; fromEmail: string },
+  locationId?: string,
+  apiKey?: string
+): Promise<any> {
+  return ghlRequest(`/conversations/messages`, {
+    method: "POST",
+    body: {
+      type: "Email",
+      contactId,
+      subject: data.subject,
+      html: data.html,
+      emailFrom: data.fromEmail,
     },
     locationId,
     apiKey,

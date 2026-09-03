@@ -3,6 +3,7 @@
  * through here rather than writing SQL, so the DB shape (snake_case) and the
  * domain shape (camelCase) only meet in one file.
  */
+import { randomUUID } from "crypto";
 import { query } from "../../shared/db";
 import {
   ApprovalStatus,
@@ -50,6 +51,11 @@ interface LeadRow {
   holdout_reason: string | null;
   sent_at: string | null;
   replied_at: string | null;
+  email_sent_at: string | null;
+  email_replied_at: string | null;
+  email_opted_out: boolean;
+  email_nudge_count: number;
+  email_unsubscribe_token: string | null;
   last_lookup_at: string | null;
   created_at: string;
   updated_at: string;
@@ -94,6 +100,11 @@ export function rowToLead(r: LeadRow): QuarryLead {
     holdoutReason: r.holdout_reason,
     sentAt: r.sent_at,
     repliedAt: r.replied_at,
+    emailSentAt: r.email_sent_at,
+    emailRepliedAt: r.email_replied_at,
+    emailOptedOut: r.email_opted_out,
+    emailNudgeCount: r.email_nudge_count,
+    emailUnsubscribeToken: r.email_unsubscribe_token,
     lastLookupAt: r.last_lookup_at,
     createdAt: r.created_at,
     updatedAt: r.updated_at,
@@ -132,12 +143,15 @@ export async function insertDiscovered(
 ): Promise<QuarryLead[]> {
   const inserted: QuarryLead[] = [];
   for (const p of places) {
+    // Generated up front rather than lazily at first send — every lead gets
+    // an unsubscribe token whether or not it ends up going down the email
+    // path, so sendEmailOne never has to branch on "does one exist yet".
     const rows = await query<LeadRow>(
       `INSERT INTO quarry_leads (
          client_id, place_id, name, formatted_address, phone, website,
          category, search_query, rating, user_ratings_total, business_status,
-         photo_refs
-       ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
+         photo_refs, email_unsubscribe_token
+       ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
        ON CONFLICT (client_id, place_id) DO NOTHING
        RETURNING *`,
       [
@@ -153,6 +167,7 @@ export async function insertDiscovered(
         p.userRatingsTotal,
         p.businessStatus,
         JSON.stringify(p.photoRefs),
+        randomUUID(),
       ]
     );
     if (rows.length > 0) inserted.push(rowToLead(rows[0]));
@@ -184,6 +199,10 @@ const UPDATABLE: Record<string, string> = {
   holdoutReason: "holdout_reason",
   sentAt: "sent_at",
   repliedAt: "replied_at",
+  emailSentAt: "email_sent_at",
+  emailRepliedAt: "email_replied_at",
+  emailOptedOut: "email_opted_out",
+  emailNudgeCount: "email_nudge_count",
   lastLookupAt: "last_lookup_at",
 };
 
@@ -211,6 +230,41 @@ export async function updateLead(
 
 export async function getLead(id: number): Promise<QuarryLead | null> {
   const rows = await query<LeadRow>("SELECT * FROM quarry_leads WHERE id = $1", [id]);
+  return rows[0] ? rowToLead(rows[0]) : null;
+}
+
+/** Looks up a lead by its GHL contact id — how an inbound reply webhook finds who replied. */
+export async function getLeadByGhlContactId(
+  contactId: string,
+  clientId = "eden"
+): Promise<QuarryLead | null> {
+  const rows = await query<LeadRow>(
+    "SELECT * FROM quarry_leads WHERE client_id = $1 AND ghl_contact_id = $2",
+    [clientId, contactId]
+  );
+  return rows[0] ? rowToLead(rows[0]) : null;
+}
+
+export async function getLeadByUnsubscribeToken(token: string): Promise<QuarryLead | null> {
+  const rows = await query<LeadRow>(
+    "SELECT * FROM quarry_leads WHERE email_unsubscribe_token = $1",
+    [token]
+  );
+  return rows[0] ? rowToLead(rows[0]) : null;
+}
+
+/**
+ * Marks a lead opted out of email by its unsubscribe token. Idempotent.
+ * Returns the full lead (not just a boolean) so the caller can mirror the
+ * opt-out onto the GHL contact too — that needs ghlContactId + clientId,
+ * which only the row itself carries.
+ */
+export async function unsubscribeByToken(token: string): Promise<QuarryLead | null> {
+  const rows = await query<LeadRow>(
+    `UPDATE quarry_leads SET email_opted_out = true, updated_at = now()
+      WHERE email_unsubscribe_token = $1 RETURNING *`,
+    [token]
+  );
   return rows[0] ? rowToLead(rows[0]) : null;
 }
 

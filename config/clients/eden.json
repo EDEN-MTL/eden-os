@@ -144,12 +144,15 @@
       "cacheDays": 180,
       "cacheDaysNote": "A business line type effectively never changes. Long cache because each lookup is billable.",
       "voipPolicy": "holdout",
-      "voipPolicyNote": "fixedVoip/nonFixedVoip are held out of SMS rather than auto-rejected — some business VOIP lines receive SMS and some do not. This is a human-decision bucket, visible in the console as a holdout."
+      "voipPolicyNote": "Jacob decided 2026-08-26: work confirmed mobiles only, set everything else aside for now. holdout is what implements that — VOIP and unclassifiable numbers stay in quarry_leads with a holdoutReason and are simply not worked, rather than being deleted. Changing this to reject would discard them permanently; changing it to allow would text lines that may not receive SMS. Revisit if calibration shows the VOIP bucket is large, because some business VOIP does take SMS and a big bucket would mean real reachable volume sitting idle.",
+      "enabled": false,
+      "enabledNote": "Turned off 2026-08-27 — Jacob wants email as the main tool, not SMS. Phone verification (Twilio Lookup, $0.008/number) existed only to gate the SMS send path; with SMS off by default there is nothing for it to gate, so leaving it on would just spend money determining mobile status nobody acts on. Flip to true to bring SMS back — nothing else needs to change, since isMobile stays null on every lead while this is off and that alone is what keeps SMS candidates empty in send.ts."
     },
     "generation": {
       "generator": "lovable",
-      "bookingUrl": "",
-      "bookingUrlNote": "GHL calendar link for the Book a call CTA. Empty until Jacob picks the calendar; generation writes a placeholder anchor and sync.ts patches it once the opportunity exists."
+      "bookingUrl": "https://link.edenmtl.com/widget/bookings/eden-strategyyeofba",
+      "bookingUrlNote": "Confirmed with Jacob 2026-09-02 to be the \"EDEN - New Website Preview\" calendar he built by hand (the slug reads eden-strategy for unrelated historical reasons, not a mix-up with a different calendar). This is the ONLY link in the pitch email now, so a wrong value here silently breaks the entire funnel — see generation._comment below for the minimum-notice setting this depends on.",
+      "_comment": "Module 4 (Lovable site generation) is PAUSED as of 2026-08-27 — Jacob is building sites by hand himself for now, using the lead time between a booked call and the call itself. previewUrl/previewImageUrl on a lead will stay empty until this resumes; nothing in the outreach flow depends on them anymore."
     },
     "outreach": {
       "senderName": "Jacob",
@@ -187,6 +190,32 @@
         "screenshot": "Hi, this is {{senderName}} — I put together a quick site redesign for {{businessName}}, wanted you to see it. Want the live link to click around?",
         "link": "Here it is — {{previewUrl}}. Have a look and tell me what you'd change.",
         "nudge": "Hey, just checking if you got a chance to look — no pressure!"
+      },
+      "channelNote": "SMS only. Email is captured for mobile leads as a second address on file, NOT as an outreach channel — there is no email sequence and building one is a separate decision with its own CASL posture.",
+      "email": {
+        "_comment": "Cold email channel, added 2026-08-27. Reuses the exact same discovery/triage/enrichment as texting — \"scrape businesses in an area\" already happens in quarry.searches above; this just adds a second send channel for leads (mobile AND landline/VOIP) who have a published email. NOT wired to a live domain yet — fromDomain/fromAddress/physicalAddress are all blank on purpose. sendEmailBatch refuses to run until they are set; see EmailChannelNotConfiguredError in outreach.ts.",
+        "fromDomain": "mail.helloedenmtl.com",
+        "fromDomainNote": "Set 2026-09-02. A subdomain built specifically for sending, not the root domain — correct move, keeps a burned cold-email domain from ever touching Jacob's real business domain. STILL NEEDS: verifying this in GHL under Settings > Email Services (adds SPF/DKIM DNS records at wherever this domain is registered) before any send will actually deliver.",
+        "fromAddress": "jacob@mail.helloedenmtl.com",
+        "physicalAddress": "319 Rue Notre Dame, Repentigny, QC J6A 0C8",
+        "dailySendCap": 15,
+        "dailySendCapNote": "Deliberately low. A brand-new sending domain with no history gets flagged by spam filters almost immediately at real volume — inbox providers judge a domain by its early sending pattern, not just content. Ramp by roughly 50% a week (15 to ~25 to ~40) only after checking bounce/spam-complaint rates stay low; this number is a starting point; there is no auto-ramp built, it is a manual dial.",
+        "minSendSpacingSeconds": 60,
+        "jitterSeconds": 60,
+        "templates": {
+          "subject": "A redesign idea for {{businessName}}",
+          "pitch": "<p>Hi —{{context}} I noticed {{problem}}. I put together a free preview of what a new site could look like for {{businessName}}, no obligation.</p><p>Want to see it? Book 15 minutes and I will walk you through it — or just reply here and I will find a time. If it is a fit, I will also cover what it would take to actually put it live.</p><p><a href=\"{{bookingUrl}}\">Book a quick call</a></p><hr><p style=\"font-size:12px;color:#666\">Sent by {{senderName}} · {{physicalAddress}} · <a href=\"{{unsubscribeUrl}}\">Unsubscribe</a></p>",
+          "nudge": "<p>Just checking you saw this — the preview is ready whenever you want to look. No pressure either way, and a reply works just as well as the link below.</p><p><a href=\"{{bookingUrl}}\">Book a quick call</a></p><hr><p style=\"font-size:12px;color:#666\">Sent by {{senderName}} · {{physicalAddress}} · <a href=\"{{unsubscribeUrl}}\">Unsubscribe</a></p>",
+          "booking": "<p>Great — here is the link to grab a time: <a href=\"{{bookingUrl}}\">Book a quick call</a></p><p>Or just reply with a day and time that works and I will find something.</p><hr><p style=\"font-size:12px;color:#666\">Sent by {{senderName}} · {{physicalAddress}} · <a href=\"{{unsubscribeUrl}}\">Unsubscribe</a></p>"
+        },
+        "templatesNote": "Updated 2026-08-27, three changes: (1) dropped \"free\" from the SUBJECT line specifically — it is a well-known spam-filter trigger word and this is a brand-new domain with no sending history, which is exactly the case that gets hurt most by it. Still says \"free preview\" in the body, where it is true and not scored the same way. (2) added {{context}} (rating/review count from Google, see contextLine()) right after the greeting for a second layer of specificity beyond {{problem}}. (3) added a reply as an equally valid alternative to the booking link everywhere — asking a stranger to book a call is a bigger first ask than asking them to hit reply, and a lot of small shop owners will find replying easier than a scheduling widget on their phone.",
+        "nudgeScheduleDays": [
+          4,
+          10
+        ],
+        "nudgeScheduleDaysNote": "Two touches now, not one — [4, 10] means a first nudge at day 4 with no reply, a second at day 10. Most cold-email replies reportedly land after the FIRST follow-up, not the initial send, so a single-touch sequence was leaving real replies on the table.",
+        "replyFixNote": "handleEmailReply now auto-sends the booking-link email (the new \"booking\" template) the moment someone replies positively — this is the fix for the exact failure mode in Jacob's old cold-SMS numbers: 342 people replied yes and almost none of them ever got a next step back. A positive reply must never just sit unanswered waiting for a human to notice.",
+        "fromAddressNote": "Personal (jacob@), not a generic alias (hello@/info@) — the copy is written in first person (\"I built...\", \"I noticed...\") and a From address that matches that consistently reads as a real person, not a mail-merge. Also generally performs better for cold email than a team alias."
       }
     },
     "ghlPipeline": {
