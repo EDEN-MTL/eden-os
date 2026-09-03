@@ -12,7 +12,7 @@ vi.mock("../agents/forge", () => ({ forgeAgent: {} }));
 vi.mock("../agents/lens", () => ({ lensAgent: {} }));
 vi.mock("../agents/nova", () => ({ novaAgent: {} }));
 
-import { verifySlackSignature } from "./slack-events";
+import { extractFileFromEvent, verifySlackSignature } from "./slack-events";
 
 const SECRET = "test-signing-secret";
 
@@ -79,5 +79,42 @@ describe("verifySlackSignature", () => {
     const signature = realSignature(staleTimestamp, rawBody);
 
     expect(verifySlackSignature(SECRET, fakeRequest({ timestamp: staleTimestamp, signature, rawBody }))).toBe(false);
+  });
+});
+
+describe("extractFileFromEvent", () => {
+  it("returns undefined when the event has no files", () => {
+    expect(extractFileFromEvent({ text: "hi" })).toBeUndefined();
+  });
+
+  it("returns undefined for an empty files array", () => {
+    expect(extractFileFromEvent({ files: [] })).toBeUndefined();
+  });
+
+  it("prefers url_private_download over url_private when both are present", () => {
+    const file = extractFileFromEvent({
+      files: [{ url_private_download: "https://files.slack.com/download", url_private: "https://files.slack.com/view", mimetype: "image/png", name: "ad.png" }],
+    });
+
+    expect(file).toEqual({ url: "https://files.slack.com/download", mimetype: "image/png", name: "ad.png" });
+  });
+
+  it("falls back to url_private when url_private_download is absent", () => {
+    const file = extractFileFromEvent({
+      files: [{ url_private: "https://files.slack.com/view", mimetype: "image/jpeg", name: "ad.jpg" }],
+    });
+
+    expect(file?.url).toBe("https://files.slack.com/view");
+  });
+
+  it("only ever uses the first file — same one-attachment-per-turn contract as the dashboard", () => {
+    const file = extractFileFromEvent({
+      files: [
+        { url_private: "https://files.slack.com/first", mimetype: "image/png", name: "first.png" },
+        { url_private: "https://files.slack.com/second", mimetype: "image/png", name: "second.png" },
+      ],
+    });
+
+    expect(file?.name).toBe("first.png");
   });
 });

@@ -145,6 +145,11 @@ export interface SlackIncomingMessage {
   threadTs?: string;
   isDM: boolean;
   timestamp: string;
+  // Raw metadata only — BaseAgent.handleMessage downloads the bytes (it
+  // needs the agent's own bot token to do that, same as getUserRealName).
+  // Only the first file a message carries is used; a chat turn takes at
+  // most one attachment, same as the dashboard's chat API.
+  file?: { url: string; mimetype: string; name?: string };
 }
 
 export interface SlackOutgoingMessage {

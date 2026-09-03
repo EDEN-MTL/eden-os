@@ -11,9 +11,14 @@ vi.mock("../shared/claude", () => ({
     mediaType: attachment.mediaType,
     data: attachment.data.toString("base64"),
   })),
+  isAttachmentMediaType: (mediaType: string) =>
+    ["image/png", "image/jpeg", "image/webp", "image/gif", "application/pdf"].includes(mediaType),
+  MAX_ATTACHMENT_BYTES: 8 * 1024 * 1024,
 }));
 vi.mock("../shared/slack", () => ({
   sendMessage: vi.fn(),
+  getUserRealName: vi.fn(async () => null),
+  downloadFile: vi.fn(),
 }));
 
 // A tiny fake of the real Postgres-backed store — same shape (load the
@@ -43,6 +48,7 @@ vi.mock("../shared/agent-notes", () => ({
 import { chatWithTools } from "../shared/claude";
 import { appendHistory, loadHistory } from "../shared/conversation-memory";
 import { saveNote } from "../shared/agent-notes";
+import { downloadFile, sendMessage } from "../shared/slack";
 import { BaseAgent } from "./base-agent";
 
 class PlainAgent extends BaseAgent {
@@ -314,5 +320,68 @@ describe("BaseAgent.generateReply — save_note (every agent, tool-capable or no
     const reply = await agent.generateReply("key-notes-down", "hi");
 
     expect(reply).toBe("still answered");
+  });
+});
+
+describe("BaseAgent.handleMessage — Slack attachment resolution", () => {
+  function slackMessage(overrides: Partial<any> = {}) {
+    return {
+      agentId: "eden",
+      userId: "U123",
+      channelId: "C123",
+      text: "hello",
+      isDM: true,
+      timestamp: "1234.5678",
+      ...overrides,
+    };
+  }
+
+  it("passes no attachment when the message has no file", async () => {
+    const agent = new PlainAgent();
+    const spy = vi.spyOn(agent, "generateReply").mockResolvedValueOnce("ok");
+
+    await agent.handleMessage(slackMessage());
+
+    expect(spy).toHaveBeenCalledWith(expect.any(String), "hello", { senderName: null }, undefined);
+    expect(downloadFile).not.toHaveBeenCalled();
+  });
+
+  it("downloads an attached file using the agent's own bot token and passes it through as an Attachment", async () => {
+    vi.mocked(downloadFile).mockResolvedValueOnce(Buffer.from("fake-png-bytes"));
+    const agent = new PlainAgent();
+    const spy = vi.spyOn(agent, "generateReply").mockResolvedValueOnce("ok");
+
+    await agent.handleMessage(slackMessage({ file: { url: "https://files.slack.com/x", mimetype: "image/png", name: "ad.png" } }));
+
+    expect(downloadFile).toHaveBeenCalledWith("eden", "https://files.slack.com/x");
+    expect(spy).toHaveBeenCalledWith(expect.any(String), "hello", { senderName: null }, {
+      data: Buffer.from("fake-png-bytes"),
+      mediaType: "image/png",
+      filename: "ad.png",
+    });
+  });
+
+  it("skips an unsupported file type without even attempting a download", async () => {
+    const agent = new PlainAgent();
+    const spy = vi.spyOn(agent, "generateReply").mockResolvedValueOnce("ok");
+
+    await agent.handleMessage(slackMessage({ file: { url: "https://files.slack.com/x", mimetype: "video/mp4", name: "clip.mp4" } }));
+
+    expect(downloadFile).not.toHaveBeenCalled();
+    expect(spy).toHaveBeenCalledWith(expect.any(String), "hello", { senderName: null }, undefined);
+  });
+
+  it("degrades to no attachment, without failing the reply, when the download throws", async () => {
+    // Real-world trigger: a transient Slack API error, an expired file url,
+    // or a scope issue — none of these should turn "couldn't fetch the
+    // image" into a dead conversation.
+    vi.mocked(downloadFile).mockRejectedValueOnce(new Error("network error"));
+    const agent = new PlainAgent();
+    const spy = vi.spyOn(agent, "generateReply").mockResolvedValueOnce("still answered");
+
+    await agent.handleMessage(slackMessage({ file: { url: "https://files.slack.com/x", mimetype: "image/png", name: "ad.png" } }));
+
+    expect(spy).toHaveBeenCalledWith(expect.any(String), "hello", { senderName: null }, undefined);
+    expect(sendMessage).toHaveBeenCalled();
   });
 });

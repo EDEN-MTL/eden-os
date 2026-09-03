@@ -1,5 +1,5 @@
 import { Request, Response, Router } from "express";
-import { Attachment, AttachmentMediaType } from "../shared/claude";
+import { Attachment, isAttachmentMediaType, MAX_ATTACHMENT_BYTES } from "../shared/claude";
 import { timingSafeStringEqual } from "../shared/security";
 import { AgentId } from "../shared/types";
 import { edenBrain } from "../agents/eden-brain";
@@ -27,18 +27,6 @@ const agents: Record<AgentId, BaseAgent> = {
 
 const VALID_AGENT_IDS = new Set(Object.keys(agents));
 
-const ALLOWED_ATTACHMENT_TYPES: ReadonlySet<string> = new Set([
-  "image/png",
-  "image/jpeg",
-  "image/webp",
-  "image/gif",
-  "application/pdf",
-]);
-
-// Decoded-bytes cap, not base64-string length — keeps this in step with
-// whatever the express.json() body limit allows for the ~33% base64 overhead.
-const MAX_ATTACHMENT_BYTES = 8 * 1024 * 1024;
-
 interface RawAttachment {
   data: string;
   mediaType: string;
@@ -49,12 +37,12 @@ interface RawAttachment {
 export function parseAttachment(raw: unknown): Attachment | null {
   if (!raw || typeof raw !== "object") return null;
   const { data, mediaType, filename } = raw as RawAttachment;
-  if (typeof data !== "string" || !ALLOWED_ATTACHMENT_TYPES.has(mediaType)) return null;
+  if (typeof data !== "string" || !isAttachmentMediaType(mediaType)) return null;
 
   const buffer = Buffer.from(data, "base64");
   if (buffer.length === 0 || buffer.length > MAX_ATTACHMENT_BYTES) return null;
 
-  return { data: buffer, mediaType: mediaType as AttachmentMediaType, filename: typeof filename === "string" ? filename : undefined };
+  return { data: buffer, mediaType, filename: typeof filename === "string" ? filename : undefined };
 }
 
 /**
