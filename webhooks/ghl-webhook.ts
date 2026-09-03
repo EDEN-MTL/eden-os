@@ -23,7 +23,13 @@ export function createGHLRouter(): Router {
     try {
       switch (body.type) {
         case "ContactCreate":
-          // New lead — Scout picks this up
+          // New lead — Scout picks this up. pipelineStageId is what
+          // normaliseLead's intentFromStageId actually reads to resolve
+          // buyer/seller/downsize/upgrading — dropping it here silently
+          // read every webhook-captured lead as "unknown" intent. Only
+          // present if the GHL workflow's webhook body includes it (GHL
+          // lets a workflow author customize the JSON body freely, so this
+          // depends on the workflow being built to include it).
           eventBus.publish("lead.captured", "scout", body.locationId || "", {
             contactId: body.id,
             firstName: body.first_name,
@@ -33,6 +39,7 @@ export function createGHLRouter(): Router {
             source: body.source,
             tags: body.tags || [],
             customFields: body.customField || {},
+            pipelineStageId: body.pipelineStageId,
           });
           break;
 
