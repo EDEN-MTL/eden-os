@@ -54,14 +54,18 @@ function listClientConfigs(): ClientSummary[] {
     });
 }
 
-async function requireExecutor(clientId: string): Promise<ActionExecutor> {
+async function requireMetaClient(clientId: string): Promise<MetaClient> {
   const cfg = await getMetaConfig(clientId);
   if (!cfg) {
     throw new Error(
       `No Meta ad account configured for client "${clientId}". Known clients are listed by the list_clients tool.`
     );
   }
-  const client = new MetaClient(cfg);
+  return new MetaClient(cfg);
+}
+
+async function requireExecutor(clientId: string): Promise<ActionExecutor> {
+  const client = await requireMetaClient(clientId);
   return new ActionExecutor(new MetaActions(client), clientId);
 }
 
@@ -189,9 +193,23 @@ const TOOLS: ToolDef[] = [
     },
   },
   {
+    name: "search_ad_regions",
+    description:
+      "Resolves a free-text place name (e.g. \"Texas\", \"Miami\") into the numeric {key, name, type, country_code} Meta requires for geo_locations.regions/cities/zips in create_adset — a bare place name is not a valid targeting value on its own. Call this once per place before building state/city-level targeting, and use the returned key verbatim.",
+    input_schema: {
+      type: "object",
+      properties: {
+        clientId: { type: "string" },
+        queryText: { type: "string", description: "Free-text place name, e.g. \"Texas\"." },
+        locationType: { type: "string", enum: ["country", "region", "city", "zip"], description: "Defaults to \"region\" (US states)." },
+      },
+      required: ["clientId", "queryText"],
+    },
+  },
+  {
     name: "create_adset",
     description:
-      "Create a new ad set under an existing campaign. Always lands PAUSED. Targeting fields not covered here (radius targeting, custom audiences) exist on the account — ask if you need something this schema doesn't expose rather than guessing at the shape.",
+      "Create a new ad set under an existing campaign. Always lands PAUSED. For state/city-level targeting, call search_ad_regions first to resolve names into keys — Meta rejects bare place names. Targeting fields not covered here (custom audiences) exist on the account — ask if you need something this schema doesn't expose rather than guessing at the shape.",
     input_schema: {
       type: "object",
       properties: {
@@ -203,7 +221,8 @@ const TOOLS: ToolDef[] = [
         dailyBudgetCents: { type: "integer", description: "Omit entirely if the parent campaign is CBO — Meta rejects an ad-set budget alongside one." },
         targeting: {
           type: "object",
-          description: "Meta targeting spec subset: age_min, age_max, genders ([1]=male [2]=female), geo_locations.zips or geo_locations.custom_locations ({radius, distance_unit, country}).",
+          description:
+            "Meta targeting spec subset: age_min, age_max, genders ([1]=male [2]=female), geo_locations.zips, geo_locations.regions/geo_locations.cities ([{key, ...}] from search_ad_regions), or geo_locations.custom_locations ({radius, distance_unit, country}).",
           properties: {
             age_min: { type: "integer" },
             age_max: { type: "integer" },
@@ -290,6 +309,12 @@ class ForgeAgent extends BaseAgent {
     switch (name) {
       case "list_clients":
         return JSON.stringify(listClientConfigs());
+
+      case "search_ad_regions": {
+        const client = await requireMetaClient(input.clientId);
+        const results = await client.searchGeoLocations(input.queryText, [input.locationType ?? "region"]);
+        return JSON.stringify(results);
+      }
 
       case "get_ad_performance": {
         const rows = await computeMetrics(input.scope as RuleScope, input.lookbackDays ?? 7, input.clientId);
