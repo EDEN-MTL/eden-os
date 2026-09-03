@@ -151,6 +151,29 @@ describe("MetaClient.getObject / call — the request() primitive", () => {
     expect(global.fetch).toHaveBeenCalledTimes(1); // non-retryable code — no retry attempted
   });
 
+  it("includes error_user_msg/error_subcode/fbtrace_id in the thrown message, not just the generic message", async () => {
+    // Meta's generic "Invalid parameter" message alone is useless for
+    // diagnosing which field was rejected — the real detail lives in these
+    // sibling fields, which were previously discarded entirely.
+    global.fetch = vi.fn(async () =>
+      jsonResponse(400, {
+        error: {
+          code: 100,
+          message: "Invalid parameter",
+          error_user_title: "Ad Set Targeting Invalid",
+          error_user_msg: "The targeting you selected is not valid.",
+          error_subcode: 1487470,
+          fbtrace_id: "Abc123XyzTrace",
+        },
+      })
+    ) as any;
+    const client = new MetaClient(clientConfig);
+
+    await expect(client.getObject("123", ["id"])).rejects.toThrow(
+      /Invalid parameter.*Ad Set Targeting Invalid.*targeting you selected.*subcode 1487470.*trace Abc123XyzTrace/s
+    );
+  });
+
   it("retries a rate-limit error (a RETRYABLE_ERROR_CODES code) with backoff, then succeeds", async () => {
     let call = 0;
     global.fetch = vi.fn(async () => {
