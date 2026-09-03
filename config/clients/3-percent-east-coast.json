@@ -64,9 +64,11 @@
     "qualificationQuestions": [
       "Are you looking to buy or sell?",
       "What area are you interested in?",
+      "What type of home are you looking for, and how many bedrooms and bathrooms do you need?",
       "What's your timeline?",
       "Are you pre-approved? What's your budget range?"
     ],
+    "qualificationQuestionsNote": "Mark, 2026-09-04: added the property-details question (3rd) per Jacob's live feedback testing a real call — property type + bed/bath count wasn't being asked at all before. Position matters: agents/iris/qualification.ts's nextQuestion() and scripts.ts's buildLeadQualificationPrompt both map these positionally, not by content.",
     "hotScoreThreshold": 75,
     "warmScoreThreshold": 40,
     "writeFields": {

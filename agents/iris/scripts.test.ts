@@ -5,7 +5,7 @@ import {
   buildLeadQualificationPrompt,
   buildVoicemailMessage,
   BUYER_QUESTIONS,
-  CALL_OPENING_GREETING,
+  callOpeningGreeting,
   callbackRecapLine,
   callOpeningContextLine,
   DOWNSIZER_QUESTIONS,
@@ -138,9 +138,27 @@ describe("NATURAL_TRANSITIONS", () => {
   });
 });
 
-describe("CALL_OPENING_GREETING", () => {
+describe("callOpeningGreeting", () => {
   it("identifies Iris by name rather than a human alias", () => {
-    expect(CALL_OPENING_GREETING).toContain("Iris");
+    expect(callOpeningGreeting("Sam", "3 Percent East Coast")).toContain("Iris");
+  });
+
+  it("asks to confirm the known name as a question, rather than declaring it", () => {
+    const line = callOpeningGreeting("Sam", "3 Percent East Coast");
+    expect(line).toContain("Sam");
+    expect(line.trim().endsWith("?")).toBe(true);
+  });
+
+  it("asks who's on the line instead of using the 'there' placeholder", () => {
+    const line = callOpeningGreeting("there", "3 Percent East Coast");
+    expect(line).not.toContain("there");
+    expect(line).toMatch(/who/i);
+  });
+
+  it("is a single short question — no 'how are you' or calling-about reason crammed in", () => {
+    const line = callOpeningGreeting("Sam", "3 Percent East Coast");
+    expect(line).not.toMatch(/how are you/i);
+    expect(line).not.toMatch(/calling about/i);
   });
 });
 
@@ -170,6 +188,7 @@ const IRIS_CONFIG: IrisConfig = {
   questions: [
     "Are you looking to buy or sell?",
     "What area are you interested in?",
+    "What type of home are you looking for, and how many bedrooms and bathrooms do you need?",
     "What's your timeline?",
     "Are you pre-approved? What's your budget range?",
   ],
@@ -227,7 +246,12 @@ describe("buildLeadQualificationPrompt", () => {
   it("skips the financing question for a seller, matching qualification.ts's nextQuestion behavior", () => {
     const lead: NormalisedLead = { ...BLANK_LEAD, intent: "seller" };
     const prompt = buildLeadQualificationPrompt(IRIS_CONFIG, lead, "3 Percent East Coast", "St. John's", false);
-    expect(prompt).not.toContain(IRIS_CONFIG.questions[3]);
+    expect(prompt).not.toContain(IRIS_CONFIG.questions[4]);
+  });
+
+  it("always asks the property-details question — no GHL field captures it yet", () => {
+    const prompt = buildLeadQualificationPrompt(IRIS_CONFIG, BLANK_LEAD, "3 Percent East Coast", "St. John's", false);
+    expect(prompt).toContain(IRIS_CONFIG.questions[2]);
   });
 
   it("uses the city and brand it's given rather than a hardcoded one", () => {
@@ -257,6 +281,23 @@ describe("buildLeadQualificationPrompt", () => {
   it("gives Iris the current date and time so she can resolve relative callback requests", () => {
     const prompt = buildLeadQualificationPrompt(IRIS_CONFIG, BLANK_LEAD, "3 Percent East Coast", "St. John's", false);
     expect(prompt).toMatch(/Right now it is/);
+  });
+
+  /**
+   * Jacob's live feedback, 2026-09-04: the opening felt robotic because
+   * Iris's first turn asked "how are you" and stated the calling-about
+   * reason all at once, with no room for the lead to actually respond.
+   * These instructions sequence it into separate turns instead.
+   */
+  it("instructs Iris to wait for the name, then ask how they're doing, before anything else", () => {
+    const prompt = buildLeadQualificationPrompt(IRIS_CONFIG, BLANK_LEAD, "3 Percent East Coast", "St. John's", false);
+    expect(prompt).toMatch(/wait for their answer/i);
+    expect(prompt).toMatch(/ask how they're doing/i);
+  });
+
+  it("tells Iris never to stack more than one question into a turn", () => {
+    const prompt = buildLeadQualificationPrompt(IRIS_CONFIG, BLANK_LEAD, "3 Percent East Coast", "St. John's", false);
+    expect(prompt).toMatch(/never stack more than one question/i);
   });
 });
 

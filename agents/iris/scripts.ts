@@ -80,7 +80,7 @@ export const DOWNSIZER_QUESTIONS: QuestionSet = {
 /** Natural acknowledgments — vary these rather than repeating one phrase. */
 export const NATURAL_TRANSITIONS = {
   sms: ["Got it!", "Makes sense.", "Sounds good.", "Cool, thanks for that.", "Yeah, I get why you'd ask that."],
-  call: ["Got it.", "Makes sense.", "Sounds good.", "Absolutely."],
+  call: ["Got it.", "Makes sense.", "Sounds good.", "Absolutely.", "Awesome!"],
 };
 
 /**
@@ -198,8 +198,23 @@ export const AGENT_UNAVAILABLE_FOLLOW_UP = "What day and time works best for us 
  * proposed wording until confirmed.
  */
 
-/** Opens with who's calling, not just what it's about — matches every real call reviewed. */
-export const CALL_OPENING_GREETING = "Hi {{first_name}}, this is Iris with {{brand_name}}. How are you doing today?";
+/**
+ * Opens with a single short question and stops — Jacob's live feedback,
+ * 2026-09-04: the old one-liner ("Hi {{first_name}}... How are you doing
+ * today? I'm calling about...") crammed identification, a question, and the
+ * calling-about reason into one uninterrupted turn with no room for the
+ * lead to actually get a word in, which read as robotic on a real test
+ * call. This is now just the opening turn — confirm who she's speaking
+ * with, then genuinely wait for an answer before anything else happens.
+ * "there" is the sentinel dial-pending.ts/test scripts use for "no real
+ * name on file" (see NormalisedLead.name) — treated as unknown here too,
+ * asking rather than parroting a placeholder back at the lead.
+ */
+export function callOpeningGreeting(firstName: string, brandName: string): string {
+  return firstName && firstName !== "there"
+    ? `Hi, this is Iris with ${brandName} — am I speaking with ${firstName}?`
+    : `Hi, this is Iris with ${brandName}. Who do I have the pleasure of speaking with?`;
+}
 
 /**
  * Ties the call to why the lead is actually being contacted instead of a
@@ -272,6 +287,10 @@ export function buildLeadQualificationPrompt(
 ): string {
   const known: string[] = [];
   const stillNeeded: string[] = [];
+  // Moved out of the firstMessage (see callOpeningGreeting) into the
+  // opening-sequence instructions below, so the reason for the call is its
+  // own turn rather than crammed into the first thing Iris says.
+  const contextLine = callOpeningContextLine(lead.intent, city, lead.leadSource);
 
   const track = (label: string, value: string | null, ask: string) => {
     if (value) known.push(`- ${label}: ${value} — already known, do NOT ask again`);
@@ -280,8 +299,12 @@ export function buildLeadQualificationPrompt(
 
   track("Intent", lead.intent !== "unknown" ? lead.intent : null, config.questions[0]);
   track("Area/property interest", lead.propertyInterest, config.questions[1]);
-  track("Timeline", lead.timeline, config.questions[2]);
-  if (lead.intent !== "seller") track("Financing", lead.financing, config.questions[3]);
+  // Property type + bedroom/bathroom count — Jacob's live feedback,
+  // 2026-09-04. There's no GHL field capturing this today (nothing in
+  // NormalisedLead tracks it), so it's always still-needed, never known.
+  stillNeeded.push(config.questions[2]);
+  track("Timeline", lead.timeline, config.questions[3]);
+  if (lead.intent !== "seller") track("Financing", lead.financing, config.questions[4]);
 
   const knownBlock = known.length
     ? `## What you already know about this lead — confirm it, never re-ask it\n${known.join("\n")}`
@@ -331,6 +354,18 @@ need to work out an exact date/time from something relative the lead says
 doesn't map back to this.
 
 ${knownBlock}${stillNeededBlock}
+
+## How you open the call
+Your first line already asked who you're speaking with — wait for their
+answer before saying anything else. Once they respond:
+1. Ask how they're doing today, then genuinely wait for their answer.
+2. Acknowledge it naturally and briefly (e.g. "${NATURAL_TRANSITIONS.call[4]}" or
+   another line from natural conversation) — don't launch straight into
+   business.
+3. Only then bring up why you're calling${contextLine ? `: "${contextLine}"` : ", using what's already known about them above"}.
+4. Move into the questions below — one at a time, always waiting for their
+   answer before asking the next one. Never stack more than one question
+   into a single turn.
 
 ## Your job
 Confirm what's known above, gather what's still needed, decide fit, then get

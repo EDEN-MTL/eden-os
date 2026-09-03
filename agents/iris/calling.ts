@@ -23,12 +23,7 @@ import { createCall, getVapiEnvConfig, CreateCallPayload, VapiCallResult, VapiTo
 import { query } from "../../shared/db";
 import { isCallingEnabled } from "./calling-settings";
 import { CallIntent } from "./qualification";
-import {
-  AGENT_UNAVAILABLE_LINE,
-  buildVoicemailMessage,
-  CALL_OPENING_GREETING,
-  callOpeningContextLine,
-} from "./scripts";
+import { AGENT_UNAVAILABLE_LINE, buildVoicemailMessage, callOpeningGreeting } from "./scripts";
 
 export class CallingDisabledError extends Error {}
 
@@ -54,20 +49,17 @@ export interface PlaceCallParams {
 
 /**
  * Builds the transient assistant config Vapi actually calls with. Pure and
- * testable — no network, no DB. {{first_name}} / {{brand_name}} placeholders
- * in the shared script lines are substituted here since this is the one
- * place that actually knows who's being called.
+ * testable — no network, no DB.
  */
 export function buildCallPayload(
   params: PlaceCallParams,
   vapiConfig: ReturnType<typeof getVapiEnvConfig>
 ): CreateCallPayload {
-  const greeting = CALL_OPENING_GREETING.replace("{{first_name}}", params.firstName).replace(
-    "{{brand_name}}",
-    params.brandName
-  );
-  const contextLine = callOpeningContextLine(params.intent, params.city, params.leadSource);
-  const firstMessage = contextLine ? `${greeting} ${contextLine}` : greeting;
+  // Just the opening turn — identify Iris and ask who she's speaking with,
+  // then stop and wait. Everything else (how are you, the reason for the
+  // call) happens as its own turn, driven by the system prompt below, not
+  // crammed into this one line. See scripts.ts's callOpeningGreeting.
+  const firstMessage = callOpeningGreeting(params.firstName, params.brandName);
 
   const tools: VapiTool[] = [];
 

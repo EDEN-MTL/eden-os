@@ -17,6 +17,7 @@ const config: IrisConfig = {
   questions: [
     "Are you looking to buy or sell?",
     "What area are you interested in?",
+    "What type of home are you looking for, and how many bedrooms and bathrooms do you need?",
     "What's your timeline?",
     "Are you pre-approved? What's your budget range?",
   ],
@@ -35,21 +36,36 @@ const config: IrisConfig = {
 };
 
 describe("nextQuestion / isComplete", () => {
-  it("asks in order: intent, area, timeline, financing", () => {
+  it("asks in order: intent, area, property details, timeline, financing", () => {
     expect(nextQuestion(config, BLANK_ANSWERS)).toBe(config.questions[0]);
     expect(nextQuestion(config, { ...BLANK_ANSWERS, intent: "buyer" })).toBe(config.questions[1]);
     expect(nextQuestion(config, { ...BLANK_ANSWERS, intent: "buyer", area: "Mount Pearl" })).toBe(
       config.questions[2]
     );
     expect(
-      nextQuestion(config, { ...BLANK_ANSWERS, intent: "buyer", area: "Mount Pearl", timeline: "ASAP" })
+      nextQuestion(config, {
+        ...BLANK_ANSWERS,
+        intent: "buyer",
+        area: "Mount Pearl",
+        propertyDetails: "3 bed, 2 bath",
+      })
     ).toBe(config.questions[3]);
+    expect(
+      nextQuestion(config, {
+        ...BLANK_ANSWERS,
+        intent: "buyer",
+        area: "Mount Pearl",
+        propertyDetails: "3 bed, 2 bath",
+        timeline: "ASAP",
+      })
+    ).toBe(config.questions[4]);
   });
 
   it("is complete once every applicable question has an answer", () => {
     const answers: QualificationAnswers = {
       intent: "buyer",
       area: "Mount Pearl",
+      propertyDetails: "3 bed, 2 bath",
       timeline: "ASAP",
       financing: "pre-approved",
       budget: "$450,000",
@@ -66,6 +82,7 @@ describe("nextQuestion / isComplete", () => {
     const answers: QualificationAnswers = {
       intent: "seller",
       area: "Downtown St. John's",
+      propertyDetails: "3 bed bungalow",
       timeline: "1-4 Months",
       financing: null,
       budget: null,
@@ -79,17 +96,18 @@ describe("nextQuestion / isComplete", () => {
       const answers: QualificationAnswers = {
         intent,
         area: "St. John's",
+        propertyDetails: "3 bed, 2 bath",
         timeline: "ASAP",
         financing: null,
         budget: null,
       };
-      expect(nextQuestion(config, answers)).toBe(config.questions[3]);
+      expect(nextQuestion(config, answers)).toBe(config.questions[4]);
     }
   });
 
   it("throws rather than silently mis-mapping when the question count doesn't match", () => {
     const badConfig: IrisConfig = { ...config, questions: [...config.questions, "One more?"] };
-    expect(() => nextQuestion(badConfig, BLANK_ANSWERS)).toThrow(/expects 4 qualification questions/);
+    expect(() => nextQuestion(badConfig, BLANK_ANSWERS)).toThrow(/expects 5 qualification questions/);
   });
 });
 
@@ -98,6 +116,7 @@ describe("scoreQualification", () => {
     const { score } = scoreQualification({
       intent: "buyer",
       area: "Mount Pearl",
+      propertyDetails: "3 bed, 2 bath",
       timeline: "ASAP",
       financing: "cash",
       budget: "$450,000",
@@ -110,6 +129,7 @@ describe("scoreQualification", () => {
     const { score } = scoreQualification({
       intent: "buyer",
       area: "unsure",
+      propertyDetails: null,
       timeline: "12+ months",
       financing: "not-approved",
       budget: null,
@@ -124,14 +144,14 @@ describe("scoreQualification", () => {
    * merely pre-approved, let alone as a negative.
    */
   it("scores a cash buyer higher than an otherwise-identical pre-approved buyer", () => {
-    const base = { intent: "buyer" as const, area: "x", timeline: "ASAP", budget: "$400,000" };
+    const base = { intent: "buyer" as const, area: "x", propertyDetails: null, timeline: "ASAP", budget: "$400,000" };
     const cash = scoreQualification({ ...base, financing: "cash" }).score;
     const preApproved = scoreQualification({ ...base, financing: "pre-approved" }).score;
     expect(cash).toBeGreaterThan(preApproved);
   });
 
   it("scores financing in-progress between pre-approved and not-approved", () => {
-    const base = { intent: "buyer" as const, area: "x", timeline: "ASAP", budget: "$400,000" };
+    const base = { intent: "buyer" as const, area: "x", propertyDetails: null, timeline: "ASAP", budget: "$400,000" };
     const preApproved = scoreQualification({ ...base, financing: "pre-approved" }).score;
     const inProgress = scoreQualification({ ...base, financing: "in-progress" }).score;
     const notApproved = scoreQualification({ ...base, financing: "not-approved" }).score;
@@ -201,6 +221,7 @@ describe("qualify", () => {
     const result = qualify(config, {
       intent: "buyer",
       area: "Mount Pearl",
+      propertyDetails: "3 bed, 2 bath",
       timeline: "ASAP",
       financing: "cash",
       budget: "$450,000",
@@ -213,6 +234,7 @@ describe("qualify", () => {
     const result = qualify(config, {
       intent: "seller",
       area: "St. John's",
+      propertyDetails: "3 bed bungalow",
       timeline: "1-4 Months",
       financing: null,
       budget: null,
@@ -226,6 +248,7 @@ describe("qualify", () => {
     const result = qualify(config, {
       intent: "buyer",
       area: "Mount Pearl",
+      propertyDetails: "3 bed, 2 bath",
       timeline: "1-4 Months",
       financing: null,
       budget: "$300,000",
@@ -244,7 +267,7 @@ describe("fieldWritesFor", () => {
    */
   it("writes the financing answer as its actual value, not a yes/no", () => {
     const writes = fieldWritesFor(
-      { intent: "buyer", area: "x", timeline: "ASAP", financing: "cash", budget: null },
+      { intent: "buyer", area: "x", propertyDetails: null, timeline: "ASAP", financing: "cash", budget: null },
       config.writeFields
     );
     expect(writes["contact.are_you_pre_approuved"]).toBe("cash");
@@ -252,7 +275,7 @@ describe("fieldWritesFor", () => {
 
   it("writes intent to the propertyInterest field as buyer/seller/downsize/upgrading", () => {
     const writes = fieldWritesFor(
-      { intent: "downsize", area: "x", timeline: "ASAP", financing: null, budget: null },
+      { intent: "downsize", area: "x", propertyDetails: null, timeline: "ASAP", financing: null, budget: null },
       config.writeFields
     );
     expect(writes["contact.lf_proprety"]).toBe("downsize");

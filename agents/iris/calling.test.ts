@@ -35,26 +35,28 @@ describe("buildCallPayload", () => {
     expect(payload.phoneNumberId).toBe("phone-123");
   });
 
-  it("substitutes first name and brand name into the greeting", () => {
+  it("uses first name and brand name in the opening greeting", () => {
     const payload = buildCallPayload(BASE_PARAMS, VAPI_CONFIG);
     expect(payload.assistant.firstMessage).toContain("Sam");
     expect(payload.assistant.firstMessage).toContain("3 Percent East Coast");
     expect(payload.assistant.firstMessage).not.toContain("{{");
   });
 
-  it("omits the context clause for unknown intent rather than inventing one", () => {
-    const payload = buildCallPayload(BASE_PARAMS, VAPI_CONFIG);
-    expect(payload.assistant.firstMessage).not.toMatch(/calling about/i);
-  });
-
-  it("adds a context clause referencing city and lead source when intent is known", () => {
-    const payload = buildCallPayload(
-      { ...BASE_PARAMS, intent: "seller", leadSource: "facebook" },
-      VAPI_CONFIG
-    );
-    expect(payload.assistant.firstMessage).toMatch(/calling about/i);
-    expect(payload.assistant.firstMessage).toContain("St. John's");
-    expect(payload.assistant.firstMessage).toContain("facebook");
+  /**
+   * Jacob's live feedback, 2026-09-04: the old firstMessage crammed
+   * identification, "how are you", and the calling-about reason into one
+   * uninterrupted turn. The opening is now just a short question — asking
+   * "how are you" and the reason for the call happen as later turns, driven
+   * by buildLeadQualificationPrompt's system prompt instead.
+   */
+  it("is a single short question — no calling-about reason or 'how are you' crammed in, regardless of intent", () => {
+    const unknownIntent = buildCallPayload(BASE_PARAMS, VAPI_CONFIG);
+    const knownIntent = buildCallPayload({ ...BASE_PARAMS, intent: "seller", leadSource: "facebook" }, VAPI_CONFIG);
+    for (const payload of [unknownIntent, knownIntent]) {
+      expect(payload.assistant.firstMessage).not.toMatch(/calling about/i);
+      expect(payload.assistant.firstMessage).not.toMatch(/how are you/i);
+      expect(payload.assistant.firstMessage.trim().endsWith("?")).toBe(true);
+    }
   });
 
   it("carries the system prompt through as the model's only system message", () => {

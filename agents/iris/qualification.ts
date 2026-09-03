@@ -36,10 +36,11 @@ export interface OutreachCadenceConfig {
 
 export interface IrisConfig {
   /**
-   * The four-question list in client config today. Per the Iris build
-   * brief, this is a placeholder — Jacob has a fuller qualification script
-   * that hasn't landed yet. assertQuestionShape() below fails loudly rather
-   * than silently mis-mapping answers if the shape changes.
+   * The five-question list in client config today (intent, area, property
+   * details, timeline, financing). Per the Iris build brief, this is a
+   * placeholder — Jacob has a fuller qualification script that hasn't
+   * landed yet. assertQuestionShape() below fails loudly rather than
+   * silently mis-mapping answers if the shape changes.
    */
   questions: string[];
   hotScoreThreshold: number;
@@ -74,6 +75,8 @@ export interface IrisConfig {
 export interface QualificationAnswers {
   intent: CallIntent;
   area: string | null;
+  /** Property type + bedroom/bathroom count — Jacob's live feedback, 2026-09-04. */
+  propertyDetails: string | null;
   timeline: string | null;
   budget: string | null;
   /**
@@ -88,6 +91,7 @@ export interface QualificationAnswers {
 export const BLANK_ANSWERS: QualificationAnswers = {
   intent: "unknown",
   area: null,
+  propertyDetails: null,
   timeline: null,
   budget: null,
   financing: null,
@@ -111,20 +115,21 @@ export interface QualificationResult {
 }
 
 /**
- * Positional concepts behind today's four placeholder questions: buy/sell,
- * area, timeline, financing+budget. There is no way to connect free-form
- * question text to structured fields other than position, since the
- * questions are plain strings in config — so this throws instead of
+ * Positional concepts behind today's five questions: buy/sell, area,
+ * property details (type + bed/bath, added per Jacob's 2026-09-04 live
+ * feedback), timeline, financing+budget. There is no way to connect
+ * free-form question text to structured fields other than position, since
+ * the questions are plain strings in config — so this throws instead of
  * silently mis-mapping if the question count ever changes.
  */
-const EXPECTED_QUESTION_COUNT = 4;
+const EXPECTED_QUESTION_COUNT = 5;
 
 function assertQuestionShape(questions: string[]): void {
   if (questions.length !== EXPECTED_QUESTION_COUNT) {
     throw new Error(
-      `Iris expects ${EXPECTED_QUESTION_COUNT} qualification questions (intent, area, timeline, ` +
-        `financing) but config supplied ${questions.length}. The positional mapping in ` +
-        `nextQuestion() needs updating before qualifying calls against this script.`
+      `Iris expects ${EXPECTED_QUESTION_COUNT} qualification questions (intent, area, property ` +
+        `details, timeline, financing) but config supplied ${questions.length}. The positional ` +
+        `mapping in nextQuestion() needs updating before qualifying calls against this script.`
     );
   }
 }
@@ -139,10 +144,11 @@ function assertQuestionShape(questions: string[]): void {
  */
 export function nextQuestion(config: IrisConfig, answers: QualificationAnswers): string | null {
   assertQuestionShape(config.questions);
-  const [intentQ, areaQ, timelineQ, financingQ] = config.questions;
+  const [intentQ, areaQ, propertyDetailsQ, timelineQ, financingQ] = config.questions;
 
   if (answers.intent === "unknown") return intentQ;
   if (answers.area === null) return areaQ;
+  if (answers.propertyDetails === null) return propertyDetailsQ;
   if (answers.timeline === null) return timelineQ;
   if (answers.intent !== "seller" && answers.financing === null) return financingQ;
   return null;
