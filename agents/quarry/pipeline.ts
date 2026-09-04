@@ -101,6 +101,12 @@ export interface CalibrationReport {
   needsReview: number;
   /** Qualified leads pushed into GHL as a contact + opportunity — only non-zero when syncToGhl was set. */
   syncedToGhl: number;
+  /**
+   * Auto-approved leads walked back to pending because enrichment (and phone,
+   * if it ran) turned up neither an email nor a verified mobile number —
+   * "approved" would be a status that can never actually fire a send.
+   */
+  heldForNoContact: number;
 }
 
 export class QuarryDisabledError extends Error {
@@ -214,6 +220,7 @@ export async function run(options: RunOptions): Promise<CalibrationReport> {
     autoApproved: 0,
     needsReview: 0,
     syncedToGhl: 0,
+    heldForNoContact: 0,
   };
 
   const bump = (category: string | null, key: keyof CategoryBreakdown) => {
@@ -237,6 +244,7 @@ export async function run(options: RunOptions): Promise<CalibrationReport> {
 
   const qualified: QuarryLead[] = [];
   const needsReview: QuarryLead[] = [];
+  const autoApprovedLeads: QuarryLead[] = [];
   for (const lead of leads) {
     try {
       let result = await triage(lead.website, {
@@ -281,6 +289,7 @@ export async function run(options: RunOptions): Promise<CalibrationReport> {
         if (isHighConfidenceCandidate(result.reasons)) {
           patch.approvalStatus = "approved";
           report.autoApproved++;
+          autoApprovedLeads.push(lead);
         } else {
           needsReview.push(lead);
           report.needsReview++;
@@ -335,9 +344,11 @@ export async function run(options: RunOptions): Promise<CalibrationReport> {
           continue;
         }
         report.phoneChecked++;
+        lead.isMobile = result.decision === "send";
+        lead.phoneLineType = result.lookup.lineType;
         await updateLead(lead.id, {
           phoneLineType: result.lookup.lineType,
-          isMobile: result.decision === "send",
+          isMobile: lead.isMobile,
           lastLookupAt: result.lookup.checkedAt,
           holdoutReason:
             result.decision === "holdout"
@@ -373,6 +384,13 @@ export async function run(options: RunOptions): Promise<CalibrationReport> {
   for (const lead of qualified) {
     try {
       const enrichment = await enrichContact(lead.website);
+      // Mutated on the in-memory lead too, not just persisted — syncToGhl and
+      // the contactability gate below both read lead.email off this same
+      // array, and a DB-only write would leave them looking at whatever
+      // discovery set (always null; Places never returns an email).
+      lead.email = enrichment.email;
+      lead.emailSource = enrichment.emailSource;
+      lead.hasPublicEmail = enrichment.hasPublicEmail;
       await updateLead(lead.id, {
         email: enrichment.email,
         emailSource: enrichment.emailSource,
@@ -384,6 +402,26 @@ export async function run(options: RunOptions): Promise<CalibrationReport> {
     }
   }
   log(`enrichment: ${report.withEmail}/${qualified.length} qualified leads have a published business email`);
+
+  // ── Contactability gate ──
+  // Auto-approval above only ever knew qualification confidence — it ran
+  // before enrichment, so it had no way to know yet whether a channel to
+  // reach this lead would actually turn up. An "approved" lead with no
+  // email and no verified mobile number can never fire a send under the
+  // current gates (sendPending filters on exactly those two things), so
+  // that status would be a lie. Walk it back to pending — same as if a
+  // human still needs to find or confirm a way to reach them.
+  let heldForNoContact = 0;
+  for (const lead of autoApprovedLeads) {
+    if (lead.email || lead.isMobile) continue;
+    await updateLead(lead.id, { approvalStatus: "pending" });
+    heldForNoContact++;
+  }
+  if (heldForNoContact > 0) {
+    report.autoApproved -= heldForNoContact;
+    report.heldForNoContact = heldForNoContact;
+    log(`${heldForNoContact} lead(s) qualified but have no email or verified mobile — held back from approved`);
+  }
 
   await syncToGhl(qualified, config, clientId, options.syncToGhl ?? false, report, note, log);
 
