@@ -231,6 +231,8 @@ const TOOLS: ToolDef[] = [
           },
         },
         specialAdCategories: { type: "array", items: { type: "string" }, description: "Should match the parent campaign's." },
+        pixelId: { type: "string", description: "Required together with customEventType when optimizationGoal is OFFSITE_CONVERSIONS — Meta has nothing to optimize toward without a pixel + event. Check the client's config for pixelId rather than guessing." },
+        customEventType: { type: "string", description: "A Meta standard event, e.g. \"LEAD\", \"PURCHASE\", \"COMPLETE_REGISTRATION\". Required together with pixelId for OFFSITE_CONVERSIONS." },
       },
       required: ["clientId", "campaignId", "name", "optimizationGoal", "billingEvent", "targeting"],
     },
@@ -390,6 +392,7 @@ class ForgeAgent extends BaseAgent {
               campaignId: input.campaignId, name: input.name, targeting: input.targeting,
               optimizationGoal: input.optimizationGoal, billingEvent: input.billingEvent,
               dailyBudgetCents: input.dailyBudgetCents, specialAdCategories: input.specialAdCategories,
+              pixelId: input.pixelId, customEventType: input.customEventType,
             },
             "jacob-via-chat"
           )
