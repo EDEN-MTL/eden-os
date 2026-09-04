@@ -27,6 +27,8 @@ import {
   updateLead,
 } from "./store";
 import { applyVisionScore, isHighConfidenceCandidate, triage } from "./triage";
+import { openOpportunity, resolvePipeline, upsertProspectContact } from "./sync";
+import { getGhlConfig } from "../../shared/ghl";
 import { PlaywrightCapturer, scoreSiteAppearance, ScreenshotCapturer } from "./screenshot";
 import { QuarryCategory, QuarryLead, RunError } from "./types";
 import { quarryAgent } from "./index";
@@ -41,6 +43,16 @@ export interface RunOptions {
   maxLeads?: number;
   /** Set to run despite `quarry.enabled: false`. Calibration passes this. */
   overrideKillSwitch?: boolean;
+  /** Overrides config.searches — how a location-targeted discovery request runs against a city that isn't in the fixed list. */
+  searches?: SearchSpec[];
+  /**
+   * Pushes every qualified lead into GHL as a contact + opportunity once
+   * this run reaches "enrich". Off by default so calibration (cli.ts) keeps
+   * its documented promise of never touching GHL — only a caller that
+   * explicitly wants real contacts created (currently the Slack discovery
+   * tool) opts in.
+   */
+  syncToGhl?: boolean;
   log?: (line: string) => void;
   /**
    * Supplies the vision pass. Omit to skip it — the run still works and the
@@ -87,6 +99,8 @@ export interface CalibrationReport {
   autoApproved: number;
   /** Qualified only by the vision pass's opinion — left pending and posted to reviewChannel. */
   needsReview: number;
+  /** Qualified leads pushed into GHL as a contact + opportunity — only non-zero when syncToGhl was set. */
+  syncedToGhl: number;
 }
 
 export class QuarryDisabledError extends Error {
@@ -160,7 +174,7 @@ export async function run(options: RunOptions): Promise<CalibrationReport> {
   log(`${alreadySeen.size} place_ids already seen within ${config.discovery.recheckAfterDays} days`);
 
   const outcome = await discover(
-    config.searches as SearchSpec[],
+    options.searches ?? (config.searches as SearchSpec[]),
     process.env.GOOGLE_PLACES_API_KEY!,
     alreadySeen,
     maxLeads,
@@ -199,6 +213,7 @@ export async function run(options: RunOptions): Promise<CalibrationReport> {
     phoneVerificationEnabled: true,
     autoApproved: 0,
     needsReview: 0,
+    syncedToGhl: 0,
   };
 
   const bump = (category: string | null, key: keyof CategoryBreakdown) => {
@@ -370,8 +385,84 @@ export async function run(options: RunOptions): Promise<CalibrationReport> {
   }
   log(`enrichment: ${report.withEmail}/${qualified.length} qualified leads have a published business email`);
 
+  await syncToGhl(qualified, config, clientId, options.syncToGhl ?? false, report, note, log);
+
   await persist(runId, report, errors);
   return finalise(report);
+}
+
+/**
+ * Pushes every qualified lead into GHL as a contact + opportunity in the
+ * configured pipeline's "New Lead" stage. Best-effort per lead — one bad
+ * contact must not stop the rest of a batch from landing — and the whole
+ * step is a no-op unless the caller explicitly opted in (see syncToGhl on
+ * RunOptions).
+ */
+async function syncToGhl(
+  qualified: QuarryLead[],
+  config: QuarryConfig,
+  clientId: string,
+  enabled: boolean,
+  report: CalibrationReport,
+  note: (step: string, lead: { placeId: string; name: string } | null, error: unknown) => void,
+  log: (line: string) => void
+): Promise<void> {
+  if (!enabled || qualified.length === 0) return;
+
+  const ghlConfig = await getGhlConfig(clientId);
+  if (!ghlConfig) {
+    log(`  ! GHL sync requested but no GHL credentials configured for "${clientId}" — skipping`);
+    return;
+  }
+
+  let pipeline;
+  try {
+    pipeline = await resolvePipeline(
+      config.ghlPipeline.name,
+      config.ghlPipeline.stages,
+      ghlConfig.locationId,
+      ghlConfig.apiKey
+    );
+  } catch (error) {
+    note("sync", null, error);
+    return;
+  }
+
+  for (const lead of qualified) {
+    if (!lead.phone) {
+      note("sync", lead, "no phone number — cannot match/create a GHL contact");
+      continue;
+    }
+    try {
+      const { contactId } = await upsertProspectContact(
+        {
+          name: lead.name,
+          phone: lead.phone,
+          email: lead.email,
+          category: (lead.category as QuarryCategory) ?? null,
+          previewUrl: lead.previewUrl,
+          previewImageUrl: lead.previewImageUrl,
+          outdatedScore: lead.outdatedScore,
+        },
+        ghlConfig.locationId,
+        ghlConfig.apiKey
+      );
+      const opportunityId = await openOpportunity(
+        { contactId, businessName: lead.name, pipeline, stage: "New Lead" },
+        ghlConfig.locationId,
+        ghlConfig.apiKey
+      );
+      await updateLead(lead.id, {
+        ghlContactId: contactId,
+        ghlOpportunityId: opportunityId,
+        pipelineStage: "New Lead",
+      });
+      report.syncedToGhl++;
+    } catch (error) {
+      note("sync", lead, error);
+    }
+  }
+  log(`GHL sync: ${report.syncedToGhl}/${qualified.length} qualified leads synced`);
 }
 
 /**

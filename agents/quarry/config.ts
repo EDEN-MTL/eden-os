@@ -30,6 +30,14 @@ export interface QuarryConfig {
   /** The GHL pipeline built by hand — see sync.ts, which resolves it by name. */
   ghlPipeline: { name: string; stages: string[] };
   searches: SearchSpec[];
+  /**
+   * Location-free business-type templates ("picture framing", "shoe
+   * repair") — the same category mix as `searches`, minus the city baked
+   * into the query string. `buildLocationSearches` combines these with
+   * whatever location a request names, so discovery is not limited to the
+   * cities hardcoded into `searches`.
+   */
+  categoryTemplates: SearchSpec[];
   discovery: { recheckAfterDays: number; maxLeadsPerRun: number };
   triage: {
     outdatedSignals: string[];
@@ -91,6 +99,19 @@ export function loadQuarryConfig(clientId = "eden"): QuarryConfig | null {
   } catch {
     return null;
   }
+}
+
+/**
+ * Combines `categoryTemplates` with a requested location to build a one-off
+ * search list — how a Slack-triggered discovery run targets a city that
+ * isn't one of the fixed queries in `searches`.
+ */
+export function buildLocationSearches(config: QuarryConfig, location: string): SearchSpec[] {
+  return config.categoryTemplates.map((t) => ({
+    query: `${t.query} ${location}`,
+    category: t.category,
+    maxResults: t.maxResults,
+  }));
 }
 
 /**

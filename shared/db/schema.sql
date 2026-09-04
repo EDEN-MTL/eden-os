@@ -323,6 +323,44 @@ CREATE TABLE IF NOT EXISTS quarry_leads (
 CREATE INDEX IF NOT EXISTS idx_quarry_stage ON quarry_leads(client_id, pipeline_stage);
 CREATE INDEX IF NOT EXISTS idx_quarry_approval ON quarry_leads(client_id, approval_status);
 CREATE INDEX IF NOT EXISTS idx_quarry_category ON quarry_leads(client_id, category);
+-- IF NOT EXISTS create above won't add these to a table that already existed
+-- before the vision-triage, phone-verification, and email-outreach columns
+-- were added — confirmed live: quarry_pipeline_stats failed with
+-- 'column "email_opted_out" does not exist' on a table created earlier.
+ALTER TABLE quarry_leads ADD COLUMN IF NOT EXISTS phone_line_type TEXT;
+ALTER TABLE quarry_leads ADD COLUMN IF NOT EXISTS is_mobile BOOLEAN;
+ALTER TABLE quarry_leads ADD COLUMN IF NOT EXISTS email TEXT;
+ALTER TABLE quarry_leads ADD COLUMN IF NOT EXISTS email_source TEXT;
+ALTER TABLE quarry_leads ADD COLUMN IF NOT EXISTS has_public_email BOOLEAN NOT NULL DEFAULT FALSE;
+ALTER TABLE quarry_leads ADD COLUMN IF NOT EXISTS website TEXT;
+ALTER TABLE quarry_leads ADD COLUMN IF NOT EXISTS category TEXT;
+ALTER TABLE quarry_leads ADD COLUMN IF NOT EXISTS search_query TEXT;
+ALTER TABLE quarry_leads ADD COLUMN IF NOT EXISTS rating DOUBLE PRECISION;
+ALTER TABLE quarry_leads ADD COLUMN IF NOT EXISTS user_ratings_total INTEGER;
+ALTER TABLE quarry_leads ADD COLUMN IF NOT EXISTS business_status TEXT;
+ALTER TABLE quarry_leads ADD COLUMN IF NOT EXISTS photo_refs JSONB NOT NULL DEFAULT '[]'::jsonb;
+ALTER TABLE quarry_leads ADD COLUMN IF NOT EXISTS is_candidate BOOLEAN;
+ALTER TABLE quarry_leads ADD COLUMN IF NOT EXISTS reasons JSONB NOT NULL DEFAULT '[]'::jsonb;
+ALTER TABLE quarry_leads ADD COLUMN IF NOT EXISTS outdated_score INTEGER;
+ALTER TABLE quarry_leads ADD COLUMN IF NOT EXISTS outdated_reasoning TEXT;
+ALTER TABLE quarry_leads ADD COLUMN IF NOT EXISTS preview_url TEXT;
+ALTER TABLE quarry_leads ADD COLUMN IF NOT EXISTS preview_image_url TEXT;
+ALTER TABLE quarry_leads ADD COLUMN IF NOT EXISTS generator TEXT;
+ALTER TABLE quarry_leads ADD COLUMN IF NOT EXISTS generation_error TEXT;
+ALTER TABLE quarry_leads ADD COLUMN IF NOT EXISTS ghl_contact_id TEXT;
+ALTER TABLE quarry_leads ADD COLUMN IF NOT EXISTS ghl_opportunity_id TEXT;
+ALTER TABLE quarry_leads ADD COLUMN IF NOT EXISTS pipeline_stage TEXT;
+ALTER TABLE quarry_leads ADD COLUMN IF NOT EXISTS approval_status TEXT NOT NULL DEFAULT 'pending';
+ALTER TABLE quarry_leads ADD COLUMN IF NOT EXISTS dncl_checked BOOLEAN NOT NULL DEFAULT FALSE;
+ALTER TABLE quarry_leads ADD COLUMN IF NOT EXISTS holdout_reason TEXT;
+ALTER TABLE quarry_leads ADD COLUMN IF NOT EXISTS sent_at TIMESTAMPTZ;
+ALTER TABLE quarry_leads ADD COLUMN IF NOT EXISTS replied_at TIMESTAMPTZ;
+ALTER TABLE quarry_leads ADD COLUMN IF NOT EXISTS email_sent_at TIMESTAMPTZ;
+ALTER TABLE quarry_leads ADD COLUMN IF NOT EXISTS email_replied_at TIMESTAMPTZ;
+ALTER TABLE quarry_leads ADD COLUMN IF NOT EXISTS email_opted_out BOOLEAN NOT NULL DEFAULT FALSE;
+ALTER TABLE quarry_leads ADD COLUMN IF NOT EXISTS email_nudge_count INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE quarry_leads ADD COLUMN IF NOT EXISTS email_unsubscribe_token TEXT;
+ALTER TABLE quarry_leads ADD COLUMN IF NOT EXISTS last_lookup_at TIMESTAMPTZ;
 
 CREATE TABLE IF NOT EXISTS quarry_runs (
     id BIGSERIAL PRIMARY KEY,

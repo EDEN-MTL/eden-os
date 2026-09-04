@@ -51,6 +51,18 @@ const shotMod = vi.hoisted(() => ({
 }));
 vi.mock("./screenshot", () => shotMod);
 
+const syncMod = vi.hoisted(() => ({
+  resolvePipeline: vi.fn(async () => ({ pipelineId: "pl1", stageIds: { "New Lead": "st1" } })),
+  upsertProspectContact: vi.fn(async () => ({ contactId: "c1", created: true })),
+  openOpportunity: vi.fn(async () => "op1"),
+}));
+vi.mock("./sync", () => syncMod);
+
+const ghlMod = vi.hoisted(() => ({
+  getGhlConfig: vi.fn(async () => ({ locationId: "loc1", apiKey: "key1" })),
+}));
+vi.mock("../../shared/ghl", () => ghlMod);
+
 import { QuarryDisabledError, MissingCredentialsError, run } from "./pipeline";
 
 const CONFIG = {
@@ -432,5 +444,94 @@ describe("run — auto-approve", () => {
         capturer: { capture: async () => Buffer.from("png"), close: async () => {} } as any,
       })
     ).resolves.toBeDefined();
+  });
+});
+
+describe("run — GHL sync", () => {
+  it("does nothing when syncToGhl is not set, even at the enrich stage", async () => {
+    withCreds();
+    configMod.loadQuarryConfig.mockReturnValue(CONFIG);
+    discovery.discover.mockResolvedValue({
+      results: [place("a", "trade-service", null)],
+      searched: 1, skippedAlreadySeen: 0, skippedClosed: 0, detailsCalls: 1,
+    });
+    triageMod.triage.mockResolvedValue({ isCandidate: true, reasons: ["No website listed on Google"] });
+    enrichMod.enrichContact.mockResolvedValue({ email: null, emailSource: null, hasPublicEmail: false });
+
+    const r = await run({ stopAfter: "enrich", triggeredBy: "test", overrideKillSwitch: true, log: () => {} });
+
+    expect(syncMod.upsertProspectContact).not.toHaveBeenCalled();
+    expect(r.syncedToGhl).toBe(0);
+  });
+
+  it("pushes every qualified lead into GHL as a contact + opportunity when syncToGhl is set", async () => {
+    withCreds();
+    configMod.loadQuarryConfig.mockReturnValue({
+      ...CONFIG,
+      ghlPipeline: { name: "Website Offer Pipeline", stages: ["New Lead"] },
+    });
+    discovery.discover.mockResolvedValue({
+      results: [place("a", "trade-service", null), place("b", "trade-service", null)],
+      searched: 2, skippedAlreadySeen: 0, skippedClosed: 0, detailsCalls: 2,
+    });
+    triageMod.triage.mockResolvedValue({ isCandidate: true, reasons: ["No website listed on Google"] });
+    enrichMod.enrichContact.mockResolvedValue({ email: "info@biz.com", emailSource: "own_website_contact_page", hasPublicEmail: true });
+
+    const r = await run({
+      stopAfter: "enrich", triggeredBy: "test", overrideKillSwitch: true, log: () => {}, syncToGhl: true,
+    });
+
+    expect(syncMod.resolvePipeline).toHaveBeenCalledWith("Website Offer Pipeline", ["New Lead"], "loc1", "key1");
+    expect(syncMod.upsertProspectContact).toHaveBeenCalledTimes(2);
+    expect(syncMod.openOpportunity).toHaveBeenCalledTimes(2);
+    expect(store.updateLead).toHaveBeenCalledWith(
+      expect.any(Number),
+      expect.objectContaining({ ghlContactId: "c1", ghlOpportunityId: "op1", pipelineStage: "New Lead" })
+    );
+    expect(r.syncedToGhl).toBe(2);
+  });
+
+  it("skips a lead with no phone number rather than failing the batch", async () => {
+    withCreds();
+    configMod.loadQuarryConfig.mockReturnValue({
+      ...CONFIG,
+      ghlPipeline: { name: "Website Offer Pipeline", stages: ["New Lead"] },
+    });
+    discovery.discover.mockResolvedValue({
+      results: [{ ...place("a", "trade-service", null), phone: null }],
+      searched: 1, skippedAlreadySeen: 0, skippedClosed: 0, detailsCalls: 1,
+    });
+    triageMod.triage.mockResolvedValue({ isCandidate: true, reasons: ["No website listed on Google"] });
+    enrichMod.enrichContact.mockResolvedValue({ email: null, emailSource: null, hasPublicEmail: false });
+
+    const r = await run({
+      stopAfter: "enrich", triggeredBy: "test", overrideKillSwitch: true, log: () => {}, syncToGhl: true,
+    });
+
+    expect(syncMod.upsertProspectContact).not.toHaveBeenCalled();
+    expect(r.syncedToGhl).toBe(0);
+    expect(r.errors.some((e) => e.step === "sync")).toBe(true);
+  });
+
+  it("logs and skips sync entirely when GHL isn't configured for the client, without failing the run", async () => {
+    withCreds();
+    configMod.loadQuarryConfig.mockReturnValue({
+      ...CONFIG,
+      ghlPipeline: { name: "Website Offer Pipeline", stages: ["New Lead"] },
+    });
+    ghlMod.getGhlConfig.mockResolvedValueOnce(null);
+    discovery.discover.mockResolvedValue({
+      results: [place("a", "trade-service", null)],
+      searched: 1, skippedAlreadySeen: 0, skippedClosed: 0, detailsCalls: 1,
+    });
+    triageMod.triage.mockResolvedValue({ isCandidate: true, reasons: ["No website listed on Google"] });
+    enrichMod.enrichContact.mockResolvedValue({ email: null, emailSource: null, hasPublicEmail: false });
+
+    const r = await run({
+      stopAfter: "enrich", triggeredBy: "test", overrideKillSwitch: true, log: () => {}, syncToGhl: true,
+    });
+
+    expect(syncMod.resolvePipeline).not.toHaveBeenCalled();
+    expect(r.syncedToGhl).toBe(0);
   });
 });
