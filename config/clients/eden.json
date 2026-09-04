@@ -56,9 +56,9 @@
     "clientChannel": ""
   },
   "quarry": {
-    "_comment": "Quarry prospects Montreal small businesses with absent or dated websites, builds them a speculative site, and opens a screenshot-first SMS sequence. Eden's own acquisition, same as the forge block above. Search queries drive BOTH discovery and category assignment — Google Places types are too coarse to pick a design brief from, so the query that surfaced a business decides which brief it gets.",
-    "enabled": false,
-    "enabledNote": "OFF until Jacob confirms the per-API spend and the Lovable plan credit ceiling. Every billable call in this agent checks this flag first.",
+    "_comment": "Quarry prospects small businesses with absent or dated websites and runs an email-first outreach sequence offering a free preview and a call. Eden's own acquisition, same as the forge block above. Search queries drive BOTH discovery and category assignment — Google Places types are too coarse to pick a design brief from, so the query that surfaced a business decides which brief it gets.",
+    "enabled": true,
+    "enabledNote": "Flipped on 2026-09-04 — Jacob confirmed real discovery + real GHL contacts + real send are all approved. Every billable call in this agent checks this flag first; flip back to false to pause everything (discovery, GHL sync, and sending) at once.",
     "searches": [
       {
         "query": "picture framing Montreal",
@@ -116,6 +116,64 @@
         "maxResults": 20
       }
     ],
+    "categoryTemplates": [
+      {
+        "query": "picture framing",
+        "category": "trade-service",
+        "maxResults": 20
+      },
+      {
+        "query": "shoe repair",
+        "category": "trade-service",
+        "maxResults": 20
+      },
+      {
+        "query": "locksmith",
+        "category": "trade-service",
+        "maxResults": 20
+      },
+      {
+        "query": "upholstery repair",
+        "category": "trade-service",
+        "maxResults": 20
+      },
+      {
+        "query": "antique dealer",
+        "category": "retail-boutique",
+        "maxResults": 20
+      },
+      {
+        "query": "florist",
+        "category": "retail-boutique",
+        "maxResults": 20
+      },
+      {
+        "query": "tailor",
+        "category": "retail-boutique",
+        "maxResults": 20
+      },
+      {
+        "query": "record store",
+        "category": "retail-boutique",
+        "maxResults": 20
+      },
+      {
+        "query": "accountant",
+        "category": "professional",
+        "maxResults": 20
+      },
+      {
+        "query": "notary",
+        "category": "professional",
+        "maxResults": 20
+      },
+      {
+        "query": "denturist",
+        "category": "professional",
+        "maxResults": 20
+      }
+    ],
+    "categoryTemplatesNote": "Same category mix as `searches` above, minus the city baked into the query string — buildLocationSearches combines these with whatever location a quarry_run_discovery request names, per Jacob's 2026-09-04 direction to stop limiting discovery to Montreal and focus on English-speaking areas outside Quebec instead. `searches` itself is left as-is; it's unused now that discovery runs on-demand per location rather than off a fixed recurring list.",
     "discovery": {
       "recheckAfterDays": 90,
       "recheckAfterDaysNote": "How long a place_id stays skipped before it is looked at again. Google Places terms restrict how long its content may be cached — check the current policy before raising this. 30 days is the figure their terms have historically used for most content.",

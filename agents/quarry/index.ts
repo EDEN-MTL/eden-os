@@ -1,8 +1,14 @@
 import { Attachment, ToolDef } from "../../shared/claude";
 import { BaseAgent } from "../base-agent";
-import { loadQuarryConfig } from "./config";
+import { buildLocationSearches, loadQuarryConfig } from "./config";
 import { getLead, getPipelineStats, listLeads, updateLead } from "./store";
 import { QuarryDisabledError, sendPending } from "./send";
+import {
+  MissingCredentialsError,
+  QuarryDisabledError as DiscoveryDisabledError,
+  run,
+} from "./pipeline";
+import { PlaywrightCapturer } from "./screenshot";
 
 const TOOLS: ToolDef[] = [
   {
@@ -33,6 +39,22 @@ const TOOLS: ToolDef[] = [
         approve: { type: "boolean", description: "true to approve, false to reject." },
       },
       required: ["leadId", "approve"],
+    },
+  },
+  {
+    name: "quarry_run_discovery",
+    description:
+      "Searches Google Places for real businesses in the given area, triages each one for a missing or dated website (technical checks first, then a vision read on anything that passes clean), enriches contact info, and pushes anything that qualifies straight into GHL as a contact + opportunity in the Website Offer Pipeline's \"New Lead\" stage — the actual prospecting step, not a preview of it. This spends real Google Places + Claude vision money and creates real GHL contacts. Refuses outright if quarry.enabled is off, matching quarry_send_now — being asked to run this IS the approval, no separate confirmation needed.",
+    input_schema: {
+      type: "object",
+      properties: {
+        location: {
+          type: "string",
+          description: "City/region to search, e.g. \"Ottawa, ON\" or \"Kingston, Ontario\". Not limited to any fixed list.",
+        },
+        maxLeads: { type: "number", description: "Cap on new businesses to discover this run. Default 50." },
+      },
+      required: ["location"],
     },
   },
   {
@@ -76,14 +98,29 @@ does not yet track GHL opportunity stage changes ("Call Booked", "Closed
 Won") — those live inside GHL itself and nothing syncs them back onto a
 lead's row here yet. Don't imply a number you don't actually have.
 
-quarry_send_now has a real external effect — actual emails to actual
-strangers, with no undo. It is gated by the quarry.enabled kill switch in
-config, not by anything conversational: if that switch is off the tool
-will refuse and say so, and if it's on, being asked here IS the approval,
-the same way Forge's spend-money tools work in this system — there is no
-separate "are you sure" step for you to add on top of the tool's own
-answer. Don't invent one, and don't refuse to call it out of undue caution
-once asked; the switch is what carries the actual authority.
+quarry_run_discovery and quarry_send_now both have real external effects —
+the first spends real Places/Claude money and creates real GHL contacts,
+the second puts a message in front of a real stranger, with no undo on
+either. Both are gated by the quarry.enabled kill switch in config, not by
+anything conversational: if that switch is off they refuse and say so, and
+if it's on, being asked here IS the approval, the same way Forge's
+spend-money tools work in this system — there is no separate "are you
+sure" step for you to add on top of the tool's own answer. Don't invent
+one, and don't refuse to call it out of undue caution once asked; the
+switch is what carries the actual authority. A request like "find N
+businesses in <city> and reach out to them" is asking for both steps —
+call quarry_run_discovery, then quarry_send_now once it's done, in the
+same turn, rather than stopping after discovery and waiting to be asked
+again.
+
+The full loop this agent runs end to end: quarry_run_discovery finds
+businesses and gets them into GHL; auto-approve clears anything qualified
+on a hard technical fact (no site, no HTTPS, not mobile-responsive, stale
+markup) automatically, and holds anything qualified only on the vision
+pass's opinion for a human read in this channel; quarry_send_now emails
+whatever's approved and due; a reply that sounds interested gets the
+booking link automatically (agents/quarry/outreach.ts's handleEmailReply)
+— nothing about booking a call needs you to do anything extra.
 
 Cite real numbers from your tool calls, not estimates. If a tool call
 fails, say that plainly rather than inventing a plausible-sounding answer.
@@ -121,6 +158,43 @@ Respond concisely, like a teammate texting a quick update — not a report.`;
         const approvalStatus = input.approve ? "approved" : "rejected";
         await updateLead(lead.id, { approvalStatus });
         return JSON.stringify({ id: lead.id, name: lead.name, approvalStatus });
+      }
+
+      case "quarry_run_discovery": {
+        const location = String(input.location ?? "").trim();
+        if (!location) return JSON.stringify({ error: "location is required" });
+        const config = loadQuarryConfig("eden");
+        if (!config) return JSON.stringify({ error: "No quarry config for eden" });
+        const searches = buildLocationSearches(config, location);
+        try {
+          const report = await run({
+            clientId: "eden",
+            stopAfter: "enrich",
+            triggeredBy: `slack:quarry_run_discovery(${location})`,
+            searches,
+            maxLeads: typeof input.maxLeads === "number" ? input.maxLeads : 50,
+            syncToGhl: true,
+            capturer: new PlaywrightCapturer(),
+          });
+          return JSON.stringify({
+            location,
+            discovered: report.discovered,
+            qualified: report.qualified,
+            autoApproved: report.autoApproved,
+            needsReview: report.needsReview,
+            syncedToGhl: report.syncedToGhl,
+            withEmail: report.withEmail,
+            errors: report.errors.slice(0, 5),
+          });
+        } catch (error) {
+          if (error instanceof DiscoveryDisabledError) {
+            return JSON.stringify({ ran: false, reason: error.message });
+          }
+          if (error instanceof MissingCredentialsError) {
+            return JSON.stringify({ ran: false, reason: error.message });
+          }
+          throw error;
+        }
       }
 
       case "quarry_send_now": {
