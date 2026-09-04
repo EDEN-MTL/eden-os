@@ -277,6 +277,29 @@ describe("handleReply", () => {
     await handleReply(lead({ sentAt: "t" }), "no", CONFIG, d);
     expect(store.updateLead).toHaveBeenCalledWith(1, expect.objectContaining({ repliedAt: expect.any(String) }));
   });
+
+  it("ignores a reply once the lead has already booked a call", async () => {
+    // A reply here is to the booking confirmation/reminder, not the pitch —
+    // "can't make it, cancel" must not read as a rejection of the offer and
+    // move a booked lead to Lost/Nurture.
+    const d = deps();
+    const result = await handleReply(lead({ sentAt: "t", pipelineStage: "Call Booked" }), "cancel", CONFIG, d);
+
+    expect(result.sentiment).toBe("ignored");
+    expect(d.sendSMS).not.toHaveBeenCalled();
+    expect(d.moveStage).not.toHaveBeenCalled();
+    expect(store.updateLead).not.toHaveBeenCalled();
+  });
+
+  it.each(["Closed Won", "Lost/Nurture"] as const)(
+    "also ignores a reply once the lead is at %s",
+    async (stage) => {
+      const d = deps();
+      const result = await handleReply(lead({ sentAt: "t", pipelineStage: stage }), "yes", CONFIG, d);
+      expect(result.sentiment).toBe("ignored");
+      expect(d.sendSMS).not.toHaveBeenCalled();
+    }
+  );
 });
 
 describe("assertEmailChannelConfigured", () => {
@@ -509,5 +532,22 @@ describe("handleEmailReply", () => {
     const d = emailDeps();
     await handleEmailReply(lead({ emailSentAt: "t" }), "no thanks", CONFIG, d);
     expect(d.sendEmail).not.toHaveBeenCalled();
+  });
+
+  it("ignores a reply once the lead has already booked a call", async () => {
+    // "no thanks" here would otherwise opt out a lead who is just declining
+    // the reminder text, not the offer — must not fire once a call is booked.
+    const d = emailDeps();
+    const result = await handleEmailReply(
+      lead({ emailSentAt: "t", pipelineStage: "Call Booked" }),
+      "no thanks",
+      CONFIG,
+      d
+    );
+
+    expect(result.sentiment).toBe("ignored");
+    expect(d.sendEmail).not.toHaveBeenCalled();
+    expect(d.moveStage).not.toHaveBeenCalled();
+    expect(store.updateLead).not.toHaveBeenCalled();
   });
 });
