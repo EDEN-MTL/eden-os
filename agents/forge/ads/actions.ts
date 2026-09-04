@@ -246,7 +246,16 @@ export class MetaActions {
       status: CREATE_DEFAULT_STATUS,
     };
     if (dailyBudgetCents !== undefined) payload.daily_budget = String(Math.trunc(dailyBudgetCents));
-    if (bidAmountCents !== undefined) payload.bid_amount = String(Math.trunc(bidAmountCents));
+    // Some ad accounts have a default bid strategy (LOWEST_COST_WITH_BID_CAP
+    // or TARGET_COST) that Meta rejects the ad set for unless bid_amount is
+    // also set. Always send an explicit bid_strategy so ad set creation
+    // never silently depends on the account's default.
+    if (bidAmountCents !== undefined) {
+      payload.bid_amount = String(Math.trunc(bidAmountCents));
+      payload.bid_strategy = "LOWEST_COST_WITH_BID_CAP";
+    } else {
+      payload.bid_strategy = "LOWEST_COST_WITHOUT_CAP";
+    }
 
     if (isRestrictedCategory(specialAdCategories) && useTuneForCategory) {
       payload.targeting = targeting;

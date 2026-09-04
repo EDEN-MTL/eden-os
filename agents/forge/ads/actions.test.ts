@@ -80,6 +80,32 @@ describe("MetaActions — creation always comes in paused", () => {
     const [, , options] = (client.call as any).mock.calls[0];
     expect(options.data.status).toBe("PAUSED");
   });
+
+  it("createAdset defaults to bid_strategy=LOWEST_COST_WITHOUT_CAP when no bid amount is given", async () => {
+    // Some ad accounts default to a bid strategy (LOWEST_COST_WITH_BID_CAP
+    // or TARGET_COST) that Meta rejects the ad set for unless bid_amount is
+    // also set — this must never be left to the account default.
+    const client = makeFakeClient();
+    const actions = new MetaActions(client);
+    await actions.createAdset({
+      campaignId: "1", name: "Test", targeting: {}, optimizationGoal: "LINK_CLICKS", billingEvent: "IMPRESSIONS",
+    });
+    const [, , options] = (client.call as any).mock.calls[0];
+    expect(options.data.bid_strategy).toBe("LOWEST_COST_WITHOUT_CAP");
+    expect(options.data.bid_amount).toBeUndefined();
+  });
+
+  it("createAdset switches to bid_strategy=LOWEST_COST_WITH_BID_CAP when a bid amount is given", async () => {
+    const client = makeFakeClient();
+    const actions = new MetaActions(client);
+    await actions.createAdset({
+      campaignId: "1", name: "Test", targeting: {}, optimizationGoal: "LINK_CLICKS", billingEvent: "IMPRESSIONS",
+      bidAmountCents: 250,
+    });
+    const [, , options] = (client.call as any).mock.calls[0];
+    expect(options.data.bid_strategy).toBe("LOWEST_COST_WITH_BID_CAP");
+    expect(options.data.bid_amount).toBe("250");
+  });
 });
 
 describe("MetaActions — compliance gate integration", () => {
