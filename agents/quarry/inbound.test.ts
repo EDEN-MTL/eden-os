@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { parseInboundMessage } from "./inbound";
+import { parseAppointmentContactId, parseInboundMessage } from "./inbound";
 
 describe("parseInboundMessage", () => {
   it("reads an inbound SMS reply", () => {
@@ -51,5 +51,26 @@ describe("parseInboundMessage", () => {
     expect(parseInboundMessage({}).contactId).toBeNull();
     expect(parseInboundMessage(null).contactId).toBeNull();
     expect(parseInboundMessage(undefined).text).toBeNull();
+  });
+});
+
+describe("parseAppointmentContactId", () => {
+  it("reads contactId out of a workflow Webhook action's customData wrapper", () => {
+    expect(parseAppointmentContactId({ customData: { contactId: "c1" } })).toBe("c1");
+  });
+
+  it("falls back to a flat body for anything that posts here directly", () => {
+    expect(parseAppointmentContactId({ contactId: "c2" })).toBe("c2");
+    expect(parseAppointmentContactId({ contact_id: "c3" })).toBe("c3");
+  });
+
+  it("prefers customData over a flat field when both are present", () => {
+    expect(parseAppointmentContactId({ contactId: "wrong", customData: { contactId: "right" } })).toBe("right");
+  });
+
+  it("handles a missing or malformed body without throwing", () => {
+    expect(parseAppointmentContactId({})).toBeNull();
+    expect(parseAppointmentContactId(null)).toBeNull();
+    expect(parseAppointmentContactId(undefined)).toBeNull();
   });
 });
