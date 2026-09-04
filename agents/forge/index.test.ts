@@ -209,4 +209,27 @@ describe("Forge — create_ad_creative and create_ad", () => {
       "jacob-via-chat"
     );
   });
+
+  it("update_ad_creative repoints an existing ad at a new creative, keyed by adId not name", async () => {
+    // The whole point of this tool: change an ad's copy without a new ad ID
+    // or losing its spend history — entityId must be the existing adId.
+    executeManualMock.mockResolvedValueOnce({ status: "executed", result: { after: { id: "ad_1", creative: { id: "creative_2" } } } });
+    vi.mocked(chatWithTools)
+      .mockResolvedValueOnce({
+        content: [toolUseBlock("call_1", "update_ad_creative", { clientId: "eden", adId: "ad_1", creativeId: "creative_2" })],
+        stop_reason: "tool_use",
+      } as any)
+      .mockResolvedValueOnce(endTurn("Ad repointed to the new creative."));
+
+    await forgeAgent.generateReply("key6", "swap ad_1 to the new creative");
+
+    expect(executeManualMock).toHaveBeenCalledWith(
+      "update_ad_creative",
+      "ad",
+      "ad_1",
+      null,
+      { creative_id: "creative_2" },
+      "jacob-via-chat"
+    );
+  });
 });
