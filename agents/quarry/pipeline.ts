@@ -250,6 +250,7 @@ export async function run(options: RunOptions): Promise<CalibrationReport> {
       let result = await triage(lead.website, {
         outdatedSignals: config.triage.outdatedSignals,
         copyrightYearBefore: config.triage.copyrightYearBefore,
+        qualifyMissingWebsite: config.triage.qualifyMissingWebsite,
       });
 
       // The vision pass runs ONLY on sites the technical checks cleared.
