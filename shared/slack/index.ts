@@ -28,6 +28,7 @@ export function initSlackClients(): void {
     { id: "forge", name: "Forge", tokenEnv: "FORGE_BOT_TOKEN", secretEnv: "FORGE_SIGNING_SECRET" },
     { id: "lens", name: "Lens", tokenEnv: "LENS_BOT_TOKEN", secretEnv: "LENS_SIGNING_SECRET" },
     { id: "nova", name: "Nova", tokenEnv: "NOVA_BOT_TOKEN", secretEnv: "NOVA_SIGNING_SECRET" },
+    { id: "quarry", name: "Quarry", tokenEnv: "QUARRY_BOT_TOKEN", secretEnv: "QUARRY_SIGNING_SECRET" },
   ];
 
   for (const agent of agents) {

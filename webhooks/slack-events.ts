@@ -13,6 +13,7 @@ import { museAgent } from "../agents/muse";
 import { forgeAgent } from "../agents/forge";
 import { lensAgent } from "../agents/lens";
 import { novaAgent } from "../agents/nova";
+import { quarryAgent } from "../agents/quarry";
 import { BaseAgent } from "../agents/base-agent";
 
 // Agent registry
@@ -26,6 +27,7 @@ const agents: Record<AgentId, BaseAgent> = {
   forge: forgeAgent,
   lens: lensAgent,
   nova: novaAgent,
+  quarry: quarryAgent,
 };
 
 /**
@@ -157,7 +159,7 @@ export function createSlackRouter(): Router {
   // Mount a route for each agent
   const agentIds: AgentId[] = [
     "eden", "scout", "iris", "atlas",
-    "ember", "muse", "forge", "lens", "nova",
+    "ember", "muse", "forge", "lens", "nova", "quarry",
   ];
 
   for (const agentId of agentIds) {

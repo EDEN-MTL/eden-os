@@ -46,7 +46,7 @@ app.get("/", (_req, res) => {
     status: "operational",
     agents: [
       "eden", "scout", "iris", "atlas",
-      "ember", "muse", "forge", "lens", "nova",
+      "ember", "muse", "forge", "lens", "nova", "quarry",
     ],
     timestamp: new Date().toISOString(),
   });
