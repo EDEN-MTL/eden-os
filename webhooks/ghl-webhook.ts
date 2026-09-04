@@ -3,7 +3,7 @@ import { eventBus } from "../shared/events";
 import { buildEmailDeps, buildOutreachDeps } from "../agents/quarry/deps";
 import { parseAppointmentContactId, parseInboundMessage } from "../agents/quarry/inbound";
 import { handleEmailReply, handleReply } from "../agents/quarry/outreach";
-import { getLeadByGhlContactId } from "../agents/quarry/store";
+import { getLeadByGhlContactId, updateLead } from "../agents/quarry/store";
 import { loadQuarryConfig } from "../agents/quarry/config";
 
 /**
@@ -180,6 +180,10 @@ export function createGHLRouter(): Router {
 
       const deps = await buildOutreachDeps(lead.clientId);
       await deps.moveStage(lead.ghlOpportunityId, "Call Booked");
+      // Local pipelineStage, not just the GHL opportunity — this is what
+      // handleReply/handleEmailReply check to stop treating a reply to a
+      // booking confirmation/reminder as a reply to the original pitch.
+      await updateLead(lead.id, { pipelineStage: "Call Booked" });
       console.log(`[QRY] ${lead.name} booked a call — moved to "Call Booked"`);
     } catch (error) {
       console.error("[QRY] failed to process appointment booking:", error);
