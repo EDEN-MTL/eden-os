@@ -15,6 +15,7 @@ import { createVapiRouter } from "../webhooks/vapi-webhook";
 import { createVapiToolsRouter } from "../webhooks/vapi-tools";
 import { initDb } from "../shared/db";
 import { startScheduler } from "../shared/scheduler";
+import { ensureDefaultAdRules } from "../agents/forge/ads/rule-seed";
 import { createChatRouter } from "./chat-api";
 import { createTtsRouter } from "./tts-api";
 import { createSettingsRouter } from "./settings-api";
@@ -80,6 +81,10 @@ async function start() {
 
   // Set up the database schema (idempotent)
   await initDb();
+
+  // Translate each client's config thresholds into real, enforced ad_rules
+  // rows before the scheduler's first evaluation run can read them.
+  await ensureDefaultAdRules();
 
   // Nothing in the system ran on its own before this.
   startScheduler();
