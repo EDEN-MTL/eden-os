@@ -17,11 +17,20 @@ export function createGHLRouter(): Router {
   router.post("/contact", async (req: Request, res: Response) => {
     res.status(200).send("OK");
 
+    // A GHL workflow's "Webhook" action wraps every custom key/value field
+    // under a "customData" object rather than sending them flat — confirmed
+    // against GHL's own docs, 2026-09-04, after a real workflow's webhook
+    // came through with body.type undefined despite the Key literally being
+    // named "type". Reading customData first (falling back to the body
+    // itself) supports both that shape and a flat body from anything else
+    // that posts here directly (our own test/dry-run scripts, most GHL
+    // trigger payload types that AREN'T a Custom Webhook action).
     const body = req.body;
-    console.log(`[GHL] Contact webhook received:`, body.type || "unknown");
+    const data = body?.customData ?? body;
+    console.log(`[GHL] Contact webhook received:`, data.type || "unknown");
 
     try {
-      switch (body.type) {
+      switch (data.type) {
         case "ContactCreate":
           // New lead — Scout picks this up. pipelineStageId is what
           // normaliseLead's intentFromStageId actually reads to resolve
@@ -30,31 +39,31 @@ export function createGHLRouter(): Router {
           // present if the GHL workflow's webhook body includes it (GHL
           // lets a workflow author customize the JSON body freely, so this
           // depends on the workflow being built to include it).
-          eventBus.publish("lead.captured", "scout", body.locationId || "", {
-            contactId: body.id,
-            firstName: body.first_name,
-            lastName: body.last_name,
-            email: body.email,
-            phone: body.phone,
-            source: body.source,
-            tags: body.tags || [],
-            customFields: body.customField || {},
-            pipelineStageId: body.pipelineStageId,
+          eventBus.publish("lead.captured", "scout", data.locationId || "", {
+            contactId: data.id,
+            firstName: data.first_name,
+            lastName: data.last_name,
+            email: data.email,
+            phone: data.phone,
+            source: data.source,
+            tags: data.tags || [],
+            customFields: data.customField || {},
+            pipelineStageId: data.pipelineStageId,
           });
           break;
 
         case "ContactUpdate":
           // Contact updated — could trigger re-scoring
-          console.log(`[GHL] Contact updated: ${body.id}`);
+          console.log(`[GHL] Contact updated: ${data.id}`);
           break;
 
         case "ContactTagUpdate":
           // Tags changed — could trigger nurture path changes
-          console.log(`[GHL] Contact tags updated: ${body.id}`);
+          console.log(`[GHL] Contact tags updated: ${data.id}`);
           break;
 
         default:
-          console.log(`[GHL] Unhandled contact event type: ${body.type}`);
+          console.log(`[GHL] Unhandled contact event type: ${data.type}. Raw body:`, JSON.stringify(body).slice(0, 1000));
       }
     } catch (error) {
       console.error("[GHL] Error processing webhook:", error);
