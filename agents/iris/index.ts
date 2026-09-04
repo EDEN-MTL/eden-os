@@ -107,6 +107,7 @@ export function loadIrisConfig(clientId: string): IrisConfig | null {
       warmScoreThreshold: raw.iris.warmScoreThreshold,
       calendars: raw.scout.calendars,
       transferNumbers: raw.iris.transferNumbers,
+      liveTransferStageId: raw.iris.liveTransferStageId || undefined,
       callbackNotesFieldKey: raw.iris.callbacks.notesFieldKey,
       writeFields: raw.iris.writeFields,
       outreachCadence: raw.iris.outreachCadence,

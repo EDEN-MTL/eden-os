@@ -126,11 +126,32 @@ export async function getPipelines(locationId: string): Promise<any> {
 
 export async function getOpportunities(
   pipelineId: string,
-  locationId: string
+  locationId: string,
+  apiKey?: string
 ): Promise<any> {
   return ghlRequest(
-    `/opportunities/search?pipelineId=${pipelineId}&locationId=${locationId}`
+    `/opportunities/search?pipelineId=${pipelineId}&locationId=${locationId}`,
+    { apiKey }
   );
+}
+
+/**
+ * Finds the contact's open opportunities, most-recently-updated first.
+ * Used to move the right card after a live transfer completes — "open"
+ * excludes won/lost/abandoned so a closed deal never gets reopened by this.
+ */
+export async function findOpenOpportunitiesForContact(
+  contactId: string,
+  locationId: string,
+  apiKey?: string
+): Promise<any[]> {
+  const payload = await ghlRequest(
+    `/opportunities/search?location_id=${locationId}&contact_id=${contactId}`,
+    { apiKey }
+  );
+  return (payload.opportunities || [])
+    .filter((o: any) => o.status === "open")
+    .sort((a: any, b: any) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime());
 }
 
 function toEpochMs(isoTimestamp?: string | null): number | undefined {
@@ -351,12 +372,14 @@ export async function createOpportunity(
 export async function updateOpportunityStage(
   opportunityId: string,
   stageId: string,
-  locationId?: string
+  locationId?: string,
+  apiKey?: string
 ): Promise<any> {
   return ghlRequest(`/opportunities/${opportunityId}`, {
     method: "PUT",
     body: { pipelineStageId: stageId },
     locationId,
+    apiKey,
   });
 }
 

@@ -1,7 +1,8 @@
 import crypto from "crypto";
 import { Request, Response, Router } from "express";
 import { query } from "../shared/db";
-import { getGhlConfig, addContactTags } from "../shared/ghl";
+import { getGhlConfig, addContactTags, findOpenOpportunitiesForContact, updateOpportunityStage } from "../shared/ghl";
+import { loadIrisConfig } from "../agents/iris";
 
 /**
  * Vapi's endedReason for a warm transfer that actually connected — the
@@ -65,21 +66,43 @@ async function handleEndOfCallReport(message: Record<string, any>): Promise<void
 
   const row = rows[0];
   if (endedReason === TRANSFER_SUCCEEDED_REASON && row?.contact_id) {
-    await tagLiveTransferred(row.client_id, row.contact_id);
+    await handleSuccessfulTransfer(row.client_id, row.contact_id);
   }
 }
 
 /**
  * Best-effort — the transfer already happened by the time this runs, so a
- * tagging failure must not be treated as the transfer having failed.
+ * failure here must never be treated as the transfer itself having failed.
+ * Two independent steps, each wrapped separately so one failing doesn't
+ * skip the other: tag the contact (existing behavior), then move its
+ * opportunity to the Live Transferred stage (Mark, 2026-09-04).
  */
-async function tagLiveTransferred(clientId: string, contactId: string): Promise<void> {
+async function handleSuccessfulTransfer(clientId: string, contactId: string): Promise<void> {
+  const ghlConfig = await getGhlConfig(clientId).catch(() => null);
+  if (!ghlConfig) return;
+
   try {
-    const ghlConfig = await getGhlConfig(clientId);
-    if (!ghlConfig) return;
     await addContactTags(contactId, ["live transferred"], ghlConfig.locationId, ghlConfig.apiKey);
   } catch (error) {
     console.error(`[VAPI] Failed to tag contact ${contactId} as live transferred:`, error instanceof Error ? error.message : error);
+  }
+
+  try {
+    const config = loadIrisConfig(clientId);
+    if (!config?.liveTransferStageId) {
+      console.log(`[VAPI] No liveTransferStageId configured for ${clientId} — skipping opportunity stage move.`);
+      return;
+    }
+    const opportunities = await findOpenOpportunitiesForContact(contactId, ghlConfig.locationId, ghlConfig.apiKey);
+    const opportunity = opportunities[0];
+    if (!opportunity) {
+      console.warn(`[VAPI] No open opportunity found for contact ${contactId} — cannot move to Live Transferred stage.`);
+      return;
+    }
+    await updateOpportunityStage(opportunity.id, config.liveTransferStageId, ghlConfig.locationId, ghlConfig.apiKey);
+    console.log(`[VAPI] Moved opportunity ${opportunity.id} for contact ${contactId} to Live Transferred.`);
+  } catch (error) {
+    console.error(`[VAPI] Failed to move contact ${contactId}'s opportunity to Live Transferred:`, error instanceof Error ? error.message : error);
   }
 }
 

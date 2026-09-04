@@ -88,9 +88,13 @@ export function buildCallPayload(
                   {
                     role: "system",
                     content:
-                      "Confirm a human operator is ready to take this call. Use transferSuccessful once " +
-                      "they accept. Use transferCancel for voicemail, no answer, or a declined transfer. " +
-                      "Keep this brief and focused only on confirming the handoff.",
+                      "Confirm a human operator is ready to take this call. Once they confirm, give one " +
+                      "quick line introducing the lead — name if known, and that they're a " +
+                      `${audience} lead ready to talk — then immediately call transferSuccessful. Use ` +
+                      "transferCancel for voicemail, no answer, or a declined transfer. After " +
+                      "transferSuccessful, your job is done — never end the call yourself; let the " +
+                      "operator and the lead continue the conversation on their own. Keep everything you " +
+                      "say brief.",
                   },
                 ],
               },

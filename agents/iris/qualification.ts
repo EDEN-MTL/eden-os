@@ -53,6 +53,15 @@ export interface IrisConfig {
    */
   transferNumbers: { buyer: string; seller: string };
   /**
+   * The pipeline stage a lead's opportunity moves to once a live transfer
+   * actually completes (real people connected, not just attempted) — Mark,
+   * 2026-09-04. Optional: a client whose pipeline has no such stage yet
+   * (a fresh test sub-account, say) just skips the move rather than
+   * blocking anything — same soft-fail pattern as callbackNotesFieldKey
+   * when a field doesn't resolve. See webhooks/vapi-webhook.ts.
+   */
+  liveTransferStageId?: string;
+  /**
    * Single write target for the callback note (iris.callbacks.notesFieldKey
    * in client config) — same field scout.fields.isaNotes reads from, but
    * named separately here on purpose: that's a read-priority list (several

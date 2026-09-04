@@ -96,7 +96,9 @@
       "_comment": "Mark, 2026-09-02: two ring-group numbers, one per intent — every agent under the number rings simultaneously, first pickup wins, ringing stops for everyone else. Used for Vapi's live-transfer tool; separate from scout.calendars (buyer/seller consultation booking) and callbacks.calendarIds (the ISA quick-callback fallback, also buyer/seller) above.",
       "buyer": "+17097058841",
       "seller": "+17097059439"
-    }
+    },
+    "liveTransferStageId": "d4cb572b-5fa5-48e5-bced-46c88715e2da",
+    "liveTransferStageIdNote": "Mark, 2026-09-04: '1. Real Estate Pipeline' → 'Live Transferred' stage, id verified live via GET /opportunities/pipelines. Moved into once a transfer actually completes (endedReason assistant-forwarded-call), not just attempted — see webhooks/vapi-webhook.ts."
   },
   "slack": {
     "clientChannel": "3-percent-eastcoast-eden"
