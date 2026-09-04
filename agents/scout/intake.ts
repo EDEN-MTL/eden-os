@@ -364,7 +364,22 @@ export function normaliseLead(
     metaAdId: read("contact.meta_ad_id"),
   };
 
-  const tags: string[] = (payload.tags || []).map((t: string) => String(t).trim().toLowerCase());
+  // GHL's own workflow "Webhook" action only offers key/value custom data,
+  // not a raw JSON body — there's no way to send a real array through it,
+  // so {{contact.tags}} arrives as a comma-separated string, not
+  // payload.tags: string[]. Confirmed against GHL's own webhook-action
+  // docs, 2026-09-04, while wiring up a real workflow. Normalizing once
+  // here (rather than trusting the type) matters beyond just this `tags`
+  // variable: isFirstTouch's `Array.isArray(tags)` guard below would
+  // silently return false — "not first touch" — for every lead captured
+  // this way, permanently blocking Iris's outreach for all of them.
+  const rawTags = payload.tags;
+  const tagsArray: string[] = Array.isArray(rawTags)
+    ? rawTags
+    : typeof rawTags === "string"
+      ? rawTags.split(",")
+      : [];
+  const tags: string[] = tagsArray.map((t) => String(t).trim().toLowerCase()).filter(Boolean);
   const propertyInterest = read(f.propertyInterest);
 
   /*
@@ -407,18 +422,24 @@ export function normaliseLead(
     attributed: Boolean(attribution.metaAdId || attribution.fbclid),
     qualified: config.qualifiedTags.some((t) => tags.includes(t.trim().toLowerCase())),
     firstTouch: isFirstTouch({
-      tags: payload.tags,
+      tags: tagsArray,
       touchedTags: config.touchedTags,
       isaNotes: f.isaNotes ? read(f.isaNotes) : null,
       stageId: payload.pipelineStageId,
       intakeStages: config.intakeStages,
     }),
-    // Stage id first (what the API actually returns), then a stage name if a
-    // webhook supplies one, then the form field as a last resort.
+    // Stage id first (what the API actually returns, when the trigger is
+    // opportunity/pipeline-related), then a stage name if a webhook
+    // supplies one, then tags — GHL's own docs confirm opportunity/stage
+    // data is only present on an opportunity-related trigger, never a
+    // plain contact/form-submission one, so a form-triggered webhook needs
+    // this fallback to resolve intent at all — then the form field as a
+    // last resort (per _liveDataFindings, that field is empty in practice).
     intent:
       firstKnown(
         intentFromStageId(payload.pipelineStageId, config.intakeStages),
         intentFromStage(payload.pipelineStageName ?? payload.stageName ?? null),
+        intentFromStage(tags.join(" ")),
         deriveIntent(propertyInterest)
       ),
   };

@@ -133,6 +133,46 @@ describe("normaliseLead", () => {
     expect(lead.score).toBeLessThanOrEqual(100);
     expect(lead.scoreReasons.length).toBeGreaterThan(0);
   });
+
+  /**
+   * GHL's own workflow "Webhook" action only offers key/value custom data,
+   * not a raw JSON body, so there's no way to send tags as a real array
+   * through it — {{contact.tags}} arrives as a comma-separated string.
+   * Confirmed against GHL's own webhook-action docs, 2026-09-04, while
+   * wiring up a real workflow for a second client. Before this fix,
+   * isFirstTouch's Array.isArray guard would have silently read every
+   * webhook-captured lead as "already touched", permanently blocking
+   * Iris's outreach.
+   */
+  it("handles tags arriving as a comma-separated string, not just an array", () => {
+    const withTouchedTags = { ...config, touchedTags: ["appt booked", "live transferred"] };
+    const stringTagsPayload = { ...payload, tags: "buyer lead, new construction" };
+    const lead = normaliseLead(stringTagsPayload, withTouchedTags);
+    expect(lead.firstTouch).toBe(true);
+  });
+
+  it("still resolves qualified/firstTouch correctly when tags is missing entirely", () => {
+    const noTagsPayload = { ...payload, tags: undefined };
+    const lead = normaliseLead(noTagsPayload, config);
+    expect(lead.qualified).toBe(false);
+    expect(lead.firstTouch).toBe(false); // isFirstTouch fails closed with no tags at all
+  });
+
+  /**
+   * Opportunity/pipeline data (pipelineStageId) is only present on an
+   * opportunity-related trigger — GHL's own docs confirm a plain contact or
+   * form-submission trigger never includes it. Without a tag-based
+   * fallback, every lead captured via a form-submission workflow would
+   * resolve intent "unknown" regardless of the "buyer lead"/"seller lead"
+   * tag the form itself applied.
+   */
+  it("falls back to intent from tags when no pipeline stage data is present at all", () => {
+    const formTriggeredPayload = { ...payload, pipelineStageId: undefined, tags: ["buyer lead"] };
+    expect(normaliseLead(formTriggeredPayload, config).intent).toBe("buyer");
+
+    const sellerTagPayload = { ...payload, pipelineStageId: undefined, tags: "seller lead" };
+    expect(normaliseLead(sellerTagPayload, config).intent).toBe("seller");
+  });
 });
 
 describe("timeline scoring against real stored values", () => {
