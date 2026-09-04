@@ -44,6 +44,14 @@ export interface QuarryConfig {
     copyrightYearBefore: number;
     visionScoring: boolean;
     visionScoreThreshold: number;
+    /**
+     * Off means a business with no website is never qualified at all — see
+     * the note on triage.ts's TriageOptions for why: with email as the only
+     * send channel, that lead type qualifies but can never be reached, since
+     * there is no page to find a contact email on. Defaults true elsewhere;
+     * a client focused on email-only outreach for now sets this false.
+     */
+    qualifyMissingWebsite?: boolean;
   };
   phone: {
     /** Off by default since 2026-08-27 — email is the primary channel and this

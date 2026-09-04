@@ -20,6 +20,16 @@ export interface TriageOptions {
   copyrightYearBefore: number;
   /** Wall-clock budget for the homepage fetch. */
   timeoutMs?: number;
+  /**
+   * A business with no website is normally qualified outright (see
+   * triageMissingSite). Set false to skip that path entirely: with email as
+   * the only send channel, enrichContact has no page to scrape a contact
+   * email from on exactly these leads, so under an email-only setup they
+   * qualify but can never be sent to (see the contactability gate in
+   * pipeline.ts). Defaults true — nothing changes unless a client config
+   * explicitly opts out.
+   */
+  qualifyMissingWebsite?: boolean;
 }
 
 export interface FetchedPage {
@@ -141,7 +151,10 @@ export async function triage(
   website: string | null,
   options: TriageOptions
 ): Promise<TriageResult> {
-  if (!website) return triageMissingSite();
+  if (!website) {
+    if (options.qualifyMissingWebsite === false) return { isCandidate: false, reasons: [] };
+    return triageMissingSite();
+  }
 
   const page = await fetchHomepage(website, options.timeoutMs);
   if ("error" in page) return triageUnreachable(page.error);
