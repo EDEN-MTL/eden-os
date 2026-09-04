@@ -106,6 +106,28 @@ describe("MetaActions — creation always comes in paused", () => {
     expect(options.data.bid_strategy).toBe("LOWEST_COST_WITH_BID_CAP");
     expect(options.data.bid_amount).toBe("250");
   });
+
+  it("createAdset sends promoted_object when both pixelId and customEventType are given", async () => {
+    const client = makeFakeClient();
+    const actions = new MetaActions(client);
+    await actions.createAdset({
+      campaignId: "1", name: "Test", targeting: {}, optimizationGoal: "OFFSITE_CONVERSIONS", billingEvent: "IMPRESSIONS",
+      pixelId: "2075698479609404", customEventType: "LEAD",
+    });
+    const [, , options] = (client.call as any).mock.calls[0];
+    expect(JSON.parse(options.data.promoted_object)).toEqual({ pixel_id: "2075698479609404", custom_event_type: "LEAD" });
+  });
+
+  it("createAdset omits promoted_object when only one of pixelId/customEventType is given", async () => {
+    const client = makeFakeClient();
+    const actions = new MetaActions(client);
+    await actions.createAdset({
+      campaignId: "1", name: "Test", targeting: {}, optimizationGoal: "LINK_CLICKS", billingEvent: "IMPRESSIONS",
+      pixelId: "2075698479609404",
+    });
+    const [, , options] = (client.call as any).mock.calls[0];
+    expect(options.data.promoted_object).toBeUndefined();
+  });
 });
 
 describe("MetaActions — compliance gate integration", () => {
