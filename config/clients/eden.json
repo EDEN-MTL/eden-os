@@ -231,6 +231,9 @@
         "Lost/Nurture"
       ],
       "stagesNote": "Screenshot Sent and Site Sent are deliberately separate — the offer turns on a picture going out first and the link only following a positive reply, so collapsing them would hide the one drop-off worth measuring. Note that Lost/Nurture merges two outcomes: a lead that said no and a lead worth re-touching later read identically in the funnel. Split it if the nurture path ever gets its own cadence."
-    }
+    },
+    "autoApprove": true,
+    "autoApproveNote": "Turned on 2026-09-04 — Jacob does not want to click approve on every lead. Only applies to leads qualified on a hard technical fact (no site / broken HTTPS / not mobile-friendly / stale markup); a lead qualified purely by the vision pass's \"looks dated\" opinion still lands as pending and gets posted to reviewChannel instead, since that judgment call is the one place a false positive is actually likely. Set to false to go back to approving everything by hand.",
+    "reviewChannel": "websites-eden"
   }
 }

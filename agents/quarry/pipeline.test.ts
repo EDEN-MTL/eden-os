@@ -21,8 +21,17 @@ vi.mock("./store", () => store);
 const discovery = vi.hoisted(() => ({ discover: vi.fn() }));
 vi.mock("./discovery", () => discovery);
 
-const triageMod = vi.hoisted(() => ({ triage: vi.fn() }));
+const triageMod = vi.hoisted(() => ({
+  triage: vi.fn(),
+  // Real implementation, not a stub — this is the actual logic under test
+  // in several auto-approve cases below, and it is trivial enough that
+  // re-implementing it here is exactly as trustworthy as importing it.
+  isHighConfidenceCandidate: (reasons: string[]) => reasons.some((r) => !r.startsWith("Looks dated")),
+}));
 vi.mock("./triage", () => triageMod);
+
+const indexMod = vi.hoisted(() => ({ quarryAgent: { post: vi.fn(async () => {}) } }));
+vi.mock("./index", () => indexMod);
 
 const enrichMod = vi.hoisted(() => ({ enrichContact: vi.fn(async () => ({ email: null, emailSource: null, hasPublicEmail: false })) }));
 vi.mock("./enrich", () => enrichMod);
@@ -46,6 +55,8 @@ import { QuarryDisabledError, MissingCredentialsError, run } from "./pipeline";
 
 const CONFIG = {
   enabled: false,
+  autoApprove: false,
+  reviewChannel: "websites-eden",
   searches: [{ query: "q", category: "trade-service", maxResults: 20 }],
   discovery: { recheckAfterDays: 90, maxLeadsPerRun: 20 },
   triage: { outdatedSignals: [], copyrightYearBefore: 2018, visionScoring: false, visionScoreThreshold: 6 },
@@ -313,5 +324,113 @@ describe("run — calibration rates", () => {
     expect(r.qualifyRate).toBe(0);
     expect(r.mobileRate).toBe(0);
     expect(r.projectedSendsPerRun).toBe(0);
+  });
+});
+
+describe("run — auto-approve", () => {
+  it("auto-approves a lead qualified on a hard technical fact when autoApprove is on", async () => {
+    withCreds();
+    configMod.loadQuarryConfig.mockReturnValue({ ...CONFIG, autoApprove: true });
+    discovery.discover.mockResolvedValue({
+      results: [place("a", "trade-service", null)], // no website — the hardest fact there is
+      searched: 1, skippedAlreadySeen: 0, skippedClosed: 0, detailsCalls: 1,
+    });
+    triageMod.triage.mockResolvedValue({ isCandidate: true, reasons: ["No website listed on Google"] });
+
+    const r = await run({ stopAfter: "triage", triggeredBy: "test", overrideKillSwitch: true, log: () => {} });
+
+    expect(store.updateLead).toHaveBeenCalledWith(1, expect.objectContaining({ approvalStatus: "approved" }));
+    expect(r.autoApproved).toBe(1);
+    expect(r.needsReview).toBe(0);
+    expect(indexMod.quarryAgent.post).not.toHaveBeenCalled();
+  });
+
+  it("holds a vision-only qualification for review instead of approving it", async () => {
+    withCreds();
+    configMod.loadQuarryConfig.mockReturnValue({ ...CONFIG, autoApprove: true, triage: { ...CONFIG.triage, visionScoring: true } });
+    discovery.discover.mockResolvedValue({
+      results: [place("a", "trade-service", "https://clean.com")],
+      searched: 1, skippedAlreadySeen: 0, skippedClosed: 0, detailsCalls: 1,
+    });
+    // Technical checks pass clean; only the vision opinion qualifies it —
+    // exactly the shape applyVisionScore produces on its own.
+    triageMod.triage.mockResolvedValue({ isCandidate: false, reasons: [] });
+    triageMod.applyVisionScore = vi.fn(() => ({
+      isCandidate: true, reasons: ["Looks dated (8/10)"], outdatedScore: 8, outdatedReasoning: "Table layout, clip art",
+    }));
+    shotMod.scoreSiteAppearance.mockResolvedValue({ score: 8, reasoning: "Table layout, clip art" });
+
+    const r = await run({
+      stopAfter: "triage", triggeredBy: "test", overrideKillSwitch: true, log: () => {},
+      capturer: { capture: async () => Buffer.from("png"), close: async () => {} } as any,
+    });
+
+    const patchCall = store.updateLead.mock.calls.find((c: any) => "isCandidate" in c[1]);
+    expect(patchCall![1]).not.toHaveProperty("approvalStatus");
+    expect(r.autoApproved).toBe(0);
+    expect(r.needsReview).toBe(1);
+  });
+
+  it("posts needs-review leads to the configured Slack channel", async () => {
+    withCreds();
+    configMod.loadQuarryConfig.mockReturnValue({ ...CONFIG, autoApprove: true, triage: { ...CONFIG.triage, visionScoring: true } });
+    discovery.discover.mockResolvedValue({
+      results: [place("a", "trade-service", "https://clean.com")],
+      searched: 1, skippedAlreadySeen: 0, skippedClosed: 0, detailsCalls: 1,
+    });
+    triageMod.triage.mockResolvedValue({ isCandidate: false, reasons: [] });
+    triageMod.applyVisionScore = vi.fn(() => ({
+      isCandidate: true, reasons: ["Looks dated (8/10)"], outdatedScore: 8, outdatedReasoning: "Table layout, clip art",
+    }));
+    shotMod.scoreSiteAppearance.mockResolvedValue({ score: 8, reasoning: "Table layout, clip art" });
+
+    await run({
+      stopAfter: "triage", triggeredBy: "test", overrideKillSwitch: true, log: () => {},
+      capturer: { capture: async () => Buffer.from("png"), close: async () => {} } as any,
+    });
+
+    expect(indexMod.quarryAgent.post).toHaveBeenCalledWith("websites-eden", expect.stringContaining("Biz a"));
+  });
+
+  it("does not auto-approve or notify anything when autoApprove is off", async () => {
+    withCreds();
+    configMod.loadQuarryConfig.mockReturnValue({ ...CONFIG, autoApprove: false });
+    discovery.discover.mockResolvedValue({
+      results: [place("a", "trade-service", null)],
+      searched: 1, skippedAlreadySeen: 0, skippedClosed: 0, detailsCalls: 1,
+    });
+    triageMod.triage.mockResolvedValue({ isCandidate: true, reasons: ["No website listed on Google"] });
+
+    const r = await run({ stopAfter: "triage", triggeredBy: "test", overrideKillSwitch: true, log: () => {} });
+
+    const patchCall = store.updateLead.mock.calls.find((c: any) => "isCandidate" in c[1]);
+    expect(patchCall![1]).not.toHaveProperty("approvalStatus");
+    expect(r.autoApproved).toBe(0);
+    expect(r.needsReview).toBe(0);
+    expect(indexMod.quarryAgent.post).not.toHaveBeenCalled();
+  });
+
+  it("does not let a Slack posting failure break the run", async () => {
+    // Best-effort by design — a Slack outage, or no bot token configured at
+    // all locally, must never take down a discovery run.
+    withCreds();
+    configMod.loadQuarryConfig.mockReturnValue({ ...CONFIG, autoApprove: true, triage: { ...CONFIG.triage, visionScoring: true } });
+    discovery.discover.mockResolvedValue({
+      results: [place("a", "trade-service", "https://clean.com")],
+      searched: 1, skippedAlreadySeen: 0, skippedClosed: 0, detailsCalls: 1,
+    });
+    triageMod.triage.mockResolvedValue({ isCandidate: false, reasons: [] });
+    triageMod.applyVisionScore = vi.fn(() => ({
+      isCandidate: true, reasons: ["Looks dated (8/10)"], outdatedScore: 8, outdatedReasoning: "dated",
+    }));
+    shotMod.scoreSiteAppearance.mockResolvedValue({ score: 8, reasoning: "dated" });
+    indexMod.quarryAgent.post.mockRejectedValueOnce(new Error("No Slack client for agent: quarry"));
+
+    await expect(
+      run({
+        stopAfter: "triage", triggeredBy: "test", overrideKillSwitch: true, log: () => {},
+        capturer: { capture: async () => Buffer.from("png"), close: async () => {} } as any,
+      })
+    ).resolves.toBeDefined();
   });
 });
