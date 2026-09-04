@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { deriveIntent, intentFromStage, isFirstTouch, normaliseLead, parseTimelineMonths, parseYesNo, readField, scoreLead, ScoutConfig } from "./intake";
+import { deriveIntent, intentFromStage, isFirstTouch, normaliseLead, normalizePhone, parseTimelineMonths, parseYesNo, readField, scoreLead, ScoutConfig } from "./intake";
 
 const config: ScoutConfig = {
   pipelineId: "g8DgskR6GqDvRR3A6jnN",
@@ -50,6 +50,38 @@ describe("parseYesNo", () => {
     expect(parseYesNo("working on it")).toBeNull();
     expect(parseYesNo(null)).toBeNull();
     expect(parseYesNo("no")).toBe(false);
+  });
+});
+
+describe("normalizePhone", () => {
+  /**
+   * Confirmed live, 2026-09-04: a real GHL form submission stored the
+   * phone as "(819) 993-6171", not E.164 — Vapi's create-call API rejects
+   * anything else outright, silently failing every automatic dial to that
+   * lead until this normalized it first.
+   */
+  it("converts a real GHL-formatted number to E.164, assuming +1", () => {
+    expect(normalizePhone("(819) 993-6171")).toBe("+18199936171");
+  });
+
+  it("passes an already-E.164 number through unchanged", () => {
+    expect(normalizePhone("+18199936171")).toBe("+18199936171");
+  });
+
+  it("handles a bare 11-digit number starting with 1", () => {
+    expect(normalizePhone("18199936171")).toBe("+18199936171");
+  });
+
+  it("handles common separators: dashes, dots, spaces", () => {
+    expect(normalizePhone("819-993-6171")).toBe("+18199936171");
+    expect(normalizePhone("819.993.6171")).toBe("+18199936171");
+  });
+
+  it("fails closed (null) rather than dialing an unrecognizable shape", () => {
+    expect(normalizePhone("12345")).toBeNull();
+    expect(normalizePhone(null)).toBeNull();
+    expect(normalizePhone(undefined)).toBeNull();
+    expect(normalizePhone("")).toBeNull();
   });
 });
 

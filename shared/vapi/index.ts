@@ -14,6 +14,20 @@ export interface VapiAssistantConfig {
     provider: string;
     model: string;
     messages: { role: "system"; content: string }[];
+    /**
+     * Confirmed against Vapi's own OpenAPI schema (api.vapi.ai/api-json),
+     * 2026-09-04, after a real call failed with "assistant.property tools
+     * should not exist": CreateAssistantDTO (what assistant.* validates
+     * against, for both POST /assistant and the inline assistant in
+     * POST /call) has NO `tools` property at all — it only exists on the
+     * per-provider model schema (OpenAIModel.tools here), alongside both
+     * `transferCall` and `function` tool types. This was live-broken from
+     * the moment schedule_callback (a function tool) was first exercised by
+     * a real automatic call; the earlier transferCall-only test apparently
+     * didn't trip the same validation, but per this schema `assistant.tools`
+     * was never actually valid either way.
+     */
+    tools?: VapiTool[];
   };
   voice: {
     provider: string;
@@ -48,7 +62,6 @@ export interface VapiAssistantConfig {
   };
   /** What Iris actually leaves on voicemail once detected — see scripts.ts's buildVoicemailMessage. */
   voicemailMessage?: string;
-  tools?: VapiTool[];
 }
 
 /**

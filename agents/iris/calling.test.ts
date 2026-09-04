@@ -85,13 +85,13 @@ describe("buildCallPayload", () => {
 
   it("wires no tools at all when nothing (transferNumber, contactId) is given", () => {
     const payload = buildCallPayload(BASE_PARAMS, VAPI_CONFIG);
-    expect(payload.assistant.tools).toBeUndefined();
+    expect(payload.assistant.model.tools).toBeUndefined();
   });
 
   describe("transferCall tool", () => {
     it("is added when a transferNumber is given, using warm-transfer-experimental with a non-ending fallback", () => {
       const payload = buildCallPayload({ ...BASE_PARAMS, transferNumber: "+17097058841" }, VAPI_CONFIG);
-      const tool = payload.assistant.tools?.find((t) => t.type === "transferCall");
+      const tool = payload.assistant.model.tools?.find((t) => t.type === "transferCall");
       expect(tool).toBeDefined();
       if (tool?.type !== "transferCall") throw new Error("expected transferCall tool");
       expect(tool.destinations[0].number).toBe("+17097058841");
@@ -108,8 +108,8 @@ describe("buildCallPayload", () => {
         { ...BASE_PARAMS, intent: "buyer", transferNumber: "+17097058841" },
         VAPI_CONFIG
       );
-      const sellerTool = sellerPayload.assistant.tools?.find((t) => t.type === "transferCall");
-      const buyerTool = buyerPayload.assistant.tools?.find((t) => t.type === "transferCall");
+      const sellerTool = sellerPayload.assistant.model.tools?.find((t) => t.type === "transferCall");
+      const buyerTool = buyerPayload.assistant.model.tools?.find((t) => t.type === "transferCall");
       if (sellerTool?.type !== "transferCall" || buyerTool?.type !== "transferCall") {
         throw new Error("expected transferCall tools");
       }
@@ -119,7 +119,7 @@ describe("buildCallPayload", () => {
 
     it("is omitted when no transferNumber is given", () => {
       const payload = buildCallPayload(BASE_PARAMS, VAPI_CONFIG);
-      expect(payload.assistant.tools?.find((t) => t.type === "transferCall")).toBeUndefined();
+      expect(payload.assistant.model.tools?.find((t) => t.type === "transferCall")).toBeUndefined();
     });
   });
 
@@ -128,23 +128,23 @@ describe("buildCallPayload", () => {
 
     it("is added only when serverUrl AND contactId are both present", () => {
       const payload = buildCallPayload(withContactId, VAPI_CONFIG);
-      const names = payload.assistant.tools?.filter((t) => t.type === "function").map((t) => (t.type === "function" ? t.function.name : ""));
+      const names = payload.assistant.model.tools?.filter((t) => t.type === "function").map((t) => (t.type === "function" ? t.function.name : ""));
       expect(names).toEqual(["schedule_callback"]);
     });
 
     it("is omitted when serverUrl is unset, even with contactId given", () => {
       const payload = buildCallPayload(withContactId, { ...VAPI_CONFIG, serverUrl: undefined });
-      expect(payload.assistant.tools?.some((t) => t.type === "function")).toBeFalsy();
+      expect(payload.assistant.model.tools?.some((t) => t.type === "function")).toBeFalsy();
     });
 
     it("is omitted when contactId is missing", () => {
       const payload = buildCallPayload(BASE_PARAMS, VAPI_CONFIG);
-      expect(payload.assistant.tools?.some((t) => t.type === "function")).toBeFalsy();
+      expect(payload.assistant.model.tools?.some((t) => t.type === "function")).toBeFalsy();
     });
 
     it("bakes clientId and contactId into the tool's server URL as query params", () => {
       const payload = buildCallPayload(withContactId, VAPI_CONFIG);
-      const tool = payload.assistant.tools?.find((t) => t.type === "function" && t.function.name === "schedule_callback");
+      const tool = payload.assistant.model.tools?.find((t) => t.type === "function" && t.function.name === "schedule_callback");
       if (tool?.type !== "function") throw new Error("expected function tool");
       const url = new URL(tool.server.url);
       expect(url.searchParams.get("clientId")).toBe("3-percent-east-coast");
@@ -153,14 +153,14 @@ describe("buildCallPayload", () => {
 
     it("attaches the webhook secret so Vapi actually sends X-Vapi-Secret back on this tool's callback", () => {
       const payload = buildCallPayload(withContactId, VAPI_CONFIG);
-      const tool = payload.assistant.tools?.find((t) => t.type === "function" && t.function.name === "schedule_callback");
+      const tool = payload.assistant.model.tools?.find((t) => t.type === "function" && t.function.name === "schedule_callback");
       if (tool?.type !== "function") throw new Error("expected function tool");
       expect(tool.server.secret).toBe("test-webhook-secret");
     });
 
     it("requires a callbackTime argument from the model", () => {
       const payload = buildCallPayload(withContactId, VAPI_CONFIG);
-      const tool = payload.assistant.tools?.find((t) => t.type === "function" && t.function.name === "schedule_callback");
+      const tool = payload.assistant.model.tools?.find((t) => t.type === "function" && t.function.name === "schedule_callback");
       if (tool?.type !== "function") throw new Error("expected function tool");
       expect(tool.function.parameters.required).toEqual(["callbackTime"]);
     });

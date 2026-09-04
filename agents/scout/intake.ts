@@ -149,6 +149,26 @@ export function parseYesNo(raw: string | null): boolean | null {
 }
 
 /**
+ * GHL's own contact.phone is whatever format the form/user typed —
+ * confirmed live, 2026-09-04: a real form submission stored the phone as
+ * "(819) 993-6171", not E.164, and Vapi's create-call API rejects
+ * anything else outright ("customer.number must be a valid phone number
+ * in the E.164 format"), so the automatic dial silently failed before
+ * ever ringing. Every real client on this system today is Canadian
+ * (+1) — assumes that country code for a bare 10/11-digit number rather
+ * than trying to guess international formats generally. Already-E.164
+ * numbers pass through unchanged.
+ */
+export function normalizePhone(raw: string | null | undefined): string | null {
+  if (!raw) return null;
+  if (raw.trim().startsWith("+")) return raw.trim();
+  const digits = raw.replace(/\D/g, "");
+  if (digits.length === 10) return `+1${digits}`;
+  if (digits.length === 11 && digits.startsWith("1")) return `+${digits}`;
+  return null; // Not a recognizable shape — fail closed rather than dial garbage.
+}
+
+/**
  * Intent comes from the intake STAGE, not from the lead form.
  *
  * Mark's notes say lead type is "captured separately in
@@ -404,7 +424,7 @@ export function normaliseLead(
     name: [payload.firstName ?? payload.first_name, payload.lastName ?? payload.last_name]
       .filter(Boolean).join(" ").trim() || null,
     email: payload.email || null,
-    phone: payload.phone || null,
+    phone: normalizePhone(payload.phone),
     propertyInterest,
     budget: fieldBudget ?? notes.budget,
     timeline: fieldTimeline ?? notes.timeline,

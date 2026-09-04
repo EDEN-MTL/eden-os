@@ -152,6 +152,7 @@ export function buildCallPayload(
         provider: vapiConfig.modelProvider,
         model: vapiConfig.modelName,
         messages: [{ role: "system", content: params.systemPrompt }],
+        tools: tools.length > 0 ? tools : undefined,
       },
       voice: {
         provider: vapiConfig.voiceProvider,
@@ -172,7 +173,6 @@ export function buildCallPayload(
       // frequencySeconds to 3-4s is their documented fix.
       voicemailDetection: { provider: "vapi", backoffPlan: { startAtSeconds: 4, frequencySeconds: 4, maxRetries: 5 } },
       voicemailMessage: buildVoicemailMessage(params.brandName),
-      tools: tools.length > 0 ? tools : undefined,
     },
   };
 }
