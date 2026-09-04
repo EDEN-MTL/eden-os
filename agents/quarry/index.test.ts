@@ -28,6 +28,23 @@ const sendMocks = vi.hoisted(() => ({
 }));
 vi.mock("./send", () => sendMocks);
 
+const pipelineMocks = vi.hoisted(() => ({
+  run: vi.fn(),
+  QuarryDisabledError: class QuarryDisabledError extends Error {},
+  MissingCredentialsError: class MissingCredentialsError extends Error {},
+}));
+vi.mock("./pipeline", () => pipelineMocks);
+
+const configMocks = vi.hoisted(() => ({
+  loadQuarryConfig: vi.fn(() => ({ categoryTemplates: [{ query: "shoe repair", category: "trade-service", maxResults: 20 }] })),
+  buildLocationSearches: vi.fn((config: any, location: string) =>
+    config.categoryTemplates.map((t: any) => ({ ...t, query: `${t.query} ${location}` }))
+  ),
+}));
+vi.mock("./config", () => configMocks);
+
+vi.mock("./screenshot", () => ({ PlaywrightCapturer: class {} }));
+
 import { chatWithTools } from "../../shared/claude";
 import { quarryAgent } from "./index";
 
@@ -136,6 +153,68 @@ describe("Quarry — quarry_send_now", () => {
 
     const reply = await quarryAgent.generateReply("k7", "send the approved batch");
     expect(reply).toBe("Something went wrong sending — ECONNREFUSED.");
+  });
+});
+
+describe("Quarry — quarry_run_discovery", () => {
+  it("builds location-specific searches and runs discovery synced to GHL", async () => {
+    const report = {
+      discovered: 40, qualified: 12, autoApproved: 9, needsReview: 3, syncedToGhl: 12, withEmail: 10, errors: [],
+    };
+    pipelineMocks.run.mockResolvedValue(report);
+    vi.mocked(chatWithTools)
+      .mockResolvedValueOnce({
+        content: [toolUseBlock("c1", "quarry_run_discovery", { location: "Ottawa, ON", maxLeads: 50 })],
+        stop_reason: "tool_use",
+      } as any)
+      .mockResolvedValueOnce(endTurn("Found 40 in Ottawa, 12 qualified, 9 auto-approved."));
+
+    const reply = await quarryAgent.generateReply("k8", "find 50 businesses in Ottawa");
+
+    expect(reply).toBe("Found 40 in Ottawa, 12 qualified, 9 auto-approved.");
+    expect(configMocks.buildLocationSearches).toHaveBeenCalledWith(expect.anything(), "Ottawa, ON");
+    expect(pipelineMocks.run).toHaveBeenCalledWith(
+      expect.objectContaining({
+        clientId: "eden",
+        stopAfter: "enrich",
+        maxLeads: 50,
+        syncToGhl: true,
+        searches: [{ query: "shoe repair Ottawa, ON", category: "trade-service", maxResults: 20 }],
+      })
+    );
+    const secondCallMessages = vi.mocked(chatWithTools).mock.calls[1][1] as any;
+    const toolResult = JSON.parse(secondCallMessages[secondCallMessages.length - 1].content[0].content);
+    expect(toolResult).toMatchObject({ location: "Ottawa, ON", discovered: 40, syncedToGhl: 12 });
+  });
+
+  it("refuses to guess a location and never calls run", async () => {
+    vi.mocked(chatWithTools)
+      .mockResolvedValueOnce({
+        content: [toolUseBlock("c1", "quarry_run_discovery", {})],
+        stop_reason: "tool_use",
+      } as any)
+      .mockResolvedValueOnce(endTurn("I need a city or region to search."));
+
+    await quarryAgent.generateReply("k9", "go find some businesses");
+
+    expect(pipelineMocks.run).not.toHaveBeenCalled();
+  });
+
+  it("reports the kill switch refusal as the tool result instead of throwing", async () => {
+    pipelineMocks.run.mockRejectedValue(new pipelineMocks.QuarryDisabledError("quarry.enabled is false"));
+    vi.mocked(chatWithTools)
+      .mockResolvedValueOnce({
+        content: [toolUseBlock("c1", "quarry_run_discovery", { location: "Ottawa, ON" })],
+        stop_reason: "tool_use",
+      } as any)
+      .mockResolvedValueOnce(endTurn("Can't run discovery — quarry.enabled is off."));
+
+    const reply = await quarryAgent.generateReply("k10", "find businesses in Ottawa");
+
+    expect(reply).toBe("Can't run discovery — quarry.enabled is off.");
+    const secondCallMessages = vi.mocked(chatWithTools).mock.calls[1][1] as any;
+    const toolResult = JSON.parse(secondCallMessages[secondCallMessages.length - 1].content[0].content);
+    expect(toolResult).toEqual({ ran: false, reason: "quarry.enabled is false" });
   });
 });
 
