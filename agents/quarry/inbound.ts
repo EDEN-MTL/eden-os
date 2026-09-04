@@ -36,3 +36,15 @@ export function parseInboundMessage(body: any): ParsedInboundMessage {
 
   return { contactId, text: text ? String(text) : null, channel, isInbound };
 }
+
+/**
+ * Reads GHL's inbound-appointment webhook payload — a human-built workflow
+ * POSTing a booked appointment's contact id here. Same customData-wrapper
+ * gotcha as the contact webhook (a workflow's Webhook action always nests
+ * custom key/value fields under customData) — checked first, falling back
+ * to a flat body for anything else that posts here directly.
+ */
+export function parseAppointmentContactId(body: any): string | null {
+  const data = body?.customData ?? body;
+  return data?.contactId ?? data?.contact_id ?? null;
+}
