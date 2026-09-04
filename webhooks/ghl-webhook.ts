@@ -1,7 +1,7 @@
 import { Request, Response, Router } from "express";
 import { eventBus } from "../shared/events";
 import { buildEmailDeps, buildOutreachDeps } from "../agents/quarry/deps";
-import { parseInboundMessage } from "../agents/quarry/inbound";
+import { parseAppointmentContactId, parseInboundMessage } from "../agents/quarry/inbound";
 import { handleEmailReply, handleReply } from "../agents/quarry/outreach";
 import { getLeadByGhlContactId } from "../agents/quarry/store";
 import { loadQuarryConfig } from "../agents/quarry/config";
@@ -139,6 +139,50 @@ export function createGHLRouter(): Router {
       }
     } catch (error) {
       console.error("[QRY] failed to process inbound reply:", error);
+    }
+  });
+
+  /**
+   * Fires when someone actually books a call off a Quarry pitch's booking
+   * link.
+   *
+   * Same gotcha as /message — GHL workflow triggers cannot be created over
+   * the API (gotcha 4 in CLAUDE.md). A human has to build a thin workflow in
+   * GHL's UI — trigger: a booked appointment on the calendar Quarry's pitch
+   * links to — that POSTs contactId here. Until that workflow exists, a
+   * booking happens in GHL and nothing here ever sees it, so the pipeline
+   * stage sits at "Replied Interest" forever even after a real call lands
+   * on the calendar.
+   *
+   * UNVERIFIED against a live payload — this repo has never received a real
+   * one. Logs the full raw body on every hit so the first real booking gives
+   * ground truth immediately, same as /message.
+   */
+  router.post("/appointment", async (req: Request, res: Response) => {
+    res.status(200).send("OK");
+
+    const body = req.body;
+    console.log("[QRY] inbound appointment webhook:", JSON.stringify(body).slice(0, 1000));
+
+    const contactId = parseAppointmentContactId(body);
+    if (!contactId) {
+      console.warn("[QRY] appointment webhook had no resolvable contactId — check the raw body logged above");
+      return;
+    }
+
+    try {
+      const lead = await getLeadByGhlContactId(contactId);
+      if (!lead) return; // not a Quarry lead — not ours to handle
+      if (!lead.ghlOpportunityId) {
+        console.warn(`[QRY] ${lead.name} booked but has no ghlOpportunityId — cannot move its stage`);
+        return;
+      }
+
+      const deps = await buildOutreachDeps(lead.clientId);
+      await deps.moveStage(lead.ghlOpportunityId, "Call Booked");
+      console.log(`[QRY] ${lead.name} booked a call — moved to "Call Booked"`);
+    } catch (error) {
+      console.error("[QRY] failed to process appointment booking:", error);
     }
   });
 
