@@ -535,3 +535,64 @@ describe("run — GHL sync", () => {
     expect(r.syncedToGhl).toBe(0);
   });
 });
+
+describe("run — contactability gate", () => {
+  it("keeps a hard-fact lead approved once enrichment finds an email", async () => {
+    withCreds();
+    configMod.loadQuarryConfig.mockReturnValue({ ...CONFIG, autoApprove: true, phone: { ...CONFIG.phone, enabled: false } });
+    discovery.discover.mockResolvedValue({
+      results: [place("a", "trade-service", null)],
+      searched: 1, skippedAlreadySeen: 0, skippedClosed: 0, detailsCalls: 1,
+    });
+    triageMod.triage.mockResolvedValue({ isCandidate: true, reasons: ["No website listed on Google"] });
+    enrichMod.enrichContact.mockResolvedValue({ email: "info@biz.com", emailSource: "own_website_homepage", hasPublicEmail: true });
+
+    const r = await run({ stopAfter: "enrich", triggeredBy: "test", overrideKillSwitch: true, log: () => {} });
+
+    expect(r.autoApproved).toBe(1);
+    expect(r.heldForNoContact).toBe(0);
+    expect(store.updateLead.mock.calls.some((c: any) => c[1].approvalStatus === "pending")).toBe(false);
+  });
+
+  it("walks an auto-approved lead back to pending when enrichment finds no email and no mobile", async () => {
+    withCreds();
+    configMod.loadQuarryConfig.mockReturnValue({ ...CONFIG, autoApprove: true, phone: { ...CONFIG.phone, enabled: false } });
+    discovery.discover.mockResolvedValue({
+      results: [place("a", "trade-service", null)],
+      searched: 1, skippedAlreadySeen: 0, skippedClosed: 0, detailsCalls: 1,
+    });
+    triageMod.triage.mockResolvedValue({ isCandidate: true, reasons: ["No website listed on Google"] });
+    enrichMod.enrichContact.mockResolvedValue({ email: null, emailSource: null, hasPublicEmail: false });
+
+    const r = await run({ stopAfter: "enrich", triggeredBy: "test", overrideKillSwitch: true, log: () => {} });
+
+    expect(r.autoApproved).toBe(0);
+    expect(r.heldForNoContact).toBe(1);
+    expect(store.updateLead).toHaveBeenCalledWith(1, { approvalStatus: "pending" });
+  });
+
+  it("passes the enriched email through to GHL sync, not the stale pre-enrichment value", async () => {
+    // upsertProspectContact reads lead.email off the same in-memory object
+    // enrichment just populated — a DB-only write here would leave it null.
+    withCreds();
+    configMod.loadQuarryConfig.mockReturnValue({
+      ...CONFIG, autoApprove: true, phone: { ...CONFIG.phone, enabled: false },
+      ghlPipeline: { name: "Website Offer Pipeline", stages: ["New Lead"] },
+    });
+    discovery.discover.mockResolvedValue({
+      results: [place("a", "trade-service", null)],
+      searched: 1, skippedAlreadySeen: 0, skippedClosed: 0, detailsCalls: 1,
+    });
+    triageMod.triage.mockResolvedValue({ isCandidate: true, reasons: ["No website listed on Google"] });
+    enrichMod.enrichContact.mockResolvedValue({ email: "info@biz.com", emailSource: "own_website_homepage", hasPublicEmail: true });
+
+    await run({
+      stopAfter: "enrich", triggeredBy: "test", overrideKillSwitch: true, log: () => {}, syncToGhl: true,
+    });
+
+    expect(syncMod.upsertProspectContact).toHaveBeenCalledWith(
+      expect.objectContaining({ email: "info@biz.com" }),
+      "loc1", "key1"
+    );
+  });
+});
