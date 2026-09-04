@@ -86,16 +86,19 @@ export async function downloadFile(agentId: AgentId, url: string): Promise<Buffe
 }
 
 /**
- * Send a message as a specific agent.
+ * Send a message as a specific agent. Returns the posted message's
+ * timestamp (Slack's thread/message identifier) so callers that need to
+ * reference this specific message later — e.g. recording it against a
+ * pending action row — don't have to make a second API call for it.
  */
 export async function sendMessage(
   agentId: AgentId,
   message: SlackOutgoingMessage
-): Promise<void> {
+): Promise<{ ts?: string }> {
   const client = getClient(agentId);
 
   try {
-    await client.chat.postMessage({
+    const response = await client.chat.postMessage({
       channel: message.channel,
       text: message.text,
       thread_ts: message.threadTs,
@@ -104,6 +107,7 @@ export async function sendMessage(
     console.log(
       `[SLACK] ${agentId.toUpperCase()} → #${message.channel}: ${message.text.slice(0, 80)}...`
     );
+    return { ts: response.ts };
   } catch (error) {
     console.error(`[SLACK] Error sending as ${agentId}:`, error);
     throw error;
