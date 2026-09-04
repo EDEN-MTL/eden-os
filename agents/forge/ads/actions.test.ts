@@ -71,6 +71,34 @@ describe("MetaActions — creation always comes in paused", () => {
     expect(JSON.parse(JSON.stringify(options.data))).toMatchObject({ status: "PAUSED" });
   });
 
+  it("createCampaign defaults bid_strategy=LOWEST_COST_WITHOUT_CAP for a CBO campaign (dailyBudgetCents set)", async () => {
+    // CBO campaigns carry bid_strategy at the CAMPAIGN level, not the ad
+    // set — without an explicit default here, every ad set created under
+    // it later fails unless it supplies a bid cap the account never asked
+    // the operator for.
+    const client = makeFakeClient();
+    const actions = new MetaActions(client);
+    await actions.createCampaign({ name: "Test", objective: "OUTCOME_LEADS", dailyBudgetCents: 5000 });
+    const [, , options] = (client.call as any).mock.calls[0];
+    expect(options.data.bid_strategy).toBe("LOWEST_COST_WITHOUT_CAP");
+  });
+
+  it("createCampaign respects an explicit bidStrategy override for a CBO campaign", async () => {
+    const client = makeFakeClient();
+    const actions = new MetaActions(client);
+    await actions.createCampaign({ name: "Test", objective: "OUTCOME_LEADS", dailyBudgetCents: 5000, bidStrategy: "LOWEST_COST_WITH_BID_CAP" });
+    const [, , options] = (client.call as any).mock.calls[0];
+    expect(options.data.bid_strategy).toBe("LOWEST_COST_WITH_BID_CAP");
+  });
+
+  it("createCampaign omits bid_strategy entirely for a non-CBO campaign (no dailyBudgetCents, no explicit bidStrategy)", async () => {
+    const client = makeFakeClient();
+    const actions = new MetaActions(client);
+    await actions.createCampaign({ name: "Test", objective: "OUTCOME_LEADS" });
+    const [, , options] = (client.call as any).mock.calls[0];
+    expect(options.data.bid_strategy).toBeUndefined();
+  });
+
   it("createAdset always sets status=PAUSED", async () => {
     const client = makeFakeClient();
     const actions = new MetaActions(client);

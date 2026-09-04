@@ -198,8 +198,18 @@ export class MetaActions {
       special_ad_categories: specialAdCategories || [],
     };
     if (specialAdCategoryCountry) payload.special_ad_category_country = specialAdCategoryCountry;
-    if (dailyBudgetCents) payload.daily_budget = String(Math.trunc(dailyBudgetCents));
-    if (bidStrategy) payload.bid_strategy = bidStrategy;
+    if (dailyBudgetCents) {
+      payload.daily_budget = String(Math.trunc(dailyBudgetCents));
+      // CBO (a budget set at the campaign level) is where Meta expects
+      // bid_strategy to live, not the ad set — same account-default trap as
+      // createAdset's bid_strategy fix, just one level up. Without this, a
+      // CBO campaign silently inherits whatever bid-cap strategy the
+      // account defaults to, and every ad set under it fails until a bid
+      // amount is supplied.
+      payload.bid_strategy = bidStrategy || "LOWEST_COST_WITHOUT_CAP";
+    } else if (bidStrategy) {
+      payload.bid_strategy = bidStrategy;
+    }
 
     validateCampaignPayload(payload as any);
 
