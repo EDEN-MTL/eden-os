@@ -3,6 +3,7 @@ import {
   applyVisionScore,
   isHighConfidenceCandidate,
   latestCopyrightYear,
+  triage,
   triageHtml,
   triageMissingSite,
 } from "./triage";
@@ -130,5 +131,20 @@ describe("isHighConfidenceCandidate", () => {
 
   it("is not high confidence for an empty reasons list", () => {
     expect(isHighConfidenceCandidate([])).toBe(false);
+  });
+});
+
+describe("triage — qualifyMissingWebsite", () => {
+  it("qualifies a no-website lead by default, same as triageMissingSite", async () => {
+    const result = await triage(null, OPTS);
+    expect(result).toEqual(triageMissingSite());
+  });
+
+  it("does not qualify a no-website lead when qualifyMissingWebsite is false", async () => {
+    // Email is the only send channel, and enrichContact can only find a
+    // contact email by reading a business's OWN website — a no-website lead
+    // would otherwise qualify but never be reachable.
+    const result = await triage(null, { ...OPTS, qualifyMissingWebsite: false });
+    expect(result).toEqual({ isCandidate: false, reasons: [] });
   });
 });

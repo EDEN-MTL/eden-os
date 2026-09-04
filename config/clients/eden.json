@@ -195,7 +195,9 @@
       "copyrightYearBefore": 2018,
       "visionScoring": true,
       "visionScoreThreshold": 6,
-      "visionScoreThresholdNote": "A site that passes every technical check but scores >= 6 for looking dated still qualifies. This is the branch that catches a technically-fine site that looks like 2009."
+      "visionScoreThresholdNote": "A site that passes every technical check but scores >= 6 for looking dated still qualifies. This is the branch that catches a technically-fine site that looks like 2009.",
+      "qualifyMissingWebsite": false,
+      "qualifyMissingWebsiteNote": "Set false 2026-09-04 per Jacob's direction: focus on outdated-but-existing sites for now, since email is the only send channel and enrichContact can only find a contact email by reading a business's OWN website — a no-website lead qualifies but can never be reached under email-only outreach (confirmed live: 3/3 leads in a real Belleville run had no email precisely because 2 of them had no site to scrape). Flip back to true once phone verification (quarry.phone.enabled) is back on as a second channel, since Google Places always returns a phone number even for a no-website business."
     },
     "phone": {
       "provider": "twilio",

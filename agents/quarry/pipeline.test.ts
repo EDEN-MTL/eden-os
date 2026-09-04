@@ -115,6 +115,26 @@ describe("run — guards", () => {
     ).rejects.toThrow(/GOOGLE_PLACES_API_KEY.*TWILIO_ACCOUNT_SID.*TWILIO_AUTH_TOKEN/);
   });
 
+  it("passes config.triage.qualifyMissingWebsite through to the real triage call", async () => {
+    withCreds();
+    configMod.loadQuarryConfig.mockReturnValue({
+      ...CONFIG,
+      triage: { ...CONFIG.triage, qualifyMissingWebsite: false },
+    });
+    discovery.discover.mockResolvedValue({
+      results: [place("a", "trade-service", null)],
+      searched: 1, skippedAlreadySeen: 0, skippedClosed: 0, detailsCalls: 1,
+    });
+    triageMod.triage.mockResolvedValue({ isCandidate: false, reasons: [] });
+
+    await run({ stopAfter: "triage", triggeredBy: "test", overrideKillSwitch: true, log: () => {} });
+
+    expect(triageMod.triage).toHaveBeenCalledWith(
+      null,
+      expect.objectContaining({ qualifyMissingWebsite: false })
+    );
+  });
+
   it("does not require Twilio credentials when stopping before phone", async () => {
     process.env.GOOGLE_PLACES_API_KEY = "k";
     configMod.loadQuarryConfig.mockReturnValue(CONFIG);
