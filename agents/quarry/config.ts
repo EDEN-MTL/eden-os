@@ -16,6 +16,17 @@ export interface SearchSpec {
 
 export interface QuarryConfig {
   enabled: boolean;
+  /**
+   * When true, a lead qualified on a hard technical fact (no site, no
+   * HTTPS, not mobile-responsive, stale markup) is approved automatically
+   * — no human click required. A lead qualified ONLY by the vision pass's
+   * "looks dated" judgment is left pending regardless, and posted to
+   * reviewChannel instead. See isHighConfidenceCandidate in triage.ts,
+   * which is what actually draws that line.
+   */
+  autoApprove: boolean;
+  /** Slack channel auto-approve posts judgment-call leads to for review. */
+  reviewChannel: string;
   /** The GHL pipeline built by hand — see sync.ts, which resolves it by name. */
   ghlPipeline: { name: string; stages: string[] };
   searches: SearchSpec[];

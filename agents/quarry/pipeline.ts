@@ -26,9 +26,10 @@ import {
   startRun,
   updateLead,
 } from "./store";
-import { applyVisionScore, triage } from "./triage";
+import { applyVisionScore, isHighConfidenceCandidate, triage } from "./triage";
 import { PlaywrightCapturer, scoreSiteAppearance, ScreenshotCapturer } from "./screenshot";
 import { QuarryCategory, QuarryLead, RunError } from "./types";
+import { quarryAgent } from "./index";
 
 export type StopAfter = "discover" | "triage" | "phone" | "enrich";
 
@@ -82,6 +83,10 @@ export interface CalibrationReport {
   qualifyRateIsFloor: boolean;
   /** False means Twilio was never called — mobile/landline counts are not "0 mobiles found", they are "not checked". */
   phoneVerificationEnabled: boolean;
+  /** Qualified on a hard technical fact and cleared automatically — config.autoApprove must be on. */
+  autoApproved: number;
+  /** Qualified only by the vision pass's opinion — left pending and posted to reviewChannel. */
+  needsReview: number;
 }
 
 export class QuarryDisabledError extends Error {
@@ -192,6 +197,8 @@ export async function run(options: RunOptions): Promise<CalibrationReport> {
     // pass. The real qualify rate is therefore at least this, never less.
     qualifyRateIsFloor: false,
     phoneVerificationEnabled: true,
+    autoApproved: 0,
+    needsReview: 0,
   };
 
   const bump = (category: string | null, key: keyof CategoryBreakdown) => {
@@ -214,6 +221,7 @@ export async function run(options: RunOptions): Promise<CalibrationReport> {
   }
 
   const qualified: QuarryLead[] = [];
+  const needsReview: QuarryLead[] = [];
   for (const lead of leads) {
     try {
       let result = await triage(lead.website, {
@@ -243,12 +251,28 @@ export async function run(options: RunOptions): Promise<CalibrationReport> {
         }
       }
 
-      await updateLead(lead.id, {
+      // Auto-approval, if the config allows it, is decided here rather
+      // than later — this is the one place both the reasons array and a
+      // fresh DB write already exist together, so it costs nothing extra.
+      // A lead qualified only by the vision pass's opinion is deliberately
+      // left pending; everything else clears immediately.
+      const patch: Record<string, unknown> = {
         isCandidate: result.isCandidate,
         reasons: result.reasons,
         outdatedScore: result.outdatedScore ?? null,
         outdatedReasoning: result.outdatedReasoning ?? null,
-      });
+      };
+      if (result.isCandidate && config.autoApprove) {
+        if (isHighConfidenceCandidate(result.reasons)) {
+          patch.approvalStatus = "approved";
+          report.autoApproved++;
+        } else {
+          needsReview.push(lead);
+          report.needsReview++;
+        }
+      }
+      await updateLead(lead.id, patch);
+
       if (result.isCandidate) {
         qualified.push(lead);
         bump(lead.category, "qualified");
@@ -258,6 +282,8 @@ export async function run(options: RunOptions): Promise<CalibrationReport> {
       note("triage", lead, error);
     }
   }
+
+  await notifyNeedsReview(needsReview, config.reviewChannel, log);
   report.qualified = qualified.length;
   log(`triage: ${qualified.length}/${leads.length} qualified${visionOn ? " (vision on)" : ""}`);
 
@@ -346,6 +372,36 @@ export async function run(options: RunOptions): Promise<CalibrationReport> {
 
   await persist(runId, report, errors);
   return finalise(report);
+}
+
+/**
+ * Posts judgment-call leads to Slack. Best-effort and non-throwing on
+ * purpose — a Slack outage (or a local run with no bot token configured at
+ * all) must never take down a discovery run over something that is
+ * genuinely optional. Nothing is skipped if this fails; the leads still
+ * sit in the database as pending, exactly as if auto-approve were off.
+ */
+async function notifyNeedsReview(
+  leads: QuarryLead[],
+  channel: string,
+  log: (line: string) => void
+): Promise<void> {
+  if (leads.length === 0) return;
+  try {
+    const lines = leads
+      .slice(0, 15)
+      .map((l) => `• #${l.id} ${l.name} — ${l.outdatedReasoning ?? "looks dated"} (${l.outdatedScore}/10)`)
+      .join("\n");
+    const more = leads.length > 15 ? `\n…and ${leads.length - 15} more.` : "";
+    await quarryAgent.post(
+      channel,
+      `${leads.length} lead(s) need a human read before I send anything — the site passed every ` +
+        `technical check, so this is the vision pass's opinion alone, not a fact I can point to:\n${lines}${more}\n\n` +
+        `Approve the ones worth pitching whenever you get a chance.`
+    );
+  } catch (error) {
+    log(`  ! failed to post needs-review leads to Slack: ${error instanceof Error ? error.message : String(error)}`);
+  }
 }
 
 async function persist(runId: number, report: CalibrationReport, errors: RunError[]): Promise<void> {
