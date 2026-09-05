@@ -164,6 +164,35 @@ const APPOINTMENT_DURATION_MINUTES = 30;
 const APPOINTMENT_SEARCH_WINDOW_DAYS = 3;
 const MAX_ALTERNATIVES_OFFERED = 3;
 
+/**
+ * Confirmed live, 2026-09-06: the model's requestedTime argument routinely
+ * comes back with no UTC offset at all (e.g. "2026-09-05T18:00:00"), and
+ * bare `new Date(...)` on a string like that parses it as the SERVER's own
+ * local time, not the client's timezone — a Render server runs in UTC, so
+ * a lead-intended "6 PM Toronto" silently became 6 PM UTC (2 PM Toronto),
+ * missing every real slot by 4 hours. Iris kept saying "trouble booking"
+ * because nothing ever matched, real slots included. If the string already
+ * carries an offset/Z, trust it outright; otherwise treat the wall-clock
+ * numbers as being in `timeZone` and convert properly — same round-trip
+ * technique as agents/iris/cadence.ts's zonedHourToUtc, generalized here
+ * to include minutes since a requested callback is rarely on the hour.
+ */
+export function resolveRequestedTime(raw: string, timeZone: string): Date | null {
+  const hasOffset = /Z$|[+-]\d{2}:?\d{2}$/.test(raw.trim());
+  if (hasOffset) {
+    const direct = new Date(raw);
+    return Number.isNaN(direct.getTime()) ? null : direct;
+  }
+
+  const naiveAsUtc = new Date(`${raw}Z`);
+  if (Number.isNaN(naiveAsUtc.getTime())) return null;
+
+  const renderedInZone = new Date(naiveAsUtc.toLocaleString("en-US", { timeZone }));
+  const renderedInUtc = new Date(naiveAsUtc.toLocaleString("en-US", { timeZone: "UTC" }));
+  const offsetMs = renderedInUtc.getTime() - renderedInZone.getTime();
+  return new Date(naiveAsUtc.getTime() + offsetMs);
+}
+
 async function handleCheckAndBookAppointment(
   clientId: string,
   contactId: string,
@@ -174,10 +203,6 @@ async function handleCheckAndBookAppointment(
   if (typeof requestedTime !== "string" || !requestedTime) {
     return "Could not check the calendar — no valid time was provided. Ask the lead for a specific day and time.";
   }
-  const requested = new Date(requestedTime);
-  if (Number.isNaN(requested.getTime())) {
-    return "Could not check the calendar — that wasn't a valid time. Ask the lead for a specific day and time.";
-  }
 
   const ghlConfig = await getGhlConfig(clientId);
   const config = loadIrisConfig(clientId);
@@ -185,6 +210,11 @@ async function handleCheckAndBookAppointment(
     return "Could not check the calendar right now — tell the lead a teammate will confirm a time directly.";
   }
   const timeZone = config.timezone;
+
+  const requested = resolveRequestedTime(requestedTime, timeZone || "America/St_Johns");
+  if (!requested) {
+    return "Could not check the calendar — that wasn't a valid time. Ask the lead for a specific day and time.";
+  }
 
   const windowStart = new Date();
   const windowEnd = new Date(windowStart.getTime() + APPOINTMENT_SEARCH_WINDOW_DAYS * 24 * 60 * 60 * 1000);
