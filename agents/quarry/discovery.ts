@@ -40,6 +40,8 @@ const DETAILS_FIELD_MASK = [
   "userRatingCount",
   "businessStatus",
   "photos",
+  "types",
+  "googleMapsUri",
 ].join(",");
 
 export class PlacesApiError extends Error {
@@ -109,6 +111,8 @@ export async function placeDetails(
     rating: p.rating ?? null,
     userRatingsTotal: p.userRatingCount ?? null,
     businessStatus: p.businessStatus ?? null,
+    placeTypes: p.types ?? [],
+    googleMapsUri: p.googleMapsUri ?? null,
     // Capped at 3: Place Photos bills per media fetch with a 1,000/month free
     // cap, and 6 photos x 20 leads x 4 runs would cross it for images the
     // generator does not need. Photo *names* in the new API ("places/X/photos/Y"), resolved to real

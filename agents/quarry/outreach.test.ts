@@ -69,7 +69,7 @@ function lead(over: Partial<QuarryLead> = {}): QuarryLead {
     formattedAddress: null, phone: "+15145550100", phoneLineType: "mobile", isMobile: true,
     email: "info@rivard.ca", emailSource: "own_website_contact_page", hasPublicEmail: true, website: null,
     category: "trade-service", searchQuery: null, rating: null, userRatingsTotal: null,
-    businessStatus: null, photoRefs: [], isCandidate: true, reasons: [], outdatedScore: null,
+    businessStatus: null, photoRefs: [], placeTypes: [], googleMapsUri: null, isCandidate: true, reasons: [], outdatedScore: null,
     outdatedReasoning: null, previewUrl: "https://preview.test/rivard",
     previewImageUrl: "https://api.test/api/quarry/images/9.png", generator: "lovable",
     generationError: null, ghlContactId: "c1", ghlOpportunityId: "o1", pipelineStage: "New Lead",
