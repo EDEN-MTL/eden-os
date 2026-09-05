@@ -116,8 +116,30 @@ export interface VapiAssistantConfig {
  * transfer per Vapi's own docs and community reports). See
  * agents/iris/calling.ts's buildCallPayload.
  */
+/**
+ * Confirmed against Vapi's own OpenAPI schema (CreateTransferCallToolDTO),
+ * 2026-09-06: a structural guard on the tool itself, evaluated BEFORE Vapi
+ * lets the model's transferCall invocation through — the model can still
+ * try to call the tool, but the call is rejected (not executed) unless the
+ * condition(s) match. Mark's rule, same date: never transfer without
+ * having told the lead first and heard something back — the prompt
+ * already instructs this, but an instruction alone doesn't guarantee an
+ * LLM never skips a step (confirmed live once already: one real call had
+ * Iris invoke the transfer immediately with no announcement or pause).
+ * This is the second, code-level line of defense.
+ */
+export interface VapiToolRejectionPlan {
+  conditions: {
+    type: "regex";
+    regex: string;
+    target?: { position?: number; role?: "user" | "assistant" };
+    negate?: boolean;
+  }[];
+}
+
 export interface VapiTransferCallTool {
   type: "transferCall";
+  rejectionPlan?: VapiToolRejectionPlan;
   destinations: {
     type: "number";
     number: string;

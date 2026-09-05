@@ -107,6 +107,27 @@ export function buildCallPayload(
     const briefing = buildAgentBriefing(params, audience);
     tools.push({
       type: "transferCall",
+      // Structural backup for the prompt's own "say the line, wait, only
+      // transfer on agreement" instruction — see VapiToolRejectionPlan's
+      // doc comment. Rejects the transfer unless the lead's most recent
+      // message actually sounds like agreement (or a callback-time answer
+      // already in progress) rather than assuming any invocation is valid.
+      rejectionPlan: {
+        conditions: [
+          {
+            // No inline (?i) here despite Vapi's own docs showing it in
+            // their examples — that syntax isn't valid in Node's RegExp at
+            // all, and their schema explicitly says rejectionPlan regexes
+            // run through RegExp.test. Explicit case variants instead,
+            // confirmed to actually compile via a live regex engine rather
+            // than trusting the vendor's own (apparently broken) example.
+            type: "regex",
+            regex: "\\b([Yy]es|[Yy]eah|[Yy]ep|[Yy]up|[Ss]ure|[Oo]k|[Oo]kay|[Ff]ine|[Aa]lright|[Dd]efinitely|[Aa]bsolutely|[Pp]lease)\\b|[Ss]ounds good|[Gg]o ahead|[Tt]hat works",
+            target: { position: -1, role: "user" },
+            negate: true,
+          },
+        ],
+      },
       destinations: [
         {
           type: "number",

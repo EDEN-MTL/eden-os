@@ -123,6 +123,30 @@ describe("buildCallPayload", () => {
       expect(tool.destinations[0].transferPlan.fallbackPlan.endCallEnabled).toBe(false);
     });
 
+    /**
+     * Mark's rule, 2026-09-06: never transfer without having told the lead
+     * first and heard something back — confirmed live once already that
+     * the prompt instruction alone isn't a guarantee (one real call had
+     * Iris invoke the transfer immediately, no announcement or pause).
+     * This is the structural backup: Vapi rejects the tool call itself
+     * unless the lead's last message actually sounds like agreement.
+     */
+    it("rejects the transfer unless the lead's last message sounds like agreement", () => {
+      const payload = buildCallPayload({ ...BASE_PARAMS, transferNumber: "+17097058841" }, VAPI_CONFIG);
+      const tool = payload.assistant.model.tools?.find((t) => t.type === "transferCall");
+      if (tool?.type !== "transferCall") throw new Error("expected transferCall tool");
+      expect(tool.rejectionPlan?.conditions[0]).toMatchObject({
+        type: "regex",
+        target: { position: -1, role: "user" },
+        negate: true,
+      });
+      const regex = new RegExp(tool.rejectionPlan!.conditions[0].regex);
+      expect(regex.test("yeah sure")).toBe(true);
+      expect(regex.test("sounds good")).toBe(true);
+      expect(regex.test("what do you mean")).toBe(false);
+      expect(regex.test("no, not right now")).toBe(false);
+    });
+
     it("briefs the receiving agent as 'seller' for seller/downsize intent and 'buyer' for buyer/upgrading", () => {
       const sellerPayload = buildCallPayload(
         { ...BASE_PARAMS, intent: "seller", transferNumber: "+17097059439" },
