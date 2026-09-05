@@ -135,7 +135,19 @@ export interface VapiFunctionTool {
   server: { url: string; secret?: string };
 }
 
-export type VapiTool = VapiTransferCallTool | VapiFunctionTool;
+/**
+ * Confirmed against Vapi's own OpenAPI schema (CreateEndCallToolDTO),
+ * 2026-09-06: minimal shape is just `{ type: "endCall" }`, same as
+ * transferCall/function above — no separate messages/rejectionPlan needed.
+ * Lets Iris actually hang up once she's said her goodbye, instead of
+ * lingering or looping (confirmed live: without this, a real test call had
+ * Iris say "I don't have the ability to hang up the call myself").
+ */
+export interface VapiEndCallTool {
+  type: "endCall";
+}
+
+export type VapiTool = VapiTransferCallTool | VapiFunctionTool | VapiEndCallTool;
 
 export interface CreateCallPayload {
   phoneNumberId: string;

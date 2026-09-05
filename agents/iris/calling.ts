@@ -173,6 +173,12 @@ export function buildCallPayload(
     });
   }
 
+  // Always available, unconditionally — every call needs a way to actually
+  // end once Iris is genuinely done, regardless of intent/transfer/callback
+  // state. See buildLeadQualificationPrompt's "Ending the call" section for
+  // when she's told to use it.
+  tools.push({ type: "endCall" });
+
   return {
     phoneNumberId: vapiConfig.phoneNumberId,
     customer: { number: params.phone },
