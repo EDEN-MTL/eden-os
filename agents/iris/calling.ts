@@ -50,6 +50,13 @@ export interface PlaceCallParams {
   timeline?: string | null;
   propertyInterest?: string | null;
   financing?: string | null;
+  /**
+   * Real calendar for this call's intent (qualification.ts's
+   * callbackCalendarForIntent). Omit to skip wiring the real-time
+   * availability tool — the call falls back to schedule_callback's simple
+   * note+redial system instead, same soft-fail pattern as transferNumber.
+   */
+  calendarId?: string;
 }
 
 /**
@@ -140,7 +147,49 @@ export function buildCallPayload(
     });
   }
 
-  if (vapiConfig.serverUrl && params.contactId) {
+  if (vapiConfig.serverUrl && params.contactId && params.calendarId) {
+    // Real-time calendar path — only wired when a real callbackCalendarId
+    // resolved for this client/intent (qualification.ts's
+    // callbackCalendarForIntent). Replaces schedule_callback entirely for
+    // this call rather than offering both — one clear tool for "how do I
+    // handle scheduling," not two overlapping ones. Mark, 2026-09-06: built
+    // once a real test calendar existed to verify against live (never
+    // invent availability — see AGENT_UNAVAILABLE_FOLLOW_UP's history).
+    const qs = new URLSearchParams({
+      clientId: params.clientId,
+      contactId: params.contactId,
+      calendarId: params.calendarId,
+      intent: params.intent === "seller" || params.intent === "downsize" ? "seller" : "buyer",
+    }).toString();
+
+    tools.push({
+      type: "function",
+      function: {
+        name: "check_and_book_appointment",
+        description:
+          "Checks a specific time against the REAL calendar and books it immediately if it's open. If " +
+          "that exact time isn't available, returns the nearest REAL open times instead — never invents " +
+          "availability. Call this for ANY specific day/time you're about to propose or confirm, whether " +
+          "the lead named it or you suggested it (e.g. 'about 3 hours from now') — never assume a time is " +
+          "open just because it sounds reasonable. If it comes back with alternatives, offer them to the " +
+          "lead and call this tool again once they pick one, to actually book it.",
+        parameters: {
+          type: "object",
+          properties: {
+            requestedTime: {
+              type: "string",
+              description:
+                "The exact moment to check/book, as an ISO 8601 timestamp, computed relative to the " +
+                "current date and time given to you at the top of this prompt — never a bare time like " +
+                "'2pm' with no date.",
+            },
+          },
+          required: ["requestedTime"],
+        },
+      },
+      server: { url: `${vapiConfig.serverUrl}/tools/check-and-book-appointment?${qs}`, secret: vapiConfig.webhookSecret },
+    });
+  } else if (vapiConfig.serverUrl && params.contactId) {
     const qs = new URLSearchParams({
       clientId: params.clientId,
       contactId: params.contactId,

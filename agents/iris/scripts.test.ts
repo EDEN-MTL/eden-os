@@ -249,7 +249,7 @@ const BLANK_LEAD: NormalisedLead = {
 
 describe("buildLeadQualificationPrompt", () => {
   it("lists every question as still needed when nothing is known yet", () => {
-    const prompt = buildLeadQualificationPrompt(IRIS_CONFIG, BLANK_LEAD, "3 Percent East Coast", "St. John's", false, true);
+    const prompt = buildLeadQualificationPrompt(IRIS_CONFIG, BLANK_LEAD, "3 Percent East Coast", "St. John's", false, true, false);
     expect(prompt).toContain("Nothing yet — this is a cold first contact.");
     for (const q of IRIS_CONFIG.questions) {
       expect(prompt).toContain(q);
@@ -265,7 +265,7 @@ describe("buildLeadQualificationPrompt", () => {
    */
   it("turns a known answer into a verifying question and drops it from what's still needed", () => {
     const lead: NormalisedLead = { ...BLANK_LEAD, intent: "seller", propertyInterest: "downtown", timeline: "3-6 months" };
-    const prompt = buildLeadQualificationPrompt(IRIS_CONFIG, lead, "3 Percent East Coast", "St. John's", false, true);
+    const prompt = buildLeadQualificationPrompt(IRIS_CONFIG, lead, "3 Percent East Coast", "St. John's", false, true, false);
     expect(prompt).toContain("I can see you're looking at selling your place in downtown — is that right?");
     expect(prompt).toContain("You mentioned you're looking to sell within 3-6 months — does that still sound right?");
     expect(prompt).not.toContain(IRIS_CONFIG.questions[0]);
@@ -282,55 +282,55 @@ describe("buildLeadQualificationPrompt", () => {
    */
   it("doesn't ask a redundant bare-intent verifying question when only intent (no area) is known", () => {
     const lead: NormalisedLead = { ...BLANK_LEAD, intent: "seller" };
-    const prompt = buildLeadQualificationPrompt(IRIS_CONFIG, lead, "3 Percent East Coast", "St. John's", false, true);
+    const prompt = buildLeadQualificationPrompt(IRIS_CONFIG, lead, "3 Percent East Coast", "St. John's", false, true, false);
     expect(prompt).not.toContain("I can see you're looking at selling your home — is that right?");
     expect(prompt).toContain(IRIS_CONFIG.questions[1]);
   });
 
   it("uses the lead's latest answer over the form's when they conflict, without arguing", () => {
     const lead: NormalisedLead = { ...BLANK_LEAD, intent: "buyer", propertyInterest: "downtown" };
-    const prompt = buildLeadQualificationPrompt(IRIS_CONFIG, lead, "3 Percent East Coast", "St. John's", false, true);
+    const prompt = buildLeadQualificationPrompt(IRIS_CONFIG, lead, "3 Percent East Coast", "St. John's", false, true, false);
     expect(prompt).toMatch(/treat THEIR latest answer as the real one/i);
     expect(prompt).toMatch(/never argue or repeat the stale value/i);
   });
 
   it("skips the financing question for a seller, matching qualification.ts's nextQuestion behavior", () => {
     const lead: NormalisedLead = { ...BLANK_LEAD, intent: "seller" };
-    const prompt = buildLeadQualificationPrompt(IRIS_CONFIG, lead, "3 Percent East Coast", "St. John's", false, true);
+    const prompt = buildLeadQualificationPrompt(IRIS_CONFIG, lead, "3 Percent East Coast", "St. John's", false, true, false);
     expect(prompt).not.toContain(IRIS_CONFIG.questions[4]);
   });
 
   it("always asks the property-details question — no GHL field captures it yet", () => {
-    const prompt = buildLeadQualificationPrompt(IRIS_CONFIG, BLANK_LEAD, "3 Percent East Coast", "St. John's", false, true);
+    const prompt = buildLeadQualificationPrompt(IRIS_CONFIG, BLANK_LEAD, "3 Percent East Coast", "St. John's", false, true, false);
     expect(prompt).toContain(IRIS_CONFIG.questions[2]);
   });
 
   it("uses the city and brand it's given rather than a hardcoded one", () => {
-    const prompt = buildLeadQualificationPrompt(IRIS_CONFIG, BLANK_LEAD, "Matama Floors", "Montreal", false, true);
+    const prompt = buildLeadQualificationPrompt(IRIS_CONFIG, BLANK_LEAD, "Matama Floors", "Montreal", false, true, false);
     expect(prompt).toContain("Matama Floors");
     expect(prompt).toContain("Montreal only");
   });
 
   it("never claims to be human, pulling the real approved wording (with the right brand) rather than inventing new lines", () => {
-    const prompt = buildLeadQualificationPrompt(IRIS_CONFIG, BLANK_LEAD, "3 Percent East Coast", "St. John's", false, true);
+    const prompt = buildLeadQualificationPrompt(IRIS_CONFIG, BLANK_LEAD, "3 Percent East Coast", "St. John's", false, true, false);
     expect(prompt).toContain(EDGE_CASE_RESPONSES.isRealPerson("3 Percent East Coast")[0]);
     expect(prompt).toContain(EDGE_CASE_RESPONSES.dontKnowAnswer);
   });
 
   it("tells Iris to actually invoke schedule_callback when the tool is available", () => {
-    const prompt = buildLeadQualificationPrompt(IRIS_CONFIG, BLANK_LEAD, "3 Percent East Coast", "St. John's", true, true);
+    const prompt = buildLeadQualificationPrompt(IRIS_CONFIG, BLANK_LEAD, "3 Percent East Coast", "St. John's", true, true, false);
     expect(prompt).toContain("schedule_callback");
     expect(prompt).not.toMatch(/do not have a working callback-scheduling tool/i);
   });
 
   it("tells Iris NOT to claim a scheduled callback when the tool isn't wired up", () => {
-    const prompt = buildLeadQualificationPrompt(IRIS_CONFIG, BLANK_LEAD, "3 Percent East Coast", "St. John's", false, true);
+    const prompt = buildLeadQualificationPrompt(IRIS_CONFIG, BLANK_LEAD, "3 Percent East Coast", "St. John's", false, true, false);
     expect(prompt).toMatch(/do not have a working callback-scheduling tool/i);
     expect(prompt).not.toContain("schedule_callback");
   });
 
   it("gives Iris the current date and time so she can resolve relative callback requests", () => {
-    const prompt = buildLeadQualificationPrompt(IRIS_CONFIG, BLANK_LEAD, "3 Percent East Coast", "St. John's", false, true);
+    const prompt = buildLeadQualificationPrompt(IRIS_CONFIG, BLANK_LEAD, "3 Percent East Coast", "St. John's", false, true, false);
     expect(prompt).toMatch(/Right now it is/);
   });
 
@@ -341,13 +341,13 @@ describe("buildLeadQualificationPrompt", () => {
    * These instructions sequence it into separate turns instead.
    */
   it("instructs Iris to wait for the name, then ask how they're doing, before anything else", () => {
-    const prompt = buildLeadQualificationPrompt(IRIS_CONFIG, BLANK_LEAD, "3 Percent East Coast", "St. John's", false, true);
+    const prompt = buildLeadQualificationPrompt(IRIS_CONFIG, BLANK_LEAD, "3 Percent East Coast", "St. John's", false, true, false);
     expect(prompt).toMatch(/wait for their answer/i);
     expect(prompt).toMatch(/ask how they're doing/i);
   });
 
   it("tells Iris never to stack more than one question into a turn", () => {
-    const prompt = buildLeadQualificationPrompt(IRIS_CONFIG, BLANK_LEAD, "3 Percent East Coast", "St. John's", false, true);
+    const prompt = buildLeadQualificationPrompt(IRIS_CONFIG, BLANK_LEAD, "3 Percent East Coast", "St. John's", false, true, false);
     expect(prompt).toMatch(/never stack more than one question/i);
   });
 
@@ -359,22 +359,50 @@ describe("buildLeadQualificationPrompt", () => {
    */
   describe("transferAvailable", () => {
     it("tells Iris to invoke the transferCall tool when a transfer is available", () => {
-      const prompt = buildLeadQualificationPrompt(IRIS_CONFIG, BLANK_LEAD, "3 Percent East Coast", "St. John's", false, true);
+      const prompt = buildLeadQualificationPrompt(IRIS_CONFIG, BLANK_LEAD, "3 Percent East Coast", "St. John's", false, true, false);
       expect(prompt).toMatch(/invoke the transferCall tool/i);
       expect(prompt).not.toMatch(/do not have a live-transfer tool/i);
     });
 
     it("tells Iris she has no live-transfer tool, and never to claim one, when none is available", () => {
-      const prompt = buildLeadQualificationPrompt(IRIS_CONFIG, BLANK_LEAD, "3 Percent East Coast", "St. John's", false, false);
+      const prompt = buildLeadQualificationPrompt(IRIS_CONFIG, BLANK_LEAD, "3 Percent East Coast", "St. John's", false, false, false);
       expect(prompt).toMatch(/do not have a live-transfer tool/i);
       expect(prompt).not.toMatch(/invoke the transferCall tool/i);
     });
 
     it("still gives the scheduling fallback instructions regardless of transfer availability", () => {
-      const withTransfer = buildLeadQualificationPrompt(IRIS_CONFIG, BLANK_LEAD, "3 Percent East Coast", "St. John's", true, true);
-      const withoutTransfer = buildLeadQualificationPrompt(IRIS_CONFIG, BLANK_LEAD, "3 Percent East Coast", "St. John's", true, false);
+      const withTransfer = buildLeadQualificationPrompt(IRIS_CONFIG, BLANK_LEAD, "3 Percent East Coast", "St. John's", true, true, false);
+      const withoutTransfer = buildLeadQualificationPrompt(IRIS_CONFIG, BLANK_LEAD, "3 Percent East Coast", "St. John's", true, false, false);
       expect(withTransfer).toContain("schedule_callback");
       expect(withoutTransfer).toContain("schedule_callback");
+    });
+  });
+
+  /**
+   * Mark, 2026-09-06: built once a real client calendar existed to verify
+   * against — check_and_book_appointment replaces schedule_callback
+   * entirely for a call where a real callbackCalendarId resolved, since
+   * offering both would leave Iris with two overlapping ways to handle the
+   * same situation.
+   */
+  describe("calendarAvailable", () => {
+    it("tells Iris to use check_and_book_appointment, never schedule_callback, when a real calendar is available", () => {
+      const prompt = buildLeadQualificationPrompt(IRIS_CONFIG, BLANK_LEAD, "3 Percent East Coast", "St. John's", true, true, true);
+      expect(prompt).toContain("check_and_book_appointment");
+      expect(prompt).not.toContain("schedule_callback");
+    });
+
+    it("tells Iris never to assume a time is open — the tool decides", () => {
+      const prompt = buildLeadQualificationPrompt(IRIS_CONFIG, BLANK_LEAD, "3 Percent East Coast", "St. John's", true, true, true);
+      expect(prompt).toMatch(/never assume it's open, the tool tells you/i);
+      expect(prompt).toMatch(/never say a time is available or booked/i);
+      expect(prompt).toMatch(/the tool actually confirmed it/i);
+    });
+
+    it("falls back to schedule_callback when no real calendar is available, even with booking tools on", () => {
+      const prompt = buildLeadQualificationPrompt(IRIS_CONFIG, BLANK_LEAD, "3 Percent East Coast", "St. John's", true, true, false);
+      expect(prompt).toContain("schedule_callback");
+      expect(prompt).not.toContain("check_and_book_appointment");
     });
   });
 });

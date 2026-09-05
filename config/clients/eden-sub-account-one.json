@@ -23,6 +23,8 @@
     "_credentialsNote": "Live GHL credentials are stored in the database (ghl_credentials), entered 2026-09-04 — not in this file."
   },
   "iris": {
+    "timezone": "America/Toronto",
+    "timezoneNote": "Mark, 2026-09-06: GHL's own location record has timezone 'Pacific/Honolulu' (a snapshot default, per market._comment above) — confirmed live, getCalendarSlots returned real slots with a '-10:00' offset, which is Hawaii, not Toronto. This field is what Iris actually uses to speak times back naturally; GHL's own (wrong) location timezone is never read for that.",
     "qualificationQuestions": [
       "Are you looking to buy or sell?",
       "What area are you interested in?",
@@ -41,7 +43,11 @@
     },
     "callbacks": {
       "_comment": "Same placeholder-field caveat as writeFields above. handleScheduleCallback (webhooks/vapi-tools.ts) degrades gracefully when this key doesn't resolve — the callback still gets scheduled and re-dialed, it just won't have a note attached to the contact until a real isa_notes-equivalent field exists here.",
-      "notesFieldKey": "contact.isa_notes"
+      "notesFieldKey": "contact.isa_notes",
+      "calendarIds": {
+        "_comment": "Mark, 2026-09-06: 'Home Buyer Calendar' created in this test sub-account specifically for Iris's real-time booking. Id verified live via GET /calendars/ — the id shown in GHL's own UI copy button read 'ViJVHWXvLPuvUltgzgVt' (lowercase L), but the API's real id is 'ViJVHWXvLPuvUItgzgVt' (capital I) — same one-glyph transcription trap as buyerCalendarId in 3-percent-east-coast.json. No seller calendar exists yet.",
+        "buyer": "ViJVHWXvLPuvUItgzgVt"
+      }
     },
     "outreachCadence": {
       "attemptsPerDay": 2,

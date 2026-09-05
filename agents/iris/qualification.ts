@@ -77,6 +77,32 @@ export interface IrisConfig {
    * handleScheduleCallback.
    */
   callbackNotesFieldKey: string;
+  /**
+   * IRIS's OWN calendar for booking a real-time callback slot when a live
+   * transfer can't happen — deliberately separate from `calendars` above
+   * (scout.calendars, the human-facilitated buyer/seller consultation
+   * calendars used elsewhere). Mark, 2026-09-06: reintroduces the concept
+   * from the earlier "ISA Callback (Iris)" calendar design that was put on
+   * hold 2026-09-02 (see callbackNotesFieldKey's own doc comment) — this
+   * time scoped to a real client-provisioned calendar Mark built and
+   * verified live, not the inactive one left over from that earlier
+   * attempt. Optional per-intent: a client with no calendar provisioned yet
+   * (or one that's deliberately still on the simple note+redial system)
+   * just has undefined here, same soft-fail pattern as liveTransferStageId.
+   */
+  callbackCalendarIds?: { buyer?: string; seller?: string };
+  /**
+   * IANA timezone for this client — was hardcoded to "America/St_Johns"
+   * (3% East Coast's own zone) in scripts.ts, dial-pending.ts, and
+   * webhooks/vapi-tools.ts, which is wrong for any other client (Mark's
+   * Realty is Toronto — America/Toronto). Only threaded through the pieces
+   * this calendar feature touches (buildLeadQualificationPrompt's "current
+   * date and time" display, and the new check-and-book-appointment handler)
+   * — dial-pending.ts's own CLIENT_TIMEZONE constant (outreach cadence
+   * scheduling) is a separate, larger-blast-radius fix, left alone here.
+   * Defaults to St. John's for existing clients that never set this.
+   */
+  timezone?: string;
   writeFields: IrisWriteFields;
   outreachCadence: OutreachCadenceConfig;
 }
@@ -235,6 +261,13 @@ export function calendarForIntent(config: IrisConfig, intent: CallIntent): strin
 export function transferNumberForIntent(config: IrisConfig, intent: CallIntent): string | null {
   if (intent === "seller" || intent === "downsize") return config.transferNumbers.seller;
   if (intent === "buyer" || intent === "upgrading") return config.transferNumbers.buyer;
+  return null;
+}
+
+/** Same buyer/seller-first-transaction mapping, for callbackCalendarIds instead. */
+export function callbackCalendarForIntent(config: IrisConfig, intent: CallIntent): string | null {
+  if (intent === "seller" || intent === "downsize") return config.callbackCalendarIds?.seller || null;
+  if (intent === "buyer" || intent === "upgrading") return config.callbackCalendarIds?.buyer || null;
   return null;
 }
 

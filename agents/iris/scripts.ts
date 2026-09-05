@@ -189,8 +189,17 @@ export function liveTransferLineForIntent(intent: CallIntent): string {
   return LIVE_TRANSFER_LINES.general;
 }
 
-/** Fallback when the live transfer can't be completed — booking, not the first choice. */
-export const AGENT_UNAVAILABLE_LINE = "Looks like they're tied up right now. Let's get you booked for a quick phone call instead.";
+/**
+ * Fallback when the live transfer can't be completed — booking, not the
+ * first choice. Also the literal message Vapi's own transferPlan.fallbackPlan
+ * speaks automatically if nobody picks up (see calling.ts) — not just
+ * documentation for the model. Mark's live feedback, 2026-09-06, testing a
+ * real call: warmer than the original ("Looks like they're tied up right
+ * now") — doesn't bake in a specific time here, since whether a real time
+ * can be offered next depends on whether a real calendar is available (see
+ * buildLeadQualificationPrompt's schedulingFallback).
+ */
+export const AGENT_UNAVAILABLE_LINE = "They're busy with another client right now, but they'd love to connect with you.";
 
 /**
  * Open question rather than pre-checked slots — there's no calendar behind
@@ -358,7 +367,8 @@ export function buildLeadQualificationPrompt(
   brandName: string,
   city: string,
   bookingToolsAvailable: boolean,
-  transferAvailable: boolean
+  transferAvailable: boolean,
+  calendarAvailable: boolean
 ): string {
   const firstName = lead.name?.split(" ")[0] || "there";
   const identifyLine = callIdentifyLine(firstName);
@@ -416,19 +426,43 @@ If their answer confirms it, acknowledge briefly (vary the phrase — see the ac
     ? `\n\n## Still need to gather — ask ONE at a time, always pausing and waiting for their answer before the next one\n${stillNeeded.map((q) => `- ${q}`).join("\n")}`
     : "";
 
-  // bookingToolsAvailable reflects whether this environment actually has the
-  // schedule_callback tool wired (VAPI_SERVER_URL set — it calls back to our
-  // own server, which only exists once deployed). Telling Iris to use a tool
-  // that isn't in her tools list for this call would have her hallucinate
-  // having scheduled something real. Match what's actually possible rather
-  // than describing the ideal end state always.
-  const schedulingFallback = bookingToolsAvailable
-    ? `Then ask: "${AGENT_UNAVAILABLE_FOLLOW_UP}" Once they give a specific day and
+  // bookingToolsAvailable reflects whether this environment actually has a
+  // scheduling tool wired at all (VAPI_SERVER_URL set — it calls back to our
+  // own server, which only exists once deployed). calendarAvailable further
+  // distinguishes WHICH tool: check_and_book_appointment (a real calendar
+  // was provisioned for this client/intent — calling.ts wires this instead
+  // of schedule_callback when calendarId resolves) vs. the simpler
+  // note+redial schedule_callback. Telling Iris to use a tool that isn't in
+  // her tools list for this call would have her hallucinate having scheduled
+  // something real, so this always matches what's actually possible.
+  //
+  // Mark, 2026-09-06: built once a real client calendar existed to verify
+  // against — implements sections 11/12/16 of his human-like-behavior brief
+  // (check real availability, never invent a slot, offer the nearest real
+  // alternative) without inventing anything: the tool itself is the only
+  // thing that ever asserts a time is open.
+  const schedulingFallback = calendarAvailable
+    ? `If they gave a specific day and time, work out the exact moment relative
+to the current date and time above. If they didn't name one, suggest
+roughly 3 hours from now as your first guess. Either way, call
+check_and_book_appointment with that moment as an ISO 8601 timestamp —
+never assume it's open, the tool tells you. If it books, confirm the exact
+time back to them in plain language. If it comes back with alternatives
+instead, offer 2-3 of them naturally and call the tool again with whichever
+one they pick. If nothing is open at all today, offer the next real opening
+within 24 hours the same way. Never say a time is available or booked unless
+the tool actually confirmed it.
+
+Example: "I don't have that exact time, but I've got an opening at 4:15pm —
+would that work?" — always naming a real time the tool gave you, never one
+you made up.`
+    : bookingToolsAvailable
+      ? `Then ask: "${AGENT_UNAVAILABLE_FOLLOW_UP}" Once they give a specific day and
 time, work out the exact moment relative to the current date and time above,
 then call schedule_callback with that as an ISO 8601 timestamp. Confirm the
 callback back to them in plain language before ending the call — never claim
 it's scheduled unless the tool actually confirmed it.`
-    : `You do NOT have a working callback-scheduling tool on this call — do not
+      : `You do NOT have a working callback-scheduling tool on this call — do not
 claim to have scheduled anything or invent a time. Instead say a teammate
 will follow up directly to get them scheduled.`;
 
@@ -466,7 +500,7 @@ ${schedulingFallback}`;
 
   const now = new Date();
   const nowLocal = now.toLocaleString("en-US", {
-    timeZone: "America/St_Johns",
+    timeZone: config.timezone || "America/St_Johns",
     weekday: "long",
     year: "numeric",
     month: "long",

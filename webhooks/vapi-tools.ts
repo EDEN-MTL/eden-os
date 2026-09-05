@@ -1,6 +1,6 @@
 import crypto from "crypto";
 import { Request, Response, Router } from "express";
-import { getGhlConfig, addContactTags, updateContact, getCustomFieldDefs } from "../shared/ghl";
+import { getGhlConfig, addContactTags, updateContact, getCustomFieldDefs, getCalendarSlots, createAppointment } from "../shared/ghl";
 import { buildKeyToId } from "../agents/scout/intake";
 import { loadIrisConfig } from "../agents/iris";
 import { scheduleExplicitCallback } from "../agents/iris/dial-pending";
@@ -46,9 +46,15 @@ interface ToolCall {
   arguments?: Record<string, unknown>;
 }
 
-function formatLocal(iso: string): string {
+/**
+ * Defaults to St. John's for back-compat with existing callers that never
+ * pass one — real per-client callers below resolve config.timezone first
+ * (see IrisConfig.timezone's own doc comment for why this was wrong for
+ * any client other than 3% East Coast).
+ */
+function formatLocal(iso: string, timeZone: string = "America/St_Johns"): string {
   return new Date(iso).toLocaleString("en-US", {
-    timeZone: "America/St_Johns",
+    timeZone,
     weekday: "long",
     month: "long",
     day: "numeric",
@@ -84,7 +90,7 @@ async function recordCallbackNote(clientId: string, contactId: string, when: Dat
     }
     await updateContact(
       contactId,
-      { customFields: [{ id: fieldId, value: `Iris scheduled a callback for ${formatLocal(when.toISOString())} — lead asked to be called back at this time.` }] },
+      { customFields: [{ id: fieldId, value: `Iris scheduled a callback for ${formatLocal(when.toISOString(), config.timezone)} — lead asked to be called back at this time.` }] },
       ghlConfig.locationId,
       ghlConfig.apiKey
     );
@@ -118,7 +124,104 @@ async function handleScheduleCallback(clientId: string, contactId: string, callb
 
   await recordCallbackNote(clientId, contactId, when);
 
-  return `Callback scheduled for ${formatLocal(when.toISOString())}. Confirm this back to the lead in plain language.`;
+  const timeZone = loadIrisConfig(clientId)?.timezone;
+  return `Callback scheduled for ${formatLocal(when.toISOString(), timeZone)}. Confirm this back to the lead in plain language.`;
+}
+
+/**
+ * Real-time equivalent of handleScheduleCallback — only wired when a real
+ * callbackCalendarId resolved for this client/intent (calling.ts's
+ * buildCallPayload), so a client on the simple note+redial system never
+ * has this called against it. Checks the requested moment against GHL's
+ * actual free-slots for this calendar and books it immediately if open;
+ * otherwise returns the nearest REAL open times instead of ever asserting
+ * availability that wasn't actually confirmed. Mark, 2026-09-06: built and
+ * verified live against a real test calendar before trusting it, same
+ * discipline as everything else in this codebase.
+ */
+const APPOINTMENT_DURATION_MINUTES = 30;
+const APPOINTMENT_SEARCH_WINDOW_DAYS = 3;
+const MAX_ALTERNATIVES_OFFERED = 3;
+
+async function handleCheckAndBookAppointment(
+  clientId: string,
+  contactId: string,
+  calendarId: string,
+  intent: string,
+  requestedTime: unknown
+): Promise<string> {
+  if (typeof requestedTime !== "string" || !requestedTime) {
+    return "Could not check the calendar — no valid time was provided. Ask the lead for a specific day and time.";
+  }
+  const requested = new Date(requestedTime);
+  if (Number.isNaN(requested.getTime())) {
+    return "Could not check the calendar — that wasn't a valid time. Ask the lead for a specific day and time.";
+  }
+
+  const ghlConfig = await getGhlConfig(clientId);
+  const config = loadIrisConfig(clientId);
+  if (!ghlConfig || !config) {
+    return "Could not check the calendar right now — tell the lead a teammate will confirm a time directly.";
+  }
+  const timeZone = config.timezone;
+
+  const windowStart = new Date();
+  const windowEnd = new Date(windowStart.getTime() + APPOINTMENT_SEARCH_WINDOW_DAYS * 24 * 60 * 60 * 1000);
+
+  let slotsResp: Record<string, { slots?: string[] }>;
+  try {
+    slotsResp = await getCalendarSlots(
+      calendarId,
+      windowStart.getTime().toString(),
+      windowEnd.getTime().toString(),
+      ghlConfig.locationId,
+      ghlConfig.apiKey
+    );
+  } catch (error) {
+    console.error(`[VAPI-TOOLS] getCalendarSlots failed for ${clientId}/${calendarId}:`, error instanceof Error ? error.message : error);
+    return "Could not check the calendar right now — tell the lead a teammate will confirm a time directly.";
+  }
+
+  // GHL's own response mixes a "traceId" string key in with the real
+  // per-date entries — confirmed live, 2026-09-06.
+  const allSlots = Object.entries(slotsResp)
+    .filter(([key, value]) => key !== "traceId" && Array.isArray(value?.slots))
+    .flatMap(([, day]) => day.slots as string[])
+    .sort();
+
+  const exactMatch = allSlots.find((s) => new Date(s).getTime() === requested.getTime());
+
+  if (exactMatch) {
+    const endTime = new Date(new Date(exactMatch).getTime() + APPOINTMENT_DURATION_MINUTES * 60_000).toISOString();
+    try {
+      await createAppointment(
+        calendarId,
+        {
+          contactId,
+          startTime: exactMatch,
+          endTime,
+          title: `${intent === "seller" ? "Seller" : "Buyer"} callback`,
+          notes: "Booked automatically by Iris during a live call.",
+        },
+        ghlConfig.locationId,
+        ghlConfig.apiKey
+      );
+    } catch (error) {
+      console.error(`[VAPI-TOOLS] createAppointment failed for ${clientId}/${contactId}:`, error instanceof Error ? error.message : error);
+      return "That time showed as open but the booking failed — do not claim it's booked. Tell the lead a teammate will confirm directly instead.";
+    }
+    return `Booked for ${formatLocal(exactMatch, timeZone)}. Confirm this exact time back to the lead in plain language.`;
+  }
+
+  const alternatives = allSlots.filter((s) => new Date(s).getTime() >= requested.getTime()).slice(0, MAX_ALTERNATIVES_OFFERED);
+  if (alternatives.length === 0) {
+    return "That time isn't available and nothing else real is open in the next few days. Do not invent a time — tell the lead a teammate will follow up directly to find one.";
+  }
+  return (
+    "That exact time isn't available. Real open times instead: " +
+    alternatives.map((s) => formatLocal(s, timeZone)).join(", ") +
+    ". Offer these to the lead and call this tool again with whichever one they pick to actually book it."
+  );
 }
 
 function createToolHandler(handler: (query: Record<string, string>, call: ToolCall) => Promise<string>) {
@@ -152,6 +255,13 @@ export function createVapiToolsRouter(): Router {
   router.post(
     "/schedule-callback",
     createToolHandler(async (query, call) => handleScheduleCallback(query.clientId, query.contactId, call.arguments?.callbackTime))
+  );
+
+  router.post(
+    "/check-and-book-appointment",
+    createToolHandler(async (query, call) =>
+      handleCheckAndBookAppointment(query.clientId, query.contactId, query.calendarId, query.intent, call.arguments?.requestedTime)
+    )
   );
 
   return router;

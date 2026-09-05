@@ -22,7 +22,7 @@ import { loadIrisConfig, loadClientBranding } from "./index";
 import { buildLeadQualificationPrompt } from "./scripts";
 import { placeCall, CallingDisabledError } from "./calling";
 import { decideNextAttempt, nextAttemptTime } from "./cadence";
-import { transferNumberForIntent } from "./qualification";
+import { transferNumberForIntent, callbackCalendarForIntent } from "./qualification";
 
 /**
  * Client timezone for cadence slot times (10am/2pm local — see
@@ -126,6 +126,7 @@ async function resolveOne(row: PendingCallRow): Promise<void> {
 
   const attemptNumber = row.attempts_made + 1;
   const transferNumber = transferNumberForIntent(config, lead.intent) ?? undefined;
+  const calendarId = callbackCalendarForIntent(config, lead.intent) ?? undefined;
 
   try {
     const result = await placeCall({
@@ -146,9 +147,11 @@ async function resolveOne(row: PendingCallRow): Promise<void> {
         branding.brandName,
         branding.city,
         Boolean(process.env.VAPI_SERVER_URL),
-        Boolean(transferNumber)
+        Boolean(transferNumber),
+        Boolean(calendarId)
       ),
       transferNumber,
+      calendarId,
       contactId: row.contact_id,
       triggeredBy: "automatic",
     });
