@@ -241,29 +241,34 @@ export function callIdentifyLine(firstName: string): string {
  * Ties the call to why the lead is actually being contacted instead of a
  * cold, context-free opener. Returns null when intent is "unknown" or there
  * is nothing true to reference yet — never invent a reason for the call.
- * leadSource is passed through as-is (e.g. NormalisedLead.leadSource); most
- * leads carry no ad attribution yet (see Scout's system prompt), so this is
- * commonly null and the source clause is simply omitted.
+ *
+ * Mark's live feedback, 2026-09-06: the previous version named the lead
+ * source verbatim ("I saw you reached out through 1. Home Buyer Form a
+ * little while ago") — reading GHL's internal form label out loud sounds
+ * exactly like what it is, a database field, not a sentence. leadSource is
+ * still accepted (kept for callers/signature compat) but no longer spoken —
+ * "the form you submitted online" covers the same ground naturally. This
+ * line now also does the job the separate intent-only verifying line used
+ * to do (see buildLeadQualificationPrompt) — it already ends as a question,
+ * so asking "still the plan?" again right after would just repeat it.
  */
 export function callOpeningContextLine(
   intent: CallIntent,
   city: string,
-  leadSource: string | null
+  _leadSource: string | null
 ): string | null {
   const subject =
     intent === "seller"
-      ? `the house you're looking at selling in ${city}`
+      ? `selling your home in ${city}`
       : intent === "buyer"
-        ? "the home you're looking to buy"
+        ? "buying a home"
         : intent === "downsize"
           ? "downsizing your home"
           : intent === "upgrading"
             ? "upgrading your home"
             : null;
   if (!subject) return null;
-  return leadSource
-    ? `I'm calling about ${subject} — I saw you reached out through ${leadSource} a little while ago.`
-    : `I'm calling about ${subject}.`;
+  return `I was calling about the form you submitted online about ${subject} — still the plan?`;
 }
 
 /**
@@ -374,7 +379,10 @@ export function buildLeadQualificationPrompt(
   if (lead.intent !== "unknown" && lead.propertyInterest) {
     verifying.push(verifyIntentAndAreaLine(lead.intent, lead.propertyInterest)!);
   } else if (lead.intent !== "unknown" && !lead.propertyInterest) {
-    verifying.push(verifyIntentAndAreaLine(lead.intent, null)!);
+    // Bare intent (no area yet) is already confirmed by the opening's own
+    // contextLine below ("I was calling about the form you submitted online
+    // about buying a home — still the plan?") — asking a second, separate
+    // "still the plan?" here would just repeat the same question twice.
     stillNeeded.push(config.questions[1]);
   } else if (lead.intent === "unknown" && lead.propertyInterest) {
     verifying.push(verifyAreaOnlyLine(lead.propertyInterest));
@@ -486,13 +494,16 @@ anything back or stayed quiet, so react to whichever actually happened:
    naturally, then ask "${identifyLine}" — then STOP and wait for their answer.
 2. If there was silence: continue on your own with that same question —
    "${identifyLine}" — then STOP and wait for their answer.
-3. Once you know who you're speaking with, ask how they're doing today,
-   then genuinely wait for their answer.
-4. Acknowledge it naturally and briefly (e.g. "${NATURAL_TRANSITIONS.call[4]}" or
+3. Once you know who you're speaking with, introduce yourself by name:
+   "This is Iris with ${brandName}." Say this even if nobody asked — don't
+   wait to be prompted for it, and don't skip it if the lead already asked
+   who you are earlier in the call.
+4. Then ask how they're doing today, and genuinely wait for their answer.
+5. Acknowledge it naturally and briefly (e.g. "${NATURAL_TRANSITIONS.call[4]}" or
    another line from natural conversation — vary it, don't reuse the same
    one every call) — don't launch straight into business.
-5. Only then bring up why you're calling${contextLine ? `: "${contextLine}"` : ", using what's already known about them above"}.
-6. Move into verifying what's known, then gathering what's still needed
+6. Only then bring up why you're calling${contextLine ? `: "${contextLine}"` : ", using what's already known about them above"}.
+7. Move into verifying what's known, then gathering what's still needed
    (both below) — one at a time, always pausing and genuinely waiting for
    their answer before asking the next one. Never stack more than one question
    into a single turn, and never answer your own question. If an item below
