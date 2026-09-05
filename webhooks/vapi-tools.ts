@@ -200,8 +200,17 @@ async function handleCheckAndBookAppointment(
   intent: string,
   requestedTime: unknown
 ): Promise<string> {
+  // These two messages are addressed to the MODEL, not the lead — confirmed
+  // live, 2026-09-06: a real call had Iris repeatedly telling the lead
+  // "I'm having trouble with the time format" on a loop, even after they
+  // clearly reconfirmed the same time twice. That phrase never came from
+  // this handler; the model invented it while trying to explain one of
+  // these two messages in its own words. Being explicit that THIS is an
+  // internal formatting problem — not a real availability check, and
+  // nothing the lead did wrong — should stop it from surfacing a fake
+  // "technical issue" to them.
   if (typeof requestedTime !== "string" || !requestedTime) {
-    return "Could not check the calendar — no valid time was provided. Ask the lead for a specific day and time.";
+    return "No requestedTime was given — this is an error in how you called the tool, not a real availability check. Recompute the moment the lead named relative to the current date and time given at the top of your instructions, then call this tool again. Do not tell the lead there's a technical issue or problem with time format.";
   }
 
   const ghlConfig = await getGhlConfig(clientId);
@@ -213,7 +222,7 @@ async function handleCheckAndBookAppointment(
 
   const requested = resolveRequestedTime(requestedTime, timeZone || "America/St_Johns");
   if (!requested) {
-    return "Could not check the calendar — that wasn't a valid time. Ask the lead for a specific day and time.";
+    return `"${requestedTime}" is not a valid ISO 8601 timestamp — this is an error in how you called the tool, not a real availability check. Recompute the moment the lead named relative to the current date and time given at the top of your instructions (e.g. "2026-09-07T18:00:00"), then call this tool again with a properly formatted timestamp. Do not tell the lead there's a technical issue or problem with time format — they did nothing wrong.`;
   }
 
   const windowStart = new Date();

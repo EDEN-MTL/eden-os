@@ -465,6 +465,22 @@ describe("buildLeadQualificationPrompt", () => {
       expect(prompt).toMatch(/before asking the lead anything/i);
       expect(prompt).toMatch(/only once you've proposed every real option left for today/i);
     });
+
+    /**
+     * Confirmed live, 2026-09-06: a real call had Iris stuck in a loop
+     * telling the lead "I'm having trouble with the time format" over and
+     * over, even after they clearly reconfirmed the same time twice — an
+     * internal tool-formatting error surfaced as a fake "technical issue"
+     * to a lead who'd done nothing wrong. This never repeats without a
+     * hard stop, since an LLM instruction alone doesn't guarantee it won't
+     * loop again some other way.
+     */
+    it("tells Iris never to blame a fake technical issue on the lead, and to stop retrying after two failures", () => {
+      const prompt = buildLeadQualificationPrompt(IRIS_CONFIG, BLANK_LEAD, "3 Percent East Coast", "St. John's", true, true, true);
+      expect(prompt).toMatch(/never repeat words like "technical issue" or "trouble with the/i);
+      expect(prompt).toMatch(/if it fails twice in a\s*\n?row, stop trying/i);
+      expect(prompt).toMatch(/do not\s*\n?call check_and_book_appointment again this call/i);
+    });
   });
 });
 

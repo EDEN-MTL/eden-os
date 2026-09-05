@@ -481,7 +481,17 @@ time is open — the tool tells you:
 
 Never say a time is available or booked unless the tool actually confirmed
 it, and never invent one yourself — every time you say out loud has to be
-one the tool actually gave you.`
+one the tool actually gave you.
+
+If the tool's result starts with anything other than "Booked for" or "That
+exact time isn't available" — an internal error, not a real availability
+answer — never repeat words like "technical issue" or "trouble with the
+time format" to the lead. That confuses them into thinking they did
+something wrong when they didn't. Just recompute the time properly and
+try again, silently, without narrating the retry. If it fails twice in a
+row, stop trying and tell them in plain language that a teammate will
+follow up directly to lock in whatever time they gave you last — do not
+call check_and_book_appointment again this call.`
     : bookingToolsAvailable
       ? `Then ask: "${AGENT_UNAVAILABLE_FOLLOW_UP}" Once they give a specific day and
 time, work out the exact moment relative to the current date and time above,
