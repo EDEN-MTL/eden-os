@@ -232,6 +232,8 @@ const BLANK_LEAD: NormalisedLead = {
   email: null,
   phone: "+15555551234",
   propertyInterest: null,
+  bedrooms: null,
+  workingWithRealtor: null,
   budget: null,
   timeline: null,
   preApproved: null,
@@ -248,61 +250,90 @@ const BLANK_LEAD: NormalisedLead = {
 };
 
 describe("buildLeadQualificationPrompt", () => {
-  it("lists every question as still needed when nothing is known yet", () => {
+  it("lists every still-genuinely-unknown item when nothing is known yet", () => {
     const prompt = buildLeadQualificationPrompt(IRIS_CONFIG, BLANK_LEAD, "3 Percent East Coast", "St. John's", false, true, false);
     expect(prompt).toContain("Nothing yet — this is a cold first contact.");
-    for (const q of IRIS_CONFIG.questions) {
-      expect(prompt).toContain(q);
-    }
+    expect(prompt).toContain(IRIS_CONFIG.questions[0]); // intent unknown
+    expect(prompt).toContain(IRIS_CONFIG.questions[1]); // area — never has a data source
+    expect(prompt).toContain("What type of home are you looking for?");
+    expect(prompt).toContain("How many bedrooms and bathrooms do you need?");
+    expect(prompt).toContain(IRIS_CONFIG.questions[3]); // timeline unknown
+    expect(prompt).toContain("Are you preapproved for a mortgage yet?");
+    expect(prompt).toContain("What's your budget range?");
   });
 
   /**
-   * Mark, 2026-09-05: a known fact must become a spoken VERIFYING question
-   * ("You were looking to buy a home in {area}, right?"), never a generic
-   * "confirm it, don't ask again" instruction — the whole point is Iris
-   * sounds like she's checking in, not reading a database dump back at the
-   * lead.
+   * Mark, 2026-09-05/06: a known fact must become a spoken VERIFYING
+   * question, never a generic "confirm it, don't ask again" instruction —
+   * the whole point is Iris sounds like she's checking in, not reading a
+   * database dump back at the lead. propertyInterest is PROPERTY TYPE
+   * ("Single Family Home"), not area — confirmed live, 2026-09-06, against
+   * eden-sub-account-one's real "LF Property" field; the fixture below uses
+   * a realistic property-type value rather than the old (semantically
+   * wrong) area-shaped one this test used before that was caught.
    */
   it("turns a known answer into a verifying question and drops it from what's still needed", () => {
-    const lead: NormalisedLead = { ...BLANK_LEAD, intent: "seller", propertyInterest: "downtown", timeline: "3-6 months" };
+    const lead: NormalisedLead = { ...BLANK_LEAD, intent: "seller", propertyInterest: "bungalow", timeline: "3-6 months" };
     const prompt = buildLeadQualificationPrompt(IRIS_CONFIG, lead, "3 Percent East Coast", "St. John's", false, true, false);
-    expect(prompt).toContain("I can see you're looking at selling your place in downtown — is that right?");
+    expect(prompt).toContain("You mentioned you're looking for a bungalow — is that still what you're after?");
     expect(prompt).toContain("You mentioned you're looking to sell within 3-6 months — does that still sound right?");
     expect(prompt).not.toContain(IRIS_CONFIG.questions[0]);
-    expect(prompt).not.toContain(IRIS_CONFIG.questions[1]);
+    expect(prompt).not.toContain("What type of home are you looking for?");
     expect(prompt).not.toContain(IRIS_CONFIG.questions[3]);
   });
 
-  /**
-   * Mark's live feedback, 2026-09-06: with intent known but no area yet, the
-   * opening's own contextLine ("I was calling about the form you submitted
-   * online about selling your home in St. John's — still the plan?")
-   * already confirms bare intent as a question — a second, separate
-   * "still the plan?" verifying line right after it would just repeat it.
-   */
-  it("doesn't ask a redundant bare-intent verifying question when only intent (no area) is known", () => {
+  it("always asks the area question fresh — no client checked so far has a real field for it", () => {
     const lead: NormalisedLead = { ...BLANK_LEAD, intent: "seller" };
     const prompt = buildLeadQualificationPrompt(IRIS_CONFIG, lead, "3 Percent East Coast", "St. John's", false, true, false);
-    expect(prompt).not.toContain("I can see you're looking at selling your home — is that right?");
     expect(prompt).toContain(IRIS_CONFIG.questions[1]);
   });
 
+  it("verifies bedroom count when known, asks it fresh when not", () => {
+    const known = buildLeadQualificationPrompt(IRIS_CONFIG, { ...BLANK_LEAD, bedrooms: "4" }, "3 Percent East Coast", "St. John's", false, true, false);
+    expect(known).toContain("And you needed 4 bedrooms, right?");
+    expect(known).not.toContain("How many bedrooms and bathrooms do you need?");
+
+    const unknown = buildLeadQualificationPrompt(IRIS_CONFIG, BLANK_LEAD, "3 Percent East Coast", "St. John's", false, true, false);
+    expect(unknown).toContain("How many bedrooms and bathrooms do you need?");
+  });
+
+  /**
+   * Confirmed live, 2026-09-06: a real lead's known $450k budget was still
+   * asked cold on every test call — captured for scoring, never actually
+   * verified in conversation.
+   */
+  it("verifies budget when known, asks it fresh when not", () => {
+    const known = buildLeadQualificationPrompt(IRIS_CONFIG, { ...BLANK_LEAD, intent: "buyer", budget: "$450k" }, "3 Percent East Coast", "St. John's", false, true, false);
+    expect(known).toContain("I also see you mentioned a budget around $450k — does that still sound right?");
+    expect(known).not.toContain("What's your budget range?");
+
+    const unknown = buildLeadQualificationPrompt(IRIS_CONFIG, { ...BLANK_LEAD, intent: "buyer" }, "3 Percent East Coast", "St. John's", false, true, false);
+    expect(unknown).toContain("What's your budget range?");
+  });
+
+  it("verifies existing agent representation when known, says nothing when it isn't", () => {
+    const hasOne = buildLeadQualificationPrompt(IRIS_CONFIG, { ...BLANK_LEAD, workingWithRealtor: true }, "3 Percent East Coast", "St. John's", false, true, false);
+    expect(hasOne).toContain("I also see you mentioned you're already working with a realtor — is that still the case?");
+
+    const doesNot = buildLeadQualificationPrompt(IRIS_CONFIG, { ...BLANK_LEAD, workingWithRealtor: false }, "3 Percent East Coast", "St. John's", false, true, false);
+    expect(doesNot).toContain("I also see you mentioned you're not currently working with a realtor — still accurate?");
+
+    const unknown = buildLeadQualificationPrompt(IRIS_CONFIG, BLANK_LEAD, "3 Percent East Coast", "St. John's", false, true, false);
+    expect(unknown).not.toMatch(/working with a realtor/i);
+  });
+
   it("uses the lead's latest answer over the form's when they conflict, without arguing", () => {
-    const lead: NormalisedLead = { ...BLANK_LEAD, intent: "buyer", propertyInterest: "downtown" };
+    const lead: NormalisedLead = { ...BLANK_LEAD, intent: "buyer", propertyInterest: "condo" };
     const prompt = buildLeadQualificationPrompt(IRIS_CONFIG, lead, "3 Percent East Coast", "St. John's", false, true, false);
     expect(prompt).toMatch(/treat THEIR latest answer as the real one/i);
     expect(prompt).toMatch(/never argue or repeat the stale value/i);
   });
 
-  it("skips the financing question for a seller, matching qualification.ts's nextQuestion behavior", () => {
+  it("skips the financing and budget questions for a seller, matching qualification.ts's nextQuestion behavior", () => {
     const lead: NormalisedLead = { ...BLANK_LEAD, intent: "seller" };
     const prompt = buildLeadQualificationPrompt(IRIS_CONFIG, lead, "3 Percent East Coast", "St. John's", false, true, false);
-    expect(prompt).not.toContain(IRIS_CONFIG.questions[4]);
-  });
-
-  it("always asks the property-details question — no GHL field captures it yet", () => {
-    const prompt = buildLeadQualificationPrompt(IRIS_CONFIG, BLANK_LEAD, "3 Percent East Coast", "St. John's", false, true, false);
-    expect(prompt).toContain(IRIS_CONFIG.questions[2]);
+    expect(prompt).not.toContain("Are you preapproved for a mortgage yet?");
+    expect(prompt).not.toContain("What's your budget range?");
   });
 
   it("uses the city and brand it's given rather than a hardcoded one", () => {

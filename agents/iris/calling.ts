@@ -48,7 +48,9 @@ export interface PlaceCallParams {
   /** Passed through to the warm-transfer agent briefing — see buildAgentBriefing below. */
   budget?: string | null;
   timeline?: string | null;
+  /** Property TYPE ("Single Family Home"), not area — see NormalisedLead.propertyInterest's own doc comment. */
   propertyInterest?: string | null;
+  bedrooms?: string | null;
   financing?: string | null;
   /**
    * Real calendar for this call's intent (qualification.ts's
@@ -70,7 +72,12 @@ export interface PlaceCallParams {
 function buildAgentBriefing(params: PlaceCallParams, audience: "buyer" | "seller"): string {
   const who = params.firstName !== "there" ? params.firstName : "a lead";
   const details: string[] = [];
-  if (params.propertyInterest) details.push(`in ${params.propertyInterest}`);
+  // Mark, 2026-09-06: propertyInterest is PROPERTY TYPE ("Single Family
+  // Home"), not area — this used to read "in Single Family Home", which
+  // sounds like a place name. "looking for a X" is correct regardless of
+  // client, since no client checked so far has a real area field at all.
+  if (params.propertyInterest) details.push(`looking for a ${params.propertyInterest}`);
+  if (params.bedrooms) details.push(`${params.bedrooms} bedrooms`);
   if (params.budget) details.push(`around a ${params.budget} budget`);
   if (params.timeline) details.push(`hoping to move within ${params.timeline}`);
   if (audience === "buyer" && params.financing) details.push(`financing: ${params.financing}`);

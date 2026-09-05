@@ -167,6 +167,33 @@ describe("normaliseLead", () => {
   });
 
   /**
+   * Confirmed live, 2026-09-06: eden-sub-account-one's real intake form has
+   * both a bedroom-count field ("LF BEDROOM") and a "working with a
+   * Realtor?" field, neither of which normaliseLead read at all before —
+   * the ScoutFieldMap.workingWithRealtor type existed but nothing ever
+   * populated the corresponding NormalisedLead property.
+   */
+  it("reads bedroom count and existing-realtor representation when the client's config maps them", () => {
+    const withExtras: ScoutConfig = {
+      ...config,
+      fields: { ...config.fields, bedrooms: "contact.lf_bedroom", workingWithRealtor: "contact.lf_working_with_a_realtor_" },
+    };
+    const withFields = {
+      ...payload,
+      customFields: { ...payload.customFields, "contact.lf_bedroom": "4", "contact.lf_working_with_a_realtor_": "No" },
+    };
+    const lead = normaliseLead(withFields, withExtras);
+    expect(lead.bedrooms).toBe("4");
+    expect(lead.workingWithRealtor).toBe(false);
+  });
+
+  it("leaves bedrooms and workingWithRealtor null when the client's config doesn't map them", () => {
+    const lead = normaliseLead(payload, config);
+    expect(lead.bedrooms).toBeNull();
+    expect(lead.workingWithRealtor).toBeNull();
+  });
+
+  /**
    * GHL's own workflow "Webhook" action only offers key/value custom data,
    * not a raw JSON body, so there's no way to send tags as a real array
    * through it — {{contact.tags}} arrives as a comma-separated string.

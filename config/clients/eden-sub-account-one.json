@@ -80,10 +80,12 @@
       "_comment": "No consultation calendars provisioned on this location yet."
     },
     "fields": {
-      "_comment": "Mark, 2026-09-06: real custom fields now exist on this location (the 2026-09-04 PLACEHOLDER note above is stale) — verified live via GET /locations/{id}/customFields. propertyInterest was corrected: config had 'contact.lf_proprety' (transposed letters), the real key is 'contact.lf_property' ('LF Property') — this is exactly why Iris kept asking property type cold even when the form's answer ('Single Family Home') was sitting right there; a wrong key never errors, it just reads null. preApproved's key ('contact.are_you_pre_approuved') does not exist on this location at all — the closest real field is 'contact.lf_working_with_a_realtor_' ('LF working with a Realtor ?'), a different question (agent representation, not financing/pre-approval) that nothing in this schema captures yet. A real bedroom-count field also exists now ('contact.lf_bedroom', 'LF BEDROOM') but isn't wired anywhere — bedroom count is still always asked fresh (see scripts.ts's stillNeeded.push(config.questions[2])).",
+      "_comment": "Mark, 2026-09-06: real custom fields now exist on this location (the 2026-09-04 PLACEHOLDER note above is stale) — verified live via GET /locations/{id}/customFields. propertyInterest was corrected: config had 'contact.lf_proprety' (transposed letters), the real key is 'contact.lf_property' ('LF Property') — this is exactly why Iris kept asking property type cold even when the form's answer ('Single Family Home') was sitting right there; a wrong key never errors, it just reads null. Despite its name, this field is PROPERTY TYPE, not area — see NormalisedLead.propertyInterest's own doc comment. preApproved's key ('contact.are_you_pre_approuved') does not exist on this location at all and is left as an honest placeholder — the closest real field, workingWithRealtor below, is a different question (agent representation, not financing/pre-approval).",
       "timeline": "contact.lf_timeframe",
       "budget": "contact.lf_budget",
       "propertyInterest": "contact.lf_property",
+      "bedrooms": "contact.lf_bedroom",
+      "workingWithRealtor": "contact.lf_working_with_a_realtor_",
       "preApproved": "contact.are_you_pre_approuved",
       "isaNotes": "contact.isa_notes",
       "leadSource": "contact.source"

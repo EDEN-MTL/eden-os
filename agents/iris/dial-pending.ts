@@ -196,6 +196,7 @@ async function resolveOne(row: PendingCallRow): Promise<void> {
       budget: lead.budget,
       timeline: lead.timeline,
       propertyInterest: lead.propertyInterest,
+      bedrooms: lead.bedrooms,
       financing: lead.financing,
       systemPrompt: buildLeadQualificationPrompt(
         config,

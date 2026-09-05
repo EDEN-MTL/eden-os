@@ -36,6 +36,8 @@ const SYNTHETIC_LEAD: NormalisedLead = {
   email: null,
   phone: "",
   propertyInterest: null,
+  bedrooms: null,
+  workingWithRealtor: null,
   budget: null,
   timeline: null,
   preApproved: null,
