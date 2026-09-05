@@ -4,7 +4,7 @@ vi.mock("../../shared/claude", () => ({
   chatWithTools: vi.fn(),
   attachmentToBlock: vi.fn(),
 }));
-vi.mock("../../shared/slack", () => ({ sendMessage: vi.fn(), getUserRealName: vi.fn(async () => null) }));
+vi.mock("../../shared/slack", () => ({ sendMessage: vi.fn(async () => ({})), getUserRealName: vi.fn(async () => null) }));
 vi.mock("../../shared/conversation-memory", () => ({
   loadHistory: vi.fn(async () => []),
   appendHistory: vi.fn(async () => {}),
@@ -46,6 +46,7 @@ vi.mock("./config", () => configMocks);
 vi.mock("./screenshot", () => ({ PlaywrightCapturer: class {} }));
 
 import { chatWithTools } from "../../shared/claude";
+import { sendMessage } from "../../shared/slack";
 import { quarryAgent } from "./index";
 
 function toolUseBlock(id: string, name: string, input: any) {
@@ -185,6 +186,52 @@ describe("Quarry — quarry_run_discovery", () => {
     const secondCallMessages = vi.mocked(chatWithTools).mock.calls[1][1] as any;
     const toolResult = JSON.parse(secondCallMessages[secondCallMessages.length - 1].content[0].content);
     expect(toolResult).toMatchObject({ location: "Ottawa, ON", discovered: 40, syncedToGhl: 12 });
+  });
+
+  it("posts an immediate acknowledgment to the requesting channel/thread before the (slow) run finishes", async () => {
+    // Confirmed live: a real batch can take 15-20+ minutes with nothing
+    // posted until it's done — without this, silence reads as "didn't hear
+    // the request" rather than "still working."
+    pipelineMocks.run.mockResolvedValue({
+      discovered: 5, qualified: 1, autoApproved: 1, needsReview: 0, syncedToGhl: 1, withEmail: 1, errors: [],
+    });
+    vi.mocked(chatWithTools)
+      .mockResolvedValueOnce({
+        content: [toolUseBlock("c1", "quarry_run_discovery", { location: "Kingston, ON" })],
+        stop_reason: "tool_use",
+      } as any)
+      .mockResolvedValueOnce(endTurn("Found 5 in Kingston."));
+
+    await quarryAgent.generateReply("k9", "find businesses in Kingston", undefined, undefined, {
+      channelId: "C0C0AKAK5S4",
+      threadTs: "111.222",
+    });
+
+    expect(sendMessage).toHaveBeenCalledWith("quarry", expect.objectContaining({
+      channel: "C0C0AKAK5S4",
+      threadTs: "111.222",
+      text: expect.stringContaining("Kingston, ON"),
+    }));
+    // The ack must go out before the slow run, not after.
+    const ackCallOrder = vi.mocked(sendMessage).mock.invocationCallOrder[0];
+    const runCallOrder = pipelineMocks.run.mock.invocationCallOrder[0];
+    expect(ackCallOrder).toBeLessThan(runCallOrder);
+  });
+
+  it("does not attempt an acknowledgment when called with no channel context (e.g. the dashboard)", async () => {
+    pipelineMocks.run.mockResolvedValue({
+      discovered: 0, qualified: 0, autoApproved: 0, needsReview: 0, syncedToGhl: 0, withEmail: 0, errors: [],
+    });
+    vi.mocked(chatWithTools)
+      .mockResolvedValueOnce({
+        content: [toolUseBlock("c1", "quarry_run_discovery", { location: "Ottawa, ON" })],
+        stop_reason: "tool_use",
+      } as any)
+      .mockResolvedValueOnce(endTurn("Found 0."));
+
+    await quarryAgent.generateReply("k10", "find businesses in Ottawa");
+
+    expect(sendMessage).not.toHaveBeenCalled();
   });
 
   it("refuses to guess a location and never calls run", async () => {
