@@ -1,6 +1,6 @@
 import crypto from "crypto";
 import { Request, Response, Router } from "express";
-import { getGhlConfig, addContactTags, updateContact, getCustomFieldDefs, getCalendarSlots, createAppointment } from "../shared/ghl";
+import { getGhlConfig, addContactTags, updateContact, getCustomFieldDefs, getCalendarSlots, createAppointment, getLocationTimezone } from "../shared/ghl";
 import { buildKeyToId } from "../agents/scout/intake";
 import { loadIrisConfig } from "../agents/iris";
 import { scheduleExplicitCallback } from "../agents/iris/dial-pending";
@@ -218,7 +218,12 @@ async function handleCheckAndBookAppointment(
   if (!ghlConfig || !config) {
     return "Could not check the calendar right now — tell the lead a teammate will confirm a time directly.";
   }
-  const timeZone = config.timezone;
+  // Follow GHL's own configured location timezone live, rather than a
+  // static config value that can drift out of sync with whatever's
+  // actually set there — same discipline as dial-pending.ts's prompt-time
+  // reference. Falls back to config.timezone, then the hardcoded default.
+  const liveTimezone = await getLocationTimezone(ghlConfig.locationId, ghlConfig.apiKey).catch(() => null);
+  const timeZone = liveTimezone || config.timezone;
 
   const requested = resolveRequestedTime(requestedTime, timeZone || "America/St_Johns");
   if (!requested) {

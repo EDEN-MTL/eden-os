@@ -48,6 +48,21 @@ async function ghlRequest(
   return response.json();
 }
 
+// ─── Locations ───
+
+/**
+ * Mark's call, 2026-09-06: rather than hardcode a per-client timezone in
+ * our own config and hope it stays in sync, follow whatever's actually
+ * configured on the GHL location itself — the same place a real user
+ * would go to correct it. Callers should fall back to IrisConfig.timezone
+ * (or a hardcoded default) if this returns null, same fail-safe pattern as
+ * everywhere else timezone-sensitive in this codebase.
+ */
+export async function getLocationTimezone(locationId: string, apiKey?: string): Promise<string | null> {
+  const resp = await ghlRequest(`/locations/${locationId}`, { locationId, apiKey });
+  return resp?.location?.timezone || null;
+}
+
 // ─── Contacts ───
 
 export async function getContact(
