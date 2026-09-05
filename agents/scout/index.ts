@@ -89,9 +89,34 @@ export function processLead(payload: any, clientId: string): NormalisedLead | nu
  * lead" tag at creation. Emits lead.enriched carrying firstTouch, which is
  * the flag Iris opens contact on.
  */
-eventBus.subscribe("lead.captured", (event) => {
+eventBus.subscribe("lead.captured", async (event) => {
   const clientId = clientIdForLocation(event.clientId) || event.clientId;
-  const lead = processLead(event.data, clientId);
+  const data = { ...event.data };
+
+  // Confirmed live, 2026-09-06: GHL's workflow "Webhook" action has no real
+  // way to relay a contact's actual tags — its merge-tag picker offers only
+  // a same-named CUSTOM FIELD ("Contact tag"), never the real tags array, no
+  // matter what key/value pair a human adds to the action. So data.tags from
+  // the webhook itself can never be trusted for intent detection (this is
+  // exactly what silently sent "buyer lead"-tagged leads through as intent
+  // "unknown"). Fetching the contact directly gets GHL's real, current tags
+  // instead — best-effort: falls back to whatever the webhook sent rather
+  // than blocking intake entirely on a GHL API hiccup.
+  try {
+    const ghlConfig = await getGhlConfig(clientId);
+    if (ghlConfig && data.contactId) {
+      const contactResp = await getContact(data.contactId, ghlConfig.locationId, ghlConfig.apiKey);
+      const contact = contactResp?.contact ?? contactResp;
+      if (Array.isArray(contact?.tags)) data.tags = contact.tags;
+    }
+  } catch (error) {
+    console.warn(
+      `[SCT] Could not fetch live tags for ${data.contactId}, using webhook tags as-is:`,
+      error instanceof Error ? error.message : error
+    );
+  }
+
+  const lead = processLead(data, clientId);
   if (!lead) return;
   logLead(lead, "intake");
   eventBus.publish("lead.enriched", "scout", clientId, lead as unknown as Record<string, any>);
