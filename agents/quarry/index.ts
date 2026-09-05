@@ -21,7 +21,7 @@ const TOOLS: ToolDef[] = [
   {
     name: "quarry_list_pending",
     description:
-      "Lists leads awaiting approval (approval_status = pending), with the reason each one was flagged. Use this before approving anything, or when asked what's waiting for review.",
+      "Lists leads sitting at approval_status = pending — with autoApprove on, that now only ever means a qualified lead with no email and no verified mobile, held back because there is no channel to actually send it on (it was also never synced to GHL). Use this when asked what's stuck, or whether anything just needs a phone/email found by hand.",
     input_schema: {
       type: "object",
       properties: {
@@ -115,13 +115,16 @@ same turn, rather than stopping after discovery and waiting to be asked
 again.
 
 The full loop this agent runs end to end: quarry_run_discovery finds
-businesses and gets them into GHL; auto-approve clears anything qualified
-on a hard technical fact (no site, no HTTPS, not mobile-responsive, stale
-markup) automatically, and holds anything qualified only on the vision
-pass's opinion for a human read in this channel; quarry_send_now emails
-whatever's approved and due; a reply that sounds interested gets the
-booking link automatically (agents/quarry/outreach.ts's handleEmailReply)
-— nothing about booking a call needs you to do anything extra.
+businesses and gets the reachable ones into GHL; auto-approve clears every
+qualified lead automatically, hard-fact or vision-only opinion alike — no
+review step, per Jacob's explicit call (2026-09-05) that this should run on
+its own. The only lead that does NOT go to GHL at all is one with neither a
+real email nor a verified mobile number: it stays pending in our own
+database only, since a contact with no way to reach them is not worth
+importing. quarry_send_now emails whatever's approved and due; a reply that
+sounds interested gets the booking link automatically
+(agents/quarry/outreach.ts's handleEmailReply) — nothing about booking a
+call needs you to do anything extra.
 
 Cite real numbers from your tool calls, not estimates. If a tool call
 fails, say that plainly rather than inventing a plausible-sounding answer.
@@ -202,7 +205,6 @@ Respond concisely, like a teammate texting a quick update — not a report.`;
             discovered: report.discovered,
             qualified: report.qualified,
             autoApproved: report.autoApproved,
-            needsReview: report.needsReview,
             heldForNoContact: report.heldForNoContact,
             syncedToGhl: report.syncedToGhl,
             withEmail: report.withEmail,

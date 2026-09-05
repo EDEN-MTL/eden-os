@@ -26,12 +26,11 @@ import {
   startRun,
   updateLead,
 } from "./store";
-import { applyVisionScore, isHighConfidenceCandidate, triage } from "./triage";
+import { applyVisionScore, triage } from "./triage";
 import { openOpportunity, resolvePipeline, upsertProspectContact } from "./sync";
 import { getGhlConfig } from "../../shared/ghl";
 import { PlaywrightCapturer, scoreSiteAppearance, ScreenshotCapturer } from "./screenshot";
 import { QuarryCategory, QuarryLead, RunError } from "./types";
-import { quarryAgent } from "./index";
 
 export type StopAfter = "discover" | "triage" | "phone" | "enrich";
 
@@ -95,16 +94,16 @@ export interface CalibrationReport {
   qualifyRateIsFloor: boolean;
   /** False means Twilio was never called — mobile/landline counts are not "0 mobiles found", they are "not checked". */
   phoneVerificationEnabled: boolean;
-  /** Qualified on a hard technical fact and cleared automatically — config.autoApprove must be on. */
+  /** Every qualified lead when config.autoApprove is on — no human review step, regardless of how it qualified. */
   autoApproved: number;
-  /** Qualified only by the vision pass's opinion — left pending and posted to reviewChannel. */
-  needsReview: number;
   /** Qualified leads pushed into GHL as a contact + opportunity — only non-zero when syncToGhl was set. */
   syncedToGhl: number;
   /**
-   * Auto-approved leads walked back to pending because enrichment (and phone,
-   * if it ran) turned up neither an email nor a verified mobile number —
-   * "approved" would be a status that can never actually fire a send.
+   * Auto-approved leads walked back to pending, and excluded from GHL sync
+   * entirely, because enrichment (and phone, if it ran) turned up neither an
+   * email nor a verified mobile number — "approved" would be a status that
+   * can never actually fire a send, and a GHL contact with no reachable
+   * channel is exactly the import Jacob does not want (2026-09-05).
    */
   heldForNoContact: number;
 }
@@ -218,7 +217,6 @@ export async function run(options: RunOptions): Promise<CalibrationReport> {
     qualifyRateIsFloor: false,
     phoneVerificationEnabled: true,
     autoApproved: 0,
-    needsReview: 0,
     syncedToGhl: 0,
     heldForNoContact: 0,
   };
@@ -243,7 +241,6 @@ export async function run(options: RunOptions): Promise<CalibrationReport> {
   }
 
   const qualified: QuarryLead[] = [];
-  const needsReview: QuarryLead[] = [];
   const autoApprovedLeads: QuarryLead[] = [];
   for (const lead of leads) {
     try {
@@ -287,8 +284,10 @@ export async function run(options: RunOptions): Promise<CalibrationReport> {
       // Auto-approval, if the config allows it, is decided here rather
       // than later — this is the one place both the reasons array and a
       // fresh DB write already exist together, so it costs nothing extra.
-      // A lead qualified only by the vision pass's opinion is deliberately
-      // left pending; everything else clears immediately.
+      // Every qualified lead clears immediately, hard-fact or vision-only —
+      // Jacob's explicit call (2026-09-05) is that nothing should wait on a
+      // human click. The contactability gate below is what still catches a
+      // lead this system cannot actually reach.
       const patch: Record<string, unknown> = {
         isCandidate: result.isCandidate,
         reasons: result.reasons,
@@ -296,14 +295,9 @@ export async function run(options: RunOptions): Promise<CalibrationReport> {
         outdatedReasoning: result.outdatedReasoning ?? null,
       };
       if (result.isCandidate && config.autoApprove) {
-        if (isHighConfidenceCandidate(result.reasons)) {
-          patch.approvalStatus = "approved";
-          report.autoApproved++;
-          autoApprovedLeads.push(lead);
-        } else {
-          needsReview.push(lead);
-          report.needsReview++;
-        }
+        patch.approvalStatus = "approved";
+        report.autoApproved++;
+        autoApprovedLeads.push(lead);
       }
       await updateLead(lead.id, patch);
 
@@ -317,7 +311,6 @@ export async function run(options: RunOptions): Promise<CalibrationReport> {
     }
   }
 
-  await notifyNeedsReview(needsReview, config.reviewChannel, log);
   report.qualified = qualified.length;
   log(`triage: ${qualified.length}/${leads.length} qualified${visionOn ? " (vision on)" : ""}`);
 
@@ -419,8 +412,9 @@ export async function run(options: RunOptions): Promise<CalibrationReport> {
   // reach this lead would actually turn up. An "approved" lead with no
   // email and no verified mobile number can never fire a send under the
   // current gates (sendPending filters on exactly those two things), so
-  // that status would be a lie. Walk it back to pending — same as if a
-  // human still needs to find or confirm a way to reach them.
+  // that status would be a lie. Walk it back to pending — and, per Jacob's
+  // explicit call (2026-09-05), never import it into GHL at all: a contact
+  // with no reachable channel is not a lead, it is dead weight in the CRM.
   let heldForNoContact = 0;
   for (const lead of autoApprovedLeads) {
     if (lead.email || lead.isMobile) continue;
@@ -430,10 +424,11 @@ export async function run(options: RunOptions): Promise<CalibrationReport> {
   if (heldForNoContact > 0) {
     report.autoApproved -= heldForNoContact;
     report.heldForNoContact = heldForNoContact;
-    log(`${heldForNoContact} lead(s) qualified but have no email or verified mobile — held back from approved`);
+    log(`${heldForNoContact} lead(s) qualified but have no email or verified mobile — held back from approved and excluded from GHL sync`);
   }
 
-  await syncToGhl(qualified, config, clientId, options.syncToGhl ?? false, report, note, log);
+  const syncable = qualified.filter((lead) => lead.email || lead.isMobile);
+  await syncToGhl(syncable, config, clientId, options.syncToGhl ?? false, report, note, log);
 
   await persist(runId, report, errors);
   return finalise(report);
@@ -511,36 +506,6 @@ async function syncToGhl(
     }
   }
   log(`GHL sync: ${report.syncedToGhl}/${qualified.length} qualified leads synced`);
-}
-
-/**
- * Posts judgment-call leads to Slack. Best-effort and non-throwing on
- * purpose — a Slack outage (or a local run with no bot token configured at
- * all) must never take down a discovery run over something that is
- * genuinely optional. Nothing is skipped if this fails; the leads still
- * sit in the database as pending, exactly as if auto-approve were off.
- */
-async function notifyNeedsReview(
-  leads: QuarryLead[],
-  channel: string,
-  log: (line: string) => void
-): Promise<void> {
-  if (leads.length === 0) return;
-  try {
-    const lines = leads
-      .slice(0, 15)
-      .map((l) => `• #${l.id} ${l.name} — ${l.outdatedReasoning ?? "looks dated"} (${l.outdatedScore}/10)`)
-      .join("\n");
-    const more = leads.length > 15 ? `\n…and ${leads.length - 15} more.` : "";
-    await quarryAgent.post(
-      channel,
-      `${leads.length} lead(s) need a human read before I send anything — the site passed every ` +
-        `technical check, so this is the vision pass's opinion alone, not a fact I can point to:\n${lines}${more}\n\n` +
-        `Approve the ones worth pitching whenever you get a chance.`
-    );
-  } catch (error) {
-    log(`  ! failed to post needs-review leads to Slack: ${error instanceof Error ? error.message : String(error)}`);
-  }
 }
 
 async function persist(runId: number, report: CalibrationReport, errors: RunError[]): Promise<void> {
