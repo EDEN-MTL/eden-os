@@ -179,15 +179,24 @@ describe("callOpeningContextLine", () => {
     expect(line).toContain("St. John's");
   });
 
-  it("mentions the lead source when one is known", () => {
-    const line = callOpeningContextLine("buyer", "St. John's", "facebook");
-    expect(line).toContain("facebook");
+  /**
+   * Mark's live feedback, 2026-09-06: naming the raw lead source verbatim
+   * ("I saw you reached out through 1. Home Buyer Form") read GHL's internal
+   * form label out loud, which sounded exactly like what it is — a database
+   * field, not a sentence. Never spoken now, regardless of whether one is
+   * known — "the form you submitted online" covers it naturally either way.
+   */
+  it("never speaks the raw lead source value, known or not", () => {
+    const withSource = callOpeningContextLine("buyer", "St. John's", "1. Home Buyer Form");
+    const withoutSource = callOpeningContextLine("buyer", "St. John's", null);
+    expect(withSource).not.toContain("1. Home Buyer Form");
+    expect(withSource).not.toMatch(/reached out through/);
+    expect(withoutSource).not.toBeNull();
   });
 
-  it("omits any source clause when the lead carries no attribution", () => {
+  it("ends as a question, doing the job of confirming intent so it isn't asked twice", () => {
     const line = callOpeningContextLine("buyer", "St. John's", null);
-    expect(line).not.toBeNull();
-    expect(line).not.toMatch(/reached out through/);
+    expect(line?.trim().endsWith("?")).toBe(true);
   });
 
   it("returns null for unknown intent rather than inventing a reason for the call", () => {
@@ -249,18 +258,33 @@ describe("buildLeadQualificationPrompt", () => {
 
   /**
    * Mark, 2026-09-05: a known fact must become a spoken VERIFYING question
-   * ("I can see you're looking at selling your home — is that right?"),
-   * never a generic "confirm it, don't ask again" instruction — the whole
-   * point is Iris sounds like she's checking in, not reading a database
-   * dump back at the lead.
+   * ("You were looking to buy a home in {area}, right?"), never a generic
+   * "confirm it, don't ask again" instruction — the whole point is Iris
+   * sounds like she's checking in, not reading a database dump back at the
+   * lead.
    */
   it("turns a known answer into a verifying question and drops it from what's still needed", () => {
-    const lead: NormalisedLead = { ...BLANK_LEAD, intent: "seller", timeline: "3-6 months" };
+    const lead: NormalisedLead = { ...BLANK_LEAD, intent: "seller", propertyInterest: "downtown", timeline: "3-6 months" };
     const prompt = buildLeadQualificationPrompt(IRIS_CONFIG, lead, "3 Percent East Coast", "St. John's", false, true);
-    expect(prompt).toContain("I can see you're looking at selling your home — is that right?");
+    expect(prompt).toContain("I can see you're looking at selling your place in downtown — is that right?");
     expect(prompt).toContain("You mentioned you're looking to sell within 3-6 months — does that still sound right?");
     expect(prompt).not.toContain(IRIS_CONFIG.questions[0]);
+    expect(prompt).not.toContain(IRIS_CONFIG.questions[1]);
     expect(prompt).not.toContain(IRIS_CONFIG.questions[3]);
+  });
+
+  /**
+   * Mark's live feedback, 2026-09-06: with intent known but no area yet, the
+   * opening's own contextLine ("I was calling about the form you submitted
+   * online about selling your home in St. John's — still the plan?")
+   * already confirms bare intent as a question — a second, separate
+   * "still the plan?" verifying line right after it would just repeat it.
+   */
+  it("doesn't ask a redundant bare-intent verifying question when only intent (no area) is known", () => {
+    const lead: NormalisedLead = { ...BLANK_LEAD, intent: "seller" };
+    const prompt = buildLeadQualificationPrompt(IRIS_CONFIG, lead, "3 Percent East Coast", "St. John's", false, true);
+    expect(prompt).not.toContain("I can see you're looking at selling your home — is that right?");
+    expect(prompt).toContain(IRIS_CONFIG.questions[1]);
   });
 
   it("uses the lead's latest answer over the form's when they conflict, without arguing", () => {
