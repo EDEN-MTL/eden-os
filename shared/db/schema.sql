@@ -277,6 +277,12 @@ CREATE TABLE IF NOT EXISTS quarry_leads (
     user_ratings_total INTEGER,
     business_status TEXT,
     photo_refs JSONB NOT NULL DEFAULT '[]'::jsonb,  -- Places photo references
+    -- Google's own type tags (e.g. "florist") and a direct maps link, kept
+    -- only so a human spot-checking a batch can catch a search returning the
+    -- wrong kind of business without opening every listing. Never fed into
+    -- `category`, which still comes solely from the config query.
+    place_types JSONB NOT NULL DEFAULT '[]'::jsonb,
+    google_maps_uri TEXT,
     is_candidate BOOLEAN,
     reasons JSONB NOT NULL DEFAULT '[]'::jsonb,
     outdated_score INTEGER,                         -- 1-10, Claude vision
@@ -339,6 +345,8 @@ ALTER TABLE quarry_leads ADD COLUMN IF NOT EXISTS rating DOUBLE PRECISION;
 ALTER TABLE quarry_leads ADD COLUMN IF NOT EXISTS user_ratings_total INTEGER;
 ALTER TABLE quarry_leads ADD COLUMN IF NOT EXISTS business_status TEXT;
 ALTER TABLE quarry_leads ADD COLUMN IF NOT EXISTS photo_refs JSONB NOT NULL DEFAULT '[]'::jsonb;
+ALTER TABLE quarry_leads ADD COLUMN IF NOT EXISTS place_types JSONB NOT NULL DEFAULT '[]'::jsonb;
+ALTER TABLE quarry_leads ADD COLUMN IF NOT EXISTS google_maps_uri TEXT;
 ALTER TABLE quarry_leads ADD COLUMN IF NOT EXISTS is_candidate BOOLEAN;
 ALTER TABLE quarry_leads ADD COLUMN IF NOT EXISTS reasons JSONB NOT NULL DEFAULT '[]'::jsonb;
 ALTER TABLE quarry_leads ADD COLUMN IF NOT EXISTS outdated_score INTEGER;

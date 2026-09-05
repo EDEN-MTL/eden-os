@@ -141,6 +141,39 @@ describe("discover", () => {
     expect(outcome.results[0].photoRefs).toHaveLength(3);
   });
 
+  it("captures Google's own type tags and maps link for spot-checking", async () => {
+    global.fetch = vi.fn(async (url: any) => {
+      const href = String(url);
+      if (href.includes(":searchText")) {
+        return {
+          ok: true, status: 200, text: async () => "",
+          json: async () => ({ places: [{ id: "a", displayName: { text: "Biz" }, businessStatus: "OPERATIONAL" }] }),
+        } as any;
+      }
+      return {
+        ok: true, status: 200, text: async () => "",
+        json: async () => ({
+          id: "a",
+          displayName: { text: "Biz" },
+          types: ["florist", "store"],
+          googleMapsUri: "https://maps.google.com/?cid=123",
+          photos: [],
+        }),
+      } as any;
+    }) as any;
+
+    const outcome = await discover([spec("q", "retail-boutique")], "key", new Set(), 1);
+    expect(outcome.results[0].placeTypes).toEqual(["florist", "store"]);
+    expect(outcome.results[0].googleMapsUri).toBe("https://maps.google.com/?cid=123");
+  });
+
+  it("defaults placeTypes/googleMapsUri when Places omits them", async () => {
+    mockPlaces({ q: ["a"] });
+    const outcome = await discover([spec("q", "trade-service")], "key", new Set(), 1);
+    expect(outcome.results[0].placeTypes).toEqual([]);
+    expect(outcome.results[0].googleMapsUri).toBeNull();
+  });
+
   it("keeps going when one search fails", async () => {
     const errors: string[] = [];
     let call = 0;

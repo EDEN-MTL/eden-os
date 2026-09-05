@@ -42,6 +42,16 @@ export interface PlacesResult {
   userRatingsTotal: number | null;
   businessStatus: string | null;
   photoRefs: string[];
+  /**
+   * Google's own type tags for this place (e.g. "florist", "grocery_store").
+   * Never used to derive `category` — kept purely so a human spot-checking a
+   * batch can catch a search returning the wrong kind of business without
+   * opening every listing (e.g. a "florist" query surfacing a grocery store
+   * that happens to sell flowers).
+   */
+  placeTypes: string[];
+  /** Direct link to the Google Maps listing, for the same spot-check. */
+  googleMapsUri: string | null;
   /** The config query that surfaced this result, kept for funnel debugging. */
   searchQuery: string;
   /** Resolved from the config query, not from Google — Places types are too coarse. */
@@ -129,6 +139,8 @@ export interface QuarryLead {
   userRatingsTotal: number | null;
   businessStatus: string | null;
   photoRefs: string[];
+  placeTypes: string[];
+  googleMapsUri: string | null;
   isCandidate: boolean | null;
   reasons: string[];
   outdatedScore: number | null;
