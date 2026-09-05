@@ -82,7 +82,8 @@ async function main() {
     branding.brandName,
     branding.city,
     Boolean(process.env.VAPI_SERVER_URL),
-    Boolean(transferNumber)
+    Boolean(transferNumber),
+    false
   );
 
   console.log(

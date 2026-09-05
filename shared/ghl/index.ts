@@ -430,6 +430,12 @@ export async function getCalendarSlots(
   );
 }
 
+/**
+ * `locationId` goes in the BODY here, not just the header — confirmed
+ * live, 2026-09-06: without it the create endpoint returns 400 "Location
+ * ID is required" even with the Location header set, same gotcha
+ * createContact's own doc comment already documents for that endpoint.
+ */
 export async function createAppointment(
   calendarId: string,
   data: {
@@ -444,7 +450,7 @@ export async function createAppointment(
 ): Promise<any> {
   return ghlRequest(`/calendars/events/appointments`, {
     method: "POST",
-    body: { calendarId, ...data },
+    body: { calendarId, locationId, ...data },
     locationId,
     apiKey,
   });

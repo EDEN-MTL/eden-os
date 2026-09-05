@@ -173,4 +173,43 @@ describe("buildCallPayload", () => {
       expect(tool.function.parameters.required).toEqual(["callbackTime"]);
     });
   });
+
+  /**
+   * Mark, 2026-09-06: replaces schedule_callback entirely for a call where
+   * a real callbackCalendarId resolved — never both at once, so Iris has
+   * exactly one clear way to handle scheduling per call.
+   */
+  describe("check_and_book_appointment tool", () => {
+    const withCalendar: PlaceCallParams = { ...BASE_PARAMS, contactId: "contact-1", calendarId: "cal-123" };
+
+    it("replaces schedule_callback when a calendarId is given", () => {
+      const payload = buildCallPayload(withCalendar, VAPI_CONFIG);
+      const names = payload.assistant.model.tools?.filter((t) => t.type === "function").map((t) => (t.type === "function" ? t.function.name : ""));
+      expect(names).toEqual(["check_and_book_appointment"]);
+    });
+
+    it("is omitted (falls back to schedule_callback) when no calendarId is given", () => {
+      const payload = buildCallPayload({ ...BASE_PARAMS, contactId: "contact-1" }, VAPI_CONFIG);
+      const names = payload.assistant.model.tools?.filter((t) => t.type === "function").map((t) => (t.type === "function" ? t.function.name : ""));
+      expect(names).toEqual(["schedule_callback"]);
+    });
+
+    it("bakes clientId, contactId, calendarId, and a buyer/seller intent into the tool's server URL", () => {
+      const payload = buildCallPayload({ ...withCalendar, intent: "seller" }, VAPI_CONFIG);
+      const tool = payload.assistant.model.tools?.find((t) => t.type === "function" && t.function.name === "check_and_book_appointment");
+      if (tool?.type !== "function") throw new Error("expected function tool");
+      const url = new URL(tool.server.url);
+      expect(url.searchParams.get("clientId")).toBe("3-percent-east-coast");
+      expect(url.searchParams.get("contactId")).toBe("contact-1");
+      expect(url.searchParams.get("calendarId")).toBe("cal-123");
+      expect(url.searchParams.get("intent")).toBe("seller");
+    });
+
+    it("requires a requestedTime argument from the model", () => {
+      const payload = buildCallPayload(withCalendar, VAPI_CONFIG);
+      const tool = payload.assistant.model.tools?.find((t) => t.type === "function" && t.function.name === "check_and_book_appointment");
+      if (tool?.type !== "function") throw new Error("expected function tool");
+      expect(tool.function.parameters.required).toEqual(["requestedTime"]);
+    });
+  });
 });
