@@ -352,6 +352,20 @@ describe("buildLeadQualificationPrompt", () => {
   });
 
   /**
+   * Mark, 2026-09-06: reading a full formatted date/timezone offset out
+   * loud (e.g. "GMT minus 2:30") sounds exactly like reading a database
+   * field — confirmed live when Iris did precisely that while explaining a
+   * suggested callback time.
+   */
+  it("tells Iris to speak day/time simply and never read out a timezone offset", () => {
+    const prompt = buildLeadQualificationPrompt(IRIS_CONFIG, BLANK_LEAD, "3 Percent East Coast", "St. John's", false, true, false);
+    expect(prompt).toMatch(/never read out the exact/i);
+    expect(prompt).toMatch(/date, month, year, or a timezone offset/i);
+    expect(prompt).toMatch(/only give the exact/i);
+    expect(prompt).toMatch(/date if the lead actually asks for it/i);
+  });
+
+  /**
    * Confirmed live, 2026-09-04: without this, Iris was unconditionally told
    * to "always invoke the transferCall tool" even on a call where no such
    * tool was ever wired in (no transferNumber resolved for this lead) — she

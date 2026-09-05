@@ -47,10 +47,12 @@ interface ToolCall {
 }
 
 /**
- * Defaults to St. John's for back-compat with existing callers that never
- * pass one — real per-client callers below resolve config.timezone first
- * (see IrisConfig.timezone's own doc comment for why this was wrong for
- * any client other than 3% East Coast).
+ * Full precision, for the GHL contact-note write only (recordCallbackNote)
+ * — a database record a human might read later, not something Iris speaks
+ * aloud. Defaults to St. John's for back-compat with existing callers that
+ * never pass one — real per-client callers below resolve config.timezone
+ * first (see IrisConfig.timezone's own doc comment for why this was wrong
+ * for any client other than 3% East Coast).
  */
 function formatLocal(iso: string, timeZone: string = "America/St_Johns"): string {
   return new Date(iso).toLocaleString("en-US", {
@@ -58,6 +60,25 @@ function formatLocal(iso: string, timeZone: string = "America/St_Johns"): string
     weekday: "long",
     month: "long",
     day: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+  });
+}
+
+/**
+ * What Iris actually says back to the lead — day of week + time only (e.g.
+ * "Saturday at 5:00 PM"), never the full "Monday, September 7 at 7:30 PM"
+ * formatLocal produces. Mark, 2026-09-06: reading the full formal date out
+ * loud sounds exactly like reading a database field — the same complaint
+ * that led to dropping the raw lead-source string from the opening line
+ * and no longer speaking a timezone offset. The full date is still one
+ * question away — nothing here prevents Iris from answering "what date is
+ * that?" if the lead actually asks; it's just not volunteered by default.
+ */
+function formatSpoken(iso: string, timeZone: string = "America/St_Johns"): string {
+  return new Date(iso).toLocaleString("en-US", {
+    timeZone,
+    weekday: "long",
     hour: "numeric",
     minute: "2-digit",
   });
@@ -125,7 +146,7 @@ async function handleScheduleCallback(clientId: string, contactId: string, callb
   await recordCallbackNote(clientId, contactId, when);
 
   const timeZone = loadIrisConfig(clientId)?.timezone;
-  return `Callback scheduled for ${formatLocal(when.toISOString(), timeZone)}. Confirm this back to the lead in plain language.`;
+  return `Callback scheduled for ${formatSpoken(when.toISOString(), timeZone)}. Confirm this back to the lead in plain language — just the day and time (e.g. "Saturday at 5 PM"), and only give the exact date if they ask for it.`;
 }
 
 /**
@@ -210,7 +231,7 @@ async function handleCheckAndBookAppointment(
       console.error(`[VAPI-TOOLS] createAppointment failed for ${clientId}/${contactId}:`, error instanceof Error ? error.message : error);
       return "That time showed as open but the booking failed — do not claim it's booked. Tell the lead a teammate will confirm directly instead.";
     }
-    return `Booked for ${formatLocal(exactMatch, timeZone)}. Confirm this exact time back to the lead in plain language.`;
+    return `Booked for ${formatSpoken(exactMatch, timeZone)}. Confirm this back to the lead simply — just the day and time (e.g. "Saturday at 5 PM"), and only give the exact date if they ask for it.`;
   }
 
   const alternatives = allSlots.filter((s) => new Date(s).getTime() >= requested.getTime()).slice(0, MAX_ALTERNATIVES_OFFERED);
@@ -219,7 +240,7 @@ async function handleCheckAndBookAppointment(
   }
   return (
     "That exact time isn't available. Real open times instead: " +
-    alternatives.map((s) => formatLocal(s, timeZone)).join(", ") +
+    alternatives.map((s) => formatSpoken(s, timeZone)).join(", ") +
     ". Offer these to the lead and call this tool again with whichever one they pick to actually book it."
   );
 }
