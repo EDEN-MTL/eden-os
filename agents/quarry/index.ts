@@ -149,6 +149,8 @@ Respond concisely, like a teammate texting a quick update — not a report.`;
           email: l.email,
           isMobile: l.isMobile,
           reasons: l.reasons,
+          placeTypes: l.placeTypes,
+          googleMapsUri: l.googleMapsUri,
         }));
         return JSON.stringify({ totalPending: pending.length, shown: trimmed.length, leads: trimmed });
       }

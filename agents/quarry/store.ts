@@ -35,6 +35,8 @@ interface LeadRow {
   user_ratings_total: number | null;
   business_status: string | null;
   photo_refs: string[];
+  place_types: string[];
+  google_maps_uri: string | null;
   is_candidate: boolean | null;
   reasons: string[];
   outdated_score: number | null;
@@ -84,6 +86,8 @@ export function rowToLead(r: LeadRow): QuarryLead {
     userRatingsTotal: r.user_ratings_total,
     businessStatus: r.business_status,
     photoRefs: r.photo_refs ?? [],
+    placeTypes: r.place_types ?? [],
+    googleMapsUri: r.google_maps_uri,
     isCandidate: r.is_candidate,
     reasons: r.reasons ?? [],
     outdatedScore: r.outdated_score,
@@ -150,8 +154,8 @@ export async function insertDiscovered(
       `INSERT INTO quarry_leads (
          client_id, place_id, name, formatted_address, phone, website,
          category, search_query, rating, user_ratings_total, business_status,
-         photo_refs, email_unsubscribe_token
-       ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
+         photo_refs, place_types, google_maps_uri, email_unsubscribe_token
+       ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)
        ON CONFLICT (client_id, place_id) DO NOTHING
        RETURNING *`,
       [
@@ -167,6 +171,8 @@ export async function insertDiscovered(
         p.userRatingsTotal,
         p.businessStatus,
         JSON.stringify(p.photoRefs),
+        JSON.stringify(p.placeTypes),
+        p.googleMapsUri,
         randomUUID(),
       ]
     );
