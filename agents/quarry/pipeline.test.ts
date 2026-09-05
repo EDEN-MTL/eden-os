@@ -21,17 +21,8 @@ vi.mock("./store", () => store);
 const discovery = vi.hoisted(() => ({ discover: vi.fn() }));
 vi.mock("./discovery", () => discovery);
 
-const triageMod = vi.hoisted(() => ({
-  triage: vi.fn(),
-  // Real implementation, not a stub — this is the actual logic under test
-  // in several auto-approve cases below, and it is trivial enough that
-  // re-implementing it here is exactly as trustworthy as importing it.
-  isHighConfidenceCandidate: (reasons: string[]) => reasons.some((r) => !r.startsWith("Looks dated")),
-}));
+const triageMod = vi.hoisted(() => ({ triage: vi.fn() }));
 vi.mock("./triage", () => triageMod);
-
-const indexMod = vi.hoisted(() => ({ quarryAgent: { post: vi.fn(async () => {}) } }));
-vi.mock("./index", () => indexMod);
 
 const enrichMod = vi.hoisted(() => ({ enrichContact: vi.fn(async () => ({ email: null, emailSource: null, hasPublicEmail: false })) }));
 vi.mock("./enrich", () => enrichMod);
@@ -68,7 +59,6 @@ import { QuarryDisabledError, MissingCredentialsError, run } from "./pipeline";
 const CONFIG = {
   enabled: false,
   autoApprove: false,
-  reviewChannel: "websites-eden",
   searches: [{ query: "q", category: "trade-service", maxResults: 20 }],
   discovery: { recheckAfterDays: 90, maxLeadsPerRun: 20 },
   triage: { outdatedSignals: [], copyrightYearBefore: 2018, visionScoring: false, visionScoreThreshold: 6 },
@@ -402,19 +392,19 @@ describe("run — auto-approve", () => {
 
     expect(store.updateLead).toHaveBeenCalledWith(1, expect.objectContaining({ approvalStatus: "approved" }));
     expect(r.autoApproved).toBe(1);
-    expect(r.needsReview).toBe(0);
-    expect(indexMod.quarryAgent.post).not.toHaveBeenCalled();
   });
 
-  it("holds a vision-only qualification for review instead of approving it", async () => {
+  it("also auto-approves a lead qualified only by the vision pass's opinion — no review step", async () => {
+    // Jacob's explicit call (2026-09-05): nothing should wait on a human
+    // click, hard-fact or judgment-call alike. Technical checks pass clean
+    // here; only the vision opinion qualifies it — exactly the shape
+    // applyVisionScore produces on its own.
     withCreds();
     configMod.loadQuarryConfig.mockReturnValue({ ...CONFIG, autoApprove: true, triage: { ...CONFIG.triage, visionScoring: true } });
     discovery.discover.mockResolvedValue({
       results: [place("a", "trade-service", "https://clean.com")],
       searched: 1, skippedAlreadySeen: 0, skippedClosed: 0, detailsCalls: 1,
     });
-    // Technical checks pass clean; only the vision opinion qualifies it —
-    // exactly the shape applyVisionScore produces on its own.
     triageMod.triage.mockResolvedValue({ isCandidate: false, reasons: [] });
     triageMod.applyVisionScore = vi.fn(() => ({
       isCandidate: true, reasons: ["Looks dated (8/10)"], outdatedScore: 8, outdatedReasoning: "Table layout, clip art",
@@ -426,34 +416,11 @@ describe("run — auto-approve", () => {
       capturer: { capture: async () => Buffer.from("png"), close: async () => {} } as any,
     });
 
-    const patchCall = store.updateLead.mock.calls.find((c: any) => "isCandidate" in c[1]);
-    expect(patchCall![1]).not.toHaveProperty("approvalStatus");
-    expect(r.autoApproved).toBe(0);
-    expect(r.needsReview).toBe(1);
+    expect(store.updateLead).toHaveBeenCalledWith(1, expect.objectContaining({ approvalStatus: "approved" }));
+    expect(r.autoApproved).toBe(1);
   });
 
-  it("posts needs-review leads to the configured Slack channel", async () => {
-    withCreds();
-    configMod.loadQuarryConfig.mockReturnValue({ ...CONFIG, autoApprove: true, triage: { ...CONFIG.triage, visionScoring: true } });
-    discovery.discover.mockResolvedValue({
-      results: [place("a", "trade-service", "https://clean.com")],
-      searched: 1, skippedAlreadySeen: 0, skippedClosed: 0, detailsCalls: 1,
-    });
-    triageMod.triage.mockResolvedValue({ isCandidate: false, reasons: [] });
-    triageMod.applyVisionScore = vi.fn(() => ({
-      isCandidate: true, reasons: ["Looks dated (8/10)"], outdatedScore: 8, outdatedReasoning: "Table layout, clip art",
-    }));
-    shotMod.scoreSiteAppearance.mockResolvedValue({ score: 8, reasoning: "Table layout, clip art" });
-
-    await run({
-      stopAfter: "triage", triggeredBy: "test", overrideKillSwitch: true, log: () => {},
-      capturer: { capture: async () => Buffer.from("png"), close: async () => {} } as any,
-    });
-
-    expect(indexMod.quarryAgent.post).toHaveBeenCalledWith("websites-eden", expect.stringContaining("Biz a"));
-  });
-
-  it("does not auto-approve or notify anything when autoApprove is off", async () => {
+  it("does not auto-approve anything when autoApprove is off", async () => {
     withCreds();
     configMod.loadQuarryConfig.mockReturnValue({ ...CONFIG, autoApprove: false });
     discovery.discover.mockResolvedValue({
@@ -467,32 +434,6 @@ describe("run — auto-approve", () => {
     const patchCall = store.updateLead.mock.calls.find((c: any) => "isCandidate" in c[1]);
     expect(patchCall![1]).not.toHaveProperty("approvalStatus");
     expect(r.autoApproved).toBe(0);
-    expect(r.needsReview).toBe(0);
-    expect(indexMod.quarryAgent.post).not.toHaveBeenCalled();
-  });
-
-  it("does not let a Slack posting failure break the run", async () => {
-    // Best-effort by design — a Slack outage, or no bot token configured at
-    // all locally, must never take down a discovery run.
-    withCreds();
-    configMod.loadQuarryConfig.mockReturnValue({ ...CONFIG, autoApprove: true, triage: { ...CONFIG.triage, visionScoring: true } });
-    discovery.discover.mockResolvedValue({
-      results: [place("a", "trade-service", "https://clean.com")],
-      searched: 1, skippedAlreadySeen: 0, skippedClosed: 0, detailsCalls: 1,
-    });
-    triageMod.triage.mockResolvedValue({ isCandidate: false, reasons: [] });
-    triageMod.applyVisionScore = vi.fn(() => ({
-      isCandidate: true, reasons: ["Looks dated (8/10)"], outdatedScore: 8, outdatedReasoning: "dated",
-    }));
-    shotMod.scoreSiteAppearance.mockResolvedValue({ score: 8, reasoning: "dated" });
-    indexMod.quarryAgent.post.mockRejectedValueOnce(new Error("No Slack client for agent: quarry"));
-
-    await expect(
-      run({
-        stopAfter: "triage", triggeredBy: "test", overrideKillSwitch: true, log: () => {},
-        capturer: { capture: async () => Buffer.from("png"), close: async () => {} } as any,
-      })
-    ).resolves.toBeDefined();
   });
 });
 
@@ -541,6 +482,9 @@ describe("run — GHL sync", () => {
   });
 
   it("skips a lead with no phone number rather than failing the batch", async () => {
+    // Isolates the phone-matching check specifically — give it an email so
+    // the contactability filter below doesn't exclude it before this check
+    // is even reached.
     withCreds();
     configMod.loadQuarryConfig.mockReturnValue({
       ...CONFIG,
@@ -551,7 +495,7 @@ describe("run — GHL sync", () => {
       searched: 1, skippedAlreadySeen: 0, skippedClosed: 0, detailsCalls: 1,
     });
     triageMod.triage.mockResolvedValue({ isCandidate: true, reasons: ["No website listed on Google"] });
-    enrichMod.enrichContact.mockResolvedValue({ email: null, emailSource: null, hasPublicEmail: false });
+    enrichMod.enrichContact.mockResolvedValue({ email: "info@biz.com", emailSource: "own_website_homepage", hasPublicEmail: true });
 
     const r = await run({
       stopAfter: "enrich", triggeredBy: "test", overrideKillSwitch: true, log: () => {}, syncToGhl: true,
@@ -560,6 +504,33 @@ describe("run — GHL sync", () => {
     expect(syncMod.upsertProspectContact).not.toHaveBeenCalled();
     expect(r.syncedToGhl).toBe(0);
     expect(r.errors.some((e) => e.step === "sync")).toBe(true);
+  });
+
+  it("never syncs a qualified lead with no email and no mobile to GHL", async () => {
+    // Jacob's explicit call (2026-09-05): don't import anyone who doesn't
+    // have an email. A no-contact-info lead is never even passed to
+    // syncToGhl, regardless of the (unrelated) phone-matching check above.
+    withCreds();
+    configMod.loadQuarryConfig.mockReturnValue({
+      ...CONFIG,
+      phone: { ...CONFIG.phone, enabled: false },
+      ghlPipeline: { name: "Website Offer Pipeline", stages: ["New Lead"] },
+    });
+    discovery.discover.mockResolvedValue({
+      results: [place("a", "trade-service", null)],
+      searched: 1, skippedAlreadySeen: 0, skippedClosed: 0, detailsCalls: 1,
+    });
+    triageMod.triage.mockResolvedValue({ isCandidate: true, reasons: ["No website listed on Google"] });
+    enrichMod.enrichContact.mockResolvedValue({ email: null, emailSource: null, hasPublicEmail: false });
+
+    const r = await run({
+      stopAfter: "enrich", triggeredBy: "test", overrideKillSwitch: true, log: () => {}, syncToGhl: true,
+    });
+
+    expect(syncMod.upsertProspectContact).not.toHaveBeenCalled();
+    expect(syncMod.openOpportunity).not.toHaveBeenCalled();
+    expect(r.syncedToGhl).toBe(0);
+    expect(r.errors.some((e) => e.step === "sync")).toBe(false);
   });
 
   it("logs and skips sync entirely when GHL isn't configured for the client, without failing the run", async () => {

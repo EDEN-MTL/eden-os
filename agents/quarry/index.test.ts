@@ -160,7 +160,7 @@ describe("Quarry — quarry_send_now", () => {
 describe("Quarry — quarry_run_discovery", () => {
   it("builds location-specific searches and runs discovery synced to GHL", async () => {
     const report = {
-      discovered: 40, qualified: 12, autoApproved: 9, needsReview: 3, syncedToGhl: 12, withEmail: 10, errors: [],
+      discovered: 40, qualified: 12, autoApproved: 9, heldForNoContact: 0, syncedToGhl: 12, withEmail: 10, errors: [],
     };
     pipelineMocks.run.mockResolvedValue(report);
     vi.mocked(chatWithTools)
@@ -193,7 +193,7 @@ describe("Quarry — quarry_run_discovery", () => {
     // posted until it's done — without this, silence reads as "didn't hear
     // the request" rather than "still working."
     pipelineMocks.run.mockResolvedValue({
-      discovered: 5, qualified: 1, autoApproved: 1, needsReview: 0, syncedToGhl: 1, withEmail: 1, errors: [],
+      discovered: 5, qualified: 1, autoApproved: 1, heldForNoContact: 0, syncedToGhl: 1, withEmail: 1, errors: [],
     });
     vi.mocked(chatWithTools)
       .mockResolvedValueOnce({
@@ -220,7 +220,7 @@ describe("Quarry — quarry_run_discovery", () => {
 
   it("does not attempt an acknowledgment when called with no channel context (e.g. the dashboard)", async () => {
     pipelineMocks.run.mockResolvedValue({
-      discovered: 0, qualified: 0, autoApproved: 0, needsReview: 0, syncedToGhl: 0, withEmail: 0, errors: [],
+      discovered: 0, qualified: 0, autoApproved: 0, heldForNoContact: 0, syncedToGhl: 0, withEmail: 0, errors: [],
     });
     vi.mocked(chatWithTools)
       .mockResolvedValueOnce({

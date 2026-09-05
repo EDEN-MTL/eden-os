@@ -1,7 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
   applyVisionScore,
-  isHighConfidenceCandidate,
   latestCopyrightYear,
   triage,
   triageHtml,
@@ -106,31 +105,6 @@ describe("applyVisionScore", () => {
     const result = applyVisionScore(broken, 1, "Looks great", 6);
     expect(result.isCandidate).toBe(true);
     expect(result.reasons).toContain("No viewport meta tag — not mobile responsive");
-  });
-});
-
-describe("isHighConfidenceCandidate", () => {
-  it("is high confidence for a hard technical fact — no site at all", () => {
-    expect(isHighConfidenceCandidate(["No website listed on Google"])).toBe(true);
-  });
-
-  it("is high confidence for a broken-HTTPS/mobile finding", () => {
-    expect(isHighConfidenceCandidate(["No viewport meta tag — not mobile responsive"])).toBe(true);
-  });
-
-  it("is NOT high confidence when the only reason is the vision pass's opinion", () => {
-    // This is the exact case the vision path produces on its own — see
-    // applyVisionScore, which only ever runs on a site the technical checks
-    // already cleared.
-    expect(isHighConfidenceCandidate(["Looks dated (8/10)"])).toBe(false);
-  });
-
-  it("is high confidence when a hard reason accompanies the vision opinion", () => {
-    expect(isHighConfidenceCandidate(["No HTTPS", "Looks dated (7/10)"])).toBe(true);
-  });
-
-  it("is not high confidence for an empty reasons list", () => {
-    expect(isHighConfidenceCandidate([])).toBe(false);
   });
 });
 
