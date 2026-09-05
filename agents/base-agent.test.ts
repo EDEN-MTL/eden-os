@@ -61,7 +61,7 @@ class PlainAgent extends BaseAgent {
 }
 
 class ToolAgent extends BaseAgent {
-  public calls: { name: string; input: any }[] = [];
+  public calls: { name: string; input: any; ctx?: unknown }[] = [];
   constructor() {
     super("forge", "Tool", "TL");
   }
@@ -71,8 +71,8 @@ class ToolAgent extends BaseAgent {
   protected getTools() {
     return [{ name: "get_thing", description: "gets a thing", input_schema: { type: "object" as const, properties: {} } }];
   }
-  protected async executeTool(name: string, input: any): Promise<string> {
-    this.calls.push({ name, input });
+  protected async executeTool(name: string, input: any, _attachment?: unknown, ctx?: unknown): Promise<string> {
+    this.calls.push({ name, input, ctx });
     return `result for ${name}`;
   }
 }
@@ -85,6 +85,17 @@ function toolUseBlock(id: string, name: string, input: any) {
 }
 function endTurn(text: string) {
   return { content: [textBlock(text)], stop_reason: "end_turn" } as any;
+}
+function slackMessage(overrides: Partial<any> = {}) {
+  return {
+    agentId: "eden",
+    userId: "U123",
+    channelId: "C123",
+    text: "hello",
+    isDM: true,
+    timestamp: "1234.5678",
+    ...overrides,
+  };
 }
 
 beforeEach(() => {
@@ -231,6 +242,22 @@ describe("BaseAgent.generateReply — tool-capable agent", () => {
     ]);
   });
 
+  it("threads the Slack channel/thread context through to executeTool", async () => {
+    // A tool that wants to post an early acknowledgment for a slow job
+    // needs to know which channel/thread the request came from.
+    vi.mocked(chatWithTools)
+      .mockResolvedValueOnce({
+        content: [toolUseBlock("call_1", "get_thing", {})],
+        stop_reason: "tool_use",
+      } as any)
+      .mockResolvedValueOnce(endTurn("done"));
+
+    const agent = new ToolAgent();
+    await agent.generateReply("key4", "go", undefined, undefined, { channelId: "C999", threadTs: "111.222" });
+
+    expect(agent.calls[0].ctx).toEqual({ channelId: "C999", threadTs: "111.222" });
+  });
+
   it("turns a thrown tool error into a tool_result the model can react to, not a crash", async () => {
     class FailingAgent extends ToolAgent {
       protected async executeTool(): Promise<string> {
@@ -324,25 +351,16 @@ describe("BaseAgent.generateReply — save_note (every agent, tool-capable or no
 });
 
 describe("BaseAgent.handleMessage — Slack attachment resolution", () => {
-  function slackMessage(overrides: Partial<any> = {}) {
-    return {
-      agentId: "eden",
-      userId: "U123",
-      channelId: "C123",
-      text: "hello",
-      isDM: true,
-      timestamp: "1234.5678",
-      ...overrides,
-    };
-  }
-
   it("passes no attachment when the message has no file", async () => {
     const agent = new PlainAgent();
     const spy = vi.spyOn(agent, "generateReply").mockResolvedValueOnce("ok");
 
     await agent.handleMessage(slackMessage());
 
-    expect(spy).toHaveBeenCalledWith(expect.any(String), "hello", { senderName: null }, undefined);
+    expect(spy).toHaveBeenCalledWith(expect.any(String), "hello", { senderName: null }, undefined, {
+      channelId: "C123",
+      threadTs: undefined,
+    });
     expect(downloadFile).not.toHaveBeenCalled();
   });
 
@@ -358,7 +376,7 @@ describe("BaseAgent.handleMessage — Slack attachment resolution", () => {
       data: Buffer.from("fake-png-bytes"),
       mediaType: "image/png",
       filename: "ad.png",
-    });
+    }, { channelId: "C123", threadTs: undefined });
   });
 
   it("skips an unsupported file type without even attempting a download", async () => {
@@ -368,7 +386,10 @@ describe("BaseAgent.handleMessage — Slack attachment resolution", () => {
     await agent.handleMessage(slackMessage({ file: { url: "https://files.slack.com/x", mimetype: "video/mp4", name: "clip.mp4" } }));
 
     expect(downloadFile).not.toHaveBeenCalled();
-    expect(spy).toHaveBeenCalledWith(expect.any(String), "hello", { senderName: null }, undefined);
+    expect(spy).toHaveBeenCalledWith(expect.any(String), "hello", { senderName: null }, undefined, {
+      channelId: "C123",
+      threadTs: undefined,
+    });
   });
 
   it("degrades to no attachment, without failing the reply, when the download throws", async () => {
@@ -381,7 +402,35 @@ describe("BaseAgent.handleMessage — Slack attachment resolution", () => {
 
     await agent.handleMessage(slackMessage({ file: { url: "https://files.slack.com/x", mimetype: "image/png", name: "ad.png" } }));
 
-    expect(spy).toHaveBeenCalledWith(expect.any(String), "hello", { senderName: null }, undefined);
+    expect(spy).toHaveBeenCalledWith(expect.any(String), "hello", { senderName: null }, undefined, {
+      channelId: "C123",
+      threadTs: undefined,
+    });
     expect(sendMessage).toHaveBeenCalled();
+  });
+});
+
+describe("BaseAgent.handleMessage — error handling", () => {
+  it("falls back to a generic reply when generateReply throws", async () => {
+    const agent = new PlainAgent();
+    vi.spyOn(agent, "generateReply").mockRejectedValueOnce(new Error("boom"));
+
+    await agent.handleMessage(slackMessage());
+
+    expect(sendMessage).toHaveBeenCalledWith("eden", expect.objectContaining({
+      text: "Systems experiencing interference. Retrying...",
+    }));
+  });
+
+  it("does not let handleMessage itself throw when the fallback reply ALSO fails to send", async () => {
+    // Confirmed live: without a try/catch around the fallback respond() call,
+    // a Slack API failure here (rate limit, network blip) propagates past
+    // handleMessage entirely — the webhook's own outer catch only logs, so
+    // the requester gets total silence instead of even the generic message.
+    const agent = new PlainAgent();
+    vi.spyOn(agent, "generateReply").mockRejectedValueOnce(new Error("boom"));
+    vi.mocked(sendMessage).mockRejectedValueOnce(new Error("Slack rate limited"));
+
+    await expect(agent.handleMessage(slackMessage())).resolves.toBeUndefined();
   });
 });

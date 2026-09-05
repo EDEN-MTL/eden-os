@@ -7,6 +7,19 @@ import { AgentId, SlackIncomingMessage } from "../shared/types";
 const MAX_TOOL_TURNS = 6;
 
 /**
+ * Where this turn's request came from — available inside executeTool so a
+ * tool that's going to take a while (a real discovery run, say) can post an
+ * immediate "on it" acknowledgment into the SAME channel/thread before the
+ * work finishes, rather than the requester seeing total silence until the
+ * final reply lands. Undefined outside Slack (the dashboard's chat API
+ * calls generateReply with no ctx) — a tool that wants one must check first.
+ */
+export interface ToolContext {
+  channelId: string;
+  threadTs?: string;
+}
+
+/**
  * Given to every agent for free — not something a subclass opts into via
  * getTools(). agent_conversations is scoped per thread on purpose, so this
  * is the only way an agent can carry something forward into a conversation
@@ -80,7 +93,7 @@ export abstract class BaseAgent {
    * on every tool call after the first within a turn that had one — it
    * doesn't get consumed or cleared, just never regenerated mid-turn.
    */
-  protected async executeTool(_name: string, _input: any, _attachment?: Attachment): Promise<string> {
+  protected async executeTool(_name: string, _input: any, _attachment?: Attachment, _ctx?: ToolContext): Promise<string> {
     throw new Error(`${this.code} has no tools configured`);
   }
 
@@ -120,14 +133,24 @@ export abstract class BaseAgent {
     const attachment = await this.resolveSlackAttachment(message);
 
     try {
-      const response = await this.generateReply(historyKey, message.text, { senderName }, attachment);
+      const response = await this.generateReply(historyKey, message.text, { senderName }, attachment, {
+        channelId: message.channelId,
+        threadTs: message.threadTs,
+      });
       await this.respond(message, response);
     } catch (error) {
       console.error(`[${this.code}] Error generating response:`, error);
-      await this.respond(
-        message,
-        "Systems experiencing interference. Retrying..."
-      );
+      // Confirmed live: without this inner catch, a Slack API failure on
+      // THIS fallback post (rate limit, network blip) propagates uncaught
+      // past this whole function — slack-events.ts's outer catch only
+      // console.errors, so the requester gets total silence instead of even
+      // the generic "interference" message. Logged distinctly rather than
+      // swallowed so it's actually visible which failure mode happened.
+      try {
+        await this.respond(message, "Systems experiencing interference. Retrying...");
+      } catch (respondError) {
+        console.error(`[${this.code}] Also failed to send the fallback reply:`, respondError);
+      }
     }
   }
 
@@ -175,7 +198,8 @@ export abstract class BaseAgent {
     historyKey: string,
     userText: string,
     context?: Record<string, any>,
-    attachment?: Attachment
+    attachment?: Attachment,
+    ctx?: ToolContext
   ): Promise<string> {
     const [history, notes] = await Promise.all([
       loadHistory(this.id, historyKey).catch((error) => {
@@ -215,7 +239,7 @@ export abstract class BaseAgent {
     // answer), so unifying onto one code path doesn't silently change how
     // every other agent sounds.
     const genOptions = this.getTools().length === 0 ? { maxTokens: 1024, temperature: 0.7 } : {};
-    const reply = await this.runToolLoop(history, systemPrompt, tools, userContent, genOptions, attachment);
+    const reply = await this.runToolLoop(history, systemPrompt, tools, userContent, genOptions, attachment, ctx);
 
     // An attachment is scratch input for this turn only, like a
     // tool_use/tool_result exchange — replaying its raw bytes into every
@@ -258,7 +282,8 @@ export abstract class BaseAgent {
     tools: ToolDef[],
     userContent: ChatMessage["content"],
     options: { maxTokens?: number; temperature?: number } = {},
-    attachment?: Attachment
+    attachment?: Attachment,
+    ctx?: ToolContext
   ): Promise<string> {
     let working: ChatMessage[] = [...priorHistory, { role: "user", content: userContent }];
     let finalText = "";
@@ -282,7 +307,7 @@ export abstract class BaseAgent {
           let content: string;
           try {
             content =
-              call.name === "save_note" ? await this.executeSaveNote(call.input) : await this.executeTool(call.name, call.input, attachment);
+              call.name === "save_note" ? await this.executeSaveNote(call.input) : await this.executeTool(call.name, call.input, attachment, ctx);
           } catch (error) {
             content = `Error: ${error instanceof Error ? error.message : String(error)}`;
           }
