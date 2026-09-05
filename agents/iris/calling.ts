@@ -233,6 +233,24 @@ export function buildCallPayload(
     customer: { number: params.phone },
     assistant: {
       firstMessage,
+      firstMessageMode: "assistant-waits-for-user",
+      // Mark's live feedback, 2026-09-06: if the lead stays silent, Iris
+      // shouldn't wait forever — but she also shouldn't speak the moment
+      // the call connects, which is what firstMessage alone would do
+      // under the default "assistant-speaks-first" mode. This nudge fires
+      // once (triggerMaxCount: 1), never repeats mid-call
+      // (triggerResetMode: "onUserSpeech" — the clock only matters for
+      // this initial silence, not every later pause), and just says a
+      // bare "Hi!" rather than firstMessage's full greeting, matching the
+      // same "wait, don't lead with everything at once" rhythm as the
+      // opening sequence in buildLeadQualificationPrompt.
+      hooks: [
+        {
+          on: "customer.speech.timeout",
+          do: [{ type: "say", exact: "Hi!" }],
+          options: { timeoutSeconds: 5, triggerMaxCount: 1, triggerResetMode: "onUserSpeech" },
+        },
+      ],
       model: {
         provider: vapiConfig.modelProvider,
         model: vapiConfig.modelName,

@@ -10,6 +10,31 @@ const VAPI_BASE_URL = "https://api.vapi.ai";
 
 export interface VapiAssistantConfig {
   firstMessage: string;
+  /**
+   * Confirmed against Vapi's own OpenAPI schema, 2026-09-06: default is
+   * "assistant-speaks-first" (what this had been using — Iris says
+   * firstMessage the instant the call connects). Mark's live feedback,
+   * same date: even a bare "Hey!" said the moment he picked up still felt
+   * premature — a real phone answer is the OTHER person saying something
+   * first. "assistant-waits-for-user" makes Iris genuinely wait for the
+   * lead to speak; see `hooks` below for what happens if they don't.
+   */
+  firstMessageMode?: "assistant-speaks-first" | "assistant-waits-for-user" | "assistant-speaks-first-with-model-generated-message";
+  /**
+   * Confirmed against Vapi's own OpenAPI schema (CallHookCustomerSpeechTimeout
+   * / SayHookAction), 2026-09-06: the one built-in mechanism for "say
+   * something if the customer hasn't spoken within N seconds" — needed
+   * because firstMessageMode: "assistant-waits-for-user" alone would leave
+   * Iris silently waiting forever if the lead never says anything first.
+   * Per Vapi's docs, the timeout clock starts once the assistant's turn
+   * begins and resets on user speech — combined with waits-for-user mode,
+   * that start-of-turn is effectively "the call connected."
+   */
+  hooks?: {
+    on: string;
+    do: { type: "say"; exact: string | string[] }[];
+    options?: { timeoutSeconds: number; triggerMaxCount?: number; triggerResetMode?: "onUserSpeech" | "never" };
+  }[];
   model: {
     provider: string;
     model: string;

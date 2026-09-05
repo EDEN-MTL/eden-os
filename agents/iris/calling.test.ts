@@ -50,6 +50,24 @@ describe("buildCallPayload", () => {
     expect(payload.assistant.firstMessage.length).toBeLessThan(10);
   });
 
+  /**
+   * Mark's live feedback, 2026-09-06: even a bare "Hey!" said the instant
+   * he answered still felt premature — real people let the other person
+   * speak first. "assistant-waits-for-user" makes that genuine; the hook
+   * is what stops Iris waiting forever if the lead never says anything.
+   */
+  it("waits for the lead to speak first, with a one-shot nudge if they stay silent", () => {
+    const payload = buildCallPayload(BASE_PARAMS, VAPI_CONFIG);
+    expect(payload.assistant.firstMessageMode).toBe("assistant-waits-for-user");
+    expect(payload.assistant.hooks).toEqual([
+      {
+        on: "customer.speech.timeout",
+        do: [{ type: "say", exact: "Hi!" }],
+        options: { timeoutSeconds: 5, triggerMaxCount: 1, triggerResetMode: "onUserSpeech" },
+      },
+    ]);
+  });
+
   it("is a single short greeting — no calling-about reason or 'how are you' crammed in, regardless of intent", () => {
     const unknownIntent = buildCallPayload(BASE_PARAMS, VAPI_CONFIG);
     const knownIntent = buildCallPayload({ ...BASE_PARAMS, intent: "seller", leadSource: "facebook" }, VAPI_CONFIG);

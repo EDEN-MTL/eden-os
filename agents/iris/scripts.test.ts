@@ -408,15 +408,31 @@ describe("buildLeadQualificationPrompt", () => {
 
     it("tells Iris never to assume a time is open — the tool decides", () => {
       const prompt = buildLeadQualificationPrompt(IRIS_CONFIG, BLANK_LEAD, "3 Percent East Coast", "St. John's", true, true, true);
-      expect(prompt).toMatch(/never assume it's open, the tool tells you/i);
+      expect(prompt).toMatch(/never assume a\s*\n?time is open/i);
+      expect(prompt).toMatch(/the tool tells you/i);
       expect(prompt).toMatch(/never say a time is available or booked/i);
-      expect(prompt).toMatch(/the tool actually confirmed it/i);
+      expect(prompt).toMatch(/the tool actually confirmed/i);
     });
 
     it("falls back to schedule_callback when no real calendar is available, even with booking tools on", () => {
       const prompt = buildLeadQualificationPrompt(IRIS_CONFIG, BLANK_LEAD, "3 Percent East Coast", "St. John's", true, true, false);
       expect(prompt).toContain("schedule_callback");
       expect(prompt).not.toContain("check_and_book_appointment");
+    });
+
+    /**
+     * Mark's live feedback, 2026-09-06: Iris kept asking "what day and
+     * time works best for you?" up front on a real test call instead of
+     * just checking and proposing a time herself — the lead shouldn't have
+     * to invent a time from nothing when Iris can just go look and offer
+     * one. Only ask the lead directly once every real same-day option has
+     * been proposed and declined.
+     */
+    it("tells Iris to propose a real time herself first, never ask the lead's preference up front", () => {
+      const prompt = buildLeadQualificationPrompt(IRIS_CONFIG, BLANK_LEAD, "3 Percent East Coast", "St. John's", true, true, true);
+      expect(prompt).toMatch(/do not open by asking what day\/time works for them/i);
+      expect(prompt).toMatch(/before asking the lead anything/i);
+      expect(prompt).toMatch(/only once you've proposed every real option left for today/i);
     });
   });
 });
