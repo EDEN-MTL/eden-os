@@ -9,11 +9,17 @@
  * dialing — never trusts the firstTouch value captured when the row was
  * queued, since the human ISA may have reached the lead in the meantime.
  * That's the entire reason cadence.ts takes a fresh check as an input
- * rather than caching it. This same re-check is also what naturally stops
- * the multi-day sequence below once a real conversation actually qualifies
- * the lead — once that happens, tags/notes exist in GHL, the next fresh
- * check reads firstTouch: false, and decideNextAttempt reports
- * stop-already-contacted, no special-casing needed for "did they answer."
+ * rather than caching it.
+ *
+ * Whether there's a NEXT attempt is decided elsewhere, once the call has
+ * actually ended — see markPlaced/reopenForNextAttempt below. Mark,
+ * 2026-09-06: the earlier design decided this immediately after placing
+ * the call, before there was any way to know if it would be answered —
+ * meaning a lead who picked up and had a real conversation still got
+ * called again the next day. Only a genuinely unanswered call (voicemail,
+ * no pickup, busy) reopens this row now; a real conversation always ends
+ * the sequence, whatever the outcome. webhooks/vapi-webhook.ts's
+ * end-of-call handler is the only place that knows which happened.
  */
 import { query } from "../../shared/db";
 import { recheckFirstTouch, refreshLead } from "../scout";
@@ -52,14 +58,64 @@ async function finish(id: number, status: "placed" | "skipped" | "failed", reaso
   );
 }
 
-/** Keeps the sequence going — same row, updated for the next scheduled attempt. */
-async function reschedule(id: number, attemptsMade: number, callAfter: Date, lastVapiCallId: string): Promise<void> {
+/**
+ * Records that a call was placed, WITHOUT yet deciding whether there'll be
+ * another attempt — that decision moved to webhooks/vapi-webhook.ts's
+ * end-of-call handler (see reopenForNextAttempt below), since only it
+ * knows whether this call was actually answered. Mark, 2026-09-06: calling
+ * a lead who already answered — even if the conversation didn't end in a
+ * booking or transfer — is exactly the "called twice" complaint; the old
+ * design decided the next attempt immediately after placing THIS one,
+ * before there was any way to know if it would be answered at all.
+ * attempts_made is bumped here (not later) so the webhook's cadence
+ * decision, whenever it runs, sees the correct count.
+ */
+async function markPlaced(id: number, attemptsMade: number, vapiCallId: string): Promise<void> {
   await query(
     `UPDATE iris_pending_calls
-     SET attempts_made = $2, call_after = $3, status = 'pending', resolution_reason = $4, resolved_at = NULL
+     SET attempts_made = $2, status = 'placed', resolution_reason = $3, resolved_at = now()
      WHERE id = $1`,
-    [id, attemptsMade, callAfter, lastVapiCallId]
+    [id, attemptsMade, vapiCallId]
   );
+}
+
+/**
+ * Reopens a row for its next scheduled attempt — called by
+ * webhooks/vapi-webhook.ts's end-of-call handler once it knows the call
+ * genuinely wasn't answered (voicemail, no pickup, busy, or a technical
+ * failure before a real conversation). Exported rather than duplicated,
+ * since this is the exact same cadence logic runDialPendingCalls used to
+ * apply eagerly. Returns false (row left in its terminal "placed" state)
+ * when the cadence says the sequence is exhausted.
+ */
+export async function reopenForNextAttempt(
+  id: number,
+  clientId: string,
+  attemptsMade: number,
+  createdAt: Date
+): Promise<boolean> {
+  const config = loadIrisConfig(clientId);
+  if (!config) return false;
+
+  const decision = decideNextAttempt(config.outreachCadence, attemptsMade, { firstTouch: true });
+  if (decision !== "attempt") return false;
+
+  let callAfter = nextAttemptTime(config.outreachCadence, attemptsMade + 1, createdAt, config.timezone || CLIENT_TIMEZONE);
+  if (!callAfter) return false;
+  // Same clamp as the old eager-reschedule path — a lead that comes in
+  // outside the 10am-2pm window can make the next slot's theoretical time
+  // already past by the time this runs.
+  if (callAfter.getTime() <= Date.now()) {
+    callAfter = new Date(Date.now() + 5 * 60 * 1000);
+  }
+
+  await query(
+    `UPDATE iris_pending_calls
+     SET call_after = $2, status = 'pending', resolution_reason = 'not answered — retrying', resolved_at = NULL
+     WHERE id = $1`,
+    [id, callAfter]
+  );
+  return true;
 }
 
 async function resolveOne(row: PendingCallRow): Promise<void> {
@@ -156,36 +212,11 @@ async function resolveOne(row: PendingCallRow): Promise<void> {
       triggeredBy: "automatic",
     });
 
-    if (row.is_explicit_callback) {
-      // One-shot: this row's job was exactly this one promised callback,
-      // not an ongoing cadence — never reschedule it further.
-      await finish(row.id, "placed", result.id);
-      return;
-    }
-
-    // Decided purely on attempt count + a fresh touch check, not on
-    // whether THIS call was answered — see the module comment above for
-    // why that's sufficient rather than a gap.
-    const decision = decideNextAttempt(config.outreachCadence, attemptNumber, { firstTouch: true });
-    if (decision === "attempt") {
-      let callAfter = nextAttemptTime(config.outreachCadence, attemptNumber + 1, row.created_at, CLIENT_TIMEZONE);
-      // A lead that comes in outside the 10am-2pm window (e.g. evening intake)
-      // can make the next slot's theoretical time already past by the time
-      // it's computed here. Clamp forward rather than either firing
-      // immediately (call_after in the past looks "due" to the cron right
-      // away) or silently dropping the attempt.
-      if (callAfter && callAfter.getTime() <= Date.now()) {
-        callAfter = new Date(Date.now() + 5 * 60 * 1000);
-      }
-      if (callAfter) {
-        await reschedule(row.id, attemptNumber, callAfter, result.id);
-        return;
-      }
-    }
-    // decision === "sequence-exhausted", or nextAttemptTime came back null
-    // (shouldn't happen if decideNextAttempt said "attempt", but fail to a
-    // terminal state rather than silently dropping the row either way).
-    await finish(row.id, "placed", result.id);
+    // Whether there's a next attempt is decided later, once the call
+    // actually ends — see markPlaced's own doc comment. is_explicit_callback
+    // rows never get reopened regardless (reopenForNextAttempt isn't called
+    // for them), same one-shot behavior as before.
+    await markPlaced(row.id, attemptNumber, result.id);
   } catch (error) {
     const reason = error instanceof CallingDisabledError ? error.message : error instanceof Error ? error.message : String(error);
     await finish(row.id, "failed", reason);
