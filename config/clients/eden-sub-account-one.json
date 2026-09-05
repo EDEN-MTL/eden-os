@@ -80,10 +80,10 @@
       "_comment": "No consultation calendars provisioned on this location yet."
     },
     "fields": {
-      "_comment": "PLACEHOLDER — no custom fields exist on this location yet (verified live, 2026-09-04). Scout's readField() degrades to null for all of these until real fields are created, same as an unpopulated field elsewhere in this codebase — it does not throw.",
+      "_comment": "Mark, 2026-09-06: real custom fields now exist on this location (the 2026-09-04 PLACEHOLDER note above is stale) — verified live via GET /locations/{id}/customFields. propertyInterest was corrected: config had 'contact.lf_proprety' (transposed letters), the real key is 'contact.lf_property' ('LF Property') — this is exactly why Iris kept asking property type cold even when the form's answer ('Single Family Home') was sitting right there; a wrong key never errors, it just reads null. preApproved's key ('contact.are_you_pre_approuved') does not exist on this location at all — the closest real field is 'contact.lf_working_with_a_realtor_' ('LF working with a Realtor ?'), a different question (agent representation, not financing/pre-approval) that nothing in this schema captures yet. A real bedroom-count field also exists now ('contact.lf_bedroom', 'LF BEDROOM') but isn't wired anywhere — bedroom count is still always asked fresh (see scripts.ts's stillNeeded.push(config.questions[2])).",
       "timeline": "contact.lf_timeframe",
       "budget": "contact.lf_budget",
-      "propertyInterest": "contact.lf_proprety",
+      "propertyInterest": "contact.lf_property",
       "preApproved": "contact.are_you_pre_approuved",
       "isaNotes": "contact.isa_notes",
       "leadSource": "contact.source"
