@@ -40,9 +40,11 @@ function printReport(r: CalibrationReport, leadsRequested: number): void {
     console.log(`      (no headless browser), so a site that is technically sound and`);
     console.log(`      merely looks dated was counted as a pass. The true rate is higher.`);
   }
-  if (r.autoApproved > 0 || r.needsReview > 0) {
-    console.log(`    auto-approved        ${r.autoApproved}   (hard technical reason — clear to send)`);
-    console.log(`    needs your review    ${r.needsReview}   (vision opinion only — posted to Slack)`);
+  if (r.autoApproved > 0) {
+    console.log(`    auto-approved        ${r.autoApproved}   (no review step — clear to send)`);
+  }
+  if (r.heldForNoContact > 0) {
+    console.log(`    held — no contact    ${r.heldForNoContact}   (no email or verified mobile — not synced to GHL)`);
   }
 
   console.log(`\n  UNKNOWN 2 — mobile rate`);
