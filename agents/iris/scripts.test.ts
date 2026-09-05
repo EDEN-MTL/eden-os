@@ -5,6 +5,7 @@ import {
   buildLeadQualificationPrompt,
   buildVoicemailMessage,
   BUYER_QUESTIONS,
+  callIdentifyLine,
   callOpeningGreeting,
   callbackRecapLine,
   callOpeningContextLine,
@@ -145,24 +146,28 @@ describe("NATURAL_TRANSITIONS", () => {
 });
 
 describe("callOpeningGreeting", () => {
-  it("identifies Iris by name rather than a human alias", () => {
-    expect(callOpeningGreeting("Sam", "3 Percent East Coast")).toContain("Iris");
+  it("is a bare greeting only — no name, no brand, no question", () => {
+    const line = callOpeningGreeting();
+    expect(line).not.toMatch(/\?/);
+    expect(line.length).toBeLessThan(10);
   });
+});
 
+describe("callIdentifyLine", () => {
   it("asks to confirm the known name as a question, rather than declaring it", () => {
-    const line = callOpeningGreeting("Sam", "3 Percent East Coast");
+    const line = callIdentifyLine("Sam");
     expect(line).toContain("Sam");
     expect(line.trim().endsWith("?")).toBe(true);
   });
 
   it("asks who's on the line instead of using the 'there' placeholder", () => {
-    const line = callOpeningGreeting("there", "3 Percent East Coast");
+    const line = callIdentifyLine("there");
     expect(line).not.toContain("there");
     expect(line).toMatch(/who/i);
   });
 
   it("is a single short question — no 'how are you' or calling-about reason crammed in", () => {
-    const line = callOpeningGreeting("Sam", "3 Percent East Coast");
+    const line = callIdentifyLine("Sam");
     expect(line).not.toMatch(/how are you/i);
     expect(line).not.toMatch(/calling about/i);
   });
@@ -242,11 +247,27 @@ describe("buildLeadQualificationPrompt", () => {
     }
   });
 
-  it("marks a known answer as already-known and drops it from what's still needed", () => {
+  /**
+   * Mark, 2026-09-05: a known fact must become a spoken VERIFYING question
+   * ("I can see you're looking at selling your home — is that right?"),
+   * never a generic "confirm it, don't ask again" instruction — the whole
+   * point is Iris sounds like she's checking in, not reading a database
+   * dump back at the lead.
+   */
+  it("turns a known answer into a verifying question and drops it from what's still needed", () => {
     const lead: NormalisedLead = { ...BLANK_LEAD, intent: "seller", timeline: "3-6 months" };
     const prompt = buildLeadQualificationPrompt(IRIS_CONFIG, lead, "3 Percent East Coast", "St. John's", false, true);
-    expect(prompt).toMatch(/Intent: seller — already known, do NOT ask again/);
-    expect(prompt).toMatch(/Timeline: 3-6 months — already known, do NOT ask again/);
+    expect(prompt).toContain("I can see you're looking at selling your home — is that right?");
+    expect(prompt).toContain("You mentioned you're looking to sell within 3-6 months — does that still sound right?");
+    expect(prompt).not.toContain(IRIS_CONFIG.questions[0]);
+    expect(prompt).not.toContain(IRIS_CONFIG.questions[3]);
+  });
+
+  it("uses the lead's latest answer over the form's when they conflict, without arguing", () => {
+    const lead: NormalisedLead = { ...BLANK_LEAD, intent: "buyer", propertyInterest: "downtown" };
+    const prompt = buildLeadQualificationPrompt(IRIS_CONFIG, lead, "3 Percent East Coast", "St. John's", false, true);
+    expect(prompt).toMatch(/treat THEIR latest answer as the real one/i);
+    expect(prompt).toMatch(/never argue or repeat the stale value/i);
   });
 
   it("skips the financing question for a seller, matching qualification.ts's nextQuestion behavior", () => {

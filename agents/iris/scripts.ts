@@ -10,6 +10,7 @@
  */
 import { CallIntent, IrisConfig } from "./qualification";
 import { NormalisedLead } from "../scout/intake";
+import { Financing } from "../scout/isa-notes";
 
 export interface QuestionSet {
   sms: string[];
@@ -209,21 +210,31 @@ export const AGENT_UNAVAILABLE_FOLLOW_UP = "What day and time works best for us 
  */
 
 /**
- * Opens with a single short question and stops — Jacob's live feedback,
- * 2026-09-04: the old one-liner ("Hi {{first_name}}... How are you doing
- * today? I'm calling about...") crammed identification, a question, and the
- * calling-about reason into one uninterrupted turn with no room for the
- * lead to actually get a word in, which read as robotic on a real test
- * call. This is now just the opening turn — confirm who she's speaking
- * with, then genuinely wait for an answer before anything else happens.
- * "there" is the sentinel dial-pending.ts/test scripts use for "no real
- * name on file" (see NormalisedLead.name) — treated as unknown here too,
- * asking rather than parroting a placeholder back at the lead.
+ * Opens with a bare, natural greeting — nothing else. Mark's live feedback,
+ * 2026-09-05: even the shorter one-liner ("Hi, this is Iris with X — am I
+ * speaking with Y?") still crammed identification and a question into the
+ * very first thing Iris says, before the lead has had any chance to say
+ * "hello" the way a real person answering (or being called) would. This is
+ * now just the opener — genuinely wait for whatever the lead does with it
+ * before saying anything else. Who she's speaking with is its own turn,
+ * see callIdentifyLine below and the opening sequence in
+ * buildLeadQualificationPrompt.
  */
-export function callOpeningGreeting(firstName: string, brandName: string): string {
+export function callOpeningGreeting(): string {
+  return "Hey!";
+}
+
+/**
+ * The identify-the-lead question — asked as its own turn after "Hey!",
+ * whichever way that greeting landed (the lead said something back, or
+ * stayed quiet). "there" is the sentinel dial-pending.ts/test scripts use
+ * for "no real name on file" (see NormalisedLead.name) — asked for rather
+ * than parroting a placeholder back at the lead.
+ */
+export function callIdentifyLine(firstName: string): string {
   return firstName && firstName !== "there"
-    ? `Hi, this is Iris with ${brandName} — am I speaking with ${firstName}?`
-    : `Hi, this is Iris with ${brandName}. Who do I have the pleasure of speaking with?`;
+    ? `Hey, am I speaking with ${firstName}?`
+    : "Hey, who do I have the pleasure of speaking with?";
 }
 
 /**
@@ -273,6 +284,54 @@ export function callbackRecapLine(chosenSlot: string, agentName: string | null, 
 }
 
 /**
+ * Natural phrasing for each Financing value — spoken back to the lead as
+ * part of a verifying question, never the raw enum ("in-progress" read
+ * aloud sounds like a bug report, not a sentence).
+ */
+const FINANCING_PHRASES: Record<Exclude<Financing, null>, string> = {
+  cash: "paying in cash",
+  "pre-approved": "already pre-approved",
+  "in-progress": "still working on getting pre-approved",
+  "not-approved": "not pre-approved yet",
+};
+
+/**
+ * Turns what Scout/the lead form already established into a VERIFYING
+ * question instead of Iris re-discovering it cold — Mark, 2026-09-05: the
+ * buyer/seller tag and form answers already say what the lead wants, so
+ * Iris's job on the call is to confirm it, not ask "are you looking to buy
+ * or sell?" from scratch. Combines intent + area into one natural line when
+ * both are known (matches the approved SOP example verbatim); falls back
+ * to intent alone, or a plain area check when intent isn't known yet, so a
+ * known fact is never silently dropped just because the other one is
+ * missing.
+ */
+function verifyIntentAndAreaLine(intent: CallIntent, area: string | null): string | null {
+  if (intent === "buyer" || intent === "upgrading") {
+    return area ? `You were looking to buy a home in ${area}, right?` : "You reached out about buying a home — still the plan?";
+  }
+  if (intent === "seller" || intent === "downsize") {
+    return area
+      ? `I can see you're looking at selling your place in ${area} — is that right?`
+      : "I can see you're looking at selling your home — is that right?";
+  }
+  return null;
+}
+
+function verifyAreaOnlyLine(area: string): string {
+  return `You mentioned you're interested in ${area} — is that right?`;
+}
+
+function verifyTimelineLine(intent: CallIntent, timeline: string): string {
+  const verb = intent === "seller" || intent === "downsize" ? "sell" : "make a move";
+  return `You mentioned you're looking to ${verb} within ${timeline} — does that still sound right?`;
+}
+
+function verifyFinancingLine(financing: Exclude<Financing, null>): string {
+  return `I also see you mentioned you're ${FINANCING_PHRASES[financing]} — still accurate?`;
+}
+
+/**
  * The real, full system prompt for an actual lead-qualification call —
  * assembled from this file's approved wording rather than written fresh, so
  * what Iris says on a real call matches what's actually been reviewed.
@@ -296,33 +355,57 @@ export function buildLeadQualificationPrompt(
   bookingToolsAvailable: boolean,
   transferAvailable: boolean
 ): string {
-  const known: string[] = [];
-  const stillNeeded: string[] = [];
+  const firstName = lead.name?.split(" ")[0] || "there";
+  const identifyLine = callIdentifyLine(firstName);
   // Moved out of the firstMessage (see callOpeningGreeting) into the
   // opening-sequence instructions below, so the reason for the call is its
   // own turn rather than crammed into the first thing Iris says.
   const contextLine = callOpeningContextLine(lead.intent, city, lead.leadSource);
 
-  const track = (label: string, value: string | null, ask: string) => {
-    if (value) known.push(`- ${label}: ${value} — already known, do NOT ask again`);
-    else stillNeeded.push(ask);
-  };
+  // Verifying lines are actual sentences to speak, confirming what Scout/the
+  // form already established — never a generic "confirm it" instruction.
+  // stillNeeded stays the open-question fallback (config.questions) for
+  // whatever genuinely isn't known yet. Branches independently on intent vs.
+  // area so a known fact is never silently dropped just because the other
+  // one is missing — see verifyIntentAndAreaLine's own comment.
+  const verifying: string[] = [];
+  const stillNeeded: string[] = [];
 
-  track("Intent", lead.intent !== "unknown" ? lead.intent : null, config.questions[0]);
-  track("Area/property interest", lead.propertyInterest, config.questions[1]);
+  if (lead.intent !== "unknown" && lead.propertyInterest) {
+    verifying.push(verifyIntentAndAreaLine(lead.intent, lead.propertyInterest)!);
+  } else if (lead.intent !== "unknown" && !lead.propertyInterest) {
+    verifying.push(verifyIntentAndAreaLine(lead.intent, null)!);
+    stillNeeded.push(config.questions[1]);
+  } else if (lead.intent === "unknown" && lead.propertyInterest) {
+    verifying.push(verifyAreaOnlyLine(lead.propertyInterest));
+    stillNeeded.push(config.questions[0]);
+  } else {
+    stillNeeded.push(config.questions[0]);
+    stillNeeded.push(config.questions[1]);
+  }
+
   // Property type + bedroom/bathroom count — Jacob's live feedback,
   // 2026-09-04. There's no GHL field capturing this today (nothing in
   // NormalisedLead tracks it), so it's always still-needed, never known.
   stillNeeded.push(config.questions[2]);
-  track("Timeline", lead.timeline, config.questions[3]);
-  if (lead.intent !== "seller") track("Financing", lead.financing, config.questions[4]);
 
-  const knownBlock = known.length
-    ? `## What you already know about this lead — confirm it, never re-ask it\n${known.join("\n")}`
+  if (lead.timeline) verifying.push(verifyTimelineLine(lead.intent, lead.timeline));
+  else stillNeeded.push(config.questions[3]);
+
+  if (lead.intent !== "seller") {
+    if (lead.financing) verifying.push(verifyFinancingLine(lead.financing));
+    else stillNeeded.push(config.questions[4]);
+  }
+
+  const verifyingBlock = verifying.length
+    ? `## Verify what's already known — speak these as natural check-ins, ONE AT A TIME, pausing and waiting for their answer before the next one. Never re-discover any of this cold:
+${verifying.map((l) => `- "${l}"`).join("\n")}
+
+If their answer confirms it, acknowledge briefly (vary the phrase — see the acknowledgment rule below) and move on. If it conflicts with what's shown here — they say something's changed, or it was never quite right — treat THEIR latest answer as the real one, acknowledge the update naturally (e.g. "Got it, so that's changed a bit"), and never argue or repeat the stale value back at them.`
     : `## What you already know about this lead\nNothing yet — this is a cold first contact.`;
 
   const stillNeededBlock = stillNeeded.length
-    ? `\n\n## Still need to gather\n${stillNeeded.map((q) => `- ${q}`).join("\n")}`
+    ? `\n\n## Still need to gather — ask ONE at a time, always pausing and waiting for their answer before the next one\n${stillNeeded.map((q) => `- ${q}`).join("\n")}`
     : "";
 
   // bookingToolsAvailable reflects whether this environment actually has the
@@ -347,10 +430,22 @@ will follow up directly to get them scheduled.`;
   // Iris was unconditionally told to "always invoke the transferCall tool"
   // even on a call where no such tool existed at all — she said the
   // transfer line and then had nothing to actually invoke.
+  //
+  // Mark, 2026-09-05: presenting the line was never conditioned on actually
+  // hearing the lead say yes — invoke the tool right after saying it, so a
+  // lead who says "I can't talk right now" got transferred anyway. Now the
+  // line is followed by a real pause: only invoke transferCall once the
+  // lead has said something that sounds like agreement, and if they signal
+  // they're busy/unavailable instead, skip the transfer entirely and go
+  // straight to the scheduling fallback below.
   const transferSection = transferAvailable
-    ? `Live transfer is ALWAYS the first priority — present it confidently,
-don't ask permission, and actually invoke the transferCall tool available
-to you (not just say the line): "${liveTransferLineForIntent(lead.intent)}"
+    ? `Live transfer is the first priority once you're done verifying — present
+it confidently, don't ask permission, say the line, then STOP and wait:
+"${liveTransferLineForIntent(lead.intent)}"
+
+Listen to what they say next:
+- Agreement ("okay", "sure", "yeah") → NOW invoke the transferCall tool available to you. Don't invoke it before they've responded.
+- Unavailable right now ("I'm at work", "can you call me later", "I can't talk") → do NOT invoke transferCall at all. Acknowledge naturally and move straight to the scheduling fallback below instead.
 
 If the transferCall tool comes back without anyone picking up: "${AGENT_UNAVAILABLE_LINE}"
 ${schedulingFallback}`
@@ -382,25 +477,46 @@ need to work out an exact date/time from something relative the lead says
 ("tomorrow afternoon", "Friday morning") — never guess or invent a time that
 doesn't map back to this.
 
-${knownBlock}${stillNeededBlock}
+${verifyingBlock}${stillNeededBlock}
 
 ## How you open the call
-Your first line already asked who you're speaking with — wait for their
-answer before saying anything else. Once they respond:
-1. Ask how they're doing today, then genuinely wait for their answer.
-2. Acknowledge it naturally and briefly (e.g. "${NATURAL_TRANSITIONS.call[4]}" or
-   another line from natural conversation) — don't launch straight into
-   business.
-3. Only then bring up why you're calling${contextLine ? `: "${contextLine}"` : ", using what's already known about them above"}.
-4. Move into the questions below — one at a time, always waiting for their
-   answer before asking the next one. Never stack more than one question
-   into a single turn.
+Your first line was just "Hey!" — you don't yet know whether they said
+anything back or stayed quiet, so react to whichever actually happened:
+1. If they said something back (even just "hi" or "hello"): acknowledge it
+   naturally, then ask "${identifyLine}" — then STOP and wait for their answer.
+2. If there was silence: continue on your own with that same question —
+   "${identifyLine}" — then STOP and wait for their answer.
+3. Once you know who you're speaking with, ask how they're doing today,
+   then genuinely wait for their answer.
+4. Acknowledge it naturally and briefly (e.g. "${NATURAL_TRANSITIONS.call[4]}" or
+   another line from natural conversation — vary it, don't reuse the same
+   one every call) — don't launch straight into business.
+5. Only then bring up why you're calling${contextLine ? `: "${contextLine}"` : ", using what's already known about them above"}.
+6. Move into verifying what's known, then gathering what's still needed
+   (both below) — one at a time, always pausing and genuinely waiting for
+   their answer before asking the next one. Never stack more than one question
+   into a single turn, and never answer your own question.
 
 ## Your job
-Confirm what's known above, gather what's still needed, decide fit, then get
-a qualified lead connected to the right agent.
+Verify what's known above, gather what's still needed, decide fit, then get
+a qualified lead connected to the right agent — as a natural back-and-forth
+conversation, not a questionnaire being read aloud.
 
 ${transferSection}
+
+## How you sound
+- Speak, then pause and actually listen — don't fill every silence. A short
+  pause is normal and better than rushing to the next line.
+- If the lead starts talking while you're mid-sentence, stop talking,
+  listen to what they actually said, and respond to that — never talk over
+  them or finish your own sentence first.
+- Vary your acknowledgments — "${NATURAL_TRANSITIONS.call[0]}", "${NATURAL_TRANSITIONS.call[1]}",
+  "${NATURAL_TRANSITIONS.call[2]}", "${NATURAL_TRANSITIONS.call[3]}", "${NATURAL_TRANSITIONS.call[4]}" — never repeat
+  the exact same one twice in a row.
+- The conversation always takes priority over this script. If the lead says
+  something that doesn't match what you expected next, respond to what they
+  actually said before deciding what to ask next — don't plow ahead with
+  the next scripted question regardless.
 
 ## Rules you must never break
 - Never give legal, investment, mortgage, or financial advice:

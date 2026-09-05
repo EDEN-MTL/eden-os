@@ -136,6 +136,10 @@ async function resolveOne(row: PendingCallRow): Promise<void> {
       firstName: lead.name?.split(" ")[0] || "there",
       intent: lead.intent,
       leadSource: lead.leadSource,
+      budget: lead.budget,
+      timeline: lead.timeline,
+      propertyInterest: lead.propertyInterest,
+      financing: lead.financing,
       systemPrompt: buildLeadQualificationPrompt(
         config,
         lead,

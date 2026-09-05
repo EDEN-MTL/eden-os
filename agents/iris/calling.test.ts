@@ -35,27 +35,28 @@ describe("buildCallPayload", () => {
     expect(payload.phoneNumberId).toBe("phone-123");
   });
 
-  it("uses first name and brand name in the opening greeting", () => {
+  /**
+   * Mark's live feedback, 2026-09-05: even the shorter "am I speaking with
+   * Sam?" opener still crammed identification into the very first thing
+   * Iris said, before the lead had any chance to say "hello" first. The
+   * opener is now a bare greeting only — name and brand are asked/mentioned
+   * in later turns, driven by buildLeadQualificationPrompt's system prompt.
+   */
+  it("opens with a bare greeting, nothing else", () => {
     const payload = buildCallPayload(BASE_PARAMS, VAPI_CONFIG);
-    expect(payload.assistant.firstMessage).toContain("Sam");
-    expect(payload.assistant.firstMessage).toContain("3 Percent East Coast");
+    expect(payload.assistant.firstMessage).not.toContain("Sam");
+    expect(payload.assistant.firstMessage).not.toContain("3 Percent East Coast");
     expect(payload.assistant.firstMessage).not.toContain("{{");
+    expect(payload.assistant.firstMessage.length).toBeLessThan(10);
   });
 
-  /**
-   * Jacob's live feedback, 2026-09-04: the old firstMessage crammed
-   * identification, "how are you", and the calling-about reason into one
-   * uninterrupted turn. The opening is now just a short question — asking
-   * "how are you" and the reason for the call happen as later turns, driven
-   * by buildLeadQualificationPrompt's system prompt instead.
-   */
-  it("is a single short question — no calling-about reason or 'how are you' crammed in, regardless of intent", () => {
+  it("is a single short greeting — no calling-about reason or 'how are you' crammed in, regardless of intent", () => {
     const unknownIntent = buildCallPayload(BASE_PARAMS, VAPI_CONFIG);
     const knownIntent = buildCallPayload({ ...BASE_PARAMS, intent: "seller", leadSource: "facebook" }, VAPI_CONFIG);
     for (const payload of [unknownIntent, knownIntent]) {
       expect(payload.assistant.firstMessage).not.toMatch(/calling about/i);
       expect(payload.assistant.firstMessage).not.toMatch(/how are you/i);
-      expect(payload.assistant.firstMessage.trim().endsWith("?")).toBe(true);
+      expect(payload.assistant.firstMessage).not.toMatch(/\?/);
     }
   });
 
@@ -113,8 +114,10 @@ describe("buildCallPayload", () => {
       if (sellerTool?.type !== "transferCall" || buyerTool?.type !== "transferCall") {
         throw new Error("expected transferCall tools");
       }
-      expect(sellerTool.destinations[0].transferPlan.transferAssistant.firstMessage).toMatch(/seller lead/);
-      expect(buyerTool.destinations[0].transferPlan.transferAssistant.firstMessage).toMatch(/buyer lead/);
+      const sellerBriefing = sellerTool.destinations[0].transferPlan.transferAssistant.model.messages[0].content;
+      const buyerBriefing = buyerTool.destinations[0].transferPlan.transferAssistant.model.messages[0].content;
+      expect(sellerBriefing).toMatch(/seller lead/);
+      expect(buyerBriefing).toMatch(/buyer lead/);
     });
 
     it("is omitted when no transferNumber is given", () => {

@@ -45,6 +45,31 @@ export interface PlaceCallParams {
    * no real lead or intent to transfer.
    */
   transferNumber?: string;
+  /** Passed through to the warm-transfer agent briefing — see buildAgentBriefing below. */
+  budget?: string | null;
+  timeline?: string | null;
+  propertyInterest?: string | null;
+  financing?: string | null;
+}
+
+/**
+ * What Iris tells the human agent once they pick up the warm transfer —
+ * Mark, 2026-09-05: previously just "I have a {audience} lead (name) on the
+ * line", which left the agent to re-discover everything Scout and this
+ * same call already established. Keeps it to what's actually known and
+ * actually useful — never a full CRM dump — so the agent can pick up the
+ * conversation in one breath instead of re-qualifying from scratch.
+ */
+function buildAgentBriefing(params: PlaceCallParams, audience: "buyer" | "seller"): string {
+  const who = params.firstName !== "there" ? params.firstName : "a lead";
+  const details: string[] = [];
+  if (params.propertyInterest) details.push(`in ${params.propertyInterest}`);
+  if (params.budget) details.push(`around a ${params.budget} budget`);
+  if (params.timeline) details.push(`hoping to move within ${params.timeline}`);
+  if (audience === "buyer" && params.financing) details.push(`financing: ${params.financing}`);
+
+  const detailText = details.length > 0 ? `, ${details.join(", ")}` : "";
+  return `I have ${who} on the other line, a ${audience} lead${detailText}.`;
 }
 
 /**
@@ -59,12 +84,13 @@ export function buildCallPayload(
   // then stop and wait. Everything else (how are you, the reason for the
   // call) happens as its own turn, driven by the system prompt below, not
   // crammed into this one line. See scripts.ts's callOpeningGreeting.
-  const firstMessage = callOpeningGreeting(params.firstName, params.brandName);
+  const firstMessage = callOpeningGreeting();
 
   const tools: VapiTool[] = [];
 
   if (params.transferNumber) {
     const audience = params.intent === "seller" || params.intent === "downsize" ? "seller" : "buyer";
+    const briefing = buildAgentBriefing(params, audience);
     tools.push({
       type: "transferCall",
       destinations: [
@@ -75,9 +101,10 @@ export function buildCallPayload(
           transferPlan: {
             mode: "warm-transfer-experimental",
             transferAssistant: {
-              firstMessage: `Hi, I have a ${audience} lead${
-                params.firstName !== "there" ? ` (${params.firstName})` : ""
-              } on the line, ready to talk. Are you available to take the call?`,
+              // Short bare greeting, same reasoning as callOpeningGreeting
+              // for the main call — Mark, 2026-09-05: don't launch into the
+              // briefing before the operator has even said anything back.
+              firstMessage: "Hey!",
               firstMessageMode: "assistant-speaks-first",
               maxDurationSeconds: 120,
               silenceTimeoutSeconds: 30,
@@ -88,13 +115,16 @@ export function buildCallPayload(
                   {
                     role: "system",
                     content:
-                      "Confirm a human operator is ready to take this call. Once they confirm, give one " +
-                      "quick line introducing the lead — name if known, and that they're a " +
-                      `${audience} lead ready to talk — then immediately call transferSuccessful. Use ` +
-                      "transferCancel for voicemail, no answer, or a declined transfer. After " +
-                      "transferSuccessful, your job is done — never end the call yourself; let the " +
-                      "operator and the lead continue the conversation on their own. Keep everything you " +
-                      "say brief.",
+                      `You just said "Hey!" to whoever picked up — wait for them to respond, then ask ` +
+                      `"This is Iris with ${params.brandName}. Who am I speaking with?" and wait for their ` +
+                      "name. Greet them by name once given (e.g. \"Hey Jason\"), then immediately give this " +
+                      `exact briefing, adjusting only for natural phrasing: "${briefing}" — then confirm ` +
+                      "they're ready to take the call. Once they confirm, immediately call " +
+                      "transferSuccessful. Use transferCancel for voicemail, no answer, or a declined " +
+                      "transfer. After transferSuccessful, your job is done — never end the call yourself; " +
+                      "let the operator and the lead continue the conversation on their own. Keep " +
+                      "everything you say brief — the whole briefing should take a few seconds, not a full " +
+                      "CRM readout.",
                   },
                 ],
               },
@@ -158,6 +188,19 @@ export function buildCallPayload(
         provider: vapiConfig.voiceProvider,
         voiceId: vapiConfig.voiceId,
       },
+      // Confirmed against Vapi's own OpenAPI schema (api.vapi.ai/api-json),
+      // 2026-09-05 — both fields live directly on `assistant`, not nested
+      // under `model` like `tools` (see shared/vapi's VapiAssistantConfig
+      // doc comment for that distinction). Mark's human-like-behavior brief,
+      // same date: waitSeconds raised from Vapi's 0.4s default so Iris gives
+      // the lead a beat to finish a thought instead of jumping in the moment
+      // audio goes quiet. stopSpeakingPlan is left mostly at Vapi's own
+      // defaults (undocumented here but sensible out of the box — a bare
+      // "yeah"/"okay" never interrupts, "wait"/"stop"/"actually" always do)
+      // — only voiceSeconds is nudged up slightly to cut down on false
+      // interrupts from background noise on a real phone line.
+      startSpeakingPlan: { waitSeconds: 0.7 },
+      stopSpeakingPlan: { numWords: 0, voiceSeconds: 0.3, backoffSeconds: 1 },
       server: vapiConfig.serverUrl ? { url: vapiConfig.serverUrl, secret: vapiConfig.webhookSecret } : undefined,
       // Without this, Vapi has no way to tell the call apart from a live
       // pickup — Iris just talks into the machine as if a person answered,

@@ -34,6 +34,23 @@ export interface VapiAssistantConfig {
     voiceId: string;
   };
   /**
+   * Confirmed against Vapi's own OpenAPI schema (api.vapi.ai/api-json),
+   * 2026-09-05: both live directly on CreateAssistantDTO, siblings of
+   * `model`/`voice`/`tools` — NOT nested under `model` the way `tools` is
+   * (see that field's own comment above for that distinction; the two
+   * fields don't follow the same nesting rule as each other, confirmed
+   * against the schema rather than assumed).
+   */
+  startSpeakingPlan?: { waitSeconds?: number };
+  /** See startSpeakingPlan above — same schema location, opposite purpose (when to stop, not start, talking). */
+  stopSpeakingPlan?: {
+    numWords?: number;
+    voiceSeconds?: number;
+    backoffSeconds?: number;
+    acknowledgementPhrases?: string[];
+    interruptionPhrases?: string[];
+  };
+  /**
    * Vapi's actual field for this is `server` (an object), NOT the flat
    * `serverUrl` string this code sent for a while — that string still
    * routes the webhook to the right URL, but Vapi has nowhere to put a
