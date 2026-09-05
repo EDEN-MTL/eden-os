@@ -139,7 +139,7 @@ export function buildCallPayload(
               // Short bare greeting, same reasoning as callOpeningGreeting
               // for the main call — Mark, 2026-09-05: don't launch into the
               // briefing before the operator has even said anything back.
-              firstMessage: "Hey!",
+              firstMessage: "Hi!",
               firstMessageMode: "assistant-speaks-first",
               maxDurationSeconds: 120,
               silenceTimeoutSeconds: 30,
@@ -150,9 +150,9 @@ export function buildCallPayload(
                   {
                     role: "system",
                     content:
-                      `You just said "Hey!" to whoever picked up — wait for them to respond, then ask ` +
+                      `You just said "Hi!" to whoever picked up — wait for them to respond, then ask ` +
                       `"This is Iris with ${params.brandName}. Who am I speaking with?" and wait for their ` +
-                      "name. Greet them by name once given (e.g. \"Hey Jason\"), then immediately give this " +
+                      "name. Greet them by name once given (e.g. \"Hi Jason\"), then immediately give this " +
                       `exact briefing, adjusting only for natural phrasing: "${briefing}" — then confirm ` +
                       "they're ready to take the call. Once they confirm, immediately call " +
                       "transferSuccessful. Use transferCancel for voicemail, no answer, or a declined " +

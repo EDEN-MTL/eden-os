@@ -230,11 +230,11 @@ export const AGENT_UNAVAILABLE_FOLLOW_UP = "What day and time works best for us 
  * buildLeadQualificationPrompt.
  */
 export function callOpeningGreeting(): string {
-  return "Hey!";
+  return "Hi!";
 }
 
 /**
- * The identify-the-lead question — asked as its own turn after "Hey!",
+ * The identify-the-lead question — asked as its own turn after "Hi!",
  * whichever way that greeting landed (the lead said something back, or
  * stayed quiet). "there" is the sentinel dial-pending.ts/test scripts use
  * for "no real name on file" (see NormalisedLead.name) — asked for rather
@@ -242,8 +242,8 @@ export function callOpeningGreeting(): string {
  */
 export function callIdentifyLine(firstName: string): string {
   return firstName && firstName !== "there"
-    ? `Hey, am I speaking with ${firstName}?`
-    : "Hey, who do I have the pleasure of speaking with?";
+    ? `Hi, am I speaking with ${firstName}?`
+    : "Hi, who do I have the pleasure of speaking with?";
 }
 
 /**
