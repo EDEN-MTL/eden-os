@@ -279,7 +279,36 @@ describe("run — calibration rates", () => {
     expect(r.qualified).toBe(1);
   });
 
-  it("keeps a lead when the screenshot fails rather than dropping it", async () => {
+  it("retries a screenshot once before giving up, and qualifies on the retry", async () => {
+    withCreds();
+    configMod.loadQuarryConfig.mockReturnValue({ ...CONFIG, triage: { ...CONFIG.triage, visionScoring: true } });
+    discovery.discover.mockResolvedValue({
+      results: [place("a", "trade-service", "https://clean.com")],
+      searched: 1, skippedAlreadySeen: 0, skippedClosed: 0, detailsCalls: 1,
+    });
+    triageMod.triage.mockResolvedValue({ isCandidate: false, reasons: [] });
+    triageMod.applyVisionScore = vi.fn(() => ({ isCandidate: true, reasons: ["Looks dated (8/10)"], outdatedScore: 8, outdatedReasoning: "Clip art" }));
+    shotMod.scoreSiteAppearance.mockResolvedValue({ score: 8, reasoning: "Clip art" });
+
+    let calls = 0;
+    const r = await run({
+      stopAfter: "triage", triggeredBy: "test", overrideKillSwitch: true, log: () => {},
+      capturer: {
+        capture: async () => {
+          calls++;
+          if (calls === 1) throw new Error("Timeout 20000ms exceeded");
+          return Buffer.from("png");
+        },
+        close: async () => {},
+      } as any,
+    });
+
+    expect(calls).toBe(2);
+    expect(r.qualified).toBe(1);
+    expect(r.errors).toHaveLength(0);
+  });
+
+  it("keeps a lead when the screenshot fails twice rather than dropping it", async () => {
     withCreds();
     configMod.loadQuarryConfig.mockReturnValue({ ...CONFIG, triage: { ...CONFIG.triage, visionScoring: true } });
     discovery.discover.mockResolvedValue({

@@ -258,7 +258,16 @@ export async function run(options: RunOptions): Promise<CalibrationReport> {
       // anyway would spend a model call and a page load to change nothing.
       if (visionOn && lead.website && !result.isCandidate) {
         try {
-          const shot = await options.capturer!.capture(lead.website);
+          // One retry on a failed capture — a page-load timeout is common
+          // enough on a prospect's own dated hosting that a real qualifying
+          // site was otherwise being dropped on nothing more than a single
+          // slow response, never actually judged on how it looks.
+          let shot: Buffer;
+          try {
+            shot = await options.capturer!.capture(lead.website);
+          } catch {
+            shot = await options.capturer!.capture(lead.website);
+          }
           const scored = await scoreSiteAppearance(shot);
           if (scored) {
             result = applyVisionScore(
