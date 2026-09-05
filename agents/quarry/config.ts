@@ -16,15 +16,42 @@ export interface SearchSpec {
 
 export interface QuarryConfig {
   enabled: boolean;
+  /**
+   * When true, a lead qualified on a hard technical fact (no site, no
+   * HTTPS, not mobile-responsive, stale markup) is approved automatically
+   * — no human click required. A lead qualified ONLY by the vision pass's
+   * "looks dated" judgment is left pending regardless, and posted to
+   * reviewChannel instead. See isHighConfidenceCandidate in triage.ts,
+   * which is what actually draws that line.
+   */
+  autoApprove: boolean;
+  /** Slack channel auto-approve posts judgment-call leads to for review. */
+  reviewChannel: string;
   /** The GHL pipeline built by hand — see sync.ts, which resolves it by name. */
   ghlPipeline: { name: string; stages: string[] };
   searches: SearchSpec[];
+  /**
+   * Location-free business-type templates ("picture framing", "shoe
+   * repair") — the same category mix as `searches`, minus the city baked
+   * into the query string. `buildLocationSearches` combines these with
+   * whatever location a request names, so discovery is not limited to the
+   * cities hardcoded into `searches`.
+   */
+  categoryTemplates: SearchSpec[];
   discovery: { recheckAfterDays: number; maxLeadsPerRun: number };
   triage: {
     outdatedSignals: string[];
     copyrightYearBefore: number;
     visionScoring: boolean;
     visionScoreThreshold: number;
+    /**
+     * Off means a business with no website is never qualified at all — see
+     * the note on triage.ts's TriageOptions for why: with email as the only
+     * send channel, that lead type qualifies but can never be reached, since
+     * there is no page to find a contact email on. Defaults true elsewhere;
+     * a client focused on email-only outreach for now sets this false.
+     */
+    qualifyMissingWebsite?: boolean;
   };
   phone: {
     /** Off by default since 2026-08-27 — email is the primary channel and this
@@ -80,6 +107,19 @@ export function loadQuarryConfig(clientId = "eden"): QuarryConfig | null {
   } catch {
     return null;
   }
+}
+
+/**
+ * Combines `categoryTemplates` with a requested location to build a one-off
+ * search list — how a Slack-triggered discovery run targets a city that
+ * isn't one of the fixed queries in `searches`.
+ */
+export function buildLocationSearches(config: QuarryConfig, location: string): SearchSpec[] {
+  return config.categoryTemplates.map((t) => ({
+    query: `${t.query} ${location}`,
+    category: t.category,
+    maxResults: t.maxResults,
+  }));
 }
 
 /**

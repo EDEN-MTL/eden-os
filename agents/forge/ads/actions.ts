@@ -198,8 +198,18 @@ export class MetaActions {
       special_ad_categories: specialAdCategories || [],
     };
     if (specialAdCategoryCountry) payload.special_ad_category_country = specialAdCategoryCountry;
-    if (dailyBudgetCents) payload.daily_budget = String(Math.trunc(dailyBudgetCents));
-    if (bidStrategy) payload.bid_strategy = bidStrategy;
+    if (dailyBudgetCents) {
+      payload.daily_budget = String(Math.trunc(dailyBudgetCents));
+      // CBO (a budget set at the campaign level) is where Meta expects
+      // bid_strategy to live, not the ad set — same account-default trap as
+      // createAdset's bid_strategy fix, just one level up. Without this, a
+      // CBO campaign silently inherits whatever bid-cap strategy the
+      // account defaults to, and every ad set under it fails until a bid
+      // amount is supplied.
+      payload.bid_strategy = bidStrategy || "LOWEST_COST_WITHOUT_CAP";
+    } else if (bidStrategy) {
+      payload.bid_strategy = bidStrategy;
+    }
 
     validateCampaignPayload(payload as any);
 
@@ -232,10 +242,13 @@ export class MetaActions {
     specialAdCategories?: string[];
     useTuneForCategory?: boolean;
     bidAmountCents?: number;
+    pixelId?: string;
+    customEventType?: string;
   }): Promise<ActionResult> {
     const {
       campaignId, name, targeting, optimizationGoal, billingEvent,
       dailyBudgetCents, specialAdCategories, useTuneForCategory = true, bidAmountCents,
+      pixelId, customEventType,
     } = params;
 
     const payload: Record<string, unknown> = {
@@ -246,7 +259,23 @@ export class MetaActions {
       status: CREATE_DEFAULT_STATUS,
     };
     if (dailyBudgetCents !== undefined) payload.daily_budget = String(Math.trunc(dailyBudgetCents));
-    if (bidAmountCents !== undefined) payload.bid_amount = String(Math.trunc(bidAmountCents));
+    // OFFSITE_CONVERSIONS optimization has no meaning to Meta without a
+    // pixel + standard event to optimize toward — required together, since
+    // one without the other is a silent no-op at best and a rejected
+    // ad set at worst.
+    if (pixelId && customEventType) {
+      payload.promoted_object = { pixel_id: pixelId, custom_event_type: customEventType };
+    }
+    // Some ad accounts have a default bid strategy (LOWEST_COST_WITH_BID_CAP
+    // or TARGET_COST) that Meta rejects the ad set for unless bid_amount is
+    // also set. Always send an explicit bid_strategy so ad set creation
+    // never silently depends on the account's default.
+    if (bidAmountCents !== undefined) {
+      payload.bid_amount = String(Math.trunc(bidAmountCents));
+      payload.bid_strategy = "LOWEST_COST_WITH_BID_CAP";
+    } else {
+      payload.bid_strategy = "LOWEST_COST_WITHOUT_CAP";
+    }
 
     if (isRestrictedCategory(specialAdCategories) && useTuneForCategory) {
       payload.targeting = targeting;

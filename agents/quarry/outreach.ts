@@ -13,9 +13,22 @@
  */
 import { renderTemplate, EmailConfig, QuarryConfig } from "./config";
 import { logSend, sendsToday, updateLead } from "./store";
-import { QuarryLead, SendStep } from "./types";
+import { QuarryLead, QuarryStage, SendStep } from "./types";
 
-export type ReplySentiment = "positive" | "negative" | "unclear";
+export type ReplySentiment = "positive" | "negative" | "unclear" | "ignored";
+
+/**
+ * Once a lead is past the cold-outreach phase, an inbound message is a reply
+ * to a booking confirmation/reminder ("see you at 2!", "can we move it?"),
+ * not to the original pitch. classifyReply's yes/no keyword matching has no
+ * way to tell the difference, so a booked lead saying "can't make it,
+ * cancel" would otherwise get misread as a negative reply to the PITCH —
+ * marking them emailOptedOut and Lost/Nurture over a scheduling change, not
+ * a rejection of the offer. handleReply/handleEmailReply skip entirely once
+ * a lead reaches one of these stages; the reply still exists in GHL for a
+ * human to read, it just gets no automated classification or auto-send.
+ */
+const POST_PITCH_STAGES: QuarryStage[] = ["Call Booked", "Closed Won", "Lost/Nurture"];
 
 /**
  * Reads a reply as yes, no, or unclear.
@@ -524,6 +537,8 @@ export async function handleReply(
   config: QuarryConfig,
   deps: OutreachDeps
 ): Promise<{ sentiment: ReplySentiment; outcome?: SendOutcome }> {
+  if (POST_PITCH_STAGES.includes(lead.pipelineStage as QuarryStage)) return { sentiment: "ignored" };
+
   const sentiment = classifyReply(body, config.outreach);
   await updateLead(lead.id, { repliedAt: new Date().toISOString() });
 
@@ -559,6 +574,8 @@ export async function handleEmailReply(
   config: QuarryConfig,
   deps: EmailDeps
 ): Promise<{ sentiment: ReplySentiment; outcome?: SendOutcome }> {
+  if (POST_PITCH_STAGES.includes(lead.pipelineStage as QuarryStage)) return { sentiment: "ignored" };
+
   const sentiment = classifyReply(body, config.outreach);
   await updateLead(lead.id, { emailRepliedAt: new Date().toISOString() });
 

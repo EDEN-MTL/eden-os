@@ -231,6 +231,8 @@ const TOOLS: ToolDef[] = [
           },
         },
         specialAdCategories: { type: "array", items: { type: "string" }, description: "Should match the parent campaign's." },
+        pixelId: { type: "string", description: "Required together with customEventType when optimizationGoal is OFFSITE_CONVERSIONS — Meta has nothing to optimize toward without a pixel + event. Check the client's config for pixelId rather than guessing." },
+        customEventType: { type: "string", description: "A Meta standard event, e.g. \"LEAD\", \"PURCHASE\", \"COMPLETE_REGISTRATION\". Required together with pixelId for OFFSITE_CONVERSIONS." },
       },
       required: ["clientId", "campaignId", "name", "optimizationGoal", "billingEvent", "targeting"],
     },
@@ -276,6 +278,20 @@ const TOOLS: ToolDef[] = [
         creativeId: { type: "string", description: "From a prior create_ad_creative call." },
       },
       required: ["clientId", "adsetId", "name", "creativeId"],
+    },
+  },
+  {
+    name: "update_ad_creative",
+    description:
+      "Swaps an EXISTING ad to point at a different, already-created ad creative — the standard way to change an ad's copy or image without touching its ad ID, spend history, or delivery. Ad creatives themselves are immutable (Meta rejects edits to their headline/text/image), so a copy change always means create_ad_creative first to make the new creative, then this to point the ad at it.",
+    input_schema: {
+      type: "object",
+      properties: {
+        clientId: { type: "string" },
+        adId: { type: "string", description: "The existing ad to repoint — from a prior create_ad call." },
+        creativeId: { type: "string", description: "The new creative to point it at — from a prior create_ad_creative call." },
+      },
+      required: ["clientId", "adId", "creativeId"],
     },
   },
 ];
@@ -390,6 +406,7 @@ class ForgeAgent extends BaseAgent {
               campaignId: input.campaignId, name: input.name, targeting: input.targeting,
               optimizationGoal: input.optimizationGoal, billingEvent: input.billingEvent,
               dailyBudgetCents: input.dailyBudgetCents, specialAdCategories: input.specialAdCategories,
+              pixelId: input.pixelId, customEventType: input.customEventType,
             },
             "jacob-via-chat"
           )
@@ -431,6 +448,17 @@ class ForgeAgent extends BaseAgent {
           await executor.executeManual(
             "create_ad", "ad", "", input.name,
             { adset_id: input.adsetId, name: input.name, creative_id: input.creativeId },
+            "jacob-via-chat"
+          )
+        );
+      }
+
+      case "update_ad_creative": {
+        const executor = await requireExecutor(input.clientId);
+        return JSON.stringify(
+          await executor.executeManual(
+            "update_ad_creative", "ad", input.adId, null,
+            { creative_id: input.creativeId },
             "jacob-via-chat"
           )
         );

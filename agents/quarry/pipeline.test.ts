@@ -21,8 +21,17 @@ vi.mock("./store", () => store);
 const discovery = vi.hoisted(() => ({ discover: vi.fn() }));
 vi.mock("./discovery", () => discovery);
 
-const triageMod = vi.hoisted(() => ({ triage: vi.fn() }));
+const triageMod = vi.hoisted(() => ({
+  triage: vi.fn(),
+  // Real implementation, not a stub — this is the actual logic under test
+  // in several auto-approve cases below, and it is trivial enough that
+  // re-implementing it here is exactly as trustworthy as importing it.
+  isHighConfidenceCandidate: (reasons: string[]) => reasons.some((r) => !r.startsWith("Looks dated")),
+}));
 vi.mock("./triage", () => triageMod);
+
+const indexMod = vi.hoisted(() => ({ quarryAgent: { post: vi.fn(async () => {}) } }));
+vi.mock("./index", () => indexMod);
 
 const enrichMod = vi.hoisted(() => ({ enrichContact: vi.fn(async () => ({ email: null, emailSource: null, hasPublicEmail: false })) }));
 vi.mock("./enrich", () => enrichMod);
@@ -42,10 +51,24 @@ const shotMod = vi.hoisted(() => ({
 }));
 vi.mock("./screenshot", () => shotMod);
 
+const syncMod = vi.hoisted(() => ({
+  resolvePipeline: vi.fn(async () => ({ pipelineId: "pl1", stageIds: { "New Lead": "st1" } })),
+  upsertProspectContact: vi.fn(async () => ({ contactId: "c1", created: true })),
+  openOpportunity: vi.fn(async () => "op1"),
+}));
+vi.mock("./sync", () => syncMod);
+
+const ghlMod = vi.hoisted(() => ({
+  getGhlConfig: vi.fn(async () => ({ locationId: "loc1", apiKey: "key1" })),
+}));
+vi.mock("../../shared/ghl", () => ghlMod);
+
 import { QuarryDisabledError, MissingCredentialsError, run } from "./pipeline";
 
 const CONFIG = {
   enabled: false,
+  autoApprove: false,
+  reviewChannel: "websites-eden",
   searches: [{ query: "q", category: "trade-service", maxResults: 20 }],
   discovery: { recheckAfterDays: 90, maxLeadsPerRun: 20 },
   triage: { outdatedSignals: [], copyrightYearBefore: 2018, visionScoring: false, visionScoreThreshold: 6 },
@@ -90,6 +113,26 @@ describe("run — guards", () => {
     await expect(
       run({ stopAfter: "phone", triggeredBy: "test", overrideKillSwitch: true })
     ).rejects.toThrow(/GOOGLE_PLACES_API_KEY.*TWILIO_ACCOUNT_SID.*TWILIO_AUTH_TOKEN/);
+  });
+
+  it("passes config.triage.qualifyMissingWebsite through to the real triage call", async () => {
+    withCreds();
+    configMod.loadQuarryConfig.mockReturnValue({
+      ...CONFIG,
+      triage: { ...CONFIG.triage, qualifyMissingWebsite: false },
+    });
+    discovery.discover.mockResolvedValue({
+      results: [place("a", "trade-service", null)],
+      searched: 1, skippedAlreadySeen: 0, skippedClosed: 0, detailsCalls: 1,
+    });
+    triageMod.triage.mockResolvedValue({ isCandidate: false, reasons: [] });
+
+    await run({ stopAfter: "triage", triggeredBy: "test", overrideKillSwitch: true, log: () => {} });
+
+    expect(triageMod.triage).toHaveBeenCalledWith(
+      null,
+      expect.objectContaining({ qualifyMissingWebsite: false })
+    );
   });
 
   it("does not require Twilio credentials when stopping before phone", async () => {
@@ -313,5 +356,263 @@ describe("run — calibration rates", () => {
     expect(r.qualifyRate).toBe(0);
     expect(r.mobileRate).toBe(0);
     expect(r.projectedSendsPerRun).toBe(0);
+  });
+});
+
+describe("run — auto-approve", () => {
+  it("auto-approves a lead qualified on a hard technical fact when autoApprove is on", async () => {
+    withCreds();
+    configMod.loadQuarryConfig.mockReturnValue({ ...CONFIG, autoApprove: true });
+    discovery.discover.mockResolvedValue({
+      results: [place("a", "trade-service", null)], // no website — the hardest fact there is
+      searched: 1, skippedAlreadySeen: 0, skippedClosed: 0, detailsCalls: 1,
+    });
+    triageMod.triage.mockResolvedValue({ isCandidate: true, reasons: ["No website listed on Google"] });
+
+    const r = await run({ stopAfter: "triage", triggeredBy: "test", overrideKillSwitch: true, log: () => {} });
+
+    expect(store.updateLead).toHaveBeenCalledWith(1, expect.objectContaining({ approvalStatus: "approved" }));
+    expect(r.autoApproved).toBe(1);
+    expect(r.needsReview).toBe(0);
+    expect(indexMod.quarryAgent.post).not.toHaveBeenCalled();
+  });
+
+  it("holds a vision-only qualification for review instead of approving it", async () => {
+    withCreds();
+    configMod.loadQuarryConfig.mockReturnValue({ ...CONFIG, autoApprove: true, triage: { ...CONFIG.triage, visionScoring: true } });
+    discovery.discover.mockResolvedValue({
+      results: [place("a", "trade-service", "https://clean.com")],
+      searched: 1, skippedAlreadySeen: 0, skippedClosed: 0, detailsCalls: 1,
+    });
+    // Technical checks pass clean; only the vision opinion qualifies it —
+    // exactly the shape applyVisionScore produces on its own.
+    triageMod.triage.mockResolvedValue({ isCandidate: false, reasons: [] });
+    triageMod.applyVisionScore = vi.fn(() => ({
+      isCandidate: true, reasons: ["Looks dated (8/10)"], outdatedScore: 8, outdatedReasoning: "Table layout, clip art",
+    }));
+    shotMod.scoreSiteAppearance.mockResolvedValue({ score: 8, reasoning: "Table layout, clip art" });
+
+    const r = await run({
+      stopAfter: "triage", triggeredBy: "test", overrideKillSwitch: true, log: () => {},
+      capturer: { capture: async () => Buffer.from("png"), close: async () => {} } as any,
+    });
+
+    const patchCall = store.updateLead.mock.calls.find((c: any) => "isCandidate" in c[1]);
+    expect(patchCall![1]).not.toHaveProperty("approvalStatus");
+    expect(r.autoApproved).toBe(0);
+    expect(r.needsReview).toBe(1);
+  });
+
+  it("posts needs-review leads to the configured Slack channel", async () => {
+    withCreds();
+    configMod.loadQuarryConfig.mockReturnValue({ ...CONFIG, autoApprove: true, triage: { ...CONFIG.triage, visionScoring: true } });
+    discovery.discover.mockResolvedValue({
+      results: [place("a", "trade-service", "https://clean.com")],
+      searched: 1, skippedAlreadySeen: 0, skippedClosed: 0, detailsCalls: 1,
+    });
+    triageMod.triage.mockResolvedValue({ isCandidate: false, reasons: [] });
+    triageMod.applyVisionScore = vi.fn(() => ({
+      isCandidate: true, reasons: ["Looks dated (8/10)"], outdatedScore: 8, outdatedReasoning: "Table layout, clip art",
+    }));
+    shotMod.scoreSiteAppearance.mockResolvedValue({ score: 8, reasoning: "Table layout, clip art" });
+
+    await run({
+      stopAfter: "triage", triggeredBy: "test", overrideKillSwitch: true, log: () => {},
+      capturer: { capture: async () => Buffer.from("png"), close: async () => {} } as any,
+    });
+
+    expect(indexMod.quarryAgent.post).toHaveBeenCalledWith("websites-eden", expect.stringContaining("Biz a"));
+  });
+
+  it("does not auto-approve or notify anything when autoApprove is off", async () => {
+    withCreds();
+    configMod.loadQuarryConfig.mockReturnValue({ ...CONFIG, autoApprove: false });
+    discovery.discover.mockResolvedValue({
+      results: [place("a", "trade-service", null)],
+      searched: 1, skippedAlreadySeen: 0, skippedClosed: 0, detailsCalls: 1,
+    });
+    triageMod.triage.mockResolvedValue({ isCandidate: true, reasons: ["No website listed on Google"] });
+
+    const r = await run({ stopAfter: "triage", triggeredBy: "test", overrideKillSwitch: true, log: () => {} });
+
+    const patchCall = store.updateLead.mock.calls.find((c: any) => "isCandidate" in c[1]);
+    expect(patchCall![1]).not.toHaveProperty("approvalStatus");
+    expect(r.autoApproved).toBe(0);
+    expect(r.needsReview).toBe(0);
+    expect(indexMod.quarryAgent.post).not.toHaveBeenCalled();
+  });
+
+  it("does not let a Slack posting failure break the run", async () => {
+    // Best-effort by design — a Slack outage, or no bot token configured at
+    // all locally, must never take down a discovery run.
+    withCreds();
+    configMod.loadQuarryConfig.mockReturnValue({ ...CONFIG, autoApprove: true, triage: { ...CONFIG.triage, visionScoring: true } });
+    discovery.discover.mockResolvedValue({
+      results: [place("a", "trade-service", "https://clean.com")],
+      searched: 1, skippedAlreadySeen: 0, skippedClosed: 0, detailsCalls: 1,
+    });
+    triageMod.triage.mockResolvedValue({ isCandidate: false, reasons: [] });
+    triageMod.applyVisionScore = vi.fn(() => ({
+      isCandidate: true, reasons: ["Looks dated (8/10)"], outdatedScore: 8, outdatedReasoning: "dated",
+    }));
+    shotMod.scoreSiteAppearance.mockResolvedValue({ score: 8, reasoning: "dated" });
+    indexMod.quarryAgent.post.mockRejectedValueOnce(new Error("No Slack client for agent: quarry"));
+
+    await expect(
+      run({
+        stopAfter: "triage", triggeredBy: "test", overrideKillSwitch: true, log: () => {},
+        capturer: { capture: async () => Buffer.from("png"), close: async () => {} } as any,
+      })
+    ).resolves.toBeDefined();
+  });
+});
+
+describe("run — GHL sync", () => {
+  it("does nothing when syncToGhl is not set, even at the enrich stage", async () => {
+    withCreds();
+    configMod.loadQuarryConfig.mockReturnValue(CONFIG);
+    discovery.discover.mockResolvedValue({
+      results: [place("a", "trade-service", null)],
+      searched: 1, skippedAlreadySeen: 0, skippedClosed: 0, detailsCalls: 1,
+    });
+    triageMod.triage.mockResolvedValue({ isCandidate: true, reasons: ["No website listed on Google"] });
+    enrichMod.enrichContact.mockResolvedValue({ email: null, emailSource: null, hasPublicEmail: false });
+
+    const r = await run({ stopAfter: "enrich", triggeredBy: "test", overrideKillSwitch: true, log: () => {} });
+
+    expect(syncMod.upsertProspectContact).not.toHaveBeenCalled();
+    expect(r.syncedToGhl).toBe(0);
+  });
+
+  it("pushes every qualified lead into GHL as a contact + opportunity when syncToGhl is set", async () => {
+    withCreds();
+    configMod.loadQuarryConfig.mockReturnValue({
+      ...CONFIG,
+      ghlPipeline: { name: "Website Offer Pipeline", stages: ["New Lead"] },
+    });
+    discovery.discover.mockResolvedValue({
+      results: [place("a", "trade-service", null), place("b", "trade-service", null)],
+      searched: 2, skippedAlreadySeen: 0, skippedClosed: 0, detailsCalls: 2,
+    });
+    triageMod.triage.mockResolvedValue({ isCandidate: true, reasons: ["No website listed on Google"] });
+    enrichMod.enrichContact.mockResolvedValue({ email: "info@biz.com", emailSource: "own_website_contact_page", hasPublicEmail: true });
+
+    const r = await run({
+      stopAfter: "enrich", triggeredBy: "test", overrideKillSwitch: true, log: () => {}, syncToGhl: true,
+    });
+
+    expect(syncMod.resolvePipeline).toHaveBeenCalledWith("Website Offer Pipeline", ["New Lead"], "loc1", "key1");
+    expect(syncMod.upsertProspectContact).toHaveBeenCalledTimes(2);
+    expect(syncMod.openOpportunity).toHaveBeenCalledTimes(2);
+    expect(store.updateLead).toHaveBeenCalledWith(
+      expect.any(Number),
+      expect.objectContaining({ ghlContactId: "c1", ghlOpportunityId: "op1", pipelineStage: "New Lead" })
+    );
+    expect(r.syncedToGhl).toBe(2);
+  });
+
+  it("skips a lead with no phone number rather than failing the batch", async () => {
+    withCreds();
+    configMod.loadQuarryConfig.mockReturnValue({
+      ...CONFIG,
+      ghlPipeline: { name: "Website Offer Pipeline", stages: ["New Lead"] },
+    });
+    discovery.discover.mockResolvedValue({
+      results: [{ ...place("a", "trade-service", null), phone: null }],
+      searched: 1, skippedAlreadySeen: 0, skippedClosed: 0, detailsCalls: 1,
+    });
+    triageMod.triage.mockResolvedValue({ isCandidate: true, reasons: ["No website listed on Google"] });
+    enrichMod.enrichContact.mockResolvedValue({ email: null, emailSource: null, hasPublicEmail: false });
+
+    const r = await run({
+      stopAfter: "enrich", triggeredBy: "test", overrideKillSwitch: true, log: () => {}, syncToGhl: true,
+    });
+
+    expect(syncMod.upsertProspectContact).not.toHaveBeenCalled();
+    expect(r.syncedToGhl).toBe(0);
+    expect(r.errors.some((e) => e.step === "sync")).toBe(true);
+  });
+
+  it("logs and skips sync entirely when GHL isn't configured for the client, without failing the run", async () => {
+    withCreds();
+    configMod.loadQuarryConfig.mockReturnValue({
+      ...CONFIG,
+      ghlPipeline: { name: "Website Offer Pipeline", stages: ["New Lead"] },
+    });
+    ghlMod.getGhlConfig.mockResolvedValueOnce(null);
+    discovery.discover.mockResolvedValue({
+      results: [place("a", "trade-service", null)],
+      searched: 1, skippedAlreadySeen: 0, skippedClosed: 0, detailsCalls: 1,
+    });
+    triageMod.triage.mockResolvedValue({ isCandidate: true, reasons: ["No website listed on Google"] });
+    enrichMod.enrichContact.mockResolvedValue({ email: null, emailSource: null, hasPublicEmail: false });
+
+    const r = await run({
+      stopAfter: "enrich", triggeredBy: "test", overrideKillSwitch: true, log: () => {}, syncToGhl: true,
+    });
+
+    expect(syncMod.resolvePipeline).not.toHaveBeenCalled();
+    expect(r.syncedToGhl).toBe(0);
+  });
+});
+
+describe("run — contactability gate", () => {
+  it("keeps a hard-fact lead approved once enrichment finds an email", async () => {
+    withCreds();
+    configMod.loadQuarryConfig.mockReturnValue({ ...CONFIG, autoApprove: true, phone: { ...CONFIG.phone, enabled: false } });
+    discovery.discover.mockResolvedValue({
+      results: [place("a", "trade-service", null)],
+      searched: 1, skippedAlreadySeen: 0, skippedClosed: 0, detailsCalls: 1,
+    });
+    triageMod.triage.mockResolvedValue({ isCandidate: true, reasons: ["No website listed on Google"] });
+    enrichMod.enrichContact.mockResolvedValue({ email: "info@biz.com", emailSource: "own_website_homepage", hasPublicEmail: true });
+
+    const r = await run({ stopAfter: "enrich", triggeredBy: "test", overrideKillSwitch: true, log: () => {} });
+
+    expect(r.autoApproved).toBe(1);
+    expect(r.heldForNoContact).toBe(0);
+    expect(store.updateLead.mock.calls.some((c: any) => c[1].approvalStatus === "pending")).toBe(false);
+  });
+
+  it("walks an auto-approved lead back to pending when enrichment finds no email and no mobile", async () => {
+    withCreds();
+    configMod.loadQuarryConfig.mockReturnValue({ ...CONFIG, autoApprove: true, phone: { ...CONFIG.phone, enabled: false } });
+    discovery.discover.mockResolvedValue({
+      results: [place("a", "trade-service", null)],
+      searched: 1, skippedAlreadySeen: 0, skippedClosed: 0, detailsCalls: 1,
+    });
+    triageMod.triage.mockResolvedValue({ isCandidate: true, reasons: ["No website listed on Google"] });
+    enrichMod.enrichContact.mockResolvedValue({ email: null, emailSource: null, hasPublicEmail: false });
+
+    const r = await run({ stopAfter: "enrich", triggeredBy: "test", overrideKillSwitch: true, log: () => {} });
+
+    expect(r.autoApproved).toBe(0);
+    expect(r.heldForNoContact).toBe(1);
+    expect(store.updateLead).toHaveBeenCalledWith(1, { approvalStatus: "pending" });
+  });
+
+  it("passes the enriched email through to GHL sync, not the stale pre-enrichment value", async () => {
+    // upsertProspectContact reads lead.email off the same in-memory object
+    // enrichment just populated — a DB-only write here would leave it null.
+    withCreds();
+    configMod.loadQuarryConfig.mockReturnValue({
+      ...CONFIG, autoApprove: true, phone: { ...CONFIG.phone, enabled: false },
+      ghlPipeline: { name: "Website Offer Pipeline", stages: ["New Lead"] },
+    });
+    discovery.discover.mockResolvedValue({
+      results: [place("a", "trade-service", null)],
+      searched: 1, skippedAlreadySeen: 0, skippedClosed: 0, detailsCalls: 1,
+    });
+    triageMod.triage.mockResolvedValue({ isCandidate: true, reasons: ["No website listed on Google"] });
+    enrichMod.enrichContact.mockResolvedValue({ email: "info@biz.com", emailSource: "own_website_homepage", hasPublicEmail: true });
+
+    await run({
+      stopAfter: "enrich", triggeredBy: "test", overrideKillSwitch: true, log: () => {}, syncToGhl: true,
+    });
+
+    expect(syncMod.upsertProspectContact).toHaveBeenCalledWith(
+      expect.objectContaining({ email: "info@biz.com" }),
+      "loc1", "key1"
+    );
   });
 });

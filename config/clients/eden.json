@@ -56,9 +56,9 @@
     "clientChannel": ""
   },
   "quarry": {
-    "_comment": "Quarry prospects Montreal small businesses with absent or dated websites, builds them a speculative site, and opens a screenshot-first SMS sequence. Eden's own acquisition, same as the forge block above. Search queries drive BOTH discovery and category assignment — Google Places types are too coarse to pick a design brief from, so the query that surfaced a business decides which brief it gets.",
-    "enabled": false,
-    "enabledNote": "OFF until Jacob confirms the per-API spend and the Lovable plan credit ceiling. Every billable call in this agent checks this flag first.",
+    "_comment": "Quarry prospects small businesses with absent or dated websites and runs an email-first outreach sequence offering a free preview and a call. Eden's own acquisition, same as the forge block above. Search queries drive BOTH discovery and category assignment — Google Places types are too coarse to pick a design brief from, so the query that surfaced a business decides which brief it gets.",
+    "enabled": true,
+    "enabledNote": "Flipped on 2026-09-04 — Jacob confirmed real discovery + real GHL contacts + real send are all approved. Every billable call in this agent checks this flag first; flip back to false to pause everything (discovery, GHL sync, and sending) at once.",
     "searches": [
       {
         "query": "picture framing Montreal",
@@ -116,6 +116,64 @@
         "maxResults": 20
       }
     ],
+    "categoryTemplates": [
+      {
+        "query": "picture framing",
+        "category": "trade-service",
+        "maxResults": 20
+      },
+      {
+        "query": "shoe repair",
+        "category": "trade-service",
+        "maxResults": 20
+      },
+      {
+        "query": "locksmith",
+        "category": "trade-service",
+        "maxResults": 20
+      },
+      {
+        "query": "upholstery repair",
+        "category": "trade-service",
+        "maxResults": 20
+      },
+      {
+        "query": "antique dealer",
+        "category": "retail-boutique",
+        "maxResults": 20
+      },
+      {
+        "query": "florist",
+        "category": "retail-boutique",
+        "maxResults": 20
+      },
+      {
+        "query": "tailor",
+        "category": "retail-boutique",
+        "maxResults": 20
+      },
+      {
+        "query": "record store",
+        "category": "retail-boutique",
+        "maxResults": 20
+      },
+      {
+        "query": "accountant",
+        "category": "professional",
+        "maxResults": 20
+      },
+      {
+        "query": "notary",
+        "category": "professional",
+        "maxResults": 20
+      },
+      {
+        "query": "denturist",
+        "category": "professional",
+        "maxResults": 20
+      }
+    ],
+    "categoryTemplatesNote": "Same category mix as `searches` above, minus the city baked into the query string — buildLocationSearches combines these with whatever location a quarry_run_discovery request names, per Jacob's 2026-09-04 direction to stop limiting discovery to Montreal and focus on English-speaking areas outside Quebec instead. `searches` itself is left as-is; it's unused now that discovery runs on-demand per location rather than off a fixed recurring list.",
     "discovery": {
       "recheckAfterDays": 90,
       "recheckAfterDaysNote": "How long a place_id stays skipped before it is looked at again. Google Places terms restrict how long its content may be cached — check the current policy before raising this. 30 days is the figure their terms have historically used for most content.",
@@ -137,7 +195,9 @@
       "copyrightYearBefore": 2018,
       "visionScoring": true,
       "visionScoreThreshold": 6,
-      "visionScoreThresholdNote": "A site that passes every technical check but scores >= 6 for looking dated still qualifies. This is the branch that catches a technically-fine site that looks like 2009."
+      "visionScoreThresholdNote": "A site that passes every technical check but scores >= 6 for looking dated still qualifies. This is the branch that catches a technically-fine site that looks like 2009.",
+      "qualifyMissingWebsite": false,
+      "qualifyMissingWebsiteNote": "Set false 2026-09-04 per Jacob's direction: focus on outdated-but-existing sites for now, since email is the only send channel and enrichContact can only find a contact email by reading a business's OWN website — a no-website lead qualifies but can never be reached under email-only outreach (confirmed live: 3/3 leads in a real Belleville run had no email precisely because 2 of them had no site to scrape). Flip back to true once phone verification (quarry.phone.enabled) is back on as a second channel, since Google Places always returns a phone number even for a no-website business."
     },
     "phone": {
       "provider": "twilio",
@@ -231,6 +291,9 @@
         "Lost/Nurture"
       ],
       "stagesNote": "Screenshot Sent and Site Sent are deliberately separate — the offer turns on a picture going out first and the link only following a positive reply, so collapsing them would hide the one drop-off worth measuring. Note that Lost/Nurture merges two outcomes: a lead that said no and a lead worth re-touching later read identically in the funnel. Split it if the nurture path ever gets its own cadence."
-    }
+    },
+    "autoApprove": true,
+    "autoApproveNote": "Turned on 2026-09-04 — Jacob does not want to click approve on every lead. Only applies to leads qualified on a hard technical fact (no site / broken HTTPS / not mobile-friendly / stale markup); a lead qualified purely by the vision pass's \"looks dated\" opinion still lands as pending and gets posted to reviewChannel instead, since that judgment call is the one place a false positive is actually likely. Set to false to go back to approving everything by hand.",
+    "reviewChannel": "websites-eden"
   }
 }

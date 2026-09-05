@@ -71,6 +71,34 @@ describe("MetaActions — creation always comes in paused", () => {
     expect(JSON.parse(JSON.stringify(options.data))).toMatchObject({ status: "PAUSED" });
   });
 
+  it("createCampaign defaults bid_strategy=LOWEST_COST_WITHOUT_CAP for a CBO campaign (dailyBudgetCents set)", async () => {
+    // CBO campaigns carry bid_strategy at the CAMPAIGN level, not the ad
+    // set — without an explicit default here, every ad set created under
+    // it later fails unless it supplies a bid cap the account never asked
+    // the operator for.
+    const client = makeFakeClient();
+    const actions = new MetaActions(client);
+    await actions.createCampaign({ name: "Test", objective: "OUTCOME_LEADS", dailyBudgetCents: 5000 });
+    const [, , options] = (client.call as any).mock.calls[0];
+    expect(options.data.bid_strategy).toBe("LOWEST_COST_WITHOUT_CAP");
+  });
+
+  it("createCampaign respects an explicit bidStrategy override for a CBO campaign", async () => {
+    const client = makeFakeClient();
+    const actions = new MetaActions(client);
+    await actions.createCampaign({ name: "Test", objective: "OUTCOME_LEADS", dailyBudgetCents: 5000, bidStrategy: "LOWEST_COST_WITH_BID_CAP" });
+    const [, , options] = (client.call as any).mock.calls[0];
+    expect(options.data.bid_strategy).toBe("LOWEST_COST_WITH_BID_CAP");
+  });
+
+  it("createCampaign omits bid_strategy entirely for a non-CBO campaign (no dailyBudgetCents, no explicit bidStrategy)", async () => {
+    const client = makeFakeClient();
+    const actions = new MetaActions(client);
+    await actions.createCampaign({ name: "Test", objective: "OUTCOME_LEADS" });
+    const [, , options] = (client.call as any).mock.calls[0];
+    expect(options.data.bid_strategy).toBeUndefined();
+  });
+
   it("createAdset always sets status=PAUSED", async () => {
     const client = makeFakeClient();
     const actions = new MetaActions(client);
@@ -79,6 +107,54 @@ describe("MetaActions — creation always comes in paused", () => {
     });
     const [, , options] = (client.call as any).mock.calls[0];
     expect(options.data.status).toBe("PAUSED");
+  });
+
+  it("createAdset defaults to bid_strategy=LOWEST_COST_WITHOUT_CAP when no bid amount is given", async () => {
+    // Some ad accounts default to a bid strategy (LOWEST_COST_WITH_BID_CAP
+    // or TARGET_COST) that Meta rejects the ad set for unless bid_amount is
+    // also set — this must never be left to the account default.
+    const client = makeFakeClient();
+    const actions = new MetaActions(client);
+    await actions.createAdset({
+      campaignId: "1", name: "Test", targeting: {}, optimizationGoal: "LINK_CLICKS", billingEvent: "IMPRESSIONS",
+    });
+    const [, , options] = (client.call as any).mock.calls[0];
+    expect(options.data.bid_strategy).toBe("LOWEST_COST_WITHOUT_CAP");
+    expect(options.data.bid_amount).toBeUndefined();
+  });
+
+  it("createAdset switches to bid_strategy=LOWEST_COST_WITH_BID_CAP when a bid amount is given", async () => {
+    const client = makeFakeClient();
+    const actions = new MetaActions(client);
+    await actions.createAdset({
+      campaignId: "1", name: "Test", targeting: {}, optimizationGoal: "LINK_CLICKS", billingEvent: "IMPRESSIONS",
+      bidAmountCents: 250,
+    });
+    const [, , options] = (client.call as any).mock.calls[0];
+    expect(options.data.bid_strategy).toBe("LOWEST_COST_WITH_BID_CAP");
+    expect(options.data.bid_amount).toBe("250");
+  });
+
+  it("createAdset sends promoted_object when both pixelId and customEventType are given", async () => {
+    const client = makeFakeClient();
+    const actions = new MetaActions(client);
+    await actions.createAdset({
+      campaignId: "1", name: "Test", targeting: {}, optimizationGoal: "OFFSITE_CONVERSIONS", billingEvent: "IMPRESSIONS",
+      pixelId: "2075698479609404", customEventType: "LEAD",
+    });
+    const [, , options] = (client.call as any).mock.calls[0];
+    expect(JSON.parse(options.data.promoted_object)).toEqual({ pixel_id: "2075698479609404", custom_event_type: "LEAD" });
+  });
+
+  it("createAdset omits promoted_object when only one of pixelId/customEventType is given", async () => {
+    const client = makeFakeClient();
+    const actions = new MetaActions(client);
+    await actions.createAdset({
+      campaignId: "1", name: "Test", targeting: {}, optimizationGoal: "LINK_CLICKS", billingEvent: "IMPRESSIONS",
+      pixelId: "2075698479609404",
+    });
+    const [, , options] = (client.call as any).mock.calls[0];
+    expect(options.data.promoted_object).toBeUndefined();
   });
 });
 

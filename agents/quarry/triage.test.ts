@@ -1,7 +1,9 @@
 import { describe, expect, it } from "vitest";
 import {
   applyVisionScore,
+  isHighConfidenceCandidate,
   latestCopyrightYear,
+  triage,
   triageHtml,
   triageMissingSite,
 } from "./triage";
@@ -104,5 +106,45 @@ describe("applyVisionScore", () => {
     const result = applyVisionScore(broken, 1, "Looks great", 6);
     expect(result.isCandidate).toBe(true);
     expect(result.reasons).toContain("No viewport meta tag — not mobile responsive");
+  });
+});
+
+describe("isHighConfidenceCandidate", () => {
+  it("is high confidence for a hard technical fact — no site at all", () => {
+    expect(isHighConfidenceCandidate(["No website listed on Google"])).toBe(true);
+  });
+
+  it("is high confidence for a broken-HTTPS/mobile finding", () => {
+    expect(isHighConfidenceCandidate(["No viewport meta tag — not mobile responsive"])).toBe(true);
+  });
+
+  it("is NOT high confidence when the only reason is the vision pass's opinion", () => {
+    // This is the exact case the vision path produces on its own — see
+    // applyVisionScore, which only ever runs on a site the technical checks
+    // already cleared.
+    expect(isHighConfidenceCandidate(["Looks dated (8/10)"])).toBe(false);
+  });
+
+  it("is high confidence when a hard reason accompanies the vision opinion", () => {
+    expect(isHighConfidenceCandidate(["No HTTPS", "Looks dated (7/10)"])).toBe(true);
+  });
+
+  it("is not high confidence for an empty reasons list", () => {
+    expect(isHighConfidenceCandidate([])).toBe(false);
+  });
+});
+
+describe("triage — qualifyMissingWebsite", () => {
+  it("qualifies a no-website lead by default, same as triageMissingSite", async () => {
+    const result = await triage(null, OPTS);
+    expect(result).toEqual(triageMissingSite());
+  });
+
+  it("does not qualify a no-website lead when qualifyMissingWebsite is false", async () => {
+    // Email is the only send channel, and enrichContact can only find a
+    // contact email by reading a business's OWN website — a no-website lead
+    // would otherwise qualify but never be reachable.
+    const result = await triage(null, { ...OPTS, qualifyMissingWebsite: false });
+    expect(result).toEqual({ isCandidate: false, reasons: [] });
   });
 });
