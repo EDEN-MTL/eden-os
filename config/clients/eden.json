@@ -138,6 +138,36 @@
         "maxResults": 20
       },
       {
+        "query": "auto repair shop",
+        "category": "trade-service",
+        "maxResults": 20
+      },
+      {
+        "query": "appliance repair",
+        "category": "trade-service",
+        "maxResults": 20
+      },
+      {
+        "query": "plumber",
+        "category": "trade-service",
+        "maxResults": 20
+      },
+      {
+        "query": "electrician",
+        "category": "trade-service",
+        "maxResults": 20
+      },
+      {
+        "query": "hvac contractor",
+        "category": "trade-service",
+        "maxResults": 20
+      },
+      {
+        "query": "pest control",
+        "category": "trade-service",
+        "maxResults": 20
+      },
+      {
         "query": "antique dealer",
         "category": "retail-boutique",
         "maxResults": 20
@@ -158,6 +188,36 @@
         "maxResults": 20
       },
       {
+        "query": "bakery",
+        "category": "retail-boutique",
+        "maxResults": 20
+      },
+      {
+        "query": "pet groomer",
+        "category": "retail-boutique",
+        "maxResults": 20
+      },
+      {
+        "query": "jewelry store",
+        "category": "retail-boutique",
+        "maxResults": 20
+      },
+      {
+        "query": "bike shop",
+        "category": "retail-boutique",
+        "maxResults": 20
+      },
+      {
+        "query": "independent bookstore",
+        "category": "retail-boutique",
+        "maxResults": 20
+      },
+      {
+        "query": "gift shop",
+        "category": "retail-boutique",
+        "maxResults": 20
+      },
+      {
         "query": "accountant",
         "category": "professional",
         "maxResults": 20
@@ -171,9 +231,44 @@
         "query": "denturist",
         "category": "professional",
         "maxResults": 20
+      },
+      {
+        "query": "chiropractor",
+        "category": "professional",
+        "maxResults": 20
+      },
+      {
+        "query": "dentist",
+        "category": "professional",
+        "maxResults": 20
+      },
+      {
+        "query": "veterinarian",
+        "category": "professional",
+        "maxResults": 20
+      },
+      {
+        "query": "physiotherapist",
+        "category": "professional",
+        "maxResults": 20
+      },
+      {
+        "query": "optometrist",
+        "category": "professional",
+        "maxResults": 20
+      },
+      {
+        "query": "law firm",
+        "category": "professional",
+        "maxResults": 20
+      },
+      {
+        "query": "real estate agent",
+        "category": "professional",
+        "maxResults": 20
       }
     ],
-    "categoryTemplatesNote": "Same category mix as `searches` above, minus the city baked into the query string — buildLocationSearches combines these with whatever location a quarry_run_discovery request names, per Jacob's 2026-09-04 direction to stop limiting discovery to Montreal and focus on English-speaking areas outside Quebec instead. `searches` itself is left as-is; it's unused now that discovery runs on-demand per location rather than off a fixed recurring list.",
+    "categoryTemplatesNote": "Expanded from the original 11-query Montreal-era list to 30 on 2026-09-05 per Jacob's direction, so a run isn't limited to a narrow, somewhat arbitrary niche mix (denturist, record store, antique dealer are low-density in most towns) — broader, more universal small-business categories across all three design-brief buckets (trade-service, retail-boutique, professional) so discovery finds a representative slice of real businesses in whatever city is named, not just whichever of the original 11 happen to exist there. Text Search itself is cheap and bills per request regardless of result count, so 30 queries instead of 11 costs a few more cheap calls per run, not more of the expensive Details tier — discover()'s round-robin (agents/quarry/discovery.ts) still caps real spend at maxLeads regardless of how many categories are configured. Same category mix as `searches` above, minus the city baked into the query string — buildLocationSearches combines these with whatever location a quarry_run_discovery request names, per Jacob's 2026-09-04 direction to stop limiting discovery to Montreal and focus on English-speaking areas outside Quebec instead. `searches` itself is left as-is; it's unused now that discovery runs on-demand per location rather than off a fixed recurring list.",
     "discovery": {
       "recheckAfterDays": 90,
       "recheckAfterDaysNote": "How long a place_id stays skipped before it is looked at again. Google Places terms restrict how long its content may be cached — check the current policy before raising this. 30 days is the figure their terms have historically used for most content.",

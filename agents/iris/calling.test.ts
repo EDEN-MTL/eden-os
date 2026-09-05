@@ -84,9 +84,14 @@ describe("buildCallPayload", () => {
     expect(payload.assistant.voicemailMessage).toContain(BASE_PARAMS.brandName);
   });
 
-  it("wires no tools at all when nothing (transferNumber, contactId) is given", () => {
+  it("wires only the always-available endCall tool when nothing else (transferNumber, contactId) is given", () => {
     const payload = buildCallPayload(BASE_PARAMS, VAPI_CONFIG);
-    expect(payload.assistant.model.tools).toBeUndefined();
+    expect(payload.assistant.model.tools).toEqual([{ type: "endCall" }]);
+  });
+
+  it("always wires the endCall tool, regardless of what else is available", () => {
+    const withTransfer = buildCallPayload({ ...BASE_PARAMS, transferNumber: "+17097058841" }, VAPI_CONFIG);
+    expect(withTransfer.assistant.model.tools?.some((t) => t.type === "endCall")).toBe(true);
   });
 
   describe("transferCall tool", () => {

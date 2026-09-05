@@ -43,7 +43,7 @@ function lead(over: Partial<QuarryLead> = {}): QuarryLead {
     phone: "+15145550100", phoneLineType: "mobile", isMobile: true, email: null,
     emailSource: null, hasPublicEmail: false, website: null, category: "trade-service",
     searchQuery: null, rating: null, userRatingsTotal: null, businessStatus: null,
-    photoRefs: [], isCandidate: true, reasons: [], outdatedScore: null, outdatedReasoning: null,
+    photoRefs: [], placeTypes: [], googleMapsUri: null, isCandidate: true, reasons: [], outdatedScore: null, outdatedReasoning: null,
     previewUrl: "https://p.test", previewImageUrl: "https://p.test/i.png", generator: "lovable",
     generationError: null, ghlContactId: "c1", ghlOpportunityId: "o1", pipelineStage: "New Lead",
     approvalStatus: "approved", dnclChecked: false, holdoutReason: null, sentAt: null, repliedAt: null,
