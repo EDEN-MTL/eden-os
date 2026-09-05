@@ -1,5 +1,5 @@
 import { Attachment, ToolDef } from "../../shared/claude";
-import { BaseAgent } from "../base-agent";
+import { BaseAgent, ToolContext } from "../base-agent";
 import { buildLocationSearches, loadQuarryConfig } from "./config";
 import { getLead, getPipelineStats, listLeads, updateLead } from "./store";
 import { QuarryDisabledError, sendPending } from "./send";
@@ -9,6 +9,7 @@ import {
   run,
 } from "./pipeline";
 import { PlaywrightCapturer } from "./screenshot";
+import { sendMessage } from "../../shared/slack";
 
 const TOOLS: ToolDef[] = [
   {
@@ -131,7 +132,7 @@ Respond concisely, like a teammate texting a quick update — not a report.`;
     return TOOLS;
   }
 
-  protected async executeTool(name: string, input: any, _attachment?: Attachment): Promise<string> {
+  protected async executeTool(name: string, input: any, _attachment?: Attachment, ctx?: ToolContext): Promise<string> {
     switch (name) {
       case "quarry_pipeline_stats": {
         const stats = await getPipelineStats();
@@ -166,13 +167,31 @@ Respond concisely, like a teammate texting a quick update — not a report.`;
         const config = loadQuarryConfig("eden");
         if (!config) return JSON.stringify({ error: "No quarry config for eden" });
         const searches = buildLocationSearches(config, location);
+        const maxLeads = typeof input.maxLeads === "number" ? input.maxLeads : 50;
+        // Confirmed live: a real batch checks every business one at a time
+        // (site fetch, vision screenshot, enrichment) and can take 15-20+
+        // minutes for 50 leads, with nothing posted until the whole thing
+        // finishes — from Jacob's side that reads as "did this even receive
+        // the request?" An immediate ack here doesn't fix the wait, but it
+        // means silence is never mistaken for "didn't hear you."
+        if (ctx) {
+          try {
+            await sendMessage("quarry", {
+              channel: ctx.channelId,
+              threadTs: ctx.threadTs,
+              text: `On it — checking up to ${maxLeads} businesses in ${location}. A batch this size can take several minutes; I'll post the full rundown here once it's done.`,
+            });
+          } catch (error) {
+            console.warn("[QRY] failed to post discovery acknowledgment:", error);
+          }
+        }
         try {
           const report = await run({
             clientId: "eden",
             stopAfter: "enrich",
             triggeredBy: `slack:quarry_run_discovery(${location})`,
             searches,
-            maxLeads: typeof input.maxLeads === "number" ? input.maxLeads : 50,
+            maxLeads,
             syncToGhl: true,
             capturer: new PlaywrightCapturer(),
           });
@@ -182,6 +201,7 @@ Respond concisely, like a teammate texting a quick update — not a report.`;
             qualified: report.qualified,
             autoApproved: report.autoApproved,
             needsReview: report.needsReview,
+            heldForNoContact: report.heldForNoContact,
             syncedToGhl: report.syncedToGhl,
             withEmail: report.withEmail,
             errors: report.errors.slice(0, 5),
