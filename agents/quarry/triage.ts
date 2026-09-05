@@ -113,22 +113,6 @@ export function triageHtml(
   return { isCandidate: reasons.length > 0, reasons };
 }
 
-/**
- * True when a lead's qualification rests on at least one hard, checkable
- * fact (no site, no HTTPS, not mobile-responsive, stale copyright/markup) —
- * not solely on the vision pass's subjective "this looks dated" judgment.
- *
- * Why this distinction and not just "isCandidate": the vision path only ever
- * runs on a site the technical checks already cleared (see pipeline.ts), so
- * a lead qualified purely by looks carries exactly one reason and it always
- * starts with "Looks dated" — a judgment call, not a fact a business owner
- * could independently verify. That is the one case worth a second pair of
- * eyes before auto-approving; a missing HTTPS certificate is not.
- */
-export function isHighConfidenceCandidate(reasons: string[]): boolean {
-  return reasons.some((r) => !r.startsWith("Looks dated"));
-}
-
 /** A business with no website at all — qualified without spending a request. */
 export function triageMissingSite(): TriageResult {
   return { isCandidate: true, reasons: ["No website listed on Google"] };
