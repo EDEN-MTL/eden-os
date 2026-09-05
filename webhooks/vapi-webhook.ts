@@ -3,6 +3,7 @@ import { Request, Response, Router } from "express";
 import { query } from "../shared/db";
 import { getGhlConfig, addContactTags, findOpenOpportunitiesForContact, updateOpportunityStage } from "../shared/ghl";
 import { loadIrisConfig } from "../agents/iris";
+import { reopenForNextAttempt } from "../agents/iris/dial-pending";
 
 /**
  * Vapi's endedReason for a warm transfer that actually connected — the
@@ -14,6 +15,47 @@ import { loadIrisConfig } from "../agents/iris";
  * other than this one.
  */
 const TRANSFER_SUCCEEDED_REASON = "assistant-forwarded-call";
+
+/**
+ * Vapi endedReason values meaning nobody real ever spoke — voicemail, no
+ * pickup, busy, or a technical failure before a real conversation could
+ * happen. Confirmed against Vapi's own OpenAPI schema, 2026-09-06 (the
+ * full endedReason string enum, not guessed). Everything NOT in this set
+ * — customer-ended-call*, assistant-ended-call*, assistant-forwarded-call,
+ * exceeded-max-duration — means a real person was genuinely on the line,
+ * however the call then went. Mark's rule, same date: only re-dial a lead
+ * who never actually answered; a real conversation, whatever its outcome,
+ * ends the automatic sequence.
+ */
+const NOT_ANSWERED_REASONS = new Set([
+  "voicemail",
+  "no-answer",
+  "customer-did-not-answer",
+  "customer-busy",
+  "call.forwarding.no-answer",
+  "call.forwarding.operator-busy",
+  "silence-timed-out",
+  "assistant-join-timed-out",
+  "manually-canceled",
+  "twilio-failed-to-connect-call",
+  "twilio-reported-customer-misdialed",
+  "vonage-rejected",
+  "phone-call-provider-closed-websocket",
+  "customer-did-not-give-microphone-permission",
+]);
+
+/**
+ * Fails toward NOT retrying on anything ambiguous (an unrecognized or
+ * missing endedReason) — same "cost of wrongly calling a real person
+ * twice vs. cost of wrongly stopping" asymmetry recheckFirstTouch's own
+ * doc comment already applies elsewhere in this codebase.
+ */
+export function wasAnswered(endedReason: string | null): boolean {
+  if (!endedReason) return true;
+  if (NOT_ANSWERED_REASONS.has(endedReason)) return false;
+  if (endedReason.startsWith("call.in-progress.error-") || endedReason.startsWith("call.ringing.error-")) return false;
+  return true;
+}
 
 /**
  * Verifies the X-Vapi-Secret header against VAPI_WEBHOOK_SECRET, same
@@ -54,11 +96,11 @@ async function handleEndOfCallReport(message: Record<string, any>): Promise<void
   const transcript = message?.artifact?.transcript ?? null;
   const endedReason = message?.endedReason ?? null;
 
-  const rows = await query<{ client_id: string; contact_id: string | null }>(
+  const rows = await query<{ client_id: string; contact_id: string | null; triggered_by: string }>(
     `UPDATE iris_call_log
      SET status = 'ended', ended_reason = $2, transcript = $3, ended_at = now(), raw = $4
      WHERE vapi_call_id = $1
-     RETURNING client_id, contact_id`,
+     RETURNING client_id, contact_id, triggered_by`,
     [callId, endedReason, transcript, JSON.stringify(message)]
   );
 
@@ -67,6 +109,39 @@ async function handleEndOfCallReport(message: Record<string, any>): Promise<void
   const row = rows[0];
   if (endedReason === TRANSFER_SUCCEEDED_REASON && row?.contact_id) {
     await handleSuccessfulTransfer(row.client_id, row.contact_id);
+  }
+
+  // Only the automatic dial-pending queue's own retry cadence gets
+  // reopened here — a manual test call (scripts/test-iris-call.ts etc.)
+  // has no cadence to continue even if it happens to share a contactId.
+  if (row?.contact_id && row.triggered_by === "automatic" && !wasAnswered(endedReason)) {
+    await maybeReopenPendingCall(row.client_id, row.contact_id);
+  }
+}
+
+/**
+ * Looks up the one iris_pending_calls row for this (client, contact) pair
+ * — UNIQUE(client_id, contact_id), so there's at most one — and reopens it
+ * for the next cadence attempt if it's still sitting in the 'placed'
+ * state this same call left it in (dial-pending.ts's markPlaced). Explicit
+ * callbacks are never reopened, same one-shot behavior as always.
+ */
+async function maybeReopenPendingCall(clientId: string, contactId: string): Promise<void> {
+  try {
+    const rows = await query<{ id: number; attempts_made: number; created_at: Date; is_explicit_callback: boolean; status: string }>(
+      `SELECT id, attempts_made, created_at, is_explicit_callback, status FROM iris_pending_calls
+       WHERE client_id = $1 AND contact_id = $2`,
+      [clientId, contactId]
+    );
+    const pending = rows[0];
+    if (!pending || pending.is_explicit_callback || pending.status !== "placed") return;
+
+    const reopened = await reopenForNextAttempt(pending.id, clientId, pending.attempts_made, pending.created_at);
+    console.log(
+      `[VAPI] Contact ${contactId} didn't answer — ${reopened ? "requeued for the next attempt" : "cadence exhausted, not requeuing"}.`
+    );
+  } catch (error) {
+    console.error(`[VAPI] Failed to check/reopen pending call for ${contactId}:`, error instanceof Error ? error.message : error);
   }
 }
 
