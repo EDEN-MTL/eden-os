@@ -29,6 +29,7 @@ import { buildLeadQualificationPrompt } from "./scripts";
 import { placeCall, CallingDisabledError } from "./calling";
 import { decideNextAttempt, nextAttemptTime } from "./cadence";
 import { transferNumberForIntent, callbackCalendarForIntent } from "./qualification";
+import { getGhlConfig, getLocationTimezone } from "../../shared/ghl";
 
 /**
  * Client timezone for cadence slot times (10am/2pm local — see
@@ -184,6 +185,16 @@ async function resolveOne(row: PendingCallRow): Promise<void> {
   const transferNumber = transferNumberForIntent(config, lead.intent) ?? undefined;
   const calendarId = callbackCalendarForIntent(config, lead.intent) ?? undefined;
 
+  // Mark's call, 2026-09-06: follow GHL's own configured location timezone
+  // live, rather than trusting a static config value that can drift out of
+  // sync with whatever's actually set there — same "verify against live
+  // data" discipline as everything else this codebase reads from GHL.
+  // Falls back to config.timezone (then the hardcoded default) if the
+  // live fetch fails, same fail-safe pattern used everywhere else.
+  const ghlConfig = await getGhlConfig(row.client_id).catch(() => null);
+  const liveTimezone = ghlConfig ? await getLocationTimezone(ghlConfig.locationId, ghlConfig.apiKey).catch(() => null) : null;
+  const promptConfig = { ...config, timezone: liveTimezone || config.timezone };
+
   try {
     const result = await placeCall({
       clientId: row.client_id,
@@ -199,7 +210,7 @@ async function resolveOne(row: PendingCallRow): Promise<void> {
       bedrooms: lead.bedrooms,
       financing: lead.financing,
       systemPrompt: buildLeadQualificationPrompt(
-        config,
+        promptConfig,
         lead,
         branding.brandName,
         branding.city,
