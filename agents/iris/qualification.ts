@@ -208,6 +208,8 @@ export function scoreQualification(answers: QualificationAnswers): { score: numb
     email: null,
     phone: "in-call",
     propertyInterest: null,
+    bedrooms: null,
+    workingWithRealtor: null,
     budget: answers.budget,
     timeline: answers.timeline,
     preApproved:

@@ -309,33 +309,6 @@ const FINANCING_PHRASES: Record<Exclude<Financing, null>, string> = {
   "not-approved": "not pre-approved yet",
 };
 
-/**
- * Turns what Scout/the lead form already established into a VERIFYING
- * question instead of Iris re-discovering it cold — Mark, 2026-09-05: the
- * buyer/seller tag and form answers already say what the lead wants, so
- * Iris's job on the call is to confirm it, not ask "are you looking to buy
- * or sell?" from scratch. Combines intent + area into one natural line when
- * both are known (matches the approved SOP example verbatim); falls back
- * to intent alone, or a plain area check when intent isn't known yet, so a
- * known fact is never silently dropped just because the other one is
- * missing.
- */
-function verifyIntentAndAreaLine(intent: CallIntent, area: string | null): string | null {
-  if (intent === "buyer" || intent === "upgrading") {
-    return area ? `You were looking to buy a home in ${area}, right?` : "You reached out about buying a home — still the plan?";
-  }
-  if (intent === "seller" || intent === "downsize") {
-    return area
-      ? `I can see you're looking at selling your place in ${area} — is that right?`
-      : "I can see you're looking at selling your home — is that right?";
-  }
-  return null;
-}
-
-function verifyAreaOnlyLine(area: string): string {
-  return `You mentioned you're interested in ${area} — is that right?`;
-}
-
 function verifyTimelineLine(intent: CallIntent, timeline: string): string {
   const verb = intent === "seller" || intent === "downsize" ? "sell" : "make a move";
   return `You mentioned you're looking to ${verb} within ${timeline} — does that still sound right?`;
@@ -343,6 +316,37 @@ function verifyTimelineLine(intent: CallIntent, timeline: string): string {
 
 function verifyFinancingLine(financing: Exclude<Financing, null>): string {
   return `I also see you mentioned you're ${FINANCING_PHRASES[financing]} — still accurate?`;
+}
+
+/**
+ * propertyInterest is PROPERTY TYPE ("Single Family Home"), not area — see
+ * NormalisedLead.propertyInterest's own doc comment for how that was
+ * confirmed live, 2026-09-06.
+ */
+function verifyPropertyTypeLine(propertyType: string): string {
+  return `You mentioned you're looking for a ${propertyType} — is that still what you're after?`;
+}
+
+function verifyBedroomsLine(bedrooms: string): string {
+  return `And you needed ${bedrooms} bedrooms, right?`;
+}
+
+function verifyBudgetLine(budget: string): string {
+  return `I also see you mentioned a budget around ${budget} — does that still sound right?`;
+}
+
+/**
+ * Mark, 2026-09-06: existing representation is captured on some clients'
+ * forms but was never actually verified — Iris already has standing
+ * instructions not to push a lead who has an agent (see
+ * EDGE_CASE_RESPONSES.buyerHasAgent/sellerHasAgentOrListed in the rules
+ * below); this just gives her the fact up front instead of only reacting
+ * if the lead happens to mention it mid-call.
+ */
+function verifyWorkingWithRealtorLine(workingWithRealtor: boolean): string {
+  return workingWithRealtor
+    ? "I also see you mentioned you're already working with a realtor — is that still the case?"
+    : "I also see you mentioned you're not currently working with a realtor — still accurate?";
 }
 
 /**
@@ -379,41 +383,53 @@ export function buildLeadQualificationPrompt(
 
   // Verifying lines are actual sentences to speak, confirming what Scout/the
   // form already established — never a generic "confirm it" instruction.
-  // stillNeeded stays the open-question fallback (config.questions) for
-  // whatever genuinely isn't known yet. Branches independently on intent vs.
-  // area so a known fact is never silently dropped just because the other
-  // one is missing — see verifyIntentAndAreaLine's own comment.
+  // stillNeeded stays the open-question fallback for whatever genuinely
+  // isn't known yet.
   const verifying: string[] = [];
   const stillNeeded: string[] = [];
 
-  if (lead.intent !== "unknown" && lead.propertyInterest) {
-    verifying.push(verifyIntentAndAreaLine(lead.intent, lead.propertyInterest)!);
-  } else if (lead.intent !== "unknown" && !lead.propertyInterest) {
-    // Bare intent (no area yet) is already confirmed by the opening's own
-    // contextLine below ("I was calling about the form you submitted online
-    // about buying a home — still the plan?") — asking a second, separate
-    // "still the plan?" here would just repeat the same question twice.
-    stillNeeded.push(config.questions[1]);
-  } else if (lead.intent === "unknown" && lead.propertyInterest) {
-    verifying.push(verifyAreaOnlyLine(lead.propertyInterest));
-    stillNeeded.push(config.questions[0]);
-  } else {
-    stillNeeded.push(config.questions[0]);
-    stillNeeded.push(config.questions[1]);
-  }
+  // Bare intent is already confirmed by the opening's own contextLine below
+  // ("I was calling about the form you submitted online about buying a
+  // home — still the plan?") when it's known — asking a second, separate
+  // "still the plan?" here would just repeat the same question twice. Only
+  // ask it fresh when contextLine has nothing to work with (intent unknown).
+  if (lead.intent === "unknown") stillNeeded.push(config.questions[0]);
 
-  // Property type + bedroom/bathroom count — Jacob's live feedback,
-  // 2026-09-04. There's no GHL field capturing this today (nothing in
-  // NormalisedLead tracks it), so it's always still-needed, never known.
-  stillNeeded.push(config.questions[2]);
+  // Area has no real data source on any client checked so far — always
+  // asked fresh. (lead.propertyInterest is NOT area, despite this slot's
+  // old "Area/property interest" label — see that field's own doc comment.)
+  stillNeeded.push(config.questions[1]);
+
+  // Property type + bedroom count — previously always one compound "still
+  // needed" question (Jacob's live feedback, 2026-09-04) since no GHL field
+  // captured either half. Mark, 2026-09-06: eden-sub-account-one's real
+  // intake form DOES capture both ("LF Property" = type, e.g. "Single
+  // Family Home"; "LF BEDROOM" = count) — verify whichever half is known,
+  // ask only the other half fresh, split into two natural turns either way
+  // rather than ever asking the old compound question verbatim. Bathroom
+  // count has no field on any client checked so far, folded into the
+  // bedroom fallback question.
+  if (lead.propertyInterest) verifying.push(verifyPropertyTypeLine(lead.propertyInterest));
+  else stillNeeded.push("What type of home are you looking for?");
+
+  if (lead.bedrooms) verifying.push(verifyBedroomsLine(lead.bedrooms));
+  else stillNeeded.push("How many bedrooms and bathrooms do you need?");
 
   if (lead.timeline) verifying.push(verifyTimelineLine(lead.intent, lead.timeline));
   else stillNeeded.push(config.questions[3]);
 
   if (lead.intent !== "seller") {
     if (lead.financing) verifying.push(verifyFinancingLine(lead.financing));
-    else stillNeeded.push(config.questions[4]);
+    else stillNeeded.push("Are you preapproved for a mortgage yet?");
+
+    // Budget was captured and scored but never actually verified in
+    // conversation until now — confirmed live, 2026-09-06: a real lead's
+    // known $450k budget was still asked cold on every test call.
+    if (lead.budget) verifying.push(verifyBudgetLine(lead.budget));
+    else stillNeeded.push("What's your budget range?");
   }
+
+  if (lead.workingWithRealtor !== null) verifying.push(verifyWorkingWithRealtorLine(lead.workingWithRealtor));
 
   const verifyingBlock = verifying.length
     ? `## Verify what's already known — speak these as natural check-ins, ONE AT A TIME, pausing and waiting for their answer before the next one. Never re-discover any of this cold:

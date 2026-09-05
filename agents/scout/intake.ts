@@ -30,6 +30,8 @@ export interface ScoutFieldMap {
   isaNotes?: FieldRef;
   /** Captured for context; see scoreLead for why it is not scored. */
   workingWithRealtor?: FieldRef;
+  /** Bedroom count, when a client's form actually asks for it — see NormalisedLead.bedrooms. */
+  bedrooms?: FieldRef;
 }
 
 export interface ScoutConfig {
@@ -49,7 +51,19 @@ export interface NormalisedLead {
   name: string | null;
   email: string | null;
   phone: string | null;
+  /**
+   * Despite the name, this is PROPERTY TYPE ("Single Family Home"), not
+   * area/neighborhood — confirmed live, 2026-09-06, against
+   * eden-sub-account-one's real "LF Property" field and its form label
+   * ("What kind of property are you looking for?"). Kept as-is (not
+   * renamed) to avoid a wider rename across scoring/tests; verifying
+   * questions built on this field must phrase it as property type.
+   */
   propertyInterest: string | null;
+  /** Bedroom count, when a client's form actually asks for it (e.g. "LF BEDROOM"). Bathroom count has no equivalent field on any client checked so far. */
+  bedrooms: string | null;
+  /** Whether the lead already has real estate representation — captured for context, see scoreLead for why it is not scored. */
+  workingWithRealtor: boolean | null;
   budget: string | null;
   timeline: string | null;
   preApproved: boolean | null;
@@ -426,6 +440,8 @@ export function normaliseLead(
     email: payload.email || null,
     phone: normalizePhone(payload.phone),
     propertyInterest,
+    bedrooms: read(f.bedrooms),
+    workingWithRealtor: parseYesNo(f.workingWithRealtor ? read(f.workingWithRealtor) : null),
     budget: fieldBudget ?? notes.budget,
     timeline: fieldTimeline ?? notes.timeline,
     preApproved: financing === null ? null : financing === "cash" || financing === "pre-approved",
