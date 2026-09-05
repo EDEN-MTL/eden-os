@@ -88,35 +88,23 @@ export function processLead(payload: any, clientId: string): NormalisedLead | nu
  * Fired by a GHL workflow when the form applies the "buyer lead" / "seller
  * lead" tag at creation. Emits lead.enriched carrying firstTouch, which is
  * the flag Iris opens contact on.
+ *
+ * Mark's call, 2026-09-06, after finding GHL's workflow Webhook action can't
+ * reliably relay lead data at all (confirmed for tags; the same action wraps
+ * everything in a customData object and can only pass flat strings): stop
+ * depending on the workflow to relay lead data, and treat the webhook purely
+ * as a "something happened, here's a contactId" trigger. Everything else is
+ * fetched live and properly resolved via refreshLead — the same path already
+ * used for the callback-recheck case — rather than trusted from whatever
+ * Key/Value pairs happen to be wired into the workflow action. The webhook's
+ * own payload is now only a fallback for when the live fetch itself fails
+ * (missing GHL credentials, API outage), not the primary data source.
  */
 eventBus.subscribe("lead.captured", async (event) => {
   const clientId = clientIdForLocation(event.clientId) || event.clientId;
-  const data = { ...event.data };
+  const contactId = event.data.contactId;
 
-  // Confirmed live, 2026-09-06: GHL's workflow "Webhook" action has no real
-  // way to relay a contact's actual tags — its merge-tag picker offers only
-  // a same-named CUSTOM FIELD ("Contact tag"), never the real tags array, no
-  // matter what key/value pair a human adds to the action. So data.tags from
-  // the webhook itself can never be trusted for intent detection (this is
-  // exactly what silently sent "buyer lead"-tagged leads through as intent
-  // "unknown"). Fetching the contact directly gets GHL's real, current tags
-  // instead — best-effort: falls back to whatever the webhook sent rather
-  // than blocking intake entirely on a GHL API hiccup.
-  try {
-    const ghlConfig = await getGhlConfig(clientId);
-    if (ghlConfig && data.contactId) {
-      const contactResp = await getContact(data.contactId, ghlConfig.locationId, ghlConfig.apiKey);
-      const contact = contactResp?.contact ?? contactResp;
-      if (Array.isArray(contact?.tags)) data.tags = contact.tags;
-    }
-  } catch (error) {
-    console.warn(
-      `[SCT] Could not fetch live tags for ${data.contactId}, using webhook tags as-is:`,
-      error instanceof Error ? error.message : error
-    );
-  }
-
-  const lead = processLead(data, clientId);
+  const lead = (contactId ? await refreshLead(contactId, clientId) : null) ?? processLead(event.data, clientId);
   if (!lead) return;
   logLead(lead, "intake");
   eventBus.publish("lead.enriched", "scout", clientId, lead as unknown as Record<string, any>);
