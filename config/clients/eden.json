@@ -380,14 +380,13 @@
       "name": "Website Offer Pipeline",
       "stages": [
         "New Lead",
-        "Screenshot Sent",
-        "Site Sent",
+        "Initial Email Sent",
         "Replied Interest",
         "Call Booked",
         "Closed Won",
         "Lost/Nurture"
       ],
-      "stagesNote": "Screenshot Sent and Site Sent are deliberately separate — the offer turns on a picture going out first and the link only following a positive reply, so collapsing them would hide the one drop-off worth measuring. Note that Lost/Nurture merges two outcomes: a lead that said no and a lead worth re-touching later read identically in the funnel. Split it if the nurture path ever gets its own cadence."
+      "stagesNote": "Confirmed live against GHL's Pipelines tab 2026-09-06. Screenshot Sent and Site Sent (originally kept deliberately separate — a picture going out first, the link only following a positive reply) were collapsed by Jacob into one \"Initial Email Sent\" stage in the GHL UI, since email is the only channel that actually sends now and the two-stage SMS-era distinction stopped meaning anything. Note that Lost/Nurture merges two outcomes: a lead that said no and a lead worth re-touching later read identically in the funnel. Split it if the nurture path ever gets its own cadence."
     },
     "autoApprove": true,
     "autoApproveNote": "Turned on 2026-09-04 — Jacob does not want to click approve on every lead. Originally only covered leads qualified on a hard technical fact, holding a vision-only \"looks dated\" qualification for a human read first. Expanded 2026-09-05 per Jacob's explicit direction (\"I don't want to have to approve any leads\") to cover every qualified lead unconditionally — no more review-channel posting, no more pending-for-review bucket. The only lead that still lands as pending is one the contactability gate in pipeline.ts holds back for having no email and no verified mobile, and that lead is also never synced to GHL at all (same direction: \"don't import anyone who doesn't have emails\") — see syncToGhl's filter in pipeline.ts. Set autoApprove to false to go back to approving everything by hand."

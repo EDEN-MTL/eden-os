@@ -167,7 +167,7 @@ describe("sendOne", () => {
     expect(d.sendMMS).toHaveBeenCalledWith("c1", expect.stringContaining("Chaussures Rivard"), [
       "https://api.test/api/quarry/images/9.png",
     ]);
-    expect(d.moveStage).toHaveBeenCalledWith("o1", "Screenshot Sent");
+    expect(d.moveStage).toHaveBeenCalledWith("o1", "Initial Email Sent");
   });
 
   it("fills the business name into the template", async () => {
@@ -430,9 +430,9 @@ describe("sendEmailOne", () => {
       "hello@edensites.ca"
     );
     expect(store.updateLead).toHaveBeenCalledWith(1, expect.objectContaining({ emailSentAt: expect.any(String) }));
-    // "Screenshot Sent" — the closest fit in a fixed pipeline that predates
-    // the booking-first design; see the comment in outreach.ts.
-    expect(d.moveStage).toHaveBeenCalledWith("o1", "Screenshot Sent");
+    // "Initial Email Sent" — literally what just happened; see the comment
+    // in outreach.ts.
+    expect(d.moveStage).toHaveBeenCalledWith("o1", "Initial Email Sent");
   });
 
   it("does not touch isMobile/SMS state when sending email", async () => {

@@ -22,12 +22,12 @@ const ghlMod = vi.hoisted(() => ({
 vi.mock("../../shared/ghl", () => ghlMod);
 
 const configMod = vi.hoisted(() => ({
-  loadQuarryConfig: vi.fn(() => ({ ghlPipeline: { name: "Website Offer Pipeline", stages: ["New Lead", "Screenshot Sent"] } })),
+  loadQuarryConfig: vi.fn(() => ({ ghlPipeline: { name: "Website Offer Pipeline", stages: ["New Lead", "Initial Email Sent"] } })),
 }));
 vi.mock("./config", () => configMod);
 
 const syncMod = vi.hoisted(() => ({
-  resolvePipeline: vi.fn(async () => ({ pipelineId: "pl1", stageIds: { "New Lead": "st1", "Screenshot Sent": "st2" } })),
+  resolvePipeline: vi.fn(async () => ({ pipelineId: "pl1", stageIds: { "New Lead": "st1", "Initial Email Sent": "st2" } })),
 }));
 vi.mock("./sync", () => syncMod);
 
@@ -44,7 +44,7 @@ describe("buildEmailDeps", () => {
 
   it("forwards apiKey on moveStage — the call that was silently broken", async () => {
     const deps = await buildEmailDeps("eden");
-    await deps.moveStage("op1", "Screenshot Sent");
+    await deps.moveStage("op1", "Initial Email Sent");
     expect(ghlMod.updateOpportunityStage).toHaveBeenCalledWith("op1", "st2", "loc1", "key1");
   });
 });
