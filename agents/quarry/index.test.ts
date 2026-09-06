@@ -43,7 +43,12 @@ const configMocks = vi.hoisted(() => ({
 }));
 vi.mock("./config", () => configMocks);
 
-vi.mock("./screenshot", () => ({ PlaywrightCapturer: class {} }));
+const screenshotMocks = vi.hoisted(() => ({ close: vi.fn(async () => {}) }));
+vi.mock("./screenshot", () => ({
+  PlaywrightCapturer: class {
+    close = screenshotMocks.close;
+  },
+}));
 
 import { chatWithTools } from "../../shared/claude";
 import { sendMessage } from "../../shared/slack";
@@ -186,6 +191,41 @@ describe("Quarry — quarry_run_discovery", () => {
     const secondCallMessages = vi.mocked(chatWithTools).mock.calls[1][1] as any;
     const toolResult = JSON.parse(secondCallMessages[secondCallMessages.length - 1].content[0].content);
     expect(toolResult).toMatchObject({ location: "Ottawa, ON", discovered: 40, syncedToGhl: 12 });
+  });
+
+  it("closes the Playwright browser after a successful run — a real orphaned-process leak, confirmed live", async () => {
+    // Confirmed live 2026-09-06: this capturer's browser was never closed
+    // here, so every Slack-triggered run leaked one headless Chromium
+    // process. After a full day of runs, the shared 512MB Render instance
+    // (every agent in one process) ran out of memory and crashed mid-batch,
+    // twice, hours apart.
+    pipelineMocks.run.mockResolvedValue({
+      discovered: 1, qualified: 1, autoApproved: 1, heldForNoContact: 0, syncedToGhl: 1, withEmail: 1, errors: [],
+    });
+    vi.mocked(chatWithTools)
+      .mockResolvedValueOnce({
+        content: [toolUseBlock("c1", "quarry_run_discovery", { location: "Ottawa, ON" })],
+        stop_reason: "tool_use",
+      } as any)
+      .mockResolvedValueOnce(endTurn("Done."));
+
+    await quarryAgent.generateReply("k-close-1", "find businesses in Ottawa");
+
+    expect(screenshotMocks.close).toHaveBeenCalledTimes(1);
+  });
+
+  it("still closes the Playwright browser when the run itself throws", async () => {
+    pipelineMocks.run.mockRejectedValue(new Error("Places API 500"));
+    vi.mocked(chatWithTools)
+      .mockResolvedValueOnce({
+        content: [toolUseBlock("c1", "quarry_run_discovery", { location: "Ottawa, ON" })],
+        stop_reason: "tool_use",
+      } as any)
+      .mockResolvedValueOnce(endTurn("That failed."));
+
+    await quarryAgent.generateReply("k-close-2", "find businesses in Ottawa");
+
+    expect(screenshotMocks.close).toHaveBeenCalledTimes(1);
   });
 
   it("posts an immediate acknowledgment to the requesting channel/thread before the (slow) run finishes", async () => {

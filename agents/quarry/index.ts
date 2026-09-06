@@ -214,6 +214,14 @@ Respond concisely, like a teammate texting a quick update — not a report.`;
             console.warn("[QRY] failed to post discovery acknowledgment:", error);
           }
         }
+        // Held in its own variable so it can always be closed below — a
+        // discovery run launches a real headless Chromium child process for
+        // vision scoring, and nothing was ever closing it here. Confirmed
+        // live 2026-09-06: after a full day of Slack-triggered runs each
+        // leaking one orphaned browser process, this shared 512MB Render
+        // instance (every agent in one process) ran out of memory and
+        // crashed mid-batch — twice, hours apart, same pattern both times.
+        const capturer = new PlaywrightCapturer();
         try {
           const report = await run({
             clientId: "eden",
@@ -222,7 +230,7 @@ Respond concisely, like a teammate texting a quick update — not a report.`;
             searches,
             maxLeads,
             syncToGhl: true,
-            capturer: new PlaywrightCapturer(),
+            capturer,
           });
           return JSON.stringify({
             location,
@@ -242,6 +250,10 @@ Respond concisely, like a teammate texting a quick update — not a report.`;
             return JSON.stringify({ ran: false, reason: error.message });
           }
           throw error;
+        } finally {
+          await capturer.close().catch((closeError) => {
+            console.warn("[QRY] failed to close Playwright browser after discovery run:", closeError);
+          });
         }
       }
 
