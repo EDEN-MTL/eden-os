@@ -192,7 +192,7 @@ export function problemLine(lead: QuarryLead): string {
     return "your site looks like it hasn't been touched in years";
   }
   if (lead.outdatedReasoning) {
-    return `it looks a bit dated — ${lead.outdatedReasoning.toLowerCase().replace(/\.$/, "")}`;
+    return `it looks a bit dated, ${lead.outdatedReasoning.toLowerCase().replace(/\.$/, "")}`;
   }
   return "your website could use a refresh";
 }
@@ -206,13 +206,13 @@ export function problemLine(lead: QuarryLead): string {
  * present and reads as "I actually looked at your business", not a mail-merge.
  *
  * Designed to collapse to nothing cleanly when there is no rating — the
- * template places this right after "Hi —" with no surrounding punctuation of
+ * template places this right after "Hi," with no surrounding punctuation of
  * its own, so an empty string just leaves the greeting plain rather than a
  * gap or a stray comma.
  */
 export function contextLine(lead: QuarryLead): string {
   if (lead.rating && lead.userRatingsTotal) {
-    return ` I saw you're at ${lead.rating} stars on Google (${lead.userRatingsTotal} reviews) —`;
+    return ` I saw you're at ${lead.rating} stars on Google (${lead.userRatingsTotal} reviews), and`;
   }
   return "";
 }
