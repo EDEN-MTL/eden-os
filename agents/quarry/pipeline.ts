@@ -482,6 +482,7 @@ async function syncToGhl(
           name: lead.name,
           phone: lead.phone,
           email: lead.email,
+          website: lead.website,
           category: (lead.category as QuarryCategory) ?? null,
           previewUrl: lead.previewUrl,
           previewImageUrl: lead.previewImageUrl,
