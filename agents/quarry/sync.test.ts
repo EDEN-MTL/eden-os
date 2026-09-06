@@ -25,11 +25,12 @@ function mockPipelines(pipelines: any[]) {
 }
 
 // Transcribed from the live pipeline, including the names that look like
-// typos — see the note on QuarryStage in types.ts.
+// typos — see the note on QuarryStage in types.ts. Confirmed against GHL's
+// Pipelines tab 2026-09-06 — "Screenshot Sent"/"Site Sent" no longer exist,
+// collapsed into "Initial Email Sent".
 const WEBSITE_STAGES = [
   "New Lead",
-  "Screenshot Sent",
-  "Site Sent",
+  "Initial Email Sent",
   "Replied Interest",
   "Call Booked",
   "Closed Won",
@@ -56,8 +57,8 @@ describe("resolvePipeline", () => {
     );
 
     expect(resolved.pipelineId).toBe("pipe_website");
-    expect(resolved.stageIds["Screenshot Sent"]).toBe("stage_1");
-    expect(resolved.stageIds["Site Sent"]).toBe("stage_2");
+    expect(resolved.stageIds["Initial Email Sent"]).toBe("stage_1");
+    expect(resolved.stageIds["Replied Interest"]).toBe("stage_2");
     expect(Object.keys(resolved.stageIds)).toHaveLength(WEBSITE_STAGES.length);
   });
 
@@ -80,11 +81,11 @@ describe("resolvePipeline", () => {
   });
 
   it("names the missing stages when the pipeline exists but is incomplete", async () => {
-    mockPipelines([websitePipeline(["New Lead", "Site Sent", "Closed Won"])]);
+    mockPipelines([websitePipeline(["New Lead", "Replied Interest", "Closed Won"])]);
 
     await expect(
       resolvePipeline("Website Offer Pipeline", WEBSITE_STAGES, "loc_1", "key")
-    ).rejects.toThrow(/Screenshot Sent/);
+    ).rejects.toThrow(/Initial Email Sent/);
   });
 
   it("does not fuzzy-match a stage that differs by a trailing space", async () => {
@@ -93,8 +94,7 @@ describe("resolvePipeline", () => {
     mockPipelines([
       websitePipeline([
         "New Lead",
-        "Screenshot Sent ",
-        "Site Sent",
+        "Initial Email Sent ",
         "Replied Interest",
         "Call Booked",
         "Closed Won",
@@ -104,7 +104,7 @@ describe("resolvePipeline", () => {
 
     await expect(
       resolvePipeline("Website Offer Pipeline", WEBSITE_STAGES, "loc_1", "key")
-    ).rejects.toThrow(/Screenshot Sent/);
+    ).rejects.toThrow(/Initial Email Sent/);
   });
 });
 
