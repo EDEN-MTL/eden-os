@@ -75,10 +75,12 @@ export async function getContact(
 
 export async function searchContacts(
   query: string,
-  locationId: string
+  locationId: string,
+  apiKey?: string
 ): Promise<any> {
   return ghlRequest(
-    `/contacts/search?query=${encodeURIComponent(query)}&locationId=${locationId}`
+    `/contacts/search?query=${encodeURIComponent(query)}&locationId=${locationId}`,
+    { apiKey }
   );
 }
 
@@ -91,6 +93,7 @@ export async function createContact(
     name: string;
     phone?: string;
     email?: string;
+    website?: string;
     tags?: string[];
     locationId: string;
     source?: string;
