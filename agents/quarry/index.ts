@@ -53,7 +53,11 @@ const TOOLS: ToolDef[] = [
           type: "string",
           description: "City/region to search, e.g. \"Ottawa, ON\" or \"Kingston, Ontario\". Not limited to any fixed list.",
         },
-        maxLeads: { type: "number", description: "Cap on new businesses to discover this run. Default 50." },
+        maxLeads: {
+          type: "number",
+          description:
+            "Cap on RAW businesses to discover and triage this run — not the number of qualified, emailable leads that come out the other end. Most discovered businesses don't qualify, and most that qualify don't have a findable email, so this needs to be set well above whatever count was actually asked for. Default 50.",
+        },
       },
       required: ["location"],
     },
@@ -113,6 +117,26 @@ businesses in <city> and reach out to them" is asking for both steps —
 call quarry_run_discovery, then quarry_send_now once it's done, in the
 same turn, rather than stopping after discovery and waiting to be asked
 again.
+
+When Jacob asks for a specific number ("find 5 leads", "get me 5 qualified
+ones"), N means qualified, email-reachable leads that actually land in GHL
+— NOT quarry_run_discovery's maxLeads. maxLeads is a raw-discovery cap, and
+most discovered businesses don't qualify, and most that qualify don't have
+a findable email, so the real hit rate on a single pass is nowhere near
+1:1. Confirmed live (2026-09-05, Cornwall, ON): maxLeads 5 produced 1
+qualified lead and 0 synced to GHL. So: size maxLeads well above N up
+front (a reasonable starting guess is 6-10x N for a first pass, adjusted
+for what you already know about the area), and after the run, check
+syncedToGhl against N yourself — do not just report a shortfall and stop.
+If it's short, immediately run another discovery pass with a
+meaningfully higher maxLeads (or, if you have reason to think the area is
+just thin — a small/rural market, repeated vision timeouts, a string of
+no-website results that can't qualify with that config flag off — say so
+and suggest a nearby city instead of blindly escalating again). Cap
+yourself at two escalating attempts on the same location before stopping
+to report honestly that the market seems thin; don't loop indefinitely
+spending real Places/Claude money chasing a count that may not exist
+there.
 
 The full loop this agent runs end to end: quarry_run_discovery finds
 businesses and gets the reachable ones into GHL; auto-approve clears every
