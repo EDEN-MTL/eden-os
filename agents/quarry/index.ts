@@ -56,7 +56,7 @@ const TOOLS: ToolDef[] = [
         maxLeads: {
           type: "number",
           description:
-            "Cap on RAW businesses to discover and triage this run — not the number of qualified, emailable leads that come out the other end. Most discovered businesses don't qualify, and most that qualify don't have a findable email, so this needs to be set well above whatever count was actually asked for. Default 50.",
+            "Cap on RAW businesses to discover and triage this run — not the number of qualified, emailable leads that come out the other end. Most discovered businesses don't qualify, and most that qualify don't have a findable email. Hard-capped at 30 server-side regardless of what's passed here (this shared instance runs every agent in one process and cannot safely handle a much bigger batch in one run — confirmed live 2026-09-06). Default/max is 30.",
         },
       },
       required: ["location"],
@@ -124,19 +124,24 @@ ones"), N means qualified, email-reachable leads that actually land in GHL
 most discovered businesses don't qualify, and most that qualify don't have
 a findable email, so the real hit rate on a single pass is nowhere near
 1:1. Confirmed live (2026-09-05, Cornwall, ON): maxLeads 5 produced 1
-qualified lead and 0 synced to GHL. So: size maxLeads well above N up
-front (a reasonable starting guess is 6-10x N for a first pass, adjusted
-for what you already know about the area), and after the run, check
-syncedToGhl against N yourself — do not just report a shortfall and stop.
-If it's short, immediately run another discovery pass with a
-meaningfully higher maxLeads (or, if you have reason to think the area is
-just thin — a small/rural market, repeated vision timeouts, a string of
-no-website results that can't qualify with that config flag off — say so
-and suggest a nearby city instead of blindly escalating again). Cap
-yourself at two escalating attempts on the same location before stopping
-to report honestly that the market seems thin; don't loop indefinitely
-spending real Places/Claude money chasing a count that may not exist
-there.
+qualified lead and 0 synced to GHL.
+
+maxLeads is hard-capped at 30 server-side, no matter what you pass — this
+shared instance runs every agent in one process on limited memory, and a
+big batch can genuinely crash it (confirmed live 2026-09-06: chaining an
+80-lead run into a 60-lead run in the same conversation crashed the
+server minutes into the second one). So: default to 30 up front rather
+than trying to compute a bigger number yourself — a first pass this size
+usually lands somewhere in the 3-8 qualified range depending on the area.
+After the run, check syncedToGhl against N. If it's short, you MAY run
+one more pass at 30 (never more than one retry — that is now a hard rule,
+not a judgment call, since a second large batch stacked right after the
+first is exactly what caused the crash above), and if it's still short
+after that, stop and report the real number honestly along with why
+(small/rural market, repeated vision timeouts, a string of no-website
+results) rather than continuing to spend real Places/Claude money and
+server load chasing a count that may not exist in that city — suggest a
+nearby city instead.
 
 The full loop this agent runs end to end: quarry_run_discovery finds
 businesses and gets the reachable ones into GHL; auto-approve clears every
@@ -196,7 +201,19 @@ Respond concisely, like a teammate texting a quick update — not a report.`;
         const config = loadQuarryConfig("eden");
         if (!config) return JSON.stringify({ error: "No quarry config for eden" });
         const searches = buildLocationSearches(config, location);
-        const maxLeads = typeof input.maxLeads === "number" ? input.maxLeads : 50;
+        // Hard server-side ceiling, not just a prompt instruction — confirmed
+        // live 2026-09-06: asked to "keep escalating" toward a target count,
+        // the model chained two back-to-back runs (80, then 60 businesses)
+        // in one Slack turn, and the second one crashed this shared 512MB
+        // instance minutes in. A prompt telling it to self-limit is not
+        // reliable enough on its own; this clamp is what actually bounds the
+        // worst case regardless of what the model asks for or decides to do
+        // next. Revisit upward only once Quarry runs on a bigger instance,
+        // or independently of others, or the per-run memory footprint is
+        // reduced further (e.g. Playwright screenshot resolution).
+        const MAX_LEADS_HARD_CAP = 30;
+        const requestedMaxLeads = typeof input.maxLeads === "number" ? input.maxLeads : 30;
+        const maxLeads = Math.min(requestedMaxLeads, MAX_LEADS_HARD_CAP);
         // Confirmed live: a real batch checks every business one at a time
         // (site fetch, vision screenshot, enrichment) and can take 15-20+
         // minutes for 50 leads, with nothing posted until the whole thing
