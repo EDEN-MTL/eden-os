@@ -170,12 +170,12 @@ describe("Quarry — quarry_run_discovery", () => {
     pipelineMocks.run.mockResolvedValue(report);
     vi.mocked(chatWithTools)
       .mockResolvedValueOnce({
-        content: [toolUseBlock("c1", "quarry_run_discovery", { location: "Ottawa, ON", maxLeads: 50 })],
+        content: [toolUseBlock("c1", "quarry_run_discovery", { location: "Ottawa, ON", maxLeads: 30 })],
         stop_reason: "tool_use",
       } as any)
       .mockResolvedValueOnce(endTurn("Found 40 in Ottawa, 12 qualified, 9 auto-approved."));
 
-    const reply = await quarryAgent.generateReply("k8", "find 50 businesses in Ottawa");
+    const reply = await quarryAgent.generateReply("k8", "find 30 businesses in Ottawa");
 
     expect(reply).toBe("Found 40 in Ottawa, 12 qualified, 9 auto-approved.");
     expect(configMocks.buildLocationSearches).toHaveBeenCalledWith(expect.anything(), "Ottawa, ON");
@@ -183,7 +183,7 @@ describe("Quarry — quarry_run_discovery", () => {
       expect.objectContaining({
         clientId: "eden",
         stopAfter: "enrich",
-        maxLeads: 50,
+        maxLeads: 30,
         syncToGhl: true,
         searches: [{ query: "shoe repair Ottawa, ON", category: "trade-service", maxResults: 20 }],
       })
@@ -191,6 +191,38 @@ describe("Quarry — quarry_run_discovery", () => {
     const secondCallMessages = vi.mocked(chatWithTools).mock.calls[1][1] as any;
     const toolResult = JSON.parse(secondCallMessages[secondCallMessages.length - 1].content[0].content);
     expect(toolResult).toMatchObject({ location: "Ottawa, ON", discovered: 40, syncedToGhl: 12 });
+  });
+
+  it("hard-caps maxLeads at 30 server-side no matter what's requested — confirmed live, a bigger batch crashed the shared instance", async () => {
+    pipelineMocks.run.mockResolvedValue({
+      discovered: 1, qualified: 1, autoApproved: 1, heldForNoContact: 0, syncedToGhl: 1, withEmail: 1, errors: [],
+    });
+    vi.mocked(chatWithTools)
+      .mockResolvedValueOnce({
+        content: [toolUseBlock("c1", "quarry_run_discovery", { location: "Ottawa, ON", maxLeads: 200 })],
+        stop_reason: "tool_use",
+      } as any)
+      .mockResolvedValueOnce(endTurn("Done."));
+
+    await quarryAgent.generateReply("k-cap-1", "find 200 businesses in Ottawa");
+
+    expect(pipelineMocks.run).toHaveBeenCalledWith(expect.objectContaining({ maxLeads: 30 }));
+  });
+
+  it("defaults to 30 (not a larger number) when maxLeads is omitted", async () => {
+    pipelineMocks.run.mockResolvedValue({
+      discovered: 1, qualified: 1, autoApproved: 1, heldForNoContact: 0, syncedToGhl: 1, withEmail: 1, errors: [],
+    });
+    vi.mocked(chatWithTools)
+      .mockResolvedValueOnce({
+        content: [toolUseBlock("c1", "quarry_run_discovery", { location: "Ottawa, ON" })],
+        stop_reason: "tool_use",
+      } as any)
+      .mockResolvedValueOnce(endTurn("Done."));
+
+    await quarryAgent.generateReply("k-cap-2", "find businesses in Ottawa");
+
+    expect(pipelineMocks.run).toHaveBeenCalledWith(expect.objectContaining({ maxLeads: 30 }));
   });
 
   it("closes the Playwright browser after a successful run — a real orphaned-process leak, confirmed live", async () => {

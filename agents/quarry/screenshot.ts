@@ -73,7 +73,15 @@ export class PlaywrightCapturer implements ScreenshotCapturer {
     const browser = await this.ensureBrowser();
     const context = await browser.newContext({
       viewport: { width, height },
-      deviceScaleFactor: 2, // Retina — the image is judged on a phone screen.
+      // Dropped from 2 (retina) to 1 on 2026-09-06 — deviceScaleFactor 2
+      // quadruples the rendered pixel buffer (both dimensions double), and
+      // this shared 512MB Render instance was confirmed live to run out of
+      // memory and crash under a real batch. Claude's judgment of layout,
+      // typography, and spacing doesn't need retina density; only the
+      // fidelity a customer's own eye would need did, and that reasoning
+      // cost more than it was worth once memory became the binding
+      // constraint.
+      deviceScaleFactor: 1,
       userAgent: "EdenQuarryBot/1.0 (+https://edenmtl.com)",
     });
     const page = await context.newPage();
