@@ -3,7 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 const queryMock = vi.fn();
 vi.mock("../db", () => ({ query: (...args: unknown[]) => queryMock(...args) }));
 
-import { getGhlConfig } from "./index";
+import { getGhlConfig, getLocationBusinessProfile } from "./index";
 
 const ENV_KEYS = ["GHL_API_KEY", "GHL_LOCATION_ID", "GHL_ATTRIBUTION_PIPELINE_NAME"] as const;
 const originalEnv: Record<string, string | undefined> = {};
@@ -59,5 +59,50 @@ describe("getGhlConfig", () => {
     process.env.GHL_API_KEY = "env-key"; // incomplete — missing GHL_LOCATION_ID
 
     expect(await getGhlConfig("eden")).toBeNull();
+  });
+});
+
+describe("getLocationBusinessProfile", () => {
+  const originalFetch = global.fetch;
+  afterEach(() => {
+    global.fetch = originalFetch;
+  });
+
+  it("joins the business address parts and returns the business name", async () => {
+    global.fetch = vi.fn(async () => ({
+      ok: true,
+      status: 200,
+      json: async () => ({
+        location: {
+          business: {
+            name: "Eden Montreal Inc.",
+            address: "42 Real St",
+            city: "Montreal",
+            state: "QC",
+            postalCode: "H1A 1A1",
+          },
+        },
+      }),
+    })) as any;
+
+    const profile = await getLocationBusinessProfile("loc1", "key1");
+
+    expect(profile).toEqual({ name: "Eden Montreal Inc.", address: "42 Real St, Montreal, QC, H1A 1A1" });
+  });
+
+  it("returns null when the location has no business profile at all", async () => {
+    global.fetch = vi.fn(async () => ({
+      ok: true, status: 200, json: async () => ({ location: {} }),
+    })) as any;
+
+    expect(await getLocationBusinessProfile("loc1", "key1")).toBeNull();
+  });
+
+  it("returns a null name/address rather than an empty string when the business profile is missing them", async () => {
+    global.fetch = vi.fn(async () => ({
+      ok: true, status: 200, json: async () => ({ location: { business: { name: "", address: "" } } }),
+    })) as any;
+
+    expect(await getLocationBusinessProfile("loc1", "key1")).toEqual({ name: null, address: null });
   });
 });

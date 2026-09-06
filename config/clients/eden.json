@@ -342,9 +342,9 @@
         "non"
       ],
       "templates": {
-        "screenshot": "Hi, this is {{senderName}} — I put together a quick site redesign for {{businessName}}, wanted you to see it. Want the live link to click around?",
-        "link": "Here it is — {{previewUrl}}. Have a look and tell me what you'd change.",
-        "nudge": "Hey, just checking if you got a chance to look — no pressure!"
+        "screenshot": "Hi, this is {{senderName}}. I put together a quick site redesign for {{businessName}}, wanted you to see it. Want the live link to click around?",
+        "link": "Here it is: {{previewUrl}}. Have a look and tell me what you'd change.",
+        "nudge": "Hey, just checking if you got a chance to look. No pressure!"
       },
       "channelNote": "SMS only. Email is captured for mobile leads as a second address on file, NOT as an outreach channel — there is no email sequence and building one is a separate decision with its own CASL posture.",
       "email": {
@@ -359,10 +359,12 @@
         "jitterSeconds": 60,
         "templates": {
           "subject": "A redesign idea for {{businessName}}",
-          "pitch": "<p>Hi —{{context}} I noticed {{problem}}. I put together a free preview of what a new site could look like for {{businessName}}, no obligation.</p><p>Want to see it? Book 15 minutes and I will walk you through it — or just reply here and I will find a time. If it is a fit, I will also cover what it would take to actually put it live.</p><p><a href=\"{{bookingUrl}}\">Book a quick call</a></p><hr><p style=\"font-size:12px;color:#666\">Sent by {{senderName}} · {{physicalAddress}} · <a href=\"{{unsubscribeUrl}}\">Unsubscribe</a></p>",
-          "nudge": "<p>Just checking you saw this — the preview is ready whenever you want to look. No pressure either way, and a reply works just as well as the link below.</p><p><a href=\"{{bookingUrl}}\">Book a quick call</a></p><hr><p style=\"font-size:12px;color:#666\">Sent by {{senderName}} · {{physicalAddress}} · <a href=\"{{unsubscribeUrl}}\">Unsubscribe</a></p>",
-          "booking": "<p>Great — here is the link to grab a time: <a href=\"{{bookingUrl}}\">Book a quick call</a></p><p>Or just reply with a day and time that works and I will find something.</p><hr><p style=\"font-size:12px;color:#666\">Sent by {{senderName}} · {{physicalAddress}} · <a href=\"{{unsubscribeUrl}}\">Unsubscribe</a></p>"
+          "pitch": "<p>Hi,{{context}} I noticed {{problem}}. I put together a free preview of what a new site could look like for {{businessName}}, no obligation.</p><p>Want to see it? Book 15 minutes and I will walk you through it, or just reply here and I will find a time. If it is a fit, I will also cover what it would take to actually put it live.</p><p><a href=\"{{bookingUrl}}\">Book a quick call</a></p><hr><p style=\"font-size:12px;color:#666\">Sent by {{senderName}}, {{physicalAddress}}. <a href=\"{{unsubscribeUrl}}\">Unsubscribe</a></p>",
+          "nudge": "<p>Just checking you saw this. The preview is ready whenever you want to look. No pressure either way, and a reply works just as well as the link below.</p><p><a href=\"{{bookingUrl}}\">Book a quick call</a></p><hr><p style=\"font-size:12px;color:#666\">Sent by {{senderName}}, {{physicalAddress}}. <a href=\"{{unsubscribeUrl}}\">Unsubscribe</a></p>",
+          "booking": "<p>Here's the link to grab a time: <a href=\"{{bookingUrl}}\">Book a quick call</a></p><p>Or just reply with a day and time that works and I will find something.</p><hr><p style=\"font-size:12px;color:#666\">Sent by {{senderName}}, {{physicalAddress}}. <a href=\"{{unsubscribeUrl}}\">Unsubscribe</a></p>"
         },
+        "templatesNoteEmDashes": "Em dashes removed from every template (and from contextLine() in outreach.ts) on 2026-09-06 per Jacob's direction — an em dash is one of the more commonly cited tells that a message was AI-written, and these are meant to read as a person's own cold email, not a mail-merge. Replaced with plain commas/periods rather than dropped outright, so sentences that used to lean on the dash for pacing still read naturally.",
+        "templatesNoteSignature": "Sent by {{senderName}}, {{physicalAddress}} now resolves from GHL's own Business Profile (Settings > Business Info) at send time, not from senderName/email.physicalAddress below directly — see send.ts's sendPending, which fetches it via getLocationBusinessProfile and only falls back to these config values if the GHL profile is missing a name or address. Per Jacob's direction (2026-09-06): GHL should be the one place this business identity lives, not a second copy here.",
         "templatesNote": "Updated 2026-08-27, three changes: (1) dropped \"free\" from the SUBJECT line specifically — it is a well-known spam-filter trigger word and this is a brand-new domain with no sending history, which is exactly the case that gets hurt most by it. Still says \"free preview\" in the body, where it is true and not scored the same way. (2) added {{context}} (rating/review count from Google, see contextLine()) right after the greeting for a second layer of specificity beyond {{problem}}. (3) added a reply as an equally valid alternative to the booking link everywhere — asking a stranger to book a call is a bigger first ask than asking them to hit reply, and a lot of small shop owners will find replying easier than a scheduling widget on their phone.",
         "nudgeScheduleDays": [
           4,

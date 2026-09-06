@@ -345,6 +345,39 @@ export async function getGhlConfig(clientId = "eden"): Promise<GhlConfig | null>
   return { apiKey: GHL_API_KEY, locationId: GHL_LOCATION_ID, attributionPipelineName: GHL_ATTRIBUTION_PIPELINE_NAME };
 }
 
+export interface LocationBusinessProfile {
+  name: string | null;
+  address: string | null;
+}
+
+/**
+ * The business name and mailing address GHL shows under Settings > Business
+ * Profile for a location — pulled so outreach copy has one authoritative
+ * source for its own identity instead of a second, separately-maintained
+ * copy sitting in client config.
+ *
+ * UNVERIFIED against a live location as of 2026-09-06 — the nested
+ * `business` object's fields are inferred from HighLevel's public Locations
+ * API reference, not exercised against a real account yet. If name/address
+ * come back null here, check Settings > Business Profile is actually filled
+ * in for this location before assuming this parsing is wrong.
+ */
+export async function getLocationBusinessProfile(
+  locationId: string,
+  apiKey?: string
+): Promise<LocationBusinessProfile | null> {
+  const data = await ghlRequest(`/locations/${locationId}`, { locationId, apiKey });
+  const business = data?.location?.business;
+  if (!business) return null;
+  const addressLine = [business.address, business.city, business.state, business.postalCode]
+    .filter(Boolean)
+    .join(", ");
+  return {
+    name: business.name || null,
+    address: addressLine || null,
+  };
+}
+
 /**
  * Creates an opportunity. `pipelineStageId` is the STAGE id, not a stage name
  * — see gotcha 5 in CLAUDE.md. Resolve it via listPipelines first.
