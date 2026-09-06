@@ -284,12 +284,16 @@ export async function sendOne(
       clientId: lead.clientId,
     });
 
+    // Both SMS touches move to the same stage — "Screenshot Sent" and "Site
+    // Sent" were collapsed into one "Initial Email Sent" stage in GHL itself
+    // on 2026-09-06 (Jacob: "since we aren't doing the screenshots anymore"),
+    // so there is no longer a distinct second stage to move a "link" send to.
     if (step === "screenshot") {
-      await updateLead(lead.id, { sentAt: new Date().toISOString(), pipelineStage: "Screenshot Sent" });
-      if (lead.ghlOpportunityId) await deps.moveStage(lead.ghlOpportunityId, "Screenshot Sent");
+      await updateLead(lead.id, { sentAt: new Date().toISOString(), pipelineStage: "Initial Email Sent" });
+      if (lead.ghlOpportunityId) await deps.moveStage(lead.ghlOpportunityId, "Initial Email Sent");
     } else if (step === "link") {
-      await updateLead(lead.id, { pipelineStage: "Site Sent" });
-      if (lead.ghlOpportunityId) await deps.moveStage(lead.ghlOpportunityId, "Site Sent");
+      await updateLead(lead.id, { pipelineStage: "Initial Email Sent" });
+      if (lead.ghlOpportunityId) await deps.moveStage(lead.ghlOpportunityId, "Initial Email Sent");
     }
 
     return { leadId: lead.id, sent: true };
@@ -349,17 +353,14 @@ export async function sendEmailOne(
 
     if (step === "email_pitch") {
       await updateLead(lead.id, { emailSentAt: new Date().toISOString() });
-      // Moves to "Screenshot Sent" — the first non-New-Lead stage in the
-      // fixed pipeline. As of 2026-08-27 the pitch offers a free redesign and
-      // a call, not a finished site (Jacob builds it himself in the gap
-      // before the call — see the booking-notice requirement on
-      // generation.bookingUrl), so no stage name in the current pipeline
-      // literally describes this moment. This is the closest fit; GHL has no
-      // create/rename-stage API (gotcha 4 in CLAUDE.md) so the actual fix is
-      // a one-click relabel to something like "Pitched" next time you're in
-      // the GHL UI — that only changes the label, not the stage id, so
-      // nothing here needs to change when you do.
-      if (lead.ghlOpportunityId) await deps.moveStage(lead.ghlOpportunityId, "Screenshot Sent");
+      // Moves to "Initial Email Sent" — Jacob's own relabel of the old
+      // "Screenshot Sent"/"Site Sent" pair (2026-09-06), since email is the
+      // only channel that actually sends now and this literally describes
+      // the moment. GHL has no create/rename-stage API (gotcha 4 in
+      // CLAUDE.md) so this was a one-click rename in the GHL UI — only the
+      // label changed, not the stage id, so nothing else needed to change
+      // here except this literal string matching it.
+      if (lead.ghlOpportunityId) await deps.moveStage(lead.ghlOpportunityId, "Initial Email Sent");
     } else if (step === "email_nudge") {
       await updateLead(lead.id, { emailNudgeCount: lead.emailNudgeCount + 1 });
     }

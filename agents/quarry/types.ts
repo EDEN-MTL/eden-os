@@ -16,14 +16,18 @@ export type ApprovalStatus = "pending" | "approved" | "rejected";
 
 /**
  * The live stage names on Eden's Website Offer Pipeline, transcribed from GHL
- * on 2026-08-26 — not invented here. "Replied Interest" and "Lost/Nurture"
- * read like typos and are not: they are what the pipeline actually says, and
- * sync.ts matches exactly. Change GHL first, then this.
+ * — not invented here. "Replied Interest" and "Lost/Nurture" read like typos
+ * and are not: they are what the pipeline actually says, and sync.ts matches
+ * exactly. Change GHL first, then this.
+ *
+ * "Screenshot Sent" and "Site Sent" were collapsed into one "Initial Email
+ * Sent" stage on 2026-09-06 (Jacob, in the GHL UI: "since we aren't doing
+ * the screenshots anymore" — email is the only channel that actually sends
+ * now, so a two-stage SMS-era distinction no longer meant anything).
  */
 export type QuarryStage =
   | "New Lead"
-  | "Screenshot Sent"
-  | "Site Sent"
+  | "Initial Email Sent"
   | "Replied Interest"
   | "Call Booked"
   | "Closed Won"
