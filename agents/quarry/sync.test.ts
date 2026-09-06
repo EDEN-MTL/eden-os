@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { PipelineNotProvisionedError, resolvePipeline } from "./sync";
+import { PipelineNotProvisionedError, resolvePipeline, upsertProspectContact } from "./sync";
 
 /**
  * Pipeline resolution has to fail loudly, because every failure mode here is
@@ -105,5 +105,73 @@ describe("resolvePipeline", () => {
     await expect(
       resolvePipeline("Website Offer Pipeline", WEBSITE_STAGES, "loc_1", "key")
     ).rejects.toThrow(/Screenshot Sent/);
+  });
+});
+
+describe("upsertProspectContact", () => {
+  const BASE_INPUT = {
+    name: "Biz",
+    phone: "+15145550100",
+    email: null,
+    website: null,
+    category: null as null,
+    previewUrl: null,
+    previewImageUrl: null,
+    outdatedScore: null,
+  };
+
+  function mockContacts(opts: { existing?: any; captured: { body?: any; method?: string }[] }) {
+    global.fetch = vi.fn(async (url: any, init: any) => {
+      const href = String(url);
+      opts.captured.push({ body: init?.body ? JSON.parse(init.body) : undefined, method: init?.method });
+      if (href.includes("/contacts/search")) {
+        return {
+          ok: true, status: 200, text: async () => "",
+          json: async () => ({ contacts: opts.existing ? [opts.existing] : [] }),
+        } as any;
+      }
+      return {
+        ok: true, status: 200, text: async () => "",
+        json: async () => ({ contact: { id: "new_c1" } }),
+      } as any;
+    }) as any;
+  }
+
+  it("includes the business's existing website on a newly created contact", async () => {
+    const captured: { body?: any; method?: string }[] = [];
+    mockContacts({ captured });
+
+    await upsertProspectContact(
+      { ...BASE_INPUT, website: "https://oldsite.example.com" },
+      "loc_1",
+      "key"
+    );
+
+    const createCall = captured.find((c) => c.method === "POST");
+    expect(createCall!.body.website).toBe("https://oldsite.example.com");
+  });
+
+  it("omits website entirely on create rather than sending an empty value when the lead has none", async () => {
+    const captured: { body?: any; method?: string }[] = [];
+    mockContacts({ captured });
+
+    await upsertProspectContact({ ...BASE_INPUT, website: null }, "loc_1", "key");
+
+    const createCall = captured.find((c) => c.method === "POST");
+    expect(createCall!.body).not.toHaveProperty("website");
+  });
+
+  it("also refreshes the website on an already-existing contact, alongside tags", async () => {
+    const captured: { body?: any; method?: string }[] = [];
+    mockContacts({ existing: { id: "existing_c1" }, captured });
+
+    await upsertProspectContact(
+      { ...BASE_INPUT, website: "https://oldsite.example.com" },
+      "loc_1",
+      "key"
+    );
+
+    const updateCall = captured.find((c) => c.method === "PUT");
+    expect(updateCall!.body).toMatchObject({ website: "https://oldsite.example.com", tags: ["quarry"] });
   });
 });

@@ -3,7 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 const queryMock = vi.fn();
 vi.mock("../db", () => ({ query: (...args: unknown[]) => queryMock(...args) }));
 
-import { getGhlConfig, getLocationBusinessProfile } from "./index";
+import { getGhlConfig, getLocationBusinessProfile, searchContacts } from "./index";
 
 const ENV_KEYS = ["GHL_API_KEY", "GHL_LOCATION_ID", "GHL_ATTRIBUTION_PIPELINE_NAME"] as const;
 const originalEnv: Record<string, string | undefined> = {};
@@ -59,6 +59,30 @@ describe("getGhlConfig", () => {
     process.env.GHL_API_KEY = "env-key"; // incomplete — missing GHL_LOCATION_ID
 
     expect(await getGhlConfig("eden")).toBeNull();
+  });
+});
+
+describe("searchContacts", () => {
+  const originalFetch = global.fetch;
+  afterEach(() => {
+    global.fetch = originalFetch;
+  });
+
+  it("forwards apiKey rather than relying on the bare GHL_API_KEY env var", async () => {
+    // Regression guard: this call had no apiKey parameter at all until
+    // 2026-09-06, so it always threw "GHL_API_KEY not set" for a client
+    // resolving its key from the DB (see getGhlConfig) rather than the env
+    // var — silently swallowed by the .catch(() => null) in
+    // upsertProspectContact, so every contact was blind-created instead of
+    // deduped by phone.
+    delete process.env.GHL_API_KEY;
+    global.fetch = vi.fn(async () => ({
+      ok: true, status: 200, json: async () => ({ contacts: [] }), text: async () => "",
+    })) as any;
+
+    await expect(searchContacts("+15145550100", "loc1", "key1")).resolves.toEqual({ contacts: [] });
+    const [, init] = vi.mocked(global.fetch).mock.calls[0];
+    expect((init as any).headers.Authorization).toBe("Bearer key1");
   });
 });
 
