@@ -89,6 +89,25 @@ export function extractFileFromEvent(event: any): SlackIncomingMessage["file"] {
 }
 
 /**
+ * True when this delivery is Slack re-sending an event it already sent us
+ * once — Slack retries (with X-Slack-Retry-Num: 1, 2, 3...) whenever it does
+ * not see our 200 inside its ~3 second window, for any reason on either
+ * side. Exported for direct unit testing.
+ *
+ * We ack synchronously at the very top of the handler and do all real work
+ * afterward, so a retry is never a safety net here — it is a second,
+ * fully duplicate run of whatever the original message asked for, on a
+ * shared single-process instance where "for any reason" is easy to trip
+ * (every other agent's work shares the same event loop). Confirmed live
+ * 2026-09-06: one Slack message ("go find and send emails to 25 more
+ * businesses in Brockville") produced two identical acknowledgments and
+ * two full discovery runs, back to back, for exactly this reason.
+ */
+export function isSlackRetryDelivery(req: Request): boolean {
+  return Boolean(req.headers["x-slack-retry-num"]);
+}
+
+/**
  * Create the webhook handler for a specific agent.
  */
 function createAgentHandler(agentId: AgentId) {
@@ -109,6 +128,13 @@ function createAgentHandler(agentId: AgentId) {
 
     // Acknowledge immediately (Slack expects response within 3 seconds)
     res.status(200).send();
+
+    if (isSlackRetryDelivery(req)) {
+      console.log(
+        `[WEBHOOK] Ignoring Slack retry #${req.headers["x-slack-retry-num"]} for ${agentId} — already processed the original delivery`
+      );
+      return;
+    }
 
     // Process the event asynchronously
     try {
