@@ -22,6 +22,15 @@ const outreachMod = vi.hoisted(() => ({
 }));
 vi.mock("./outreach", () => outreachMod);
 
+const ghlMod = vi.hoisted(() => ({
+  // Returns null by default — most tests never touch GHL directly and
+  // should fall straight back to the config values below without a real
+  // location profile to resolve.
+  getGhlConfig: vi.fn(async () => null),
+  getLocationBusinessProfile: vi.fn(async () => null),
+}));
+vi.mock("../../shared/ghl", () => ghlMod);
+
 import { QuarryDisabledError, sendPending } from "./send";
 import { QuarryLead } from "./types";
 
@@ -70,6 +79,60 @@ describe("sendPending — guards", () => {
     expect(outreachMod.sendEmailBatch).not.toHaveBeenCalled();
     // SMS must still run — one channel not being ready must not block the other.
     expect(outreachMod.sendSmsBatch).toHaveBeenCalled();
+  });
+});
+
+describe("sendPending — GHL business profile for the email signature", () => {
+  it("uses GHL's business name/address over the config values when both are present", async () => {
+    ghlMod.getGhlConfig.mockResolvedValueOnce({ locationId: "loc1", apiKey: "key1" });
+    ghlMod.getLocationBusinessProfile.mockResolvedValueOnce({
+      name: "Eden Montreal Inc.",
+      address: "42 Real St, Montreal, QC",
+    });
+    configMod.loadQuarryConfig.mockReturnValue({
+      ...CONFIG,
+      outreach: { ...CONFIG.outreach, senderName: "Config Placeholder" },
+    });
+    store.listLeads.mockResolvedValue([lead({ email: "info@biz.com" })]);
+
+    await sendPending("eden", { log: () => {} });
+
+    expect(ghlMod.getLocationBusinessProfile).toHaveBeenCalledWith("loc1", "key1");
+    const emailConfig = outreachMod.sendEmailBatch.mock.calls[1][2];
+    expect(emailConfig.outreach.senderName).toBe("Eden Montreal Inc.");
+    expect(emailConfig.outreach.email.physicalAddress).toBe("42 Real St, Montreal, QC");
+  });
+
+  it("falls back to config when the GHL profile is missing a name or address", async () => {
+    ghlMod.getGhlConfig.mockResolvedValueOnce({ locationId: "loc1", apiKey: "key1" });
+    ghlMod.getLocationBusinessProfile.mockResolvedValueOnce({ name: null, address: null });
+    configMod.loadQuarryConfig.mockReturnValue({
+      ...CONFIG,
+      outreach: { ...CONFIG.outreach, senderName: "Config Placeholder" },
+    });
+    store.listLeads.mockResolvedValue([lead({ email: "info@biz.com" })]);
+
+    await sendPending("eden", { log: () => {} });
+
+    const emailConfig = outreachMod.sendEmailBatch.mock.calls[1][2];
+    expect(emailConfig.outreach.senderName).toBe("Config Placeholder");
+    expect(emailConfig.outreach.email.physicalAddress).toBe(CONFIG.outreach.email.physicalAddress);
+  });
+
+  it("falls back to config, without failing the send, when fetching the GHL profile throws", async () => {
+    ghlMod.getGhlConfig.mockResolvedValueOnce({ locationId: "loc1", apiKey: "key1" });
+    ghlMod.getLocationBusinessProfile.mockRejectedValueOnce(new Error("GHL API Error 500"));
+    configMod.loadQuarryConfig.mockReturnValue({
+      ...CONFIG,
+      outreach: { ...CONFIG.outreach, senderName: "Config Placeholder" },
+    });
+    store.listLeads.mockResolvedValue([lead({ email: "info@biz.com" })]);
+
+    const report = await sendPending("eden", { log: () => {} });
+
+    expect(report.emailPitch.attempted).toBe(1);
+    const emailConfig = outreachMod.sendEmailBatch.mock.calls[1][2];
+    expect(emailConfig.outreach.senderName).toBe("Config Placeholder");
   });
 });
 

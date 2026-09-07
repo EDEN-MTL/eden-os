@@ -104,6 +104,7 @@ export async function upsertProspectContact(
     name: string;
     phone: string;
     email: string | null;
+    website: string | null;
     category: QuarryCategory | null;
     previewUrl: string | null;
     previewImageUrl: string | null;
@@ -112,24 +113,44 @@ export async function upsertProspectContact(
   locationId: string,
   apiKey?: string
 ): Promise<{ contactId: string; created: boolean }> {
-  const existing = await searchContacts(input.phone, locationId).catch(() => null);
+  // apiKey was missing here before 2026-09-06 — this call has been failing
+  // outright on every real run (this client resolves its key from the DB,
+  // not the bare GHL_API_KEY env var ghlRequest falls back to), silently
+  // swallowed by the catch below. In effect every contact was blind-created
+  // rather than deduped, and a true repeat phone number only ever surfaced
+  // as GHL's own "duplicated contacts" 400 on the create call, never as a
+  // clean update — see the Remax Centre City Realty sync failure.
+  const existing = await searchContacts(input.phone, locationId, apiKey).catch(() => null);
   const found = existing?.contacts?.[0];
 
   const tags = ["quarry", ...(input.category ? [input.category] : [])];
 
   if (found?.id) {
-    await updateContact(found.id, { tags }, locationId);
+    // apiKey was missing here before 2026-09-06 — harmless while the bare
+    // GHL_API_KEY env var still worked as an implicit fallback, but this
+    // client resolves its key from the DB instead (see getGhlConfig), so an
+    // existing contact (a repeat phone number) would fail this update with
+    // "GHL_API_KEY not set" the moment that env var stopped being set.
+    await updateContact(
+      found.id,
+      { tags, ...(input.website ? { website: input.website } : {}) },
+      locationId,
+      apiKey
+    );
     return { contactId: found.id, created: false };
   }
 
   // Custom fields (previewUrl, previewImageUrl, outdatedScore) are NOT written
   // here. They must be addressed by internal field id and never by fieldKey
-  // (gotcha 1), so they need a resolved id lookup the caller owns.
+  // (gotcha 1), so they need a resolved id lookup the caller owns. `website`
+  // is different — it's a native GHL contact field, not a custom one, so it
+  // needs no id lookup at all.
   const created = await createContact(
     {
       name: input.name,
       phone: input.phone,
       ...(input.email ? { email: input.email } : {}),
+      ...(input.website ? { website: input.website } : {}),
       tags,
       locationId,
       source: "quarry",

@@ -4,11 +4,12 @@
  * does, on purpose, and this is the only place that gets to fire a message
  * at a real stranger.
  */
-import { loadQuarryConfig } from "./config";
+import { loadQuarryConfig, QuarryConfig } from "./config";
 import { buildEmailDeps, buildOutreachDeps } from "./deps";
 import { BatchResult, sendEmailBatch, sendSmsBatch } from "./outreach";
 import { listLeads } from "./store";
 import { QuarryLead } from "./types";
+import { getGhlConfig, getLocationBusinessProfile } from "../../shared/ghl";
 
 export class QuarryDisabledError extends Error {
   constructor() {
@@ -70,10 +71,41 @@ export async function sendPending(
   // ── Email ──
   let emailNudge = EMPTY_RESULT;
   let emailPitch = EMPTY_RESULT;
-  if (!config.outreach.email.fromDomain || !config.outreach.email.physicalAddress) {
+
+  // The sender name and CASL mailing address that show up in every outreach
+  // email now come from GHL's own Business Profile (Settings > Business
+  // Info), not client config — Jacob's direction (2026-09-06): GHL already
+  // holds the one authoritative copy of the business's identity, so a
+  // second hardcoded copy here was never the source of truth. Config's own
+  // senderName/physicalAddress remain a fallback only, for whichever of the
+  // two the GHL profile has left blank — CASL requires a REAL mailing
+  // address in every commercial email, so a missing one anywhere still
+  // blocks the send rather than fabricating one.
+  const ghlConfig = await getGhlConfig(clientId);
+  let businessProfile: { name: string | null; address: string | null } | null = null;
+  if (ghlConfig) {
+    try {
+      businessProfile = await getLocationBusinessProfile(ghlConfig.locationId, ghlConfig.apiKey);
+    } catch (error) {
+      log(`  ! failed to fetch GHL business profile, falling back to config: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
+  const emailConfig: QuarryConfig = {
+    ...config,
+    outreach: {
+      ...config.outreach,
+      senderName: businessProfile?.name || config.outreach.senderName,
+      email: {
+        ...config.outreach.email,
+        physicalAddress: businessProfile?.address || config.outreach.email.physicalAddress,
+      },
+    },
+  };
+
+  if (!emailConfig.outreach.email.fromDomain || !emailConfig.outreach.email.physicalAddress) {
     log("email channel not configured (fromDomain/physicalAddress unset) — SMS ran, email skipped");
   } else {
-    const schedule = config.outreach.email.nudgeScheduleDays;
+    const schedule = emailConfig.outreach.email.nudgeScheduleDays;
     const emailNudgeCandidates = approved.filter((l) => {
       if (!l.email || l.emailOptedOut || !l.emailSentAt || l.emailRepliedAt) return false;
       // emailNudgeCount is which touch is next, not which one just went out —
@@ -87,8 +119,8 @@ export async function sendPending(
 
     const emailDeps = await buildEmailDeps(clientId);
     log(`Email: ${emailNudgeCandidates.length} due for a nudge, ${emailPitchCandidates.length} awaiting a first pitch`);
-    emailNudge = await sendEmailBatch(emailNudgeCandidates, "email_nudge", config, emailDeps, { clientId, log });
-    emailPitch = await sendEmailBatch(emailPitchCandidates, "email_pitch", config, emailDeps, { clientId, log });
+    emailNudge = await sendEmailBatch(emailNudgeCandidates, "email_nudge", emailConfig, emailDeps, { clientId, log });
+    emailPitch = await sendEmailBatch(emailPitchCandidates, "email_pitch", emailConfig, emailDeps, { clientId, log });
   }
 
   return { smsNudge, smsPitch, emailNudge, emailPitch };

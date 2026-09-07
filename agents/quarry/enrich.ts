@@ -15,7 +15,68 @@
 import { ContactEnrichment } from "./types";
 import { fetchHomepage } from "./triage";
 
-const CONTACT_PATHS = ["/contact", "/contact-us", "/about", "/contactez-nous", "/nous-joindre"];
+const CONTACT_PATHS = [
+  "/contact",
+  "/contact-us",
+  "/about",
+  "/about-us",
+  "/team",
+  "/staff",
+  "/locations",
+  "/booking",
+  "/contactez-nous",
+  "/nous-joindre",
+];
+
+// Fixed paths are a guess at where a site keeps its contact info; a link the
+// site itself put in its nav or footer is far more likely to hit. Followed
+// BEFORE the static guesses below, and capped so a page with a huge nav menu
+// can't turn one lead into dozens of fetches.
+const LINK_TEXT_RE = /contact|about|team|staff|location|booking|contactez|joindre/i;
+const MAX_DISCOVERED_LINKS = 6;
+const MAX_TOTAL_EXTRA_FETCHES = 8;
+
+/**
+ * Finds same-site links worth following for a contact email, from the site's
+ * own nav/footer — e.g. "Contact Us" pointing at /get-in-touch, a slug none
+ * of the static guesses above would ever try.
+ *
+ * Restricted to the SAME host as the page being scanned: this is following a
+ * business's own site map, not crawling out to an unrelated domain a footer
+ * happens to link to (a payment processor, a review site, etc.).
+ */
+export function discoverContactLinks(html: string, pageUrl: string): string[] {
+  let base: URL;
+  try {
+    base = new URL(pageUrl);
+  } catch {
+    return [];
+  }
+  const baseHost = base.hostname.replace(/^www\./, "").toLowerCase();
+
+  const links = new Set<string>();
+  const anchorRe = /<a\b[^>]*href=["']([^"'#][^"']*)["'][^>]*>([\s\S]*?)<\/a>/gi;
+  for (const match of html.matchAll(anchorRe)) {
+    const href = match[1];
+    if (/^(mailto:|tel:|javascript:)/i.test(href)) continue;
+    const text = match[2].replace(/<[^>]+>/g, " ");
+    if (!LINK_TEXT_RE.test(href) && !LINK_TEXT_RE.test(text)) continue;
+
+    let resolved: URL;
+    try {
+      resolved = new URL(href, base);
+    } catch {
+      continue;
+    }
+    if (resolved.hostname.replace(/^www\./, "").toLowerCase() !== baseHost) continue;
+    resolved.hash = "";
+    const url = resolved.toString();
+    if (url === base.toString()) continue;
+    links.add(url);
+    if (links.size >= MAX_DISCOVERED_LINKS) break;
+  }
+  return [...links];
+}
 
 const EMAIL_RE = /[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}/gi;
 
@@ -75,7 +136,8 @@ export function extractEmails(html: string, businessDomain: string | null): stri
 }
 
 /**
- * Looks for a published business email on the site's contact/about pages.
+ * Looks for a published business email on the homepage, then the site's own
+ * discovered contact/about links, then a fixed list of common path guesses.
  * Stops at the first page that yields one — there is no value in a second
  * address and every extra fetch is another request at someone else's server.
  */
@@ -86,17 +148,38 @@ export async function enrichContact(website: string | null): Promise<ContactEnri
   const businessDomain = domainOf(website);
   const base = website.replace(/\/+$/, "");
 
-  for (const path of ["", ...CONTACT_PATHS]) {
-    const page = await fetchHomepage(`${base}${path}`, 10000);
+  const homepage = await fetchHomepage(base, 10000);
+  if (!("error" in homepage) && homepage.ok) {
+    const emails = extractEmails(homepage.html, businessDomain);
+    if (emails.length > 0) {
+      return { email: emails[0], emailSource: "own_website_homepage", hasPublicEmail: true };
+    }
+  }
+
+  const discovered =
+    !("error" in homepage) && homepage.ok
+      ? discoverContactLinks(homepage.html, homepage.finalUrl || base)
+      : [];
+
+  const candidates = [
+    ...discovered.map((url) => ({ url, source: "own_website_discovered_link" })),
+    ...CONTACT_PATHS.map((path) => ({ url: `${base}${path}`, source: "own_website_contact_page" })),
+  ];
+
+  const checked = new Set([base, ...(!("error" in homepage) ? [homepage.finalUrl] : [])]);
+  let fetched = 0;
+  for (const { url, source } of candidates) {
+    if (checked.has(url)) continue;
+    checked.add(url);
+    if (fetched >= MAX_TOTAL_EXTRA_FETCHES) break;
+    fetched += 1;
+
+    const page = await fetchHomepage(url, 10000);
     if ("error" in page || !page.ok) continue;
 
     const emails = extractEmails(page.html, businessDomain);
     if (emails.length > 0) {
-      return {
-        email: emails[0],
-        emailSource: path === "" ? "own_website_homepage" : "own_website_contact_page",
-        hasPublicEmail: true,
-      };
+      return { email: emails[0], emailSource: source, hasPublicEmail: true };
     }
   }
   return empty;

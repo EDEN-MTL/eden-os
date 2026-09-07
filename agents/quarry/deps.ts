@@ -55,7 +55,15 @@ async function moveStageByName(ctx: Context, opportunityId: string, stageName: s
     console.warn(`[QRY] cannot move opportunity ${opportunityId} — stage "${stageName}" not resolved`);
     return;
   }
-  await updateOpportunityStage(opportunityId, stageId, ctx.locationId);
+  // apiKey was missing here before 2026-09-06 — this call threw
+  // "GHL_API_KEY not set" on every real send for a client resolving its key
+  // from the DB rather than the bare env var. Called from inside
+  // sendEmailOne's try block, AFTER the email itself had already gone out
+  // successfully, so the whole send was reported as a failure — right down
+  // to logSend recording an error against a message that actually delivered
+  // (confirmed live: Kloepfer Custom Framing & Gallery received the pitch
+  // fine, but Quarry told Jacob it failed).
+  await updateOpportunityStage(opportunityId, stageId, ctx.locationId, ctx.apiKey);
 }
 
 export async function buildOutreachDeps(clientId = "eden"): Promise<OutreachDeps> {
@@ -102,7 +110,8 @@ export async function markEmailOptOutInGhl(lead: {
     await updateContact(
       lead.ghlContactId,
       { inboundDndSettings: { Email: { status: "active" } } },
-      ghlConfig.locationId
+      ghlConfig.locationId,
+      ghlConfig.apiKey
     );
   } catch (error) {
     console.warn(`[QRY] failed to mirror email opt-out to GHL for contact ${lead.ghlContactId}:`, error);

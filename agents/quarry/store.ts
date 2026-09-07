@@ -308,6 +308,39 @@ export async function startRun(triggeredBy: string, clientId = "eden"): Promise<
   return Number(rows[0].id);
 }
 
+export interface StaleRun {
+  id: number;
+  triggeredBy: string;
+  startedAt: string;
+  minutesElapsed: number;
+}
+
+/**
+ * Runs still marked 'running' well past any real batch's actual duration —
+ * status only ever moves to 'ok'/'failed' via finishRun, so a row stuck here
+ * means the process died before finishing it (a deploy, a crash) rather
+ * than the run genuinely still working. Confirmed live 2026-09-07: a run
+ * killed mid-batch left no trace anywhere except Render's own logs, and
+ * Jacob had no way to find out short of asking directly. Default threshold
+ * (45 min) is comfortably above any real batch observed so far (the
+ * largest, an 80-lead run, finished in under 20).
+ */
+export async function getStaleRuns(clientId = "eden", thresholdMinutes = 45): Promise<StaleRun[]> {
+  const rows = await query<{ id: string; triggered_by: string; started_at: string; minutes_elapsed: string }>(
+    `SELECT id, triggered_by, started_at, EXTRACT(EPOCH FROM (now() - started_at)) / 60 AS minutes_elapsed
+       FROM quarry_runs
+      WHERE client_id = $1 AND status = 'running' AND started_at < now() - ($2 || ' minutes')::interval
+      ORDER BY started_at DESC`,
+    [clientId, String(thresholdMinutes)]
+  );
+  return rows.map((r) => ({
+    id: Number(r.id),
+    triggeredBy: r.triggered_by,
+    startedAt: r.started_at,
+    minutesElapsed: Math.round(Number(r.minutes_elapsed)),
+  }));
+}
+
 export async function finishRun(
   runId: number,
   counts: Partial<Omit<QuarryRun, "id" | "clientId" | "startedAt" | "finishedAt" | "errors" | "triggeredBy" | "status">>,

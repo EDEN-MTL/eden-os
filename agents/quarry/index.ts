@@ -1,7 +1,7 @@
 import { Attachment, ToolDef } from "../../shared/claude";
 import { BaseAgent, ToolContext } from "../base-agent";
 import { buildLocationSearches, loadQuarryConfig } from "./config";
-import { getLead, getPipelineStats, listLeads, updateLead } from "./store";
+import { getLead, getPipelineStats, getStaleRuns, listLeads, updateLead } from "./store";
 import { QuarryDisabledError, sendPending } from "./send";
 import {
   MissingCredentialsError,
@@ -10,6 +10,49 @@ import {
 } from "./pipeline";
 import { PlaywrightCapturer } from "./screenshot";
 import { sendMessage } from "../../shared/slack";
+
+/**
+ * The one discovery run in flight right now, if any — set right before
+ * calling run() and cleared in its finally block. Lets the SIGTERM handler
+ * below report an interruption to the right Slack channel/thread instead
+ * of the run just vanishing, which is what happened twice on 2026-09-05
+ * (a deploy landing mid-batch) and again on 2026-09-07 (this fix's own
+ * deploy cutting off the run it was meant to prevent duplicating).
+ */
+let inFlightRun: { channelId: string; threadTs?: string; location: string } | null = null;
+
+/**
+ * There is no other SIGTERM handling anywhere in this process (checked —
+ * every agent shares this one Node process), so today a deploy or restart
+ * gives every in-flight thing exactly zero warning. This handler is
+ * necessarily process-wide rather than Quarry-scoped for that reason: it is
+ * a net improvement for everyone, not just Quarry, even though it only
+ * knows how to report on Quarry's own in-flight work specifically.
+ *
+ * Bounded at a few seconds so a slow/unreachable Slack API can never hang
+ * the shutdown past Render's own grace period — better to exit on time and
+ * have occasionally missed the notice than to be the reason a deploy stalls.
+ * This does NOT catch a hard OOM kill (SIGKILL, no signal at all) — the
+ * stale-run check in quarry_pipeline_stats is the fallback for that case.
+ */
+process.on("SIGTERM", async () => {
+  if (inFlightRun) {
+    const { channelId, threadTs, location } = inFlightRun;
+    try {
+      await Promise.race([
+        sendMessage("quarry", {
+          channel: channelId,
+          threadTs,
+          text: `Heads up — I got interrupted partway through the ${location} batch (a deploy or restart), so it never finished. Nothing further will happen with it; just ask again to actually get a result.`,
+        }),
+        new Promise((resolve) => setTimeout(resolve, 4000)),
+      ]);
+    } catch (error) {
+      console.warn("[QRY] failed to post SIGTERM interruption notice:", error);
+    }
+  }
+  process.exit(0);
+});
 
 const TOOLS: ToolDef[] = [
   {
@@ -53,7 +96,16 @@ const TOOLS: ToolDef[] = [
           type: "string",
           description: "City/region to search, e.g. \"Ottawa, ON\" or \"Kingston, Ontario\". Not limited to any fixed list.",
         },
-        maxLeads: { type: "number", description: "Cap on new businesses to discover this run. Default 50." },
+        maxLeads: {
+          type: "number",
+          description:
+            "Cap on RAW businesses to discover and triage this run — not the number of qualified, emailable leads that come out the other end. Most discovered businesses don't qualify, and most that qualify don't have a findable email. Hard-capped at 15 server-side regardless of what's passed here (this shared instance runs every agent in one process and cannot safely handle a much bigger batch in one run — confirmed live 2026-09-06, and again 2026-09-07 at the old 30-cap even with the escalation retry closing its browser cleanly between passes). Default/max is 15.",
+        },
+        isFollowUp: {
+          type: "boolean",
+          description:
+            "Set true only when this call is the one-allowed escalation retry within the same conversation, because the first pass came up short of the qualified+emailed count Jacob asked for. Changes the acknowledgment wording so a second pass reads as a deliberate retry, not Slack duplicating the request — confirmed live 2026-09-07 that an identical ack for a real retry looked exactly like the bug it wasn't. Omit (or false) for the first attempt at any request.",
+        },
       },
       required: ["location"],
     },
@@ -99,6 +151,14 @@ does not yet track GHL opportunity stage changes ("Call Booked", "Closed
 Won") — those live inside GHL itself and nothing syncs them back onto a
 lead's row here yet. Don't imply a number you don't actually have.
 
+quarry_pipeline_stats' response includes staleRuns — any earlier discovery
+run stuck at "running" for 45+ minutes with no result, which means the
+process died mid-batch (a deploy, a crash), not that it is still working.
+If that array is non-empty, whatever else the message asked for, mention it
+plainly (which location, how long ago) and say it needs to be run again —
+don't leave Jacob thinking something is quietly still in progress that
+actually died with no result.
+
 quarry_run_discovery and quarry_send_now both have real external effects —
 the first spends real Places/Claude money and creates real GHL contacts,
 the second puts a message in front of a real stranger, with no undo on
@@ -113,6 +173,40 @@ businesses in <city> and reach out to them" is asking for both steps —
 call quarry_run_discovery, then quarry_send_now once it's done, in the
 same turn, rather than stopping after discovery and waiting to be asked
 again.
+
+When Jacob asks for a specific number ("find 5 leads", "get me 5 qualified
+ones"), N means qualified, email-reachable leads that actually land in GHL
+— NOT quarry_run_discovery's maxLeads. maxLeads is a raw-discovery cap, and
+most discovered businesses don't qualify, and most that qualify don't have
+a findable email, so the real hit rate on a single pass is nowhere near
+1:1. Confirmed live (2026-09-05, Cornwall, ON): maxLeads 5 produced 1
+qualified lead and 0 synced to GHL.
+
+maxLeads is hard-capped at 15 server-side, no matter what you pass — this
+shared instance runs every agent in one process on limited memory, and a
+big batch can genuinely crash it (confirmed live 2026-09-06: chaining an
+80-lead run into a 60-lead run in the same conversation crashed the
+server minutes into the second one; confirmed AGAIN live 2026-09-07 at
+the old 30-cap — a 30-lead run followed by one 30-lead escalation retry
+ran the shared instance out of memory even though each run's own browser
+was fully closed before the next one started, because the underlying
+Node process's own memory from 30 sequential screenshot/vision buffers
+doesn't get reclaimed instantly and the next batch piles more on top
+before it does). So: default to 15 up front rather than trying to
+compute a bigger number yourself — a first pass this size usually lands
+somewhere in the 1-4 qualified range depending on the area. After the
+run, check syncedToGhl against N. If it's short, you MAY run one more
+pass at 15 (never more than one retry — that is now a hard rule, not a
+judgment call, since a second large batch stacked right after the first
+is exactly what caused the crash above), and if it's still short after
+that, stop and report the real number honestly along with why
+(small/rural market, repeated vision timeouts, a string of no-website
+results) rather than continuing to spend real Places/Claude money and
+server load chasing a count that may not exist in that city — suggest a
+nearby city instead. Always pass isFollowUp: true on that one retry call
+— confirmed live 2026-09-07 that an identical acknowledgment for a real
+retry read exactly like Slack duplicating the request; the flag changes
+the wording so it reads as the deliberate second pass it actually is.
 
 The full loop this agent runs end to end: quarry_run_discovery finds
 businesses and gets the reachable ones into GHL; auto-approve clears every
@@ -139,7 +233,14 @@ Respond concisely, like a teammate texting a quick update — not a report.`;
     switch (name) {
       case "quarry_pipeline_stats": {
         const stats = await getPipelineStats();
-        return JSON.stringify(stats);
+        // A row stuck at status='running' well past any real batch's
+        // duration means the process died before finishing it, not that
+        // it's still working — surfaced here since this is the tool asked
+        // for real numbers, and "still running" vs "silently died" is
+        // exactly the kind of thing that shouldn't require checking
+        // Render's logs by hand to find out.
+        const staleRuns = await getStaleRuns();
+        return JSON.stringify({ ...stats, staleRuns });
       }
 
       case "quarry_list_pending": {
@@ -172,24 +273,65 @@ Respond concisely, like a teammate texting a quick update — not a report.`;
         const config = loadQuarryConfig("eden");
         if (!config) return JSON.stringify({ error: "No quarry config for eden" });
         const searches = buildLocationSearches(config, location);
-        const maxLeads = typeof input.maxLeads === "number" ? input.maxLeads : 50;
+        // Hard server-side ceiling, not just a prompt instruction — confirmed
+        // live 2026-09-06: asked to "keep escalating" toward a target count,
+        // the model chained two back-to-back runs (80, then 60 businesses)
+        // in one Slack turn, and the second one crashed this shared 512MB
+        // instance minutes in. A prompt telling it to self-limit is not
+        // reliable enough on its own; this clamp is what actually bounds the
+        // worst case regardless of what the model asks for or decides to do
+        // next. Lowered again 30 -> 15 on 2026-09-07: even with the earlier
+        // fixes (closed browser per run, halved screenshot resolution), a
+        // 30-lead run followed by its one allowed 30-lead escalation retry
+        // still ran the shared instance out of memory (Render's Metrics tab
+        // showed memory climbing continuously through both runs, never
+        // dropping to baseline in between, until the OOM kill). The two
+        // runs' browsers were confirmed closed and sequential, not
+        // overlapping — the actual constraint is the shared Node process's
+        // own accumulated memory across close-together large batches, not
+        // just Chromium. Revisit upward only once Quarry runs on a bigger
+        // instance, or independently of others, or the per-run memory
+        // footprint is reduced further.
+        const MAX_LEADS_HARD_CAP = 15;
+        const requestedMaxLeads = typeof input.maxLeads === "number" ? input.maxLeads : 15;
+        const maxLeads = Math.min(requestedMaxLeads, MAX_LEADS_HARD_CAP);
         // Confirmed live: a real batch checks every business one at a time
         // (site fetch, vision screenshot, enrichment) and can take 15-20+
         // minutes for 50 leads, with nothing posted until the whole thing
         // finishes — from Jacob's side that reads as "did this even receive
         // the request?" An immediate ack here doesn't fix the wait, but it
         // means silence is never mistaken for "didn't hear you."
+        //
+        // A follow-up escalation pass gets different wording on purpose —
+        // confirmed live 2026-09-07: an identical "On it" for a genuine
+        // retry (the first pass came up short of the requested count) read
+        // exactly like Slack duplicating the request, even though the
+        // duplicate-delivery bug itself was already fixed by then.
+        const isFollowUp = input.isFollowUp === true;
         if (ctx) {
           try {
             await sendMessage("quarry", {
               channel: ctx.channelId,
               threadTs: ctx.threadTs,
-              text: `On it — checking up to ${maxLeads} businesses in ${location}. A batch this size can take several minutes; I'll post the full rundown here once it's done.`,
+              text: isFollowUp
+                ? `The first pass came up short of what you asked for, so I'm trying again — checking up to ${maxLeads} more businesses in ${location}. I'll post the full rundown here once this pass is done too.`
+                : `On it — checking up to ${maxLeads} businesses in ${location}. A batch this size can take several minutes; I'll post the full rundown here once it's done.`,
             });
           } catch (error) {
             console.warn("[QRY] failed to post discovery acknowledgment:", error);
           }
         }
+        // Held in its own variable so it can always be closed below — a
+        // discovery run launches a real headless Chromium child process for
+        // vision scoring, and nothing was ever closing it here. Confirmed
+        // live 2026-09-06: after a full day of Slack-triggered runs each
+        // leaking one orphaned browser process, this shared 512MB Render
+        // instance (every agent in one process) ran out of memory and
+        // crashed mid-batch — twice, hours apart, same pattern both times.
+        const capturer = new PlaywrightCapturer();
+        // Only trackable when we actually have somewhere to report an
+        // interruption to (a dashboard-triggered call has no ctx at all).
+        if (ctx) inFlightRun = { channelId: ctx.channelId, threadTs: ctx.threadTs, location };
         try {
           const report = await run({
             clientId: "eden",
@@ -198,7 +340,7 @@ Respond concisely, like a teammate texting a quick update — not a report.`;
             searches,
             maxLeads,
             syncToGhl: true,
-            capturer: new PlaywrightCapturer(),
+            capturer,
           });
           return JSON.stringify({
             location,
@@ -218,6 +360,11 @@ Respond concisely, like a teammate texting a quick update — not a report.`;
             return JSON.stringify({ ran: false, reason: error.message });
           }
           throw error;
+        } finally {
+          inFlightRun = null;
+          await capturer.close().catch((closeError) => {
+            console.warn("[QRY] failed to close Playwright browser after discovery run:", closeError);
+          });
         }
       }
 
