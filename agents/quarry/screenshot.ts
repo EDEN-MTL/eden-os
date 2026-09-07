@@ -37,12 +37,26 @@ export class BrowserUnavailableError extends Error {
 }
 
 /**
- * Playwright capturer that reuses ONE browser across a batch.
+ * Playwright capturer that reuses ONE browser across a small window of
+ * captures, then recycles it.
  *
  * Launching Chromium costs roughly a second; doing it per lead would dominate
  * the runtime of a 50-lead batch for no reason. Each capture still gets its
  * own context so cookies and storage from one prospect's site can never leak
  * into the next one's screenshot.
+ *
+ * Confirmed live 2026-09-07 (Barrie, run 30): even with every context closed
+ * right after its capture, this shared 512MB instance ran out of memory
+ * within a single 15-lead run — no chained retry involved. Render's Metrics
+ * tab showed memory oscillating higher across successive captures WITHIN one
+ * run's triage phase and never settling back to baseline until the browser
+ * itself closed. Closing a context does not return a headless Chromium
+ * process's own internal growth (renderer/GPU/disk cache) to the OS — that
+ * only happens when the browser process itself exits. So the browser is now
+ * closed and relaunched every RECYCLE_EVERY captures, capping how much any
+ * one Chromium process can accumulate mid-batch, at the cost of one extra
+ * ~1s launch per recycle — negligible against a batch that already runs
+ * minutes long.
  *
  * Playwright is imported dynamically and is an OPTIONAL dependency, so the
  * Express API — which never screenshots anything — does not carry a ~400MB
@@ -50,9 +64,10 @@ export class BrowserUnavailableError extends Error {
  */
 export class PlaywrightCapturer implements ScreenshotCapturer {
   private browser: any = null;
+  private capturesSinceLaunch = 0;
+  private static readonly RECYCLE_EVERY = 5;
 
-  private async ensureBrowser(): Promise<any> {
-    if (this.browser) return this.browser;
+  private async launchBrowser(): Promise<any> {
     let chromium: any;
     try {
       // Specifier held in a variable so TypeScript cannot resolve it
@@ -64,13 +79,29 @@ export class PlaywrightCapturer implements ScreenshotCapturer {
     } catch (error) {
       throw new BrowserUnavailableError((error as Error).message);
     }
-    this.browser = await chromium.launch({ args: ["--no-sandbox"] });
+    return chromium.launch({ args: ["--no-sandbox"] });
+  }
+
+  private async ensureBrowser(): Promise<any> {
+    if (this.browser && this.capturesSinceLaunch < PlaywrightCapturer.RECYCLE_EVERY) {
+      return this.browser;
+    }
+    if (this.browser) {
+      await this.browser.close().catch(() => {});
+    }
+    this.browser = await this.launchBrowser();
+    this.capturesSinceLaunch = 0;
     return this.browser;
   }
 
   async capture(url: string, options: CaptureOptions = {}): Promise<Buffer> {
-    const { width = 1200, height = 800, fullPage = false, timeoutMs = 20000 } = options;
+    // Dropped from 1200x800 to 900x600 on 2026-09-07, on top of the earlier
+    // deviceScaleFactor cut — same reasoning: Claude's judgment of layout,
+    // typography, and spacing doesn't need a large render, and this shared
+    // instance's memory is the binding constraint, not image fidelity.
+    const { width = 900, height = 600, fullPage = false, timeoutMs = 20000 } = options;
     const browser = await this.ensureBrowser();
+    this.capturesSinceLaunch += 1;
     const context = await browser.newContext({
       viewport: { width, height },
       // Dropped from 2 (retina) to 1 on 2026-09-06 — deviceScaleFactor 2
@@ -103,6 +134,7 @@ export class PlaywrightCapturer implements ScreenshotCapturer {
     if (this.browser) {
       await this.browser.close();
       this.browser = null;
+      this.capturesSinceLaunch = 0;
     }
   }
 }
