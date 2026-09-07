@@ -59,213 +59,214 @@
     "_comment": "Quarry prospects small businesses with absent or dated websites and runs an email-first outreach sequence offering a free preview and a call. Eden's own acquisition, same as the forge block above. Search queries drive BOTH discovery and category assignment — Google Places types are too coarse to pick a design brief from, so the query that surfaced a business decides which brief it gets.",
     "enabled": true,
     "enabledNote": "Flipped on 2026-09-04 — Jacob confirmed real discovery + real GHL contacts + real send are all approved. Every billable call in this agent checks this flag first; flip back to false to pause everything (discovery, GHL sync, and sending) at once.",
+    "maxResultsNote": "Raised 20 to 60 on 2026-09-07 (both arrays below) — confirmed live in Barrie, Ontario that a third pass in one city found almost nothing new. Root cause was NOT a thin market: Places Text Search (New) caps every page at 20 results and re-searching the same query returns the same top-20-by-relevance businesses every time. discovery.ts's textSearch now paginates up to spec.maxResults (capped at 3 pages / 60, Google's own ceiling for this API), so 60 actually reaches 3 pages deep instead of repeatedly re-fetching page 1. Jacob confirmed this cost tradeoff explicitly: Text Search bills per request, so a run that needs the extra depth can now cost up to 3x the search-request volume it did at maxResults 20.",
     "searches": [
       {
         "query": "picture framing Montreal",
         "category": "trade-service",
-        "maxResults": 20
+        "maxResults": 60
       },
       {
         "query": "shoe repair Montreal",
         "category": "trade-service",
-        "maxResults": 20
+        "maxResults": 60
       },
       {
         "query": "locksmith Verdun Montreal",
         "category": "trade-service",
-        "maxResults": 20
+        "maxResults": 60
       },
       {
         "query": "upholstery repair Montreal",
         "category": "trade-service",
-        "maxResults": 20
+        "maxResults": 60
       },
       {
         "query": "antique dealer Montreal",
         "category": "retail-boutique",
-        "maxResults": 20
+        "maxResults": 60
       },
       {
         "query": "florist NDG Montreal",
         "category": "retail-boutique",
-        "maxResults": 20
+        "maxResults": 60
       },
       {
         "query": "tailor Mile End Montreal",
         "category": "retail-boutique",
-        "maxResults": 20
+        "maxResults": 60
       },
       {
         "query": "record store Montreal",
         "category": "retail-boutique",
-        "maxResults": 20
+        "maxResults": 60
       },
       {
         "query": "accountant Cote-des-Neiges Montreal",
         "category": "professional",
-        "maxResults": 20
+        "maxResults": 60
       },
       {
         "query": "notary Montreal",
         "category": "professional",
-        "maxResults": 20
+        "maxResults": 60
       },
       {
         "query": "denturist Montreal",
         "category": "professional",
-        "maxResults": 20
+        "maxResults": 60
       }
     ],
     "categoryTemplates": [
       {
         "query": "picture framing",
         "category": "trade-service",
-        "maxResults": 20
+        "maxResults": 60
       },
       {
         "query": "shoe repair",
         "category": "trade-service",
-        "maxResults": 20
+        "maxResults": 60
       },
       {
         "query": "locksmith",
         "category": "trade-service",
-        "maxResults": 20
+        "maxResults": 60
       },
       {
         "query": "upholstery repair",
         "category": "trade-service",
-        "maxResults": 20
+        "maxResults": 60
       },
       {
         "query": "auto repair shop",
         "category": "trade-service",
-        "maxResults": 20
+        "maxResults": 60
       },
       {
         "query": "appliance repair",
         "category": "trade-service",
-        "maxResults": 20
+        "maxResults": 60
       },
       {
         "query": "plumber",
         "category": "trade-service",
-        "maxResults": 20
+        "maxResults": 60
       },
       {
         "query": "electrician",
         "category": "trade-service",
-        "maxResults": 20
+        "maxResults": 60
       },
       {
         "query": "hvac contractor",
         "category": "trade-service",
-        "maxResults": 20
+        "maxResults": 60
       },
       {
         "query": "pest control",
         "category": "trade-service",
-        "maxResults": 20
+        "maxResults": 60
       },
       {
         "query": "antique dealer",
         "category": "retail-boutique",
-        "maxResults": 20
+        "maxResults": 60
       },
       {
         "query": "florist",
         "category": "retail-boutique",
-        "maxResults": 20
+        "maxResults": 60
       },
       {
         "query": "tailor",
         "category": "retail-boutique",
-        "maxResults": 20
+        "maxResults": 60
       },
       {
         "query": "record store",
         "category": "retail-boutique",
-        "maxResults": 20
+        "maxResults": 60
       },
       {
         "query": "bakery",
         "category": "retail-boutique",
-        "maxResults": 20
+        "maxResults": 60
       },
       {
         "query": "pet groomer",
         "category": "retail-boutique",
-        "maxResults": 20
+        "maxResults": 60
       },
       {
         "query": "jewelry store",
         "category": "retail-boutique",
-        "maxResults": 20
+        "maxResults": 60
       },
       {
         "query": "bike shop",
         "category": "retail-boutique",
-        "maxResults": 20
+        "maxResults": 60
       },
       {
         "query": "independent bookstore",
         "category": "retail-boutique",
-        "maxResults": 20
+        "maxResults": 60
       },
       {
         "query": "gift shop",
         "category": "retail-boutique",
-        "maxResults": 20
+        "maxResults": 60
       },
       {
         "query": "accountant",
         "category": "professional",
-        "maxResults": 20
+        "maxResults": 60
       },
       {
         "query": "notary",
         "category": "professional",
-        "maxResults": 20
+        "maxResults": 60
       },
       {
         "query": "denturist",
         "category": "professional",
-        "maxResults": 20
+        "maxResults": 60
       },
       {
         "query": "chiropractor",
         "category": "professional",
-        "maxResults": 20
+        "maxResults": 60
       },
       {
         "query": "dentist",
         "category": "professional",
-        "maxResults": 20
+        "maxResults": 60
       },
       {
         "query": "veterinarian",
         "category": "professional",
-        "maxResults": 20
+        "maxResults": 60
       },
       {
         "query": "physiotherapist",
         "category": "professional",
-        "maxResults": 20
+        "maxResults": 60
       },
       {
         "query": "optometrist",
         "category": "professional",
-        "maxResults": 20
+        "maxResults": 60
       },
       {
         "query": "law firm",
         "category": "professional",
-        "maxResults": 20
+        "maxResults": 60
       },
       {
         "query": "real estate agent",
         "category": "professional",
-        "maxResults": 20
+        "maxResults": 60
       }
     ],
     "categoryTemplatesNote": "Expanded from the original 11-query Montreal-era list to 30 on 2026-09-05 per Jacob's direction, so a run isn't limited to a narrow, somewhat arbitrary niche mix (denturist, record store, antique dealer are low-density in most towns) — broader, more universal small-business categories across all three design-brief buckets (trade-service, retail-boutique, professional) so discovery finds a representative slice of real businesses in whatever city is named, not just whichever of the original 11 happen to exist there. Text Search itself is cheap and bills per request regardless of result count, so 30 queries instead of 11 costs a few more cheap calls per run, not more of the expensive Details tier — discover()'s round-robin (agents/quarry/discovery.ts) still caps real spend at maxLeads regardless of how many categories are configured. Same category mix as `searches` above, minus the city baked into the query string — buildLocationSearches combines these with whatever location a quarry_run_discovery request names, per Jacob's 2026-09-04 direction to stop limiting discovery to Montreal and focus on English-speaking areas outside Quebec instead. `searches` itself is left as-is; it's unused now that discovery runs on-demand per location rather than off a fixed recurring list.",
