@@ -77,23 +77,64 @@ interface SearchHit {
   businessStatus: string | null;
 }
 
+/** Google's own hard ceiling on results per Text Search (New) page. */
+const SEARCH_PAGE_SIZE = 20;
+
+/**
+ * A freshly issued page token needs a brief moment before Google will honor
+ * it — firing the next request immediately reliably 400s. Injectable so
+ * tests don't have to actually sleep.
+ */
+const DEFAULT_PAGE_DELAY_MS = 2000;
+
+/**
+ * Text Search (New) caps every individual page at 20 results and hands back
+ * a nextPageToken when more exist. Fetching only page 1 means the SAME top
+ * 20-by-relevance businesses come back every time a category is re-searched
+ * — confirmed live 2026-09-07 (Barrie, Ontario): a third pass in one city
+ * found almost nothing new and read as "this market is tapped out," when the
+ * real cause was that every pass only ever looked at Google's first page per
+ * category. Paginating up to `spec.maxResults` (capped at 3 pages / 60 —
+ * Google does not return more than that for Text Search) actually reaches
+ * further into a city instead of repeatedly re-fetching the same page.
+ */
 export async function textSearch(
   spec: SearchSpec,
-  apiKey: string
+  apiKey: string,
+  pageDelayMs = DEFAULT_PAGE_DELAY_MS
 ): Promise<SearchHit[]> {
-  const payload = await placesRequest("/places:searchText", SEARCH_FIELD_MASK, apiKey, {
-    textQuery: spec.query,
-    // Capped server-side so we are not billed for results we then throw away.
-    maxResultCount: Math.min(spec.maxResults, 20),
-    languageCode: "en",
-    regionCode: "CA",
-  });
-  return (payload.places ?? []).map((p: any) => ({
-    placeId: p.id,
-    name: p.displayName?.text ?? "(unnamed)",
-    formattedAddress: p.formattedAddress ?? null,
-    businessStatus: p.businessStatus ?? null,
-  }));
+  const maxPages = Math.max(1, Math.min(3, Math.ceil(spec.maxResults / SEARCH_PAGE_SIZE)));
+  const hits: SearchHit[] = [];
+  let pageToken: string | undefined;
+
+  for (let page = 0; page < maxPages; page++) {
+    // A page token carries the original query's context server-side —
+    // resending textQuery alongside it is unnecessary and risks a mismatch
+    // error, so a follow-up page sends the token alone.
+    const body = pageToken
+      ? { pageToken }
+      : {
+          textQuery: spec.query,
+          maxResultCount: SEARCH_PAGE_SIZE,
+          languageCode: "en",
+          regionCode: "CA",
+        };
+    const payload = await placesRequest("/places:searchText", SEARCH_FIELD_MASK, apiKey, body);
+    for (const p of payload.places ?? []) {
+      hits.push({
+        placeId: p.id,
+        name: p.displayName?.text ?? "(unnamed)",
+        formattedAddress: p.formattedAddress ?? null,
+        businessStatus: p.businessStatus ?? null,
+      });
+    }
+
+    pageToken = payload.nextPageToken;
+    if (!pageToken || page === maxPages - 1) break;
+    if (pageDelayMs > 0) await new Promise((resolve) => setTimeout(resolve, pageDelayMs));
+  }
+
+  return hits.slice(0, spec.maxResults);
 }
 
 export async function placeDetails(
