@@ -99,7 +99,7 @@ const TOOLS: ToolDef[] = [
         maxLeads: {
           type: "number",
           description:
-            "Cap on RAW businesses to discover and triage this run — not the number of qualified, emailable leads that come out the other end. Most discovered businesses don't qualify, and most that qualify don't have a findable email. Hard-capped at 30 server-side regardless of what's passed here (this shared instance runs every agent in one process and cannot safely handle a much bigger batch in one run — confirmed live 2026-09-06). Default/max is 30.",
+            "Cap on RAW businesses to discover and triage this run — not the number of qualified, emailable leads that come out the other end. Most discovered businesses don't qualify, and most that qualify don't have a findable email. Hard-capped at 15 server-side regardless of what's passed here (this shared instance runs every agent in one process and cannot safely handle a much bigger batch in one run — confirmed live 2026-09-06, and again 2026-09-07 at the old 30-cap even with the escalation retry closing its browser cleanly between passes). Default/max is 15.",
         },
         isFollowUp: {
           type: "boolean",
@@ -182,18 +182,24 @@ a findable email, so the real hit rate on a single pass is nowhere near
 1:1. Confirmed live (2026-09-05, Cornwall, ON): maxLeads 5 produced 1
 qualified lead and 0 synced to GHL.
 
-maxLeads is hard-capped at 30 server-side, no matter what you pass — this
+maxLeads is hard-capped at 15 server-side, no matter what you pass — this
 shared instance runs every agent in one process on limited memory, and a
 big batch can genuinely crash it (confirmed live 2026-09-06: chaining an
 80-lead run into a 60-lead run in the same conversation crashed the
-server minutes into the second one). So: default to 30 up front rather
-than trying to compute a bigger number yourself — a first pass this size
-usually lands somewhere in the 3-8 qualified range depending on the area.
-After the run, check syncedToGhl against N. If it's short, you MAY run
-one more pass at 30 (never more than one retry — that is now a hard rule,
-not a judgment call, since a second large batch stacked right after the
-first is exactly what caused the crash above), and if it's still short
-after that, stop and report the real number honestly along with why
+server minutes into the second one; confirmed AGAIN live 2026-09-07 at
+the old 30-cap — a 30-lead run followed by one 30-lead escalation retry
+ran the shared instance out of memory even though each run's own browser
+was fully closed before the next one started, because the underlying
+Node process's own memory from 30 sequential screenshot/vision buffers
+doesn't get reclaimed instantly and the next batch piles more on top
+before it does). So: default to 15 up front rather than trying to
+compute a bigger number yourself — a first pass this size usually lands
+somewhere in the 1-4 qualified range depending on the area. After the
+run, check syncedToGhl against N. If it's short, you MAY run one more
+pass at 15 (never more than one retry — that is now a hard rule, not a
+judgment call, since a second large batch stacked right after the first
+is exactly what caused the crash above), and if it's still short after
+that, stop and report the real number honestly along with why
 (small/rural market, repeated vision timeouts, a string of no-website
 results) rather than continuing to spend real Places/Claude money and
 server load chasing a count that may not exist in that city — suggest a
@@ -274,11 +280,20 @@ Respond concisely, like a teammate texting a quick update — not a report.`;
         // instance minutes in. A prompt telling it to self-limit is not
         // reliable enough on its own; this clamp is what actually bounds the
         // worst case regardless of what the model asks for or decides to do
-        // next. Revisit upward only once Quarry runs on a bigger instance,
-        // or independently of others, or the per-run memory footprint is
-        // reduced further (e.g. Playwright screenshot resolution).
-        const MAX_LEADS_HARD_CAP = 30;
-        const requestedMaxLeads = typeof input.maxLeads === "number" ? input.maxLeads : 30;
+        // next. Lowered again 30 -> 15 on 2026-09-07: even with the earlier
+        // fixes (closed browser per run, halved screenshot resolution), a
+        // 30-lead run followed by its one allowed 30-lead escalation retry
+        // still ran the shared instance out of memory (Render's Metrics tab
+        // showed memory climbing continuously through both runs, never
+        // dropping to baseline in between, until the OOM kill). The two
+        // runs' browsers were confirmed closed and sequential, not
+        // overlapping — the actual constraint is the shared Node process's
+        // own accumulated memory across close-together large batches, not
+        // just Chromium. Revisit upward only once Quarry runs on a bigger
+        // instance, or independently of others, or the per-run memory
+        // footprint is reduced further.
+        const MAX_LEADS_HARD_CAP = 15;
+        const requestedMaxLeads = typeof input.maxLeads === "number" ? input.maxLeads : 15;
         const maxLeads = Math.min(requestedMaxLeads, MAX_LEADS_HARD_CAP);
         // Confirmed live: a real batch checks every business one at a time
         // (site fetch, vision screenshot, enrichment) and can take 15-20+
