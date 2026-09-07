@@ -357,8 +357,23 @@ describe("buildLeadQualificationPrompt", () => {
     const lead: NormalisedLead = { ...BLANK_LEAD, intent: "buyer", propertyInterest: "condo" };
     const prompt = buildLeadQualificationPrompt(IRIS_CONFIG, lead, "3 Percent East Coast", "St. John's", false, true, false);
     expect(prompt).toMatch(/not a script to read/i);
-    expect(prompt).toMatch(/never recite the example wording below word-for-word/i);
-    expect(prompt).toMatch(/vary how you say it call to call/i);
+    expect(prompt).toMatch(/small library of DIFFERENT ways to ask the same thing/i);
+    expect(prompt).toMatch(/never pick the same shape twice in this call/i);
+  });
+
+  /**
+   * Jacob's live feedback, 2026-09-08: every verifying question landed on
+   * the exact same shape ("You mentioned X. Does that still sound right?"),
+   * repeated back to back in the same call. Each fact now offers several
+   * differently-shaped phrasings rather than one fixed template.
+   */
+  it("gives multiple differently-shaped phrasing options per verified fact, not one fixed template", () => {
+    const lead: NormalisedLead = { ...BLANK_LEAD, intent: "buyer", propertyInterest: "condo", bedrooms: "3" };
+    const prompt = buildLeadQualificationPrompt(IRIS_CONFIG, lead, "3 Percent East Coast", "St. John's", false, true, false);
+    expect(prompt).toContain("You mentioned you're looking for a condo — is that still what you're after?");
+    expect(prompt).toContain("Ok so, you're set on a condo, right?");
+    expect(prompt).toContain("And you needed 3 bedrooms, right?");
+    expect(prompt).toContain("Still looking for 3 bedrooms?");
   });
 
   it("skips filler acknowledgment and goes straight to the identify question on a bare pickup", () => {

@@ -316,13 +316,37 @@ const FINANCING_PHRASES: Record<Exclude<Financing, null>, string> = {
   "not-approved": "not pre-approved yet",
 };
 
-function verifyTimelineLine(intent: CallIntent, timeline: string): string {
+/**
+ * Jacob's live feedback, 2026-09-08 (reviewing a call recording): every
+ * verifying question landed on the exact same shape — "You mentioned X.
+ * Does that still sound right?" — repeated call after call and even
+ * back-to-back in the same call. Telling the model to "vary it" wasn't
+ * enough on its own when every example it was shown shared one template;
+ * each fact below now has a small library of genuinely different sentence
+ * shapes (tag question, fronted-topic, compressed, casual) for Iris to pick
+ * from, with the ORIGINAL wording kept as the first option so nothing here
+ * regresses to being asked cold. buildLeadQualificationPrompt's own
+ * instruction (see verifyingBlock) tells her to pick a different one than
+ * she used last, not just repeat option 1 every time.
+ */
+function verifyTimelineLines(intent: CallIntent, timeline: string): string[] {
   const verb = intent === "seller" || intent === "downsize" ? "sell" : "make a move";
-  return `You mentioned you're looking to ${verb} within ${timeline} — does that still sound right?`;
+  return [
+    `You mentioned you're looking to ${verb} within ${timeline} — does that still sound right?`,
+    `Timeline-wise, still hoping to ${verb} within ${timeline}?`,
+    `And ${timeline} to ${verb} — that still the plan?`,
+    `Still on track to ${verb} within ${timeline}?`,
+  ];
 }
 
-function verifyFinancingLine(financing: Exclude<Financing, null>): string {
-  return `I also see you mentioned you're ${FINANCING_PHRASES[financing]} — still accurate?`;
+function verifyFinancingLines(financing: Exclude<Financing, null>): string[] {
+  const phrase = FINANCING_PHRASES[financing];
+  return [
+    `I also see you mentioned you're ${phrase} — still accurate?`,
+    `And you're ${phrase}, right?`,
+    `On the financing side, still ${phrase}?`,
+    `Just confirming — ${phrase}?`,
+  ];
 }
 
 /**
@@ -330,16 +354,31 @@ function verifyFinancingLine(financing: Exclude<Financing, null>): string {
  * NormalisedLead.propertyInterest's own doc comment for how that was
  * confirmed live, 2026-09-06.
  */
-function verifyPropertyTypeLine(propertyType: string): string {
-  return `You mentioned you're looking for a ${propertyType} — is that still what you're after?`;
+function verifyPropertyTypeLines(propertyType: string): string[] {
+  return [
+    `You mentioned you're looking for a ${propertyType} — is that still what you're after?`,
+    `Ok so, you're set on a ${propertyType}, right?`,
+    `A ${propertyType}'s still the plan?`,
+    `Just to confirm — still looking for a ${propertyType}?`,
+  ];
 }
 
-function verifyBedroomsLine(bedrooms: string): string {
-  return `And you needed ${bedrooms} bedrooms, right?`;
+function verifyBedroomsLines(bedrooms: string): string[] {
+  return [
+    `And you needed ${bedrooms} bedrooms, right?`,
+    `For bedrooms, ${bedrooms} still sound about right?`,
+    `Still looking for ${bedrooms} bedrooms?`,
+    `And that's ${bedrooms} bedrooms you're after?`,
+  ];
 }
 
-function verifyBudgetLine(budget: string): string {
-  return `I also see you mentioned a budget around ${budget} — does that still sound right?`;
+function verifyBudgetLines(budget: string): string[] {
+  return [
+    `I also see you mentioned a budget around ${budget} — does that still sound right?`,
+    `Budget-wise, still around ${budget}?`,
+    `And ${budget}'s still roughly where your budget's at?`,
+    `Just confirming — budget's still around ${budget}?`,
+  ];
 }
 
 /**
@@ -350,10 +389,20 @@ function verifyBudgetLine(budget: string): string {
  * below); this just gives her the fact up front instead of only reacting
  * if the lead happens to mention it mid-call.
  */
-function verifyWorkingWithRealtorLine(workingWithRealtor: boolean): string {
+function verifyWorkingWithRealtorLines(workingWithRealtor: boolean): string[] {
   return workingWithRealtor
-    ? "I also see you mentioned you're already working with a realtor — is that still the case?"
-    : "I also see you mentioned you're not currently working with a realtor — still accurate?";
+    ? [
+        "I also see you mentioned you're already working with a realtor — is that still the case?",
+        "And you're still working with a realtor?",
+        "Still got a realtor helping you out?",
+        "You're already working with someone on that front, right?",
+      ]
+    : [
+        "I also see you mentioned you're not currently working with a realtor — still accurate?",
+        "And you're not working with a realtor yet, right?",
+        "Still nobody helping you out on the realtor side?",
+        "No realtor yet — that still the case?",
+      ];
 }
 
 /**
@@ -392,7 +441,7 @@ export function buildLeadQualificationPrompt(
   // form already established — never a generic "confirm it" instruction.
   // stillNeeded stays the open-question fallback for whatever genuinely
   // isn't known yet.
-  const verifying: string[] = [];
+  const verifying: string[][] = [];
   const stillNeeded: string[] = [];
 
   // Bare intent is already confirmed by the opening's own contextLine below
@@ -416,31 +465,33 @@ export function buildLeadQualificationPrompt(
   // rather than ever asking the old compound question verbatim. Bathroom
   // count has no field on any client checked so far, folded into the
   // bedroom fallback question.
-  if (lead.propertyInterest) verifying.push(verifyPropertyTypeLine(lead.propertyInterest));
+  if (lead.propertyInterest) verifying.push(verifyPropertyTypeLines(lead.propertyInterest));
   else stillNeeded.push("What type of home are you looking for?");
 
-  if (lead.bedrooms) verifying.push(verifyBedroomsLine(lead.bedrooms));
+  if (lead.bedrooms) verifying.push(verifyBedroomsLines(lead.bedrooms));
   else stillNeeded.push("How many bedrooms and bathrooms do you need?");
 
-  if (lead.timeline) verifying.push(verifyTimelineLine(lead.intent, lead.timeline));
+  if (lead.timeline) verifying.push(verifyTimelineLines(lead.intent, lead.timeline));
   else stillNeeded.push(config.questions[3]);
 
   if (lead.intent !== "seller") {
-    if (lead.financing) verifying.push(verifyFinancingLine(lead.financing));
+    if (lead.financing) verifying.push(verifyFinancingLines(lead.financing));
     else stillNeeded.push("Are you preapproved for a mortgage yet?");
 
     // Budget was captured and scored but never actually verified in
     // conversation until now — confirmed live, 2026-09-06: a real lead's
     // known $450k budget was still asked cold on every test call.
-    if (lead.budget) verifying.push(verifyBudgetLine(lead.budget));
+    if (lead.budget) verifying.push(verifyBudgetLines(lead.budget));
     else stillNeeded.push("What's your budget range?");
   }
 
-  if (lead.workingWithRealtor !== null) verifying.push(verifyWorkingWithRealtorLine(lead.workingWithRealtor));
+  if (lead.workingWithRealtor !== null) verifying.push(verifyWorkingWithRealtorLines(lead.workingWithRealtor));
 
   const verifyingBlock = verifying.length
-    ? `## Verify what's already known — these are FACTS to confirm, not a script to read. Check in on each ONE AT A TIME, in your own natural words, pausing and waiting for their answer before the next one. Never re-discover any of this cold, and never recite the example wording below word-for-word — vary how you say it call to call, e.g. "Ok so, you were looking for a [value], right?" instead of the exact phrasing shown:
-${verifying.map((l) => `- ${l}`).join("\n")}
+    ? `## Verify what's already known — these are FACTS to confirm, not a script to read. Check in on each ONE AT A TIME, in your own natural words, pausing and waiting for their answer before the next one. Never re-discover any of this cold.
+
+Each item below is a small library of DIFFERENT ways to ask the same thing — pick ONE per item, and never pick the same shape twice in this call (e.g. don't close two different questions with "does that still sound right?" back to back — that's the exact repetitive pattern Jacob flagged on a real call). Feel free to write your own phrasing entirely, as long as it asks the same underlying fact:
+${verifying.map((variants) => `- ${variants.join("\n  — or: ")}`).join("\n")}
 
 If their answer confirms it, acknowledge briefly (vary the phrase — see the acknowledgment rule below) and move on. If it conflicts with what's shown here — they say something's changed, or it was never quite right — treat THEIR latest answer as the real one, acknowledge the update naturally (e.g. "Got it, so that's changed a bit"), and never argue or repeat the stale value back at them.`
     : `## What you already know about this lead\nNothing yet — this is a cold first contact.`;
@@ -618,6 +669,12 @@ ${transferSection}
   lines almost word-for-word on real calls, which read as stiff and
   robotic — talk like a real person having a conversation, not a dialogue
   tree.
+- Don't fall into one repeated question shape either — closing every single
+  verifying question with the same tag ("...does that still sound right?")
+  is just as robotic as reciting a line verbatim, even if the wording before
+  it changes. Mix up the sentence shape itself: a tag question, a
+  fronted-topic question, a quick "right?", a casual "yeah?" — see the
+  phrasing options given for each fact and genuinely vary between them.
 - Speak, then pause and actually listen — don't fill every silence. A short
   pause is normal and better than rushing to the next line.
 - If the lead starts talking while you're mid-sentence, stop talking,
