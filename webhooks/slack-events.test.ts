@@ -12,7 +12,7 @@ vi.mock("../agents/forge", () => ({ forgeAgent: {} }));
 vi.mock("../agents/lens", () => ({ lensAgent: {} }));
 vi.mock("../agents/nova", () => ({ novaAgent: {} }));
 
-import { extractFileFromEvent, verifySlackSignature } from "./slack-events";
+import { extractFileFromEvent, isSlackRetryDelivery, verifySlackSignature } from "./slack-events";
 
 const SECRET = "test-signing-secret";
 
@@ -79,6 +79,19 @@ describe("verifySlackSignature", () => {
     const signature = realSignature(staleTimestamp, rawBody);
 
     expect(verifySlackSignature(SECRET, fakeRequest({ timestamp: staleTimestamp, signature, rawBody }))).toBe(false);
+  });
+});
+
+describe("isSlackRetryDelivery", () => {
+  // Regression guard: confirmed live 2026-09-06, one Slack message produced
+  // two identical acknowledgments and two full Quarry discovery runs — the
+  // handler had no way to tell a retried delivery from a fresh one.
+  it("is true when Slack sends a retry-num header", () => {
+    expect(isSlackRetryDelivery({ headers: { "x-slack-retry-num": "1" } } as any)).toBe(true);
+  });
+
+  it("is false for a fresh delivery with no retry header", () => {
+    expect(isSlackRetryDelivery({ headers: {} } as any)).toBe(false);
   });
 });
 
