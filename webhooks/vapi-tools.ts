@@ -4,6 +4,7 @@ import { getGhlConfig, addContactTags, updateContact, getCustomFieldDefs, getCal
 import { buildKeyToId } from "../agents/scout/intake";
 import { loadIrisConfig } from "../agents/iris";
 import { scheduleExplicitCallback } from "../agents/iris/dial-pending";
+import { query } from "../shared/db";
 
 /**
  * Server-side handler for the schedule_callback function tool Vapi calls
@@ -337,6 +338,17 @@ function createToolHandler(handler: (query: Record<string, string>, call: ToolCa
       console.warn("[VAPI-TOOLS] Invalid or missing X-Vapi-Secret header");
       return res.status(401).send("Invalid signature");
     }
+
+    // TEMPORARY, 2026-09-08: capturing the exact real request body Vapi
+    // sends — check_and_book_appointment still hit "No requestedTime was
+    // given" on a live call even after fixing call.function.arguments
+    // parsing, so something about the real wire shape still doesn't match
+    // what's assumed here. Remove once diagnosed. Fire-and-forget, never
+    // blocks or fails the actual tool response.
+    query(`INSERT INTO debug_tool_webhook_log (query, body) VALUES ($1, $2)`, [
+      JSON.stringify(req.query || {}),
+      JSON.stringify(req.body || {}),
+    ]).catch(() => {});
 
     try {
       const toolCalls: ToolCall[] = req.body?.message?.toolCallList || [];
