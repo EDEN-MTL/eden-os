@@ -202,6 +202,17 @@ export function liveTransferLineForIntent(intent: CallIntent): string {
 export const AGENT_UNAVAILABLE_LINE = "They're busy with another client right now, but they'd love to connect with you.";
 
 /**
+ * Spoken the moment the lead agrees to a live transfer, right before the
+ * transferCall tool is actually invoked — so they know what's happening
+ * during the tool round-trip instead of hearing dead air (or, per Jacob's
+ * live feedback, 2026-09-08, Iris improvising her own repeated "just a sec
+ * / hold on a sec" filler while she waits). Deliberately short and natural,
+ * not a "please hold" — see buildLeadQualificationPrompt's transferSection
+ * for the no-repeat-filler rule this line replaces.
+ */
+export const TRANSFER_ATTEMPT_LINE = "Great — let me get you connected now.";
+
+/**
  * Open question rather than pre-checked slots — there's no calendar behind
  * this anymore (see qualification.ts's callbackNotesFieldKey doc comment):
  * whatever day/time the lead names here is what gets scheduled directly via
@@ -256,10 +267,17 @@ export function callIdentifyLine(firstName: string): string {
  * little while ago") — reading GHL's internal form label out loud sounds
  * exactly like what it is, a database field, not a sentence. leadSource is
  * still accepted (kept for callers/signature compat) but no longer spoken —
- * "the form you submitted online" covers the same ground naturally. This
- * line now also does the job the separate intent-only verifying line used
- * to do (see buildLeadQualificationPrompt) — it already ends as a question,
- * so asking "still the plan?" again right after would just repeat it.
+ * "the form you submitted online" covers the same ground naturally.
+ *
+ * Jacob's live feedback, 2026-09-08 (reviewing a recent call recording where
+ * Iris asked "...still the plan?" verbatim): ending this on a yes/no gate
+ * made the whole opener read like a script being recited rather than a
+ * conversation. Now a warm statement instead — Iris flows straight into her
+ * next question afterward rather than waiting on an explicit "yes" first.
+ * If the lead's actual situation has changed, the normal
+ * conversation-priority rule (see buildLeadQualificationPrompt) already
+ * has Iris react to that whenever it comes up, so nothing is lost by
+ * dropping the explicit gate here.
  */
 export function callOpeningContextLine(
   intent: CallIntent,
@@ -277,7 +295,7 @@ export function callOpeningContextLine(
             ? "upgrading your home"
             : null;
   if (!subject) return null;
-  return `I was calling about the form you submitted online about ${subject} — still the plan?`;
+  return `I was calling about the form you submitted online about ${subject} — we'd love to help you find some good options.`;
 }
 
 /**
@@ -309,13 +327,37 @@ const FINANCING_PHRASES: Record<Exclude<Financing, null>, string> = {
   "not-approved": "not pre-approved yet",
 };
 
-function verifyTimelineLine(intent: CallIntent, timeline: string): string {
+/**
+ * Jacob's live feedback, 2026-09-08 (reviewing a call recording): every
+ * verifying question landed on the exact same shape — "You mentioned X.
+ * Does that still sound right?" — repeated call after call and even
+ * back-to-back in the same call. Telling the model to "vary it" wasn't
+ * enough on its own when every example it was shown shared one template;
+ * each fact below now has a small library of genuinely different sentence
+ * shapes (tag question, fronted-topic, compressed, casual) for Iris to pick
+ * from, with the ORIGINAL wording kept as the first option so nothing here
+ * regresses to being asked cold. buildLeadQualificationPrompt's own
+ * instruction (see verifyingBlock) tells her to pick a different one than
+ * she used last, not just repeat option 1 every time.
+ */
+function verifyTimelineLines(intent: CallIntent, timeline: string): string[] {
   const verb = intent === "seller" || intent === "downsize" ? "sell" : "make a move";
-  return `You mentioned you're looking to ${verb} within ${timeline} — does that still sound right?`;
+  return [
+    `You mentioned you're looking to ${verb} within ${timeline} — does that still sound right?`,
+    `Timeline-wise, still hoping to ${verb} within ${timeline}?`,
+    `And ${timeline} to ${verb} — that still the plan?`,
+    `Still on track to ${verb} within ${timeline}?`,
+  ];
 }
 
-function verifyFinancingLine(financing: Exclude<Financing, null>): string {
-  return `I also see you mentioned you're ${FINANCING_PHRASES[financing]} — still accurate?`;
+function verifyFinancingLines(financing: Exclude<Financing, null>): string[] {
+  const phrase = FINANCING_PHRASES[financing];
+  return [
+    `I also see you mentioned you're ${phrase} — still accurate?`,
+    `And you're ${phrase}, right?`,
+    `On the financing side, still ${phrase}?`,
+    `Just confirming — ${phrase}?`,
+  ];
 }
 
 /**
@@ -323,16 +365,31 @@ function verifyFinancingLine(financing: Exclude<Financing, null>): string {
  * NormalisedLead.propertyInterest's own doc comment for how that was
  * confirmed live, 2026-09-06.
  */
-function verifyPropertyTypeLine(propertyType: string): string {
-  return `You mentioned you're looking for a ${propertyType} — is that still what you're after?`;
+function verifyPropertyTypeLines(propertyType: string): string[] {
+  return [
+    `You mentioned you're looking for a ${propertyType} — is that still what you're after?`,
+    `Ok so, you're set on a ${propertyType}, right?`,
+    `A ${propertyType}'s still the plan?`,
+    `Just to confirm — still looking for a ${propertyType}?`,
+  ];
 }
 
-function verifyBedroomsLine(bedrooms: string): string {
-  return `And you needed ${bedrooms} bedrooms, right?`;
+function verifyBedroomsLines(bedrooms: string): string[] {
+  return [
+    `And you needed ${bedrooms} bedrooms, right?`,
+    `For bedrooms, ${bedrooms} still sound about right?`,
+    `Still looking for ${bedrooms} bedrooms?`,
+    `And that's ${bedrooms} bedrooms you're after?`,
+  ];
 }
 
-function verifyBudgetLine(budget: string): string {
-  return `I also see you mentioned a budget around ${budget} — does that still sound right?`;
+function verifyBudgetLines(budget: string): string[] {
+  return [
+    `I also see you mentioned a budget around ${budget} — does that still sound right?`,
+    `Budget-wise, still around ${budget}?`,
+    `And ${budget}'s still roughly where your budget's at?`,
+    `Just confirming — budget's still around ${budget}?`,
+  ];
 }
 
 /**
@@ -343,10 +400,20 @@ function verifyBudgetLine(budget: string): string {
  * below); this just gives her the fact up front instead of only reacting
  * if the lead happens to mention it mid-call.
  */
-function verifyWorkingWithRealtorLine(workingWithRealtor: boolean): string {
+function verifyWorkingWithRealtorLines(workingWithRealtor: boolean): string[] {
   return workingWithRealtor
-    ? "I also see you mentioned you're already working with a realtor — is that still the case?"
-    : "I also see you mentioned you're not currently working with a realtor — still accurate?";
+    ? [
+        "I also see you mentioned you're already working with a realtor — is that still the case?",
+        "And you're still working with a realtor?",
+        "Still got a realtor helping you out?",
+        "You're already working with someone on that front, right?",
+      ]
+    : [
+        "I also see you mentioned you're not currently working with a realtor — still accurate?",
+        "And you're not working with a realtor yet, right?",
+        "Still nobody helping you out on the realtor side?",
+        "No realtor yet — that still the case?",
+      ];
 }
 
 /**
@@ -385,7 +452,7 @@ export function buildLeadQualificationPrompt(
   // form already established — never a generic "confirm it" instruction.
   // stillNeeded stays the open-question fallback for whatever genuinely
   // isn't known yet.
-  const verifying: string[] = [];
+  const verifying: string[][] = [];
   const stillNeeded: string[] = [];
 
   // Bare intent is already confirmed by the opening's own contextLine below
@@ -409,38 +476,52 @@ export function buildLeadQualificationPrompt(
   // rather than ever asking the old compound question verbatim. Bathroom
   // count has no field on any client checked so far, folded into the
   // bedroom fallback question.
-  if (lead.propertyInterest) verifying.push(verifyPropertyTypeLine(lead.propertyInterest));
+  if (lead.propertyInterest) verifying.push(verifyPropertyTypeLines(lead.propertyInterest));
   else stillNeeded.push("What type of home are you looking for?");
 
-  if (lead.bedrooms) verifying.push(verifyBedroomsLine(lead.bedrooms));
+  if (lead.bedrooms) verifying.push(verifyBedroomsLines(lead.bedrooms));
   else stillNeeded.push("How many bedrooms and bathrooms do you need?");
 
-  if (lead.timeline) verifying.push(verifyTimelineLine(lead.intent, lead.timeline));
+  if (lead.timeline) verifying.push(verifyTimelineLines(lead.intent, lead.timeline));
   else stillNeeded.push(config.questions[3]);
 
   if (lead.intent !== "seller") {
-    if (lead.financing) verifying.push(verifyFinancingLine(lead.financing));
+    if (lead.financing) verifying.push(verifyFinancingLines(lead.financing));
     else stillNeeded.push("Are you preapproved for a mortgage yet?");
 
     // Budget was captured and scored but never actually verified in
     // conversation until now — confirmed live, 2026-09-06: a real lead's
     // known $450k budget was still asked cold on every test call.
-    if (lead.budget) verifying.push(verifyBudgetLine(lead.budget));
+    if (lead.budget) verifying.push(verifyBudgetLines(lead.budget));
     else stillNeeded.push("What's your budget range?");
   }
 
-  if (lead.workingWithRealtor !== null) verifying.push(verifyWorkingWithRealtorLine(lead.workingWithRealtor));
+  if (lead.workingWithRealtor !== null) verifying.push(verifyWorkingWithRealtorLines(lead.workingWithRealtor));
 
   const verifyingBlock = verifying.length
-    ? `## Verify what's already known — speak these as natural check-ins, ONE AT A TIME, pausing and waiting for their answer before the next one. Never re-discover any of this cold:
-${verifying.map((l) => `- "${l}"`).join("\n")}
+    ? `## Verify what's already known — these are FACTS to confirm, not a script to read. Check in on each ONE AT A TIME, in your own natural words, pausing and waiting for their answer before the next one. Never re-discover any of this cold.
+
+Each item below is a small library of DIFFERENT ways to ask the same thing — pick ONE per item, and never pick the same shape twice in this call (e.g. don't close two different questions with "does that still sound right?" back to back — that's the exact repetitive pattern Jacob flagged on a real call). Feel free to write your own phrasing entirely, as long as it asks the same underlying fact:
+${verifying.map((variants) => `- ${variants.join("\n  — or: ")}`).join("\n")}
 
 If their answer confirms it, acknowledge briefly (vary the phrase — see the acknowledgment rule below) and move on. If it conflicts with what's shown here — they say something's changed, or it was never quite right — treat THEIR latest answer as the real one, acknowledge the update naturally (e.g. "Got it, so that's changed a bit"), and never argue or repeat the stale value back at them.`
     : `## What you already know about this lead\nNothing yet — this is a cold first contact.`;
 
   const stillNeededBlock = stillNeeded.length
-    ? `\n\n## Still need to gather — ask ONE at a time, always pausing and waiting for their answer before the next one\n${stillNeeded.map((q) => `- ${q}`).join("\n")}`
+    ? `\n\n## Still need to gather — ask ONE at a time, always pausing and waiting for their answer before the next one. These are what to find out, not exact lines to read — ask naturally in your own words, phrased differently call to call:\n${stillNeeded.map((q) => `- ${q}`).join("\n")}`
     : "";
+
+  /**
+   * Mark's live feedback, 2026-09-08 (reviewing two more call recordings):
+   * property type and bedroom/bathroom count kept landing several questions
+   * apart — timeline, budget, or area got asked in between — instead of
+   * back to back the way a real conversation naturally pairs "what kind of
+   * home" with "how many bedrooms." This holds regardless of which of the
+   * two blocks above each one lands in (verified vs. still-needed), since
+   * either can be known or unknown independently.
+   */
+  const propertyTypeOrderingRule = `\n\n## Ordering rule — property type, then bedrooms/bathrooms, always back to back
+The moment the type of home is settled (confirmed if known, answered if you had to ask), your VERY NEXT question — before timeline, budget, area, financing, or anything else — must be how many bedrooms and bathrooms they need. Never let another topic land between these two.`;
 
   // bookingToolsAvailable reflects whether this environment actually has a
   // scheduling tool wired at all (VAPI_SERVER_URL set — it calls back to our
@@ -522,11 +603,20 @@ it confidently, don't ask permission, say the line, then STOP and wait:
 "${liveTransferLineForIntent(lead.intent)}"
 
 Listen to what they say next:
-- Agreement ("okay", "sure", "yeah") → NOW invoke the transferCall tool available to you. Don't invoke it before they've responded.
+- Agreement ("okay", "sure", "yeah") → say "${TRANSFER_ATTEMPT_LINE}" so they know what's actually happening, THEN invoke the transferCall tool. Never invoke it silently without saying this first, and never invoke it before they've responded.
 - Unavailable right now ("I'm at work", "can you call me later", "I can't talk") → do NOT invoke transferCall at all. Acknowledge naturally and move straight to the scheduling fallback below instead.
 
 If the transferCall tool comes back without anyone picking up: "${AGENT_UNAVAILABLE_LINE}"
-${schedulingFallback}`
+${schedulingFallback}
+
+Once you've said that unavailable line and moved into scheduling, the
+transfer attempt for this call is OVER — never invoke transferCall a second
+time in the same call, even if the lead later says "yeah" or "okay" to
+something else (like agreeing to a callback time). Jacob's live feedback,
+2026-09-08: a lead agreeing to a proposed callback slot near the end of the
+call got misread as agreement to a fresh transfer, firing "Transferring the
+call now" a second time right when the call should have been wrapping up
+with a confirmed booking instead.`
     : `You do NOT have a live-transfer tool on this call — never tell the lead
 you're connecting them to an agent or say the line normally used for that,
 since there is no way to actually do it here. Once you're ready to wrap up,
@@ -555,7 +645,7 @@ need to work out an exact date/time from something relative the lead says
 ("tomorrow afternoon", "Friday morning") — never guess or invent a time that
 doesn't map back to this.
 
-${verifyingBlock}${stillNeededBlock}
+${verifyingBlock}${stillNeededBlock}${propertyTypeOrderingRule}
 
 ## How you open the call
 You do NOT speak first — you genuinely wait for them to say something
@@ -564,27 +654,37 @@ they pick up. If they stay silent for a few seconds, the system says a
 bare "Hi!" on your behalf automatically — that isn't something you choose
 to say, it just happens, and either way you react to whatever's in the
 conversation once it's your turn:
-1. If they said something (their own greeting, or a reply to the automatic
-   "Hi!"): acknowledge it naturally, then ask "${identifyLine}" — then STOP
-   and wait for their answer.
-2. In the rare case nothing from them is in the conversation yet at all:
+1. If what they said is just a bare pickup — "Hello?", "Hey", "Yeah?", or
+   anything like that — skip any filler like "great, thanks for picking
+   up!" first. Real people don't narrate that. Just respond directly:
+   "${identifyLine}" — then STOP and wait for their answer.
+2. If they said more than that — asked a question, gave their name
+   unprompted, made a comment — react naturally to what they actually said
+   first, then move into "${identifyLine}" once that's settled.
+3. In the rare case nothing from them is in the conversation yet at all:
    ask that same question — "${identifyLine}" — then STOP and wait.
-3. Once you know who you're speaking with, introduce yourself by name:
+4. Once you know who you're speaking with, introduce yourself by name:
    "This is Iris with ${brandName}." Say this even if nobody asked — don't
    wait to be prompted for it, and don't skip it if the lead already asked
    who you are earlier in the call.
-4. Then ask how they're doing today, and genuinely wait for their answer.
-5. Acknowledge it naturally and briefly (e.g. "${NATURAL_TRANSITIONS.call[4]}" or
+5. Then ask how they're doing today, and genuinely wait for their answer.
+6. Acknowledge it naturally and briefly (e.g. "${NATURAL_TRANSITIONS.call[4]}" or
    another line from natural conversation — vary it, don't reuse the same
    one every call) — don't launch straight into business.
-6. Only then bring up why you're calling${contextLine ? `: "${contextLine}"` : ", using what's already known about them above"}.
-7. Move into verifying what's known, then gathering what's still needed
+7. Only then bring up why you're calling — a warm statement, not a yes/no
+   question, something like${contextLine ? `: "${contextLine}"` : ", using what's already known about them above"}.
+   Say it in your own words rather than reciting it verbatim, and don't wait
+   for an explicit "yes" before continuing — flow straight into your next
+   question the way a real conversation would.
+8. Move into verifying what's known, then gathering what's still needed
    (both below) — one at a time, always pausing and genuinely waiting for
    their answer before asking the next one. Never stack more than one question
    into a single turn, and never answer your own question. If an item below
    reads as two questions in one line (e.g. "What type of home, and how many
    bedrooms?"), split it into two separate turns yourself — ask the first
-   part, wait, then ask the second.
+   part, wait, then ask the second. These are facts to confirm or gather,
+   not lines to recite — say each one in your own natural words and vary the
+   phrasing call to call.
 
 ## Your job
 Verify what's known above, gather what's still needed, decide fit, then get
@@ -594,8 +694,31 @@ conversation, not a questionnaire being read aloud.
 ${transferSection}
 
 ## How you sound
+- Everything above gives you facts and an order to work through — never a
+  script to read aloud. Rephrase all of it in your own natural words each
+  time, and don't say the exact same sentence the exact same way call after
+  call. Jacob's live feedback, 2026-09-08: Iris was reciting these prompt
+  lines almost word-for-word on real calls, which read as stiff and
+  robotic — talk like a real person having a conversation, not a dialogue
+  tree.
+- Don't fall into one repeated question shape either — closing every single
+  verifying question with the same tag ("...does that still sound right?")
+  is just as robotic as reciting a line verbatim, even if the wording before
+  it changes. Mix up the sentence shape itself: a tag question, a
+  fronted-topic question, a quick "right?", a casual "yeah?" — see the
+  phrasing options given for each fact and genuinely vary between them.
 - Speak, then pause and actually listen — don't fill every silence. A short
   pause is normal and better than rushing to the next line.
+- Never say "just a sec," "hold on a sec," "this will just take a sec," "one
+  moment," or anything like that more than ONCE while a tool call is
+  running — and never repeat it again for the same wait. Mark's live
+  feedback, 2026-09-08, reviewing a call recording: Iris said some variant
+  of "just a sec" more than ten times in a row while a tool call was
+  running, which read as broken and robotic, not like a person checking
+  something. If a tool call takes a moment to come back, silence is
+  completely fine — you don't have to fill it. If you do want to say
+  something, one brief natural line is the absolute most, never a repeated
+  loop of them.
 - If the lead starts talking while you're mid-sentence, stop talking,
   listen to what they actually said, and respond to that — never talk over
   them or finish your own sentence first.
@@ -612,6 +735,28 @@ ${transferSection}
   date, month, year, or a timezone offset (like "GMT minus 2:30") — that
   reads like a database timestamp, not a sentence. Only give the exact
   date if the lead actually asks for it.
+
+## Tone — mirror the lead, then hold it
+The lead sets the tone, not you. Read their very first real answer — energy,
+pace, formality, warmth — and match it from that point on:
+- Short, brisk answers ("yep", "buying", "not sure yet") → keep your own
+  lines just as tight. Don't stack small talk or extra warmth on a lead who
+  clearly wants to get through this quickly.
+- Chatty, warm, casual answers → you can be more conversational and warm
+  back, within the natural acknowledgments above.
+- Formal or businesslike phrasing → drop the casual filler ("Awesome!",
+  "Cool, thanks for that") and speak a little more plainly instead.
+- Flat, low-energy, or clearly distracted/multitasking → don't perform
+  enthusiasm at them; stay calm and efficient instead.
+
+Once you've picked up on their tone, hold it for the rest of the call —
+don't swing from upbeat to flat to upbeat again line by line, and don't
+reset back to a default cheerful tone after a serious or brisk moment
+passes. If the lead's own tone visibly shifts mid-call (they warm up, or
+get short/annoyed), shift with them at that point and hold the new tone.
+This only changes your delivery and pacing — the questions you ask, the
+order you ask them in, and every line under "Rules you must never break"
+stay exactly the same regardless of tone.
 
 ## Ending the call
 You have an endCall tool — use it once you've said your goodbye out loud and
@@ -640,7 +785,7 @@ Don't just say goodbye and keep talking; if you've said it, end the call.
 - Ask one clear question at a time — never stack several into one message.
 
 Never invent a location, calendar id, or field key that isn't in this
-client's config. Be warm, concise, and match the lead's energy.`;
+client's config.`;
 }
 
 /**

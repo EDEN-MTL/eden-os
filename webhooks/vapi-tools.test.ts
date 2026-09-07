@@ -1,5 +1,47 @@
 import { describe, expect, it } from "vitest";
-import { resolveRequestedTime } from "./vapi-tools";
+import { resolveRequestedTime, parseToolArguments, ToolCall } from "./vapi-tools";
+
+/**
+ * Mark's live feedback, 2026-09-08 (reviewing a call recording where every
+ * single check_and_book_appointment call looped on "No requestedTime was
+ * given" for the entire call): confirmed against every historical
+ * iris_call_log row that this tool has NEVER once successfully read an
+ * argument, on any call, for any client — because the old code read
+ * `call.arguments?.requestedTime` directly, but Vapi's real ToolCall shape
+ * (confirmed against their own OpenAPI schema AND a live call's stored raw
+ * payload) nests a JSON-ENCODED STRING under `call.function.arguments`.
+ * `call.arguments` never existed on the real wire format, so it was always
+ * `undefined`. These tests build the tool call exactly the way Vapi's
+ * schema and a real captured payload describe it — not the shape this
+ * file's own (wrong) interface used to declare — so a regression back to
+ * reading a flat `.arguments` field would be caught immediately.
+ */
+describe("parseToolArguments", () => {
+  function realToolCall(name: string, args: Record<string, unknown>): ToolCall {
+    return { id: "call_test123", type: "function", function: { name, arguments: JSON.stringify(args) } };
+  }
+
+  it("parses the real wire shape — a JSON-encoded string nested under function.arguments", () => {
+    const call = realToolCall("check_and_book_appointment", { requestedTime: "2026-09-07T18:30:00" });
+    expect(parseToolArguments(call)).toEqual({ requestedTime: "2026-09-07T18:30:00" });
+  });
+
+  /**
+   * Reproduces the exact payload captured from a real call's raw Vapi
+   * artifact (iris_call_log #30, 2026-09-07) that looped forever under the
+   * old code.
+   */
+  it("extracts requestedTime from a real captured Vapi tool-call payload", () => {
+    const raw = '{"requestedTime": "2026-09-07T18:30:00"}';
+    const call: ToolCall = { id: "call_Vy12P18JbYXgc6uQHLivJukZ", type: "function", function: { name: "check_and_book_appointment", arguments: raw } };
+    expect(parseToolArguments(call).requestedTime).toBe("2026-09-07T18:30:00");
+  });
+
+  it("degrades to an empty object on malformed JSON rather than throwing", () => {
+    const call: ToolCall = { id: "call_bad", type: "function", function: { name: "check_and_book_appointment", arguments: "not json" } };
+    expect(parseToolArguments(call)).toEqual({});
+  });
+});
 
 describe("resolveRequestedTime", () => {
   /**

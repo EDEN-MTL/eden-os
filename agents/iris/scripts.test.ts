@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   AGENT_UNAVAILABLE_FOLLOW_UP,
   AGENT_UNAVAILABLE_LINE,
+  TRANSFER_ATTEMPT_LINE,
   buildLeadQualificationPrompt,
   buildVoicemailMessage,
   BUYER_QUESTIONS,
@@ -194,9 +195,15 @@ describe("callOpeningContextLine", () => {
     expect(withoutSource).not.toBeNull();
   });
 
-  it("ends as a question, doing the job of confirming intent so it isn't asked twice", () => {
+  /**
+   * Jacob's live feedback, 2026-09-08: ending this on a yes/no gate
+   * ("...still the plan?") made Iris sound like she was reciting a script.
+   * Now a warm statement — Iris flows into her next question rather than
+   * waiting on an explicit "yes" first.
+   */
+  it("is a warm statement, not a yes/no gate", () => {
     const line = callOpeningContextLine("buyer", "St. John's", null);
-    expect(line?.trim().endsWith("?")).toBe(true);
+    expect(line?.trim().endsWith("?")).toBe(false);
   });
 
   it("returns null for unknown intent rather than inventing a reason for the call", () => {
@@ -336,6 +343,53 @@ describe("buildLeadQualificationPrompt", () => {
     expect(prompt).not.toContain("What's your budget range?");
   });
 
+  /**
+   * Mark's live feedback, 2026-09-08 (reviewing recent Vapi call recordings):
+   * tone was drifting across a single call instead of staying consistent —
+   * the old prompt only had a single throwaway "match the lead's energy"
+   * adjective, no concrete instruction on how to read or hold a tone.
+   */
+  /**
+   * Jacob's live feedback, 2026-09-08 (reviewing a call recording): Iris was
+   * reciting the verifying/context lines almost word-for-word, which read
+   * as stiff and scripted rather than conversational.
+   */
+  it("tells Iris to paraphrase in her own words and vary phrasing, not recite verbatim", () => {
+    const lead: NormalisedLead = { ...BLANK_LEAD, intent: "buyer", propertyInterest: "condo" };
+    const prompt = buildLeadQualificationPrompt(IRIS_CONFIG, lead, "3 Percent East Coast", "St. John's", false, true, false);
+    expect(prompt).toMatch(/not a script to read/i);
+    expect(prompt).toMatch(/small library of DIFFERENT ways to ask the same thing/i);
+    expect(prompt).toMatch(/never pick the same shape twice in this call/i);
+  });
+
+  /**
+   * Jacob's live feedback, 2026-09-08: every verifying question landed on
+   * the exact same shape ("You mentioned X. Does that still sound right?"),
+   * repeated back to back in the same call. Each fact now offers several
+   * differently-shaped phrasings rather than one fixed template.
+   */
+  it("gives multiple differently-shaped phrasing options per verified fact, not one fixed template", () => {
+    const lead: NormalisedLead = { ...BLANK_LEAD, intent: "buyer", propertyInterest: "condo", bedrooms: "3" };
+    const prompt = buildLeadQualificationPrompt(IRIS_CONFIG, lead, "3 Percent East Coast", "St. John's", false, true, false);
+    expect(prompt).toContain("You mentioned you're looking for a condo — is that still what you're after?");
+    expect(prompt).toContain("Ok so, you're set on a condo, right?");
+    expect(prompt).toContain("And you needed 3 bedrooms, right?");
+    expect(prompt).toContain("Still looking for 3 bedrooms?");
+  });
+
+  it("skips filler acknowledgment and goes straight to the identify question on a bare pickup", () => {
+    const prompt = buildLeadQualificationPrompt(IRIS_CONFIG, BLANK_LEAD, "3 Percent East Coast", "St. John's", false, true, false);
+    expect(prompt).toMatch(/skip any filler like/i);
+    expect(prompt).toMatch(/great, thanks for picking\s+up!/i);
+  });
+
+  it("tells Iris to mirror the lead's tone and hold it for the rest of the call", () => {
+    const prompt = buildLeadQualificationPrompt(IRIS_CONFIG, BLANK_LEAD, "3 Percent East Coast", "St. John's", false, true, false);
+    expect(prompt).toMatch(/mirror the lead, then hold it/i);
+    expect(prompt).toMatch(/don't swing from upbeat to flat to upbeat again/i);
+    expect(prompt).toMatch(/shift with them at that point and hold the new tone/i);
+  });
+
   it("uses the city and brand it's given rather than a hardcoded one", () => {
     const prompt = buildLeadQualificationPrompt(IRIS_CONFIG, BLANK_LEAD, "Matama Floors", "Montreal", false, true, false);
     expect(prompt).toContain("Matama Floors");
@@ -402,11 +456,58 @@ describe("buildLeadQualificationPrompt", () => {
    * tool was ever wired in (no transferNumber resolved for this lead) — she
    * said the transfer line and then had nothing to actually invoke.
    */
+  /**
+   * Mark's live feedback, 2026-09-08 (reviewing more call recordings):
+   * property type and bedroom/bathroom count kept landing several
+   * questions apart instead of back to back.
+   */
+  it("tells Iris to ask bedrooms/bathrooms immediately after property type, before anything else", () => {
+    const prompt = buildLeadQualificationPrompt(IRIS_CONFIG, BLANK_LEAD, "3 Percent East Coast", "St. John's", false, true, false);
+    expect(prompt).toMatch(/property type, then bedrooms\/bathrooms, always back to back/i);
+    expect(prompt).toMatch(/before timeline, budget, area, financing, or anything else/i);
+  });
+
+  /**
+   * Mark's live feedback, 2026-09-08: Iris said some variant of "just a
+   * sec" more than ten times in a row while a tool call was running.
+   */
+  it("bans repeated stalling filler like 'just a sec' during a tool call", () => {
+    const prompt = buildLeadQualificationPrompt(IRIS_CONFIG, BLANK_LEAD, "3 Percent East Coast", "St. John's", false, true, false);
+    expect(prompt).toMatch(/never say "just a sec/i);
+    expect(prompt).toMatch(/more than ONCE while a tool call is/i);
+  });
+
   describe("transferAvailable", () => {
+    /**
+     * Mark's live feedback, 2026-09-08: Iris invoked transferCall silently
+     * right after hearing agreement, leaving the lead in dead air (which
+     * she then filled with a repeated "just a sec" loop) instead of telling
+     * them what was actually happening.
+     */
+    it("tells Iris to announce the transfer attempt before invoking the tool", () => {
+      const prompt = buildLeadQualificationPrompt(IRIS_CONFIG, BLANK_LEAD, "3 Percent East Coast", "St. John's", false, true, false);
+      expect(prompt).toContain(TRANSFER_ATTEMPT_LINE);
+      expect(prompt).toMatch(/never invoke it silently without saying this first/i);
+    });
+
+
     it("tells Iris to invoke the transferCall tool when a transfer is available", () => {
       const prompt = buildLeadQualificationPrompt(IRIS_CONFIG, BLANK_LEAD, "3 Percent East Coast", "St. John's", false, true, false);
       expect(prompt).toMatch(/invoke the transferCall tool/i);
       expect(prompt).not.toMatch(/do not have a live-transfer tool/i);
+    });
+
+    /**
+     * Jacob's live feedback, 2026-09-08 (reviewing a call recording): after
+     * transferCall failed and Iris fell back to scheduling, the lead later
+     * agreeing to a proposed callback time ("yeah") got misread as
+     * agreement to a fresh transfer attempt, firing "Transferring the call
+     * now" a second time right as the call should have wrapped up with a
+     * confirmed booking.
+     */
+    it("tells Iris never to attempt a second transferCall once she's fallen back to scheduling", () => {
+      const prompt = buildLeadQualificationPrompt(IRIS_CONFIG, BLANK_LEAD, "3 Percent East Coast", "St. John's", false, true, false);
+      expect(prompt).toMatch(/never invoke transferCall a second\s+time in the same call/i);
     });
 
     it("tells Iris she has no live-transfer tool, and never to claim one, when none is available", () => {
