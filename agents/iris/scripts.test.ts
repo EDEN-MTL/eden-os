@@ -336,6 +336,19 @@ describe("buildLeadQualificationPrompt", () => {
     expect(prompt).not.toContain("What's your budget range?");
   });
 
+  /**
+   * Mark's live feedback, 2026-09-08 (reviewing recent Vapi call recordings):
+   * tone was drifting across a single call instead of staying consistent —
+   * the old prompt only had a single throwaway "match the lead's energy"
+   * adjective, no concrete instruction on how to read or hold a tone.
+   */
+  it("tells Iris to mirror the lead's tone and hold it for the rest of the call", () => {
+    const prompt = buildLeadQualificationPrompt(IRIS_CONFIG, BLANK_LEAD, "3 Percent East Coast", "St. John's", false, true, false);
+    expect(prompt).toMatch(/mirror the lead, then hold it/i);
+    expect(prompt).toMatch(/don't swing from upbeat to flat to upbeat again/i);
+    expect(prompt).toMatch(/shift with them at that point and hold the new tone/i);
+  });
+
   it("uses the city and brand it's given rather than a hardcoded one", () => {
     const prompt = buildLeadQualificationPrompt(IRIS_CONFIG, BLANK_LEAD, "Matama Floors", "Montreal", false, true, false);
     expect(prompt).toContain("Matama Floors");
