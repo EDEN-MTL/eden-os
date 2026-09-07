@@ -3,7 +3,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 const dbMocks = vi.hoisted(() => ({ query: vi.fn() }));
 vi.mock("../../shared/db", () => dbMocks);
 
-import { getPipelineStats } from "./store";
+import { getPipelineStats, getStaleRuns } from "./store";
 
 afterEach(() => vi.clearAllMocks());
 
@@ -44,5 +44,30 @@ describe("getPipelineStats", () => {
     expect(stats.qualified).toBe(0);
     expect(stats.sentTodaySms).toBe(0);
     expect(stats.sentTodayEmail).toBe(0);
+  });
+});
+
+describe("getStaleRuns", () => {
+  it("shapes a stuck row into a StaleRun, rounding the elapsed minutes", async () => {
+    dbMocks.query.mockResolvedValueOnce([
+      { id: "22", triggered_by: "slack:quarry_run_discovery(Brockville)", started_at: "2026-09-07T15:14:13.000Z", minutes_elapsed: "52.734" },
+    ]);
+
+    const stale = await getStaleRuns();
+
+    expect(stale).toEqual([
+      { id: 22, triggeredBy: "slack:quarry_run_discovery(Brockville)", startedAt: "2026-09-07T15:14:13.000Z", minutesElapsed: 53 },
+    ]);
+  });
+
+  it("returns an empty array when nothing is stuck", async () => {
+    dbMocks.query.mockResolvedValueOnce([]);
+    expect(await getStaleRuns()).toEqual([]);
+  });
+
+  it("passes the threshold through as the interval bound", async () => {
+    dbMocks.query.mockResolvedValueOnce([]);
+    await getStaleRuns("eden", 90);
+    expect(dbMocks.query).toHaveBeenCalledWith(expect.stringContaining("status = 'running'"), ["eden", "90"]);
   });
 });

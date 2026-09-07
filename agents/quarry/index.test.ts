@@ -16,6 +16,7 @@ vi.mock("../../shared/agent-notes", () => ({
 
 const storeMocks = vi.hoisted(() => ({
   getPipelineStats: vi.fn(),
+  getStaleRuns: vi.fn(async () => []),
   listLeads: vi.fn(),
   getLead: vi.fn(),
   updateLead: vi.fn(async () => {}),
@@ -78,7 +79,28 @@ describe("Quarry — quarry_pipeline_stats", () => {
     expect(reply).toBe("4 qualified, 2 emails out today.");
     const secondCallMessages = vi.mocked(chatWithTools).mock.calls[1][1] as any;
     const toolResult = secondCallMessages[secondCallMessages.length - 1].content[0].content;
-    expect(JSON.parse(toolResult)).toEqual(stats);
+    expect(JSON.parse(toolResult)).toEqual({ ...stats, staleRuns: [] });
+  });
+
+  it("includes any stale (never-finished) runs alongside the normal stats", async () => {
+    // Regression guard: confirmed live 2026-09-07, a run killed mid-batch
+    // by a deploy left no trace anywhere Jacob could see without checking
+    // Render's logs by hand.
+    storeMocks.getPipelineStats.mockResolvedValue({ byApproval: {}, byStage: {} });
+    storeMocks.getStaleRuns.mockResolvedValue([
+      { id: 22, triggeredBy: "slack:quarry_run_discovery(Brockville)", startedAt: "2026-09-07T15:14:13.000Z", minutesElapsed: 52 },
+    ]);
+    vi.mocked(chatWithTools)
+      .mockResolvedValueOnce({ content: [toolUseBlock("c1", "quarry_pipeline_stats", {})], stop_reason: "tool_use" } as any)
+      .mockResolvedValueOnce(endTurn("One run looks stuck."));
+
+    await quarryAgent.generateReply("k1b", "how are we doing today");
+
+    const secondCallMessages = vi.mocked(chatWithTools).mock.calls[1][1] as any;
+    const toolResult = JSON.parse(secondCallMessages[secondCallMessages.length - 1].content[0].content);
+    expect(toolResult.staleRuns).toEqual([
+      { id: 22, triggeredBy: "slack:quarry_run_discovery(Brockville)", startedAt: "2026-09-07T15:14:13.000Z", minutesElapsed: 52 },
+    ]);
   });
 });
 
@@ -288,6 +310,51 @@ describe("Quarry — quarry_run_discovery", () => {
     const ackCallOrder = vi.mocked(sendMessage).mock.invocationCallOrder[0];
     const runCallOrder = pipelineMocks.run.mock.invocationCallOrder[0];
     expect(ackCallOrder).toBeLessThan(runCallOrder);
+  });
+
+  it("uses different wording for a follow-up escalation pass, so it doesn't read as a duplicate", async () => {
+    // Confirmed live 2026-09-07: the escalation retry (a real, intentional
+    // second pass when the first came up short) posted the exact same "On
+    // it" text as the original ack, and read exactly like Slack duplicating
+    // the request even though the duplicate-delivery bug was already fixed.
+    pipelineMocks.run.mockResolvedValue({
+      discovered: 5, qualified: 1, autoApproved: 1, heldForNoContact: 0, syncedToGhl: 1, withEmail: 1, errors: [],
+    });
+    vi.mocked(chatWithTools)
+      .mockResolvedValueOnce({
+        content: [toolUseBlock("c1", "quarry_run_discovery", { location: "Brockville, ON", isFollowUp: true })],
+        stop_reason: "tool_use",
+      } as any)
+      .mockResolvedValueOnce(endTurn("Trying again."));
+
+    await quarryAgent.generateReply("k9b", "escalate", undefined, undefined, {
+      channelId: "C0C0AKAK5S4",
+      threadTs: "111.222",
+    });
+
+    const ackText = vi.mocked(sendMessage).mock.calls[0][1].text;
+    expect(ackText).toMatch(/came up short.*trying again/i);
+    expect(ackText).not.toMatch(/^On it/);
+  });
+
+  it("uses the normal acknowledgment wording when isFollowUp is absent", async () => {
+    pipelineMocks.run.mockResolvedValue({
+      discovered: 5, qualified: 1, autoApproved: 1, heldForNoContact: 0, syncedToGhl: 1, withEmail: 1, errors: [],
+    });
+    vi.mocked(chatWithTools)
+      .mockResolvedValueOnce({
+        content: [toolUseBlock("c1", "quarry_run_discovery", { location: "Brockville, ON" })],
+        stop_reason: "tool_use",
+      } as any)
+      .mockResolvedValueOnce(endTurn("On it."));
+
+    await quarryAgent.generateReply("k9c", "find businesses", undefined, undefined, {
+      channelId: "C0C0AKAK5S4",
+      threadTs: "111.222",
+    });
+
+    const ackText = vi.mocked(sendMessage).mock.calls[0][1].text;
+    expect(ackText).toMatch(/^On it/);
   });
 
   it("does not attempt an acknowledgment when called with no channel context (e.g. the dashboard)", async () => {
