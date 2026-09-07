@@ -194,9 +194,15 @@ describe("callOpeningContextLine", () => {
     expect(withoutSource).not.toBeNull();
   });
 
-  it("ends as a question, doing the job of confirming intent so it isn't asked twice", () => {
+  /**
+   * Jacob's live feedback, 2026-09-08: ending this on a yes/no gate
+   * ("...still the plan?") made Iris sound like she was reciting a script.
+   * Now a warm statement — Iris flows into her next question rather than
+   * waiting on an explicit "yes" first.
+   */
+  it("is a warm statement, not a yes/no gate", () => {
     const line = callOpeningContextLine("buyer", "St. John's", null);
-    expect(line?.trim().endsWith("?")).toBe(true);
+    expect(line?.trim().endsWith("?")).toBe(false);
   });
 
   it("returns null for unknown intent rather than inventing a reason for the call", () => {
@@ -334,6 +340,38 @@ describe("buildLeadQualificationPrompt", () => {
     const prompt = buildLeadQualificationPrompt(IRIS_CONFIG, lead, "3 Percent East Coast", "St. John's", false, true, false);
     expect(prompt).not.toContain("Are you preapproved for a mortgage yet?");
     expect(prompt).not.toContain("What's your budget range?");
+  });
+
+  /**
+   * Mark's live feedback, 2026-09-08 (reviewing recent Vapi call recordings):
+   * tone was drifting across a single call instead of staying consistent —
+   * the old prompt only had a single throwaway "match the lead's energy"
+   * adjective, no concrete instruction on how to read or hold a tone.
+   */
+  /**
+   * Jacob's live feedback, 2026-09-08 (reviewing a call recording): Iris was
+   * reciting the verifying/context lines almost word-for-word, which read
+   * as stiff and scripted rather than conversational.
+   */
+  it("tells Iris to paraphrase in her own words and vary phrasing, not recite verbatim", () => {
+    const lead: NormalisedLead = { ...BLANK_LEAD, intent: "buyer", propertyInterest: "condo" };
+    const prompt = buildLeadQualificationPrompt(IRIS_CONFIG, lead, "3 Percent East Coast", "St. John's", false, true, false);
+    expect(prompt).toMatch(/not a script to read/i);
+    expect(prompt).toMatch(/never recite the example wording below word-for-word/i);
+    expect(prompt).toMatch(/vary how you say it call to call/i);
+  });
+
+  it("skips filler acknowledgment and goes straight to the identify question on a bare pickup", () => {
+    const prompt = buildLeadQualificationPrompt(IRIS_CONFIG, BLANK_LEAD, "3 Percent East Coast", "St. John's", false, true, false);
+    expect(prompt).toMatch(/skip any filler like/i);
+    expect(prompt).toMatch(/great, thanks for picking\s+up!/i);
+  });
+
+  it("tells Iris to mirror the lead's tone and hold it for the rest of the call", () => {
+    const prompt = buildLeadQualificationPrompt(IRIS_CONFIG, BLANK_LEAD, "3 Percent East Coast", "St. John's", false, true, false);
+    expect(prompt).toMatch(/mirror the lead, then hold it/i);
+    expect(prompt).toMatch(/don't swing from upbeat to flat to upbeat again/i);
+    expect(prompt).toMatch(/shift with them at that point and hold the new tone/i);
   });
 
   it("uses the city and brand it's given rather than a hardcoded one", () => {
