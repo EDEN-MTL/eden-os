@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   AGENT_UNAVAILABLE_FOLLOW_UP,
   AGENT_UNAVAILABLE_LINE,
+  TRANSFER_ATTEMPT_LINE,
   buildLeadQualificationPrompt,
   buildVoicemailMessage,
   BUYER_QUESTIONS,
@@ -455,7 +456,41 @@ describe("buildLeadQualificationPrompt", () => {
    * tool was ever wired in (no transferNumber resolved for this lead) — she
    * said the transfer line and then had nothing to actually invoke.
    */
+  /**
+   * Mark's live feedback, 2026-09-08 (reviewing more call recordings):
+   * property type and bedroom/bathroom count kept landing several
+   * questions apart instead of back to back.
+   */
+  it("tells Iris to ask bedrooms/bathrooms immediately after property type, before anything else", () => {
+    const prompt = buildLeadQualificationPrompt(IRIS_CONFIG, BLANK_LEAD, "3 Percent East Coast", "St. John's", false, true, false);
+    expect(prompt).toMatch(/property type, then bedrooms\/bathrooms, always back to back/i);
+    expect(prompt).toMatch(/before timeline, budget, area, financing, or anything else/i);
+  });
+
+  /**
+   * Mark's live feedback, 2026-09-08: Iris said some variant of "just a
+   * sec" more than ten times in a row while a tool call was running.
+   */
+  it("bans repeated stalling filler like 'just a sec' during a tool call", () => {
+    const prompt = buildLeadQualificationPrompt(IRIS_CONFIG, BLANK_LEAD, "3 Percent East Coast", "St. John's", false, true, false);
+    expect(prompt).toMatch(/never say "just a sec/i);
+    expect(prompt).toMatch(/more than ONCE while a tool call is/i);
+  });
+
   describe("transferAvailable", () => {
+    /**
+     * Mark's live feedback, 2026-09-08: Iris invoked transferCall silently
+     * right after hearing agreement, leaving the lead in dead air (which
+     * she then filled with a repeated "just a sec" loop) instead of telling
+     * them what was actually happening.
+     */
+    it("tells Iris to announce the transfer attempt before invoking the tool", () => {
+      const prompt = buildLeadQualificationPrompt(IRIS_CONFIG, BLANK_LEAD, "3 Percent East Coast", "St. John's", false, true, false);
+      expect(prompt).toContain(TRANSFER_ATTEMPT_LINE);
+      expect(prompt).toMatch(/never invoke it silently without saying this first/i);
+    });
+
+
     it("tells Iris to invoke the transferCall tool when a transfer is available", () => {
       const prompt = buildLeadQualificationPrompt(IRIS_CONFIG, BLANK_LEAD, "3 Percent East Coast", "St. John's", false, true, false);
       expect(prompt).toMatch(/invoke the transferCall tool/i);

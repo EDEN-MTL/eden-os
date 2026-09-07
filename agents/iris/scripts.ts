@@ -202,6 +202,17 @@ export function liveTransferLineForIntent(intent: CallIntent): string {
 export const AGENT_UNAVAILABLE_LINE = "They're busy with another client right now, but they'd love to connect with you.";
 
 /**
+ * Spoken the moment the lead agrees to a live transfer, right before the
+ * transferCall tool is actually invoked — so they know what's happening
+ * during the tool round-trip instead of hearing dead air (or, per Jacob's
+ * live feedback, 2026-09-08, Iris improvising her own repeated "just a sec
+ * / hold on a sec" filler while she waits). Deliberately short and natural,
+ * not a "please hold" — see buildLeadQualificationPrompt's transferSection
+ * for the no-repeat-filler rule this line replaces.
+ */
+export const TRANSFER_ATTEMPT_LINE = "Great — let me get you connected now.";
+
+/**
  * Open question rather than pre-checked slots — there's no calendar behind
  * this anymore (see qualification.ts's callbackNotesFieldKey doc comment):
  * whatever day/time the lead names here is what gets scheduled directly via
@@ -500,6 +511,18 @@ If their answer confirms it, acknowledge briefly (vary the phrase — see the ac
     ? `\n\n## Still need to gather — ask ONE at a time, always pausing and waiting for their answer before the next one. These are what to find out, not exact lines to read — ask naturally in your own words, phrased differently call to call:\n${stillNeeded.map((q) => `- ${q}`).join("\n")}`
     : "";
 
+  /**
+   * Mark's live feedback, 2026-09-08 (reviewing two more call recordings):
+   * property type and bedroom/bathroom count kept landing several questions
+   * apart — timeline, budget, or area got asked in between — instead of
+   * back to back the way a real conversation naturally pairs "what kind of
+   * home" with "how many bedrooms." This holds regardless of which of the
+   * two blocks above each one lands in (verified vs. still-needed), since
+   * either can be known or unknown independently.
+   */
+  const propertyTypeOrderingRule = `\n\n## Ordering rule — property type, then bedrooms/bathrooms, always back to back
+The moment the type of home is settled (confirmed if known, answered if you had to ask), your VERY NEXT question — before timeline, budget, area, financing, or anything else — must be how many bedrooms and bathrooms they need. Never let another topic land between these two.`;
+
   // bookingToolsAvailable reflects whether this environment actually has a
   // scheduling tool wired at all (VAPI_SERVER_URL set — it calls back to our
   // own server, which only exists once deployed). calendarAvailable further
@@ -580,7 +603,7 @@ it confidently, don't ask permission, say the line, then STOP and wait:
 "${liveTransferLineForIntent(lead.intent)}"
 
 Listen to what they say next:
-- Agreement ("okay", "sure", "yeah") → NOW invoke the transferCall tool available to you. Don't invoke it before they've responded.
+- Agreement ("okay", "sure", "yeah") → say "${TRANSFER_ATTEMPT_LINE}" so they know what's actually happening, THEN invoke the transferCall tool. Never invoke it silently without saying this first, and never invoke it before they've responded.
 - Unavailable right now ("I'm at work", "can you call me later", "I can't talk") → do NOT invoke transferCall at all. Acknowledge naturally and move straight to the scheduling fallback below instead.
 
 If the transferCall tool comes back without anyone picking up: "${AGENT_UNAVAILABLE_LINE}"
@@ -622,7 +645,7 @@ need to work out an exact date/time from something relative the lead says
 ("tomorrow afternoon", "Friday morning") — never guess or invent a time that
 doesn't map back to this.
 
-${verifyingBlock}${stillNeededBlock}
+${verifyingBlock}${stillNeededBlock}${propertyTypeOrderingRule}
 
 ## How you open the call
 You do NOT speak first — you genuinely wait for them to say something
@@ -686,6 +709,16 @@ ${transferSection}
   phrasing options given for each fact and genuinely vary between them.
 - Speak, then pause and actually listen — don't fill every silence. A short
   pause is normal and better than rushing to the next line.
+- Never say "just a sec," "hold on a sec," "this will just take a sec," "one
+  moment," or anything like that more than ONCE while a tool call is
+  running — and never repeat it again for the same wait. Mark's live
+  feedback, 2026-09-08, reviewing a call recording: Iris said some variant
+  of "just a sec" more than ten times in a row while a tool call was
+  running, which read as broken and robotic, not like a person checking
+  something. If a tool call takes a moment to come back, silence is
+  completely fine — you don't have to fill it. If you do want to say
+  something, one brief natural line is the absolute most, never a repeated
+  loop of them.
 - If the lead starts talking while you're mid-sentence, stop talking,
   listen to what they actually said, and respond to that — never talk over
   them or finish your own sentence first.
