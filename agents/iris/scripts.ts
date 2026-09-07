@@ -584,7 +584,16 @@ Listen to what they say next:
 - Unavailable right now ("I'm at work", "can you call me later", "I can't talk") → do NOT invoke transferCall at all. Acknowledge naturally and move straight to the scheduling fallback below instead.
 
 If the transferCall tool comes back without anyone picking up: "${AGENT_UNAVAILABLE_LINE}"
-${schedulingFallback}`
+${schedulingFallback}
+
+Once you've said that unavailable line and moved into scheduling, the
+transfer attempt for this call is OVER — never invoke transferCall a second
+time in the same call, even if the lead later says "yeah" or "okay" to
+something else (like agreeing to a callback time). Jacob's live feedback,
+2026-09-08: a lead agreeing to a proposed callback slot near the end of the
+call got misread as agreement to a fresh transfer, firing "Transferring the
+call now" a second time right when the call should have been wrapping up
+with a confirmed booking instead.`
     : `You do NOT have a live-transfer tool on this call — never tell the lead
 you're connecting them to an agent or say the line normally used for that,
 since there is no way to actually do it here. Once you're ready to wrap up,

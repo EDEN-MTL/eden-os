@@ -11,7 +11,10 @@ import { scheduleExplicitCallback } from "../agents/iris/dial-pending";
  * it gets wired into an assistant, and shared/vapi/index.ts's
  * VapiFunctionTool for the request/response shape this implements (Vapi
  * POSTs {message: {toolCallList: [...]}}, expects {results: [{toolCallId,
- * result}]} back).
+ * result}]} back). Each toolCallList entry's arguments arrive as a
+ * JSON-ENCODED STRING under `.function.arguments`, not a parsed object
+ * directly on the entry — see ToolCall's own doc comment below for how that
+ * was missed for this tool's entire lifetime.
  *
  * clientId/contactId travel as query params on the tool's own server URL
  * (baked in per-call at payload-build time) rather than as arguments the
@@ -40,10 +43,48 @@ function verifyVapiSecret(expectedSecret: string, req: Request): boolean {
   return crypto.timingSafeEqual(a, b);
 }
 
-interface ToolCall {
+/**
+ * Matches Vapi's real `ToolCall` schema (confirmed against their own
+ * OpenAPI spec, api.vapi.ai/api-json, and cross-checked against a live
+ * call's stored raw payload, 2026-09-08) — NOT the shape this interface
+ * used to declare. `arguments` is a JSON-ENCODED STRING nested under
+ * `function`, never a parsed object sitting directly on the tool call.
+ *
+ * Mark's live feedback, 2026-09-08 (reviewing a call recording where every
+ * single check_and_book_appointment call looped forever on "No
+ * requestedTime was given"): the old interface declared `{id, name,
+ * arguments: Record<string, unknown>}` — a shape Vapi has never actually
+ * sent. `call.arguments?.requestedTime` was reading a field that never
+ * existed on the real request body, so it was `undefined` on every single
+ * tool call this server has ever received, for every client, since this
+ * was built. Confirmed by querying every historical iris_call_log row with
+ * a schedule_callback/check_and_book_appointment tool result: 100% of them
+ * came back with the "no valid time" error path — not one booking has ever
+ * actually succeeded. See parseToolArguments below for the fix.
+ */
+export interface ToolCall {
   id: string;
-  name: string;
-  arguments?: Record<string, unknown>;
+  type?: string;
+  function: {
+    name: string;
+    arguments: string;
+  };
+}
+
+/**
+ * Safely parses the real (string) arguments payload — see ToolCall's own
+ * doc comment for why this exists instead of reading `call.arguments`
+ * directly. Falls back to {} on malformed JSON rather than throwing, so a
+ * bad payload degrades to the tool's own "missing argument" error message
+ * (which the model can recover from) instead of a 500.
+ */
+export function parseToolArguments(call: ToolCall): Record<string, unknown> {
+  try {
+    const parsed = JSON.parse(call.function.arguments);
+    return typeof parsed === "object" && parsed !== null ? parsed : {};
+  } catch {
+    return {};
+  }
 }
 
 /**
@@ -319,13 +360,13 @@ export function createVapiToolsRouter(): Router {
 
   router.post(
     "/schedule-callback",
-    createToolHandler(async (query, call) => handleScheduleCallback(query.clientId, query.contactId, call.arguments?.callbackTime))
+    createToolHandler(async (query, call) => handleScheduleCallback(query.clientId, query.contactId, parseToolArguments(call).callbackTime))
   );
 
   router.post(
     "/check-and-book-appointment",
     createToolHandler(async (query, call) =>
-      handleCheckAndBookAppointment(query.clientId, query.contactId, query.calendarId, query.intent, call.arguments?.requestedTime)
+      handleCheckAndBookAppointment(query.clientId, query.contactId, query.calendarId, query.intent, parseToolArguments(call).requestedTime)
     )
   );
 

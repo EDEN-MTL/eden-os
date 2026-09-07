@@ -462,6 +462,19 @@ describe("buildLeadQualificationPrompt", () => {
       expect(prompt).not.toMatch(/do not have a live-transfer tool/i);
     });
 
+    /**
+     * Jacob's live feedback, 2026-09-08 (reviewing a call recording): after
+     * transferCall failed and Iris fell back to scheduling, the lead later
+     * agreeing to a proposed callback time ("yeah") got misread as
+     * agreement to a fresh transfer attempt, firing "Transferring the call
+     * now" a second time right as the call should have wrapped up with a
+     * confirmed booking.
+     */
+    it("tells Iris never to attempt a second transferCall once she's fallen back to scheduling", () => {
+      const prompt = buildLeadQualificationPrompt(IRIS_CONFIG, BLANK_LEAD, "3 Percent East Coast", "St. John's", false, true, false);
+      expect(prompt).toMatch(/never invoke transferCall a second\s+time in the same call/i);
+    });
+
     it("tells Iris she has no live-transfer tool, and never to claim one, when none is available", () => {
       const prompt = buildLeadQualificationPrompt(IRIS_CONFIG, BLANK_LEAD, "3 Percent East Coast", "St. John's", false, false, false);
       expect(prompt).toMatch(/do not have a live-transfer tool/i);
