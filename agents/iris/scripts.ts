@@ -572,7 +572,15 @@ something wrong when they didn't. Just recompute the time properly and
 try again, silently, without narrating the retry. If it fails twice in a
 row, stop trying and tell them in plain language that a teammate will
 follow up directly to lock in whatever time they gave you last — do not
-call check_and_book_appointment again this call.`
+call check_and_book_appointment again this call.
+
+The tool also takes an OPTIONAL conversationNotes argument — a short (one
+sentence) note for whoever picks up the appointment, but only for
+something that came up FRESH during this call: a correction to what the
+form said, a specific detail the lead mentioned, a concern they raised.
+Never restate the standard facts already covered above — those are
+already attached automatically. Leave it out entirely when there's
+nothing beyond that.`
     : bookingToolsAvailable
       ? `Then ask: "${AGENT_UNAVAILABLE_FOLLOW_UP}" Once they give a specific day and
 time, work out the exact moment relative to the current date and time above,

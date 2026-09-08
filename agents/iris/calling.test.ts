@@ -279,5 +279,38 @@ describe("buildCallPayload", () => {
       if (tool?.type !== "function") throw new Error("expected function tool");
       expect(tool.function.parameters.required).toEqual(["requestedTime"]);
     });
+
+    /**
+     * Mark's request, 2026-09-08: a booked appointment only ever carried a
+     * generic "Booked automatically..." note — no lead details at all.
+     * leadSummary is baked in at call-placement time from what's already
+     * known, never left to the model to retype (see
+     * webhooks/vapi-tools.ts's handleCheckAndBookAppointment for how this
+     * gets appended to the appointment's notes).
+     */
+    it("bakes a lead-facts summary into the tool's server URL", () => {
+      const payload = buildCallPayload(
+        { ...withCalendar, intent: "buyer", firstName: "Jason", propertyInterest: "condo", bedrooms: "2", budget: "$500k", timeline: "3 months", workingWithRealtor: false },
+        VAPI_CONFIG
+      );
+      const tool = payload.assistant.model.tools?.find((t) => t.type === "function" && t.function.name === "check_and_book_appointment");
+      if (tool?.type !== "function") throw new Error("expected function tool");
+      const url = new URL(tool.server.url);
+      const summary = url.searchParams.get("leadSummary");
+      expect(summary).toContain("Jason");
+      expect(summary).toContain("condo");
+      expect(summary).toContain("2 bedrooms");
+      expect(summary).toContain("$500k");
+      expect(summary).toContain("3 months");
+      expect(summary).toContain("not working with a realtor");
+    });
+
+    it("offers an optional conversationNotes argument for anything fresh from the call, not required", () => {
+      const payload = buildCallPayload(withCalendar, VAPI_CONFIG);
+      const tool = payload.assistant.model.tools?.find((t) => t.type === "function" && t.function.name === "check_and_book_appointment");
+      if (tool?.type !== "function") throw new Error("expected function tool");
+      expect(tool.function.parameters.properties).toHaveProperty("conversationNotes");
+      expect(tool.function.parameters.required).not.toContain("conversationNotes");
+    });
   });
 });

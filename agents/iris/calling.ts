@@ -59,6 +59,31 @@ export interface PlaceCallParams {
    * note+redial system instead, same soft-fail pattern as transferNumber.
    */
   calendarId?: string;
+  /** Passed through to the appointment-notes summary — see buildLeadDetails below. */
+  workingWithRealtor?: boolean | null;
+}
+
+/**
+ * Shared "what do we actually know about this lead" fact list — used both
+ * for the warm-transfer agent briefing (buildAgentBriefing) and for the
+ * notes written onto a booked GHL appointment (see check_and_book_appointment's
+ * wiring below). One source of fact-strings so the two never drift apart.
+ */
+function buildLeadDetails(params: PlaceCallParams, audience: "buyer" | "seller"): string[] {
+  const details: string[] = [];
+  // Mark, 2026-09-06: propertyInterest is PROPERTY TYPE ("Single Family
+  // Home"), not area — this used to read "in Single Family Home", which
+  // sounds like a place name. "looking for a X" is correct regardless of
+  // client, since no client checked so far has a real area field at all.
+  if (params.propertyInterest) details.push(`looking for a ${params.propertyInterest}`);
+  if (params.bedrooms) details.push(`${params.bedrooms} bedrooms`);
+  if (params.budget) details.push(`around a ${params.budget} budget`);
+  if (params.timeline) details.push(`hoping to move within ${params.timeline}`);
+  if (audience === "buyer" && params.financing) details.push(`financing: ${params.financing}`);
+  if (params.workingWithRealtor !== null && params.workingWithRealtor !== undefined) {
+    details.push(params.workingWithRealtor ? "already working with a realtor" : "not working with a realtor");
+  }
+  return details;
 }
 
 /**
@@ -71,19 +96,25 @@ export interface PlaceCallParams {
  */
 function buildAgentBriefing(params: PlaceCallParams, audience: "buyer" | "seller"): string {
   const who = params.firstName !== "there" ? params.firstName : "a lead";
-  const details: string[] = [];
-  // Mark, 2026-09-06: propertyInterest is PROPERTY TYPE ("Single Family
-  // Home"), not area — this used to read "in Single Family Home", which
-  // sounds like a place name. "looking for a X" is correct regardless of
-  // client, since no client checked so far has a real area field at all.
-  if (params.propertyInterest) details.push(`looking for a ${params.propertyInterest}`);
-  if (params.bedrooms) details.push(`${params.bedrooms} bedrooms`);
-  if (params.budget) details.push(`around a ${params.budget} budget`);
-  if (params.timeline) details.push(`hoping to move within ${params.timeline}`);
-  if (audience === "buyer" && params.financing) details.push(`financing: ${params.financing}`);
-
+  const details = buildLeadDetails(params, audience);
   const detailText = details.length > 0 ? `, ${details.join(", ")}` : "";
   return `I have ${who} on the other line, a ${audience} lead${detailText}.`;
+}
+
+/**
+ * The lead-facts half of a booked appointment's notes — see
+ * check_and_book_appointment's wiring below for where the conversational
+ * half (Iris's own free-text summary) gets appended to this. Mark's
+ * request, 2026-09-08: a booked appointment only ever carried a generic
+ * "Booked automatically by Iris during a live call" note — no lead details
+ * at all, meaning whoever picks up the appointment has to re-open the
+ * contact and re-derive everything Iris already established.
+ */
+function buildAppointmentLeadSummary(params: PlaceCallParams, audience: "buyer" | "seller"): string {
+  const who = params.firstName !== "there" ? params.firstName : "the lead";
+  const details = buildLeadDetails(params, audience);
+  const detailText = details.length > 0 ? ` — ${details.join(", ")}.` : ".";
+  return `${who}, a ${audience} lead${detailText}`;
 }
 
 /**
@@ -209,11 +240,16 @@ export function buildCallPayload(
     // handle scheduling," not two overlapping ones. Mark, 2026-09-06: built
     // once a real test calendar existed to verify against live (never
     // invent availability — see AGENT_UNAVAILABLE_FOLLOW_UP's history).
+    const audience = params.intent === "seller" || params.intent === "downsize" ? "seller" : "buyer";
     const qs = new URLSearchParams({
       clientId: params.clientId,
       contactId: params.contactId,
       calendarId: params.calendarId,
-      intent: params.intent === "seller" || params.intent === "downsize" ? "seller" : "buyer",
+      intent: audience,
+      // Baked in at call-placement time from what Scout/this call already
+      // know — never left to the model to retype, same reasoning as
+      // buildAgentBriefing's briefing string. See handleCheckAndBookAppointment.
+      leadSummary: buildAppointmentLeadSummary(params, audience),
     }).toString();
 
     tools.push({
@@ -236,6 +272,15 @@ export function buildCallPayload(
                 "The exact moment to check/book, as an ISO 8601 timestamp, computed relative to the " +
                 "current date and time given to you at the top of this prompt — never a bare time like " +
                 "'2pm' with no date.",
+            },
+            conversationNotes: {
+              type: "string",
+              description:
+                "OPTIONAL — a short (one sentence) note on anything from THIS call worth flagging to " +
+                "whoever picks up the appointment: a correction the lead gave (e.g. 'budget actually " +
+                "changed to 500k'), something specific they mentioned, or a concern they raised. Never " +
+                "restate facts already known before the call — only what came up freshly during it. Omit " +
+                "entirely if there's nothing beyond the standard facts.",
             },
           },
           required: ["requestedTime"],

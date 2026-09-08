@@ -578,6 +578,19 @@ describe("buildLeadQualificationPrompt", () => {
       expect(prompt).toMatch(/the tool actually confirmed/i);
     });
 
+    /**
+     * Mark's request, 2026-09-08: a booked appointment should carry lead
+     * details and notes from the conversation, not just a generic booking
+     * note. Structured facts are baked in automatically (calling.ts's
+     * buildAppointmentLeadSummary) — this covers the optional free-text
+     * half only Iris can supply, for whatever came up fresh in the call.
+     */
+    it("tells Iris about the optional conversationNotes argument, for fresh details only", () => {
+      const prompt = buildLeadQualificationPrompt(IRIS_CONFIG, BLANK_LEAD, "3 Percent East Coast", "St. John's", true, true, true);
+      expect(prompt).toMatch(/OPTIONAL conversationNotes argument/i);
+      expect(prompt).toMatch(/never restate the standard facts already covered above/i);
+    });
+
     it("falls back to schedule_callback when no real calendar is available, even with booking tools on", () => {
       const prompt = buildLeadQualificationPrompt(IRIS_CONFIG, BLANK_LEAD, "3 Percent East Coast", "St. John's", true, true, false);
       expect(prompt).toContain("schedule_callback");
