@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { discover, worthDetailing } from "./discovery";
+import { discover, textSearch, worthDetailing } from "./discovery";
 import { SearchSpec } from "./config";
 
 const originalFetch = global.fetch;
@@ -52,6 +52,91 @@ function mockPlaces(resultsPerQuery: Record<string, string[]>) {
   }) as any;
   return calls;
 }
+
+describe("textSearch pagination", () => {
+  function mockPages(pages: { ids: string[]; nextPageToken?: string }[]) {
+    const requests: any[] = [];
+    let call = 0;
+    global.fetch = vi.fn(async (_url: any, init: any) => {
+      requests.push(JSON.parse(init.body));
+      const p = pages[Math.min(call, pages.length - 1)];
+      call++;
+      return {
+        ok: true,
+        status: 200,
+        text: async () => "",
+        json: async () => ({
+          places: p.ids.map((id) => ({ id, displayName: { text: id }, businessStatus: "OPERATIONAL" })),
+          ...(p.nextPageToken ? { nextPageToken: p.nextPageToken } : {}),
+        }),
+      } as any;
+    }) as any;
+    return requests;
+  }
+
+  it("makes only one request when maxResults fits in a single page, even if Google offers more", async () => {
+    const requests = mockPages([{ ids: ["a", "b"], nextPageToken: "more" }]);
+    const hits = await textSearch({ query: "q", category: "trade-service", maxResults: 20 }, "key", 0);
+    expect(requests).toHaveLength(1);
+    expect(hits.map((h) => h.placeId)).toEqual(["a", "b"]);
+  });
+
+  it("follows nextPageToken with a token-only request when more results are wanted", async () => {
+    const requests = mockPages([
+      { ids: ["a", "b"], nextPageToken: "page2" },
+      { ids: ["c", "d"] },
+    ]);
+    const hits = await textSearch({ query: "q", category: "trade-service", maxResults: 60 }, "key", 0);
+
+    expect(requests).toHaveLength(2);
+    expect(requests[0]).toMatchObject({ textQuery: "q" });
+    // A follow-up page carries only the token — resending textQuery risks a
+    // mismatch error, since the token already encodes the original query.
+    expect(requests[1]).toEqual({ pageToken: "page2" });
+    expect(hits.map((h) => h.placeId)).toEqual(["a", "b", "c", "d"]);
+  });
+
+  it("stops after 3 pages even if Google keeps offering more — its own ceiling for this API", async () => {
+    const requests = mockPages([
+      { ids: ["a"], nextPageToken: "p2" },
+      { ids: ["b"], nextPageToken: "p3" },
+      { ids: ["c"], nextPageToken: "p4" },
+    ]);
+    const hits = await textSearch({ query: "q", category: "trade-service", maxResults: 200 }, "key", 0);
+
+    expect(requests).toHaveLength(3);
+    expect(hits.map((h) => h.placeId)).toEqual(["a", "b", "c"]);
+  });
+
+  it("stops requesting further pages once nextPageToken is absent", async () => {
+    const requests = mockPages([{ ids: ["a", "b"] }]);
+    await textSearch({ query: "q", category: "trade-service", maxResults: 60 }, "key", 0);
+    expect(requests).toHaveLength(1);
+  });
+
+  it("trims the final result to maxResults even when full pages overshoot it", async () => {
+    // maxResults 25 needs 2 pages (ceil(25/20)); two full 20-result pages
+    // hand back 40 raw hits, which must be trimmed down to the 25 asked for.
+    const page1 = Array.from({ length: 20 }, (_, i) => `p1-${i}`);
+    const page2 = Array.from({ length: 20 }, (_, i) => `p2-${i}`);
+    mockPages([
+      { ids: page1, nextPageToken: "p2" },
+      { ids: page2 },
+    ]);
+    const hits = await textSearch({ query: "q", category: "trade-service", maxResults: 25 }, "key", 0);
+    expect(hits).toHaveLength(25);
+  });
+
+  it("waits the given delay before requesting a follow-up page", async () => {
+    mockPages([
+      { ids: ["a"], nextPageToken: "p2" },
+      { ids: ["b"] },
+    ]);
+    const start = Date.now();
+    await textSearch({ query: "q", category: "trade-service", maxResults: 60 }, "key", 50);
+    expect(Date.now() - start).toBeGreaterThanOrEqual(45);
+  });
+});
 
 describe("worthDetailing", () => {
   const hit = (id: string, businessStatus: string | null) => ({
