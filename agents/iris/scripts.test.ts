@@ -490,6 +490,26 @@ describe("buildLeadQualificationPrompt", () => {
       expect(prompt).toMatch(/never invoke it silently without saying this first/i);
     });
 
+    /**
+     * Mark's live feedback, 2026-09-08: Iris offered the live transfer while
+     * the lead was still mid-answer on the last qualifying question.
+     */
+    it("gates the transfer behind every verifying and still-needed item being fully answered", () => {
+      const prompt = buildLeadQualificationPrompt(IRIS_CONFIG, BLANK_LEAD, "3 Percent East Coast", "St. John's", false, true, false);
+      expect(prompt).toMatch(/only once EVERY item above is\s*\nactually done/i);
+      expect(prompt).toMatch(/never offer the transfer until\s*\nthe lead has completely finished answering the last thing you asked them/i);
+    });
+
+    /**
+     * Mark's live feedback, 2026-09-08: Iris repeated "hold on a sec" / "this
+     * will just take a sec" in a loop right after the transfer failed,
+     * instead of silently checking the calendar.
+     */
+    it("tells Iris to say nothing at all while the scheduling tool runs after a failed transfer", () => {
+      const prompt = buildLeadQualificationPrompt(IRIS_CONFIG, BLANK_LEAD, "3 Percent East Coast", "St. John's", false, true, false);
+      expect(prompt).toMatch(/go STRAIGHT into scheduling — do not say anything else first/i);
+      expect(prompt).toMatch(/say NOTHING while your scheduling tool is\s*\nrunning — not even once/i);
+    });
 
     it("tells Iris to invoke the transferCall tool when a transfer is available", () => {
       const prompt = buildLeadQualificationPrompt(IRIS_CONFIG, BLANK_LEAD, "3 Percent East Coast", "St. John's", false, true, false);
@@ -581,6 +601,39 @@ describe("buildLeadQualificationPrompt", () => {
       expect(prompt).toMatch(/never repeat words like "technical issue" or "trouble with the/i);
       expect(prompt).toMatch(/if it fails twice in a\s*\n?row, stop trying/i);
       expect(prompt).toMatch(/do not\s*\n?call check_and_book_appointment again this call/i);
+    });
+  });
+
+  /**
+   * Mark's live feedback, 2026-09-08: a lead asked "who am I speaking with?"
+   * right at pickup and Iris just repeated her own identify question back
+   * at them instead of actually answering who was calling.
+   */
+  it("tells Iris to directly answer if the lead asks who's calling, instead of deflecting", () => {
+    const prompt = buildLeadQualificationPrompt(IRIS_CONFIG, BLANK_LEAD, "3 Percent East Coast", "St. John's", false, true, false);
+    expect(prompt).toMatch(/If\s+what\s+they asked is specifically who's calling or who they're speaking with/i);
+    expect(prompt).toMatch(/ANSWER IT/);
+    expect(prompt).toContain('"This is Iris with 3 Percent East Coast"');
+  });
+
+  describe("ending the call", () => {
+    /**
+     * Mark's live feedback, 2026-09-08: Iris ended a call after her
+     * scheduling tool kept failing, having neither transferred the lead nor
+     * booked anything — a lead left with no outcome at all.
+     */
+    it("tells Iris never to end the call without a real transfer or a real confirmed booking", () => {
+      const prompt = buildLeadQualificationPrompt(IRIS_CONFIG, BLANK_LEAD, "3 Percent East Coast", "St. John's", false, true, false);
+      expect(prompt).toMatch(/never end the call unless ONE of these is actually true/i);
+      expect(prompt).toMatch(/the lead was successfully connected via live transfer/i);
+      expect(prompt).toMatch(/a real appointment was actually confirmed booked/i);
+    });
+
+    /** Mark's live feedback, 2026-09-08: Iris said "Goodbye" twice in a row before ending. */
+    it("tells Iris to say goodbye exactly once, not repeat it before ending", () => {
+      const prompt = buildLeadQualificationPrompt(IRIS_CONFIG, BLANK_LEAD, "3 Percent East Coast", "St. John's", false, true, false);
+      expect(prompt).toMatch(/say your goodbye line exactly ONCE/i);
+      expect(prompt).toMatch(/never say another farewell word or repeat "goodbye"/i);
     });
   });
 });
