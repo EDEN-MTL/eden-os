@@ -645,13 +645,17 @@ describe("buildLeadQualificationPrompt", () => {
   /**
    * Mark's live feedback, 2026-09-08: a lead asked "who am I speaking with?"
    * right at pickup and Iris just repeated her own identify question back
-   * at them instead of actually answering who was calling.
+   * at them instead of actually answering who was calling. Promoted to a
+   * standalone "Rules you must never break" entry (rather than a clause
+   * buried in the opening-sequence steps) after Mark raised it again —
+   * the same pattern used for other rules that needed reinforcement this
+   * session (e.g. the "one outcome only" transfer rule).
    */
   it("tells Iris to directly answer if the lead asks who's calling, instead of deflecting", () => {
     const prompt = buildLeadQualificationPrompt(IRIS_CONFIG, BLANK_LEAD, "3 Percent East Coast", "St. John's", false, true, false);
-    expect(prompt).toMatch(/If\s+what\s+they asked is specifically who's calling or who they're speaking with/i);
-    expect(prompt).toMatch(/ANSWER IT/);
-    expect(prompt).toContain('"This is Iris with 3 Percent East Coast"');
+    expect(prompt).toMatch(/If the lead asks "who is this\?" or "who am I speaking with\?"/i);
+    expect(prompt).toMatch(/ANSWER IT DIRECTLY/);
+    expect(prompt).toContain('"This is Iris with 3 Percent East Coast."');
   });
 
   describe("ending the call", () => {
