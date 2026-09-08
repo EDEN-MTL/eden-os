@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   AGENT_UNAVAILABLE_FOLLOW_UP,
   AGENT_UNAVAILABLE_LINE,
-  TRANSFER_ATTEMPT_LINE,
+  TRANSFER_ATTEMPT_LINES,
   buildLeadQualificationPrompt,
   buildVoicemailMessage,
   BUYER_QUESTIONS,
@@ -135,7 +135,7 @@ describe("fallback booking line", () => {
   it("is present and distinct from the live transfer lines", () => {
     expect(AGENT_UNAVAILABLE_LINE.length).toBeGreaterThan(0);
     expect(AGENT_UNAVAILABLE_FOLLOW_UP.length).toBeGreaterThan(0);
-    expect(Object.values(LIVE_TRANSFER_LINES)).not.toContain(AGENT_UNAVAILABLE_LINE);
+    expect(Object.values(LIVE_TRANSFER_LINES).flat()).not.toContain(AGENT_UNAVAILABLE_LINE);
   });
 });
 
@@ -486,8 +486,21 @@ describe("buildLeadQualificationPrompt", () => {
      */
     it("tells Iris to announce the transfer attempt before invoking the tool", () => {
       const prompt = buildLeadQualificationPrompt(IRIS_CONFIG, BLANK_LEAD, "3 Percent East Coast", "St. John's", false, true, false);
-      expect(prompt).toContain(TRANSFER_ATTEMPT_LINE);
+      for (const line of TRANSFER_ATTEMPT_LINES) expect(prompt).toContain(line);
       expect(prompt).toMatch(/never invoke it silently without saying this first/i);
+    });
+
+    /**
+     * Mark's request, 2026-09-09: added from a real recording of Jacob (the
+     * human ISA) doing a live transfer himself — keep the original lines,
+     * add these as a second option so Iris can switch between them instead
+     * of repeating one script every call.
+     */
+    it("offers Jacob's real transfer phrasing as a second option, not a replacement", () => {
+      const prompt = buildLeadQualificationPrompt(IRIS_CONFIG, { ...BLANK_LEAD, intent: "buyer" }, "3 Percent East Coast", "St. John's", false, true, false);
+      expect(prompt).toContain("Perfect. We'll connect you with one of our buyer agents to send over some available home options.");
+      expect(prompt).toContain("I'm just the assistant, so let me connect you with one of our buyer agents — they'll have access to send over some real listings.");
+      expect(prompt).toMatch(/pick ONE of these\s*\n\(never repeat the same one call after call\)/i);
     });
 
     /**
