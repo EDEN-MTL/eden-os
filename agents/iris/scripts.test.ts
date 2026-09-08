@@ -671,6 +671,19 @@ describe("buildLeadQualificationPrompt", () => {
     expect(prompt).toContain('"This is Iris with 3 Percent East Coast."');
   });
 
+  /**
+   * Mark's live feedback, 2026-09-09: a real call had a known name ("Mark")
+   * available, and Iris still said "Am I speaking with you?" instead of
+   * using it — the broad "vary your phrasing" instruction elsewhere in the
+   * prompt apparently licensed dropping the name from the one line whose
+   * entire purpose is confirming it.
+   */
+  it("tells Iris she must say the actual name when confirming who she's speaking with, never a generic substitute", () => {
+    const prompt = buildLeadQualificationPrompt(IRIS_CONFIG, BLANK_LEAD, "3 Percent East Coast", "St. John's", false, true, false);
+    expect(prompt).toMatch(/you\s+MUST actually say that name — never substitute "you" or any generic/i);
+    expect(prompt).toMatch(/never blend the two\s+into something meaningless like "am I speaking with you\?"/i);
+  });
+
   describe("ending the call", () => {
     /**
      * Mark's live feedback, 2026-09-08: Iris ended a call after her
