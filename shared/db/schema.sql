@@ -515,3 +515,31 @@ CREATE TABLE IF NOT EXISTS iris_pending_calls (
 ALTER TABLE iris_pending_calls ADD COLUMN IF NOT EXISTS attempts_made INTEGER NOT NULL DEFAULT 0;
 ALTER TABLE iris_pending_calls ADD COLUMN IF NOT EXISTS is_explicit_callback BOOLEAN NOT NULL DEFAULT FALSE;
 CREATE INDEX IF NOT EXISTS idx_iris_pending_due ON iris_pending_calls(status, call_after);
+
+-- One stable, revocable link per client for Scout's bi-weekly team
+-- check-in page (webhooks/checkin-api.ts). Not per-send: the page always
+-- reflects the live rolling 2-month window read fresh from GHL, so a
+-- single durable link Scout can resend bi-weekly is simpler than minting
+-- a new token every time.
+CREATE TABLE IF NOT EXISTS scout_checkin_links (
+    client_id TEXT PRIMARY KEY,
+    token TEXT NOT NULL UNIQUE,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+-- Our own checkbox state for the check-in page, keyed to the real GHL
+-- calendar event id — not a copy of the appointment itself, which is
+-- always re-fetched live from GHL so it can never go stale. Absence of a
+-- row just means nothing has been checked yet for that appointment.
+CREATE TABLE IF NOT EXISTS scout_appointment_checkins (
+    id BIGSERIAL PRIMARY KEY,
+    client_id TEXT NOT NULL,
+    ghl_event_id TEXT NOT NULL,
+    still_in_conversation BOOLEAN NOT NULL DEFAULT FALSE,
+    showed_up BOOLEAN NOT NULL DEFAULT FALSE,
+    deal_progressing BOOLEAN NOT NULL DEFAULT FALSE,
+    deal_closed BOOLEAN NOT NULL DEFAULT FALSE,
+    contract_signed BOOLEAN NOT NULL DEFAULT FALSE,
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    UNIQUE (client_id, ghl_event_id)
+);

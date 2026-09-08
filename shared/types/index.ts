@@ -134,6 +134,14 @@ export interface ClientConfig {
   slack: {
     clientChannel: string;
   };
+  // Real-estate team roster for Scout's bi-weekly check-in page
+  // (agents/scout/checkin.ts) — which named team a GHL appointment's
+  // assignedUserId belongs to. Optional: only 3% Realty has this today.
+  teams?: {
+    teamName: string;
+    teamLead: string;
+    members: { name: string; ghlUserId: string }[];
+  }[];
 }
 
 // ─── Slack Message Types ───

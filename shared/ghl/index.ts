@@ -482,6 +482,30 @@ export async function getCalendarSlots(
 }
 
 /**
+ * Lists booked calendar events (appointments) in a time range — verified
+ * live, 2026-09-09, against 3% Realty's account. `calendarId` is required:
+ * the endpoint 422s with "Either of userId, calendarId or groupId is
+ * required" without it. `locationId` must be a QUERY param here (unlike
+ * getCalendarSlots' free-slots endpoint, which needs no locationId query
+ * param at all) — confirmed by the same live check. Each event may or may
+ * not carry `assignedUserId`: it's only set once a human manually claims
+ * the booking in GHL's CRM, so plenty of real events have none.
+ */
+export async function listCalendarEvents(
+  locationId: string,
+  calendarId: string,
+  startTimeMs: number,
+  endTimeMs: number,
+  apiKey?: string
+): Promise<any[]> {
+  const result = await ghlRequest(
+    `/calendars/events?locationId=${locationId}&calendarId=${calendarId}&startTime=${startTimeMs}&endTime=${endTimeMs}`,
+    { locationId, apiKey }
+  );
+  return result.events || [];
+}
+
+/**
  * `locationId` goes in the BODY here, not just the header — confirmed
  * live, 2026-09-06: without it the create endpoint returns 400 "Location
  * ID is required" even with the Location header set, same gotcha
