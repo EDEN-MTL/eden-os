@@ -103,6 +103,39 @@
   "slack": {
     "clientChannel": "3-percent-eastcoast-eden"
   },
+  "teams": [
+    {
+      "teamName": "Ashley Fleming Team",
+      "teamLead": "Ashley Fleming",
+      "members": [
+        { "name": "Ashley Fleming", "ghlUserId": "W6tgkl6FZFEmwRS1MdbB" },
+        { "name": "Andrew Fleming", "ghlUserId": "FtUDZ9FJqayyTS9SYanf" },
+        { "name": "Candice Mayo", "ghlUserId": "ImtFgfwdZRKKffmuwVBi" }
+      ]
+    },
+    {
+      "teamName": "Homes by Hickey",
+      "teamLead": "Genna Hickey",
+      "members": [
+        { "name": "Genna Hickey", "ghlUserId": "XnTRNyagVeoyvpqDAHda" },
+        { "name": "Charlene Harnum", "ghlUserId": "1A5sJpqYGI2IvSYpS5s3" },
+        { "name": "Stephanie McGrath", "ghlUserId": "FxhXD7440LRChvWfotmD" }
+      ]
+    },
+    {
+      "teamName": "Penny Properties",
+      "teamLead": "Brittany Penney",
+      "members": [
+        { "name": "Brittany Penney", "ghlUserId": "99ZRGYPQoZG6pdBj3Bpz" },
+        { "name": "Justin Penney", "ghlUserId": "hNUfmfeakKv0J7gGmmZS" },
+        { "name": "Chantelle English", "ghlUserId": "VKibPDAtqMTwDRd5A7ql" },
+        { "name": "Chelsea Tiller", "ghlUserId": "MxPGbk9VikrEU0aciVty" },
+        { "name": "Heather St. Croix", "ghlUserId": "GBGyXNsF89CGXbKiWKo8" },
+        { "name": "Brock Roul", "ghlUserId": "ETXCX7TFN0DY45x1EBMj" }
+      ]
+    }
+  ],
+  "_teamsNote": "Verified live against GET /users/?locationId=t3ypFoQY6EC5IJfj2UYl on 2026-09-09 — every name here is a real GHL user at this location with the ghlUserId shown. Note the correct spelling is 'Stephanie McGrath' (GHL's own user record), not 'Mcgrawth'. This roster maps a booked appointment's assignedUserId (from GHL's calendar events) to a named team for agents/scout/checkin.ts's bi-weekly check-in page; assignedUserId is only populated once someone manually claims the booking in GHL, so appointments without it show up as 'needs routing' on that page rather than under a team.",
   "scout": {
     "_comment": "Lead intake mapping for 3% East Coast, from Mark's GHL discovery (2026-08-25), verified against the live location before being committed. Every stage ID he mapped resolved correctly. Two values were corrected — see _corrections.",
     "_corrections": {

@@ -21,6 +21,7 @@ import { createTtsRouter } from "./tts-api";
 import { createSettingsRouter } from "./settings-api";
 import { createClientsRouter } from "./clients-api";
 import { createQuarryRouter } from "./quarry-api";
+import { createCheckinRouter } from "./checkin-api";
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -67,6 +68,7 @@ app.use("/api/tts", createTtsRouter());
 app.use("/api/settings", createSettingsRouter());
 app.use("/api/clients", createClientsRouter());
 app.use("/api/quarry", createQuarryRouter());
+app.use(createCheckinRouter());
 
 // ─── Initialize & Start ───
 async function start() {
