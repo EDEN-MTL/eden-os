@@ -17,44 +17,41 @@ import { reopenForNextAttempt } from "../agents/iris/dial-pending";
 const TRANSFER_SUCCEEDED_REASON = "assistant-forwarded-call";
 
 /**
- * Vapi endedReason values meaning nobody real ever spoke — voicemail, no
- * pickup, busy, or a technical failure before a real conversation could
- * happen. Confirmed against Vapi's own OpenAPI schema, 2026-09-06 (the
- * full endedReason string enum, not guessed). Everything NOT in this set
- * — customer-ended-call*, assistant-ended-call*, assistant-forwarded-call,
- * exceeded-max-duration — means a real person was genuinely on the line,
- * however the call then went. Mark's rule, same date: only re-dial a lead
- * who never actually answered; a real conversation, whatever its outcome,
- * ends the automatic sequence.
+ * The ONLY endedReason values (or prefixes) that mean a real person was
+ * genuinely on the line at some point — confirmed against every
+ * endedReason actually seen on a real call in iris_call_log, plus Vapi's
+ * documented transfer/duration outcomes.
+ *
+ * Design flipped, 2026-09-08 (was a NOT_ANSWERED blocklist, defaulting to
+ * "answered" — no retry — for anything unrecognized): a real test call hit
+ * `call.start.error-get-transport` (cost $0 — the call never actually
+ * connected), which fell through that blocklist as "answered" and
+ * permanently starved the lead of a retry — exactly the "called twice"
+ * bug this classifier exists to prevent, just inverted. Checked Vapi's own
+ * OpenAPI schema: the real endedReason enum has 629 possible values —
+ * dozens of call.start.error-* variants alone, plus a pipeline-error-*
+ * entry per voice provider (elevenlabs, playht, deepgram, azure, ...) —
+ * and grows every time Vapi adds a provider or failure mode. No blocklist
+ * can keep up with that. A small ANSWERED allowlist, defaulting everything
+ * else to "not answered," is the only classification that stays correct
+ * as Vapi adds new codes rather than silently regressing each time.
  */
-const NOT_ANSWERED_REASONS = new Set([
-  "voicemail",
-  "no-answer",
-  "customer-did-not-answer",
-  "customer-busy",
-  "call.forwarding.no-answer",
-  "call.forwarding.operator-busy",
-  "silence-timed-out",
-  "assistant-join-timed-out",
-  "manually-canceled",
-  "twilio-failed-to-connect-call",
-  "twilio-reported-customer-misdialed",
-  "vonage-rejected",
-  "phone-call-provider-closed-websocket",
-  "customer-did-not-give-microphone-permission",
-]);
+const ANSWERED_REASON_PREFIXES = ["customer-ended-call", "assistant-ended-call"];
+const ANSWERED_REASONS = new Set(["assistant-forwarded-call", "exceeded-max-duration"]);
 
 /**
- * Fails toward NOT retrying on anything ambiguous (an unrecognized or
- * missing endedReason) — same "cost of wrongly calling a real person
- * twice vs. cost of wrongly stopping" asymmetry recheckFirstTouch's own
- * doc comment already applies elsewhere in this codebase.
+ * Fails toward RETRYING on anything ambiguous now (an unrecognized or
+ * missing endedReason) — inverted from the old direction along with the
+ * allowlist above. The cost of wrongly retrying a lead who was actually
+ * reached (one extra call) is far smaller than a lead silently never
+ * getting called again because of an infrastructure failure that wasn't
+ * on an explicit list.
  */
 export function wasAnswered(endedReason: string | null): boolean {
-  if (!endedReason) return true;
-  if (NOT_ANSWERED_REASONS.has(endedReason)) return false;
-  if (endedReason.startsWith("call.in-progress.error-") || endedReason.startsWith("call.ringing.error-")) return false;
-  return true;
+  if (!endedReason) return false;
+  if (ANSWERED_REASONS.has(endedReason)) return true;
+  if (ANSWERED_REASON_PREFIXES.some((prefix) => endedReason.startsWith(prefix))) return true;
+  return false;
 }
 
 /**
