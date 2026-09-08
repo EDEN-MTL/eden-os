@@ -265,34 +265,51 @@ async function handleCheckAndBookAppointment(
   if (!ghlConfig || !config) {
     return "Could not check the calendar right now — tell the lead a teammate will confirm a time directly.";
   }
-  // Follow GHL's own configured location timezone live, rather than a
-  // static config value that can drift out of sync with whatever's
-  // actually set there — same discipline as dial-pending.ts's prompt-time
-  // reference. Falls back to config.timezone, then the hardcoded default.
-  const liveTimezone = await getLocationTimezone(ghlConfig.locationId, ghlConfig.apiKey).catch(() => null);
-  const timeZone = liveTimezone || config.timezone;
 
-  const requested = resolveRequestedTime(requestedTime, timeZone || "America/St_Johns");
-  if (!requested) {
+  // Cheap, local, no network — validate the timestamp is parseable at all
+  // BEFORE spending any GHL round-trips on it. resolveRequestedTime's
+  // parseability check doesn't depend on which timezone name it's given
+  // (that only affects the offset applied to an already-valid timestamp),
+  // so config.timezone here is just a placeholder for this pre-check — the
+  // real, live-timezone-informed resolution happens below once we have it.
+  if (!resolveRequestedTime(requestedTime, config.timezone || "America/St_Johns")) {
     return `"${requestedTime}" is not a valid ISO 8601 timestamp — this is an error in how you called the tool, not a real availability check. Recompute the moment the lead named relative to the current date and time given at the top of your instructions (e.g. "2026-09-07T18:00:00"), then call this tool again with a properly formatted timestamp. Do not tell the lead there's a technical issue or problem with time format — they did nothing wrong.`;
   }
 
   const windowStart = new Date();
   const windowEnd = new Date(windowStart.getTime() + APPOINTMENT_SEARCH_WINDOW_DAYS * 24 * 60 * 60 * 1000);
 
+  // getLocationTimezone and getCalendarSlots don't depend on each other —
+  // the slots window is plain epoch ms, timezone-independent — so they run
+  // in parallel rather than sequentially. Mark's live feedback, 2026-09-08:
+  // a real call's second check_and_book_appointment invocation took long
+  // enough to blow past Vapi's 20-second webhook timeout; three sequential
+  // GHL round-trips (timezone, slots, create) is exactly the kind of
+  // latency that adds up to that. This cuts one round-trip off the
+  // critical path.
+  let liveTimezone: string | null;
   let slotsResp: Record<string, { slots?: string[] }>;
   try {
-    slotsResp = await getCalendarSlots(
-      calendarId,
-      windowStart.getTime().toString(),
-      windowEnd.getTime().toString(),
-      ghlConfig.locationId,
-      ghlConfig.apiKey
-    );
+    [liveTimezone, slotsResp] = await Promise.all([
+      getLocationTimezone(ghlConfig.locationId, ghlConfig.apiKey).catch(() => null),
+      getCalendarSlots(calendarId, windowStart.getTime().toString(), windowEnd.getTime().toString(), ghlConfig.locationId, ghlConfig.apiKey),
+    ]);
   } catch (error) {
     console.error(`[VAPI-TOOLS] getCalendarSlots failed for ${clientId}/${calendarId}:`, error instanceof Error ? error.message : error);
     return "Could not check the calendar right now — tell the lead a teammate will confirm a time directly.";
   }
+  // Follow GHL's own configured location timezone live, rather than a
+  // static config value that can drift out of sync with whatever's
+  // actually set there — same discipline as dial-pending.ts's prompt-time
+  // reference. Falls back to config.timezone, then the hardcoded default.
+  const timeZone = liveTimezone || config.timezone;
+
+  // Re-resolve with the real (live) timezone now that we have it — matters
+  // when it differs from config.timezone (e.g. a DST edge, or the two
+  // genuinely disagree), since that changes the exact UTC instant a naive
+  // "2026-09-07T18:00:00" string resolves to. Already known parseable from
+  // the pre-check above, so this can't fail here.
+  const requested = resolveRequestedTime(requestedTime, timeZone || "America/St_Johns")!;
 
   // GHL's own response mixes a "traceId" string key in with the real
   // per-date entries — confirmed live, 2026-09-06.

@@ -627,6 +627,19 @@ describe("buildLeadQualificationPrompt", () => {
       expect(prompt).toMatch(/if it fails twice in a\s*\n?row, stop trying/i);
       expect(prompt).toMatch(/do not\s*\n?call check_and_book_appointment again this call/i);
     });
+
+    /**
+     * Mark's live feedback, 2026-09-08: a lead got double-booked — Iris
+     * booked 6:30, the lead asked for 7 instead, and Iris called the tool
+     * again rather than recognizing 6:30 was already locked in, creating a
+     * second separate appointment nobody wanted. Confirmed live against
+     * the real GHL calendar: both appointments existed simultaneously.
+     */
+    it("tells Iris never to call check_and_book_appointment again once it's already booked one", () => {
+      const prompt = buildLeadQualificationPrompt(IRIS_CONFIG, BLANK_LEAD, "3 Percent East Coast", "St. John's", true, true, true);
+      expect(prompt).toMatch(/NEVER call check_and_book_appointment again\s*\nafter that, for the rest of this call/i);
+      expect(prompt).toMatch(/this tool can only create appointments,\s*\nnever move or cancel one/i);
+    });
   });
 
   /**
