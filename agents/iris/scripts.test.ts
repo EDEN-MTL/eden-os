@@ -530,6 +530,18 @@ describe("buildLeadQualificationPrompt", () => {
       expect(prompt).toMatch(/never invoke transferCall a second\s+time in the same call/i);
     });
 
+    /**
+     * Mark's live feedback, 2026-09-08: a real call had Iris attempt a
+     * transfer, fall back to booking, successfully book an appointment —
+     * and then STILL go back and attempt the transfer a second time right
+     * after the booking had already succeeded.
+     */
+    it("tells Iris a successful transfer or booking ends the connect-the-lead attempt for the whole call", () => {
+      const prompt = buildLeadQualificationPrompt(IRIS_CONFIG, BLANK_LEAD, "3 Percent East Coast", "St. John's", false, true, false);
+      expect(prompt).toMatch(/exactly ONE attempt at connecting the lead to a person/i);
+      expect(prompt).toMatch(/never say the transfer line, never mention connecting them to an\s*\nagent, and never invoke transferCall again/i);
+    });
+
     it("tells Iris she has no live-transfer tool, and never to claim one, when none is available", () => {
       const prompt = buildLeadQualificationPrompt(IRIS_CONFIG, BLANK_LEAD, "3 Percent East Coast", "St. John's", false, false, false);
       expect(prompt).toMatch(/do not have a live-transfer tool/i);
@@ -629,11 +641,17 @@ describe("buildLeadQualificationPrompt", () => {
       expect(prompt).toMatch(/a real appointment was actually confirmed booked/i);
     });
 
-    /** Mark's live feedback, 2026-09-08: Iris said "Goodbye" twice in a row before ending. */
+    /**
+     * Mark's live feedback, 2026-09-08: Iris said "Goodbye" twice in a row
+     * before ending — a real call recording still showed this even after
+     * the first "say it once" fix, so this adds an explicit fallback for
+     * the case where the model somehow gets another turn after endCall.
+     */
     it("tells Iris to say goodbye exactly once, not repeat it before ending", () => {
       const prompt = buildLeadQualificationPrompt(IRIS_CONFIG, BLANK_LEAD, "3 Percent East Coast", "St. John's", false, true, false);
       expect(prompt).toMatch(/say your goodbye line exactly ONCE/i);
       expect(prompt).toMatch(/never say another farewell word or repeat "goodbye"/i);
+      expect(prompt).toMatch(/if for any reason you get another\s*\nturn after invoking endCall, say NOTHING at all/i);
     });
   });
 });

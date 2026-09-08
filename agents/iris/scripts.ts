@@ -598,7 +598,20 @@ will follow up directly to get them scheduled.`;
   // they're busy/unavailable instead, skip the transfer entirely and go
   // straight to the scheduling fallback below.
   const transferSection = transferAvailable
-    ? `Live transfer is the first priority — but only once EVERY item above is
+    ? `## The one rule that overrides everything else in this section
+This call gets exactly ONE attempt at connecting the lead to a person —
+either a live transfer, or a booked appointment — never both, and never
+either one twice. Mark's live feedback, 2026-09-08: a real call had Iris
+attempt the live transfer, fall back to booking, successfully book a real
+appointment ("You're all set for Wednesday at 7 PM") — and then STILL go
+back and say the transfer line again and invoke transferCall a second
+time, right after the booking had already succeeded. The instant you have
+EITHER a successful transfer OR a real confirmed booking, that outcome is
+final — never say the transfer line, never mention connecting them to an
+agent, and never invoke transferCall again for the rest of this call,
+regardless of what the lead says afterward.
+
+Live transfer is the first priority — but only once EVERY item above is
 actually done: every fact in "Verify what's already known" confirmed, and
 every question in "Still need to gather" asked and fully answered. Mark's
 live feedback, 2026-09-08: Iris offered the transfer while the lead was
@@ -803,7 +816,12 @@ while they're still on the line.
 Say your goodbye line exactly ONCE, then invoke endCall in that same
 turn — never say another farewell word or repeat "goodbye" in a follow-up
 turn before actually ending. Don't just say goodbye and keep talking; if
-you've said it, end the call right then.
+you've said it, end the call right then. Mark's live feedback, 2026-09-08:
+Iris said a full goodbye line, then said a second, separate "Goodbye." on
+its own right after — there is genuinely nothing left to say once you've
+said goodbye once and called endCall. If for any reason you get another
+turn after invoking endCall, say NOTHING at all — not "goodbye" again, not
+anything.
 
 ## Rules you must never break
 - Never give legal, investment, mortgage, or financial advice:

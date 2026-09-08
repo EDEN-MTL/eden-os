@@ -109,22 +109,48 @@ export function buildCallPayload(
       type: "transferCall",
       // Structural backup for the prompt's own "say the line, wait, only
       // transfer on agreement" instruction — see VapiToolRejectionPlan's
-      // doc comment. Rejects the transfer unless the lead's most recent
-      // message actually sounds like agreement (or a callback-time answer
-      // already in progress) rather than assuming any invocation is valid.
+      // doc comment. Requires BOTH: the lead's most recent message actually
+      // sounds like agreement, AND Iris's own immediately-preceding turn
+      // actually said the transfer line — not assuming either on its own.
+      //
+      // Mark's live feedback, 2026-09-08: even with the agreement-only
+      // check below already live, a real call had Iris invoke transferCall
+      // having never said the transfer line at all — she went straight
+      // from the last qualifying question to the tool call, skipping the
+      // announcement and the pause entirely. A regex on the user's last
+      // message can't catch that; this adds a second condition targeting
+      // role: "assistant" for the transfer line itself, combined via a
+      // group (top-level conditions are ANDed in Vapi's schema, which isn't
+      // what's needed here — see VapiRejectionCondition's own doc comment).
       rejectionPlan: {
         conditions: [
           {
-            // No inline (?i) here despite Vapi's own docs showing it in
-            // their examples — that syntax isn't valid in Node's RegExp at
-            // all, and their schema explicitly says rejectionPlan regexes
-            // run through RegExp.test. Explicit case variants instead,
-            // confirmed to actually compile via a live regex engine rather
-            // than trusting the vendor's own (apparently broken) example.
-            type: "regex",
-            regex: "\\b([Yy]es|[Yy]eah|[Yy]ep|[Yy]up|[Ss]ure|[Oo]k|[Oo]kay|[Ff]ine|[Aa]lright|[Dd]efinitely|[Aa]bsolutely|[Pp]lease)\\b|[Ss]ounds good|[Gg]o ahead|[Tt]hat works",
-            target: { position: -1, role: "user" },
-            negate: true,
+            type: "group",
+            operator: "OR",
+            conditions: [
+              {
+                // No inline (?i) here despite Vapi's own docs showing it in
+                // their examples — that syntax isn't valid in Node's RegExp
+                // at all, and their schema explicitly says rejectionPlan
+                // regexes run through RegExp.test. Explicit case variants
+                // instead, confirmed to actually compile via a live regex
+                // engine rather than trusting the vendor's own (apparently
+                // broken) example.
+                type: "regex",
+                regex: "\\b([Yy]es|[Yy]eah|[Yy]ep|[Yy]up|[Ss]ure|[Oo]k|[Oo]kay|[Ff]ine|[Aa]lright|[Dd]efinitely|[Aa]bsolutely|[Pp]lease)\\b|[Ss]ounds good|[Gg]o ahead|[Tt]hat works",
+                target: { position: -1, role: "user" },
+                negate: true,
+              },
+              {
+                // "connect you with" is the one substring every
+                // LIVE_TRANSFER_LINES variant (buyer/seller/general) shares
+                // — see scripts.ts's LIVE_TRANSFER_LINES.
+                type: "regex",
+                regex: "[Cc]onnect you with",
+                target: { position: -2, role: "assistant" },
+                negate: true,
+              },
+            ],
           },
         ],
       },
