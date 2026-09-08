@@ -135,16 +135,42 @@ describe("buildCallPayload", () => {
       const payload = buildCallPayload({ ...BASE_PARAMS, transferNumber: "+17097058841" }, VAPI_CONFIG);
       const tool = payload.assistant.model.tools?.find((t) => t.type === "transferCall");
       if (tool?.type !== "transferCall") throw new Error("expected transferCall tool");
-      expect(tool.rejectionPlan?.conditions[0]).toMatchObject({
-        type: "regex",
-        target: { position: -1, role: "user" },
-        negate: true,
-      });
-      const regex = new RegExp(tool.rejectionPlan!.conditions[0].regex);
+      const group = tool.rejectionPlan?.conditions[0];
+      if (group?.type !== "group") throw new Error("expected a group condition");
+      const agreementCondition = group.conditions.find((c) => c.type === "regex" && c.target?.role === "user");
+      if (agreementCondition?.type !== "regex") throw new Error("expected a regex condition targeting the user");
+      expect(agreementCondition).toMatchObject({ target: { position: -1, role: "user" }, negate: true });
+      const regex = new RegExp(agreementCondition.regex);
       expect(regex.test("yeah sure")).toBe(true);
       expect(regex.test("sounds good")).toBe(true);
       expect(regex.test("what do you mean")).toBe(false);
       expect(regex.test("no, not right now")).toBe(false);
+    });
+
+    /**
+     * Mark's live feedback, 2026-09-08: even with the agreement-only check
+     * above already live, a real call had Iris invoke transferCall having
+     * never said the transfer line at all — straight from the last
+     * qualifying question to the tool call, skipping the announcement and
+     * the pause entirely. A regex on the user's last message alone can't
+     * catch that.
+     */
+    it("also rejects the transfer unless Iris's own prior turn actually said the transfer line", () => {
+      const payload = buildCallPayload({ ...BASE_PARAMS, transferNumber: "+17097058841" }, VAPI_CONFIG);
+      const tool = payload.assistant.model.tools?.find((t) => t.type === "transferCall");
+      if (tool?.type !== "transferCall") throw new Error("expected transferCall tool");
+      const group = tool.rejectionPlan?.conditions[0];
+      if (group?.type !== "group") throw new Error("expected a group condition");
+      expect(group.operator).toBe("OR");
+      const lineCondition = group.conditions.find((c) => c.type === "regex" && c.target?.role === "assistant");
+      if (lineCondition?.type !== "regex") throw new Error("expected a regex condition targeting the assistant");
+      expect(lineCondition).toMatchObject({ target: { position: -2, role: "assistant" }, negate: true });
+      const regex = new RegExp(lineCondition.regex);
+      // Every LIVE_TRANSFER_LINES variant (buyer/seller/general) shares this substring.
+      expect(regex.test("Perfect. We'll connect you with one of our buyer agents to send over some available home options.")).toBe(true);
+      expect(regex.test("Sounds good. I'll connect you with one of our seller agents now.")).toBe(true);
+      expect(regex.test("Perfect. I'll connect you with one of our agents now.")).toBe(true);
+      expect(regex.test("How many bedrooms and bathrooms do you need?")).toBe(false);
     });
 
     it("briefs the receiving agent as 'seller' for seller/downsize intent and 'buyer' for buyer/upgrading", () => {
