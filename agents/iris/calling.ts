@@ -59,6 +59,31 @@ export interface PlaceCallParams {
    * note+redial system instead, same soft-fail pattern as transferNumber.
    */
   calendarId?: string;
+  /** Passed through to the appointment-notes summary — see buildLeadDetails below. */
+  workingWithRealtor?: boolean | null;
+}
+
+/**
+ * Shared "what do we actually know about this lead" fact list — used both
+ * for the warm-transfer agent briefing (buildAgentBriefing) and for the
+ * notes written onto a booked GHL appointment (see check_and_book_appointment's
+ * wiring below). One source of fact-strings so the two never drift apart.
+ */
+function buildLeadDetails(params: PlaceCallParams, audience: "buyer" | "seller"): string[] {
+  const details: string[] = [];
+  // Mark, 2026-09-06: propertyInterest is PROPERTY TYPE ("Single Family
+  // Home"), not area — this used to read "in Single Family Home", which
+  // sounds like a place name. "looking for a X" is correct regardless of
+  // client, since no client checked so far has a real area field at all.
+  if (params.propertyInterest) details.push(`looking for a ${params.propertyInterest}`);
+  if (params.bedrooms) details.push(`${params.bedrooms} bedrooms`);
+  if (params.budget) details.push(`around a ${params.budget} budget`);
+  if (params.timeline) details.push(`hoping to move within ${params.timeline}`);
+  if (audience === "buyer" && params.financing) details.push(`financing: ${params.financing}`);
+  if (params.workingWithRealtor !== null && params.workingWithRealtor !== undefined) {
+    details.push(params.workingWithRealtor ? "already working with a realtor" : "not working with a realtor");
+  }
+  return details;
 }
 
 /**
@@ -71,19 +96,25 @@ export interface PlaceCallParams {
  */
 function buildAgentBriefing(params: PlaceCallParams, audience: "buyer" | "seller"): string {
   const who = params.firstName !== "there" ? params.firstName : "a lead";
-  const details: string[] = [];
-  // Mark, 2026-09-06: propertyInterest is PROPERTY TYPE ("Single Family
-  // Home"), not area — this used to read "in Single Family Home", which
-  // sounds like a place name. "looking for a X" is correct regardless of
-  // client, since no client checked so far has a real area field at all.
-  if (params.propertyInterest) details.push(`looking for a ${params.propertyInterest}`);
-  if (params.bedrooms) details.push(`${params.bedrooms} bedrooms`);
-  if (params.budget) details.push(`around a ${params.budget} budget`);
-  if (params.timeline) details.push(`hoping to move within ${params.timeline}`);
-  if (audience === "buyer" && params.financing) details.push(`financing: ${params.financing}`);
-
+  const details = buildLeadDetails(params, audience);
   const detailText = details.length > 0 ? `, ${details.join(", ")}` : "";
   return `I have ${who} on the other line, a ${audience} lead${detailText}.`;
+}
+
+/**
+ * The lead-facts half of a booked appointment's notes — see
+ * check_and_book_appointment's wiring below for where the conversational
+ * half (Iris's own free-text summary) gets appended to this. Mark's
+ * request, 2026-09-08: a booked appointment only ever carried a generic
+ * "Booked automatically by Iris during a live call" note — no lead details
+ * at all, meaning whoever picks up the appointment has to re-open the
+ * contact and re-derive everything Iris already established.
+ */
+function buildAppointmentLeadSummary(params: PlaceCallParams, audience: "buyer" | "seller"): string {
+  const who = params.firstName !== "there" ? params.firstName : "the lead";
+  const details = buildLeadDetails(params, audience);
+  const detailText = details.length > 0 ? ` — ${details.join(", ")}.` : ".";
+  return `${who}, a ${audience} lead${detailText}`;
 }
 
 /**
@@ -109,22 +140,48 @@ export function buildCallPayload(
       type: "transferCall",
       // Structural backup for the prompt's own "say the line, wait, only
       // transfer on agreement" instruction — see VapiToolRejectionPlan's
-      // doc comment. Rejects the transfer unless the lead's most recent
-      // message actually sounds like agreement (or a callback-time answer
-      // already in progress) rather than assuming any invocation is valid.
+      // doc comment. Requires BOTH: the lead's most recent message actually
+      // sounds like agreement, AND Iris's own immediately-preceding turn
+      // actually said the transfer line — not assuming either on its own.
+      //
+      // Mark's live feedback, 2026-09-08: even with the agreement-only
+      // check below already live, a real call had Iris invoke transferCall
+      // having never said the transfer line at all — she went straight
+      // from the last qualifying question to the tool call, skipping the
+      // announcement and the pause entirely. A regex on the user's last
+      // message can't catch that; this adds a second condition targeting
+      // role: "assistant" for the transfer line itself, combined via a
+      // group (top-level conditions are ANDed in Vapi's schema, which isn't
+      // what's needed here — see VapiRejectionCondition's own doc comment).
       rejectionPlan: {
         conditions: [
           {
-            // No inline (?i) here despite Vapi's own docs showing it in
-            // their examples — that syntax isn't valid in Node's RegExp at
-            // all, and their schema explicitly says rejectionPlan regexes
-            // run through RegExp.test. Explicit case variants instead,
-            // confirmed to actually compile via a live regex engine rather
-            // than trusting the vendor's own (apparently broken) example.
-            type: "regex",
-            regex: "\\b([Yy]es|[Yy]eah|[Yy]ep|[Yy]up|[Ss]ure|[Oo]k|[Oo]kay|[Ff]ine|[Aa]lright|[Dd]efinitely|[Aa]bsolutely|[Pp]lease)\\b|[Ss]ounds good|[Gg]o ahead|[Tt]hat works",
-            target: { position: -1, role: "user" },
-            negate: true,
+            type: "group",
+            operator: "OR",
+            conditions: [
+              {
+                // No inline (?i) here despite Vapi's own docs showing it in
+                // their examples — that syntax isn't valid in Node's RegExp
+                // at all, and their schema explicitly says rejectionPlan
+                // regexes run through RegExp.test. Explicit case variants
+                // instead, confirmed to actually compile via a live regex
+                // engine rather than trusting the vendor's own (apparently
+                // broken) example.
+                type: "regex",
+                regex: "\\b([Yy]es|[Yy]eah|[Yy]ep|[Yy]up|[Ss]ure|[Oo]k|[Oo]kay|[Ff]ine|[Aa]lright|[Dd]efinitely|[Aa]bsolutely|[Pp]lease)\\b|[Ss]ounds good|[Gg]o ahead|[Tt]hat works",
+                target: { position: -1, role: "user" },
+                negate: true,
+              },
+              {
+                // "connect you with" is the one substring every
+                // LIVE_TRANSFER_LINES variant (buyer/seller/general) shares
+                // — see scripts.ts's LIVE_TRANSFER_LINES.
+                type: "regex",
+                regex: "[Cc]onnect you with",
+                target: { position: -2, role: "assistant" },
+                negate: true,
+              },
+            ],
           },
         ],
       },
@@ -183,11 +240,16 @@ export function buildCallPayload(
     // handle scheduling," not two overlapping ones. Mark, 2026-09-06: built
     // once a real test calendar existed to verify against live (never
     // invent availability — see AGENT_UNAVAILABLE_FOLLOW_UP's history).
+    const audience = params.intent === "seller" || params.intent === "downsize" ? "seller" : "buyer";
     const qs = new URLSearchParams({
       clientId: params.clientId,
       contactId: params.contactId,
       calendarId: params.calendarId,
-      intent: params.intent === "seller" || params.intent === "downsize" ? "seller" : "buyer",
+      intent: audience,
+      // Baked in at call-placement time from what Scout/this call already
+      // know — never left to the model to retype, same reasoning as
+      // buildAgentBriefing's briefing string. See handleCheckAndBookAppointment.
+      leadSummary: buildAppointmentLeadSummary(params, audience),
     }).toString();
 
     tools.push({
@@ -210,6 +272,15 @@ export function buildCallPayload(
                 "The exact moment to check/book, as an ISO 8601 timestamp, computed relative to the " +
                 "current date and time given to you at the top of this prompt — never a bare time like " +
                 "'2pm' with no date.",
+            },
+            conversationNotes: {
+              type: "string",
+              description:
+                "OPTIONAL — a short (one sentence) note on anything from THIS call worth flagging to " +
+                "whoever picks up the appointment: a correction the lead gave (e.g. 'budget actually " +
+                "changed to 500k'), something specific they mentioned, or a concern they raised. Never " +
+                "restate facts already known before the call — only what came up freshly during it. Omit " +
+                "entirely if there's nothing beyond the standard facts.",
             },
           },
           required: ["requestedTime"],

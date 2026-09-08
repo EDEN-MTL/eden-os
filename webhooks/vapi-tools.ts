@@ -4,7 +4,6 @@ import { getGhlConfig, addContactTags, updateContact, getCustomFieldDefs, getCal
 import { buildKeyToId } from "../agents/scout/intake";
 import { loadIrisConfig } from "../agents/iris";
 import { scheduleExplicitCallback } from "../agents/iris/dial-pending";
-import { query } from "../shared/db";
 
 /**
  * Server-side handler for the schedule_callback function tool Vapi calls
@@ -45,43 +44,47 @@ function verifyVapiSecret(expectedSecret: string, req: Request): boolean {
 }
 
 /**
- * Matches Vapi's real `ToolCall` schema (confirmed against their own
- * OpenAPI spec, api.vapi.ai/api-json, and cross-checked against a live
- * call's stored raw payload, 2026-09-08) — NOT the shape this interface
- * used to declare. `arguments` is a JSON-ENCODED STRING nested under
- * `function`, never a parsed object sitting directly on the tool call.
- *
- * Mark's live feedback, 2026-09-08 (reviewing a call recording where every
- * single check_and_book_appointment call looped forever on "No
- * requestedTime was given"): the old interface declared `{id, name,
- * arguments: Record<string, unknown>}` — a shape Vapi has never actually
- * sent. `call.arguments?.requestedTime` was reading a field that never
- * existed on the real request body, so it was `undefined` on every single
- * tool call this server has ever received, for every client, since this
- * was built. Confirmed by querying every historical iris_call_log row with
- * a schedule_callback/check_and_book_appointment tool result: 100% of them
- * came back with the "no valid time" error path — not one booking has ever
- * actually succeeded. See parseToolArguments below for the fix.
+ * `arguments` is documented on Vapi's own OpenAPI schema (api.vapi.ai/api-json)
+ * as a JSON-ENCODED STRING — but that's wrong. Round two of this bug, 2026-09-08:
+ * fixed this file once already to read `call.function.arguments` instead of a
+ * flat `call.arguments` (which never existed on the real payload), assuming
+ * the schema's "it's a string" claim was correct. Deployed, then a live call
+ * STILL hit "No requestedTime was given" every time. Added temporary debug
+ * logging (createToolHandler below), captured a REAL production webhook body,
+ * and found the actual shape: `function.arguments` arrives as an
+ * ALREADY-PARSED OBJECT (`{"requestedTime":"2026-09-08T08:45:00"}`), not a
+ * string at all. `JSON.parse()` on a non-string argument coerces it via
+ * `.toString()` first (producing `"[object Object]"`, invalid JSON), which
+ * threw, and the old parseToolArguments's catch-all silently returned `{}` —
+ * reproducing the exact same symptom in a new form. This is now handled for
+ * both real shapes seen (object OR string), rather than trusting either the
+ * vendor's doc or a single prior observation. Confirmed by querying every
+ * historical iris_call_log row with a schedule_callback/check_and_book_appointment
+ * tool result before this fix: 100% of them, across every call for every
+ * client since this was built, came back with the "no valid time" error path.
  */
 export interface ToolCall {
   id: string;
   type?: string;
   function: {
     name: string;
-    arguments: string;
+    arguments: string | Record<string, unknown>;
   };
 }
 
 /**
- * Safely parses the real (string) arguments payload — see ToolCall's own
- * doc comment for why this exists instead of reading `call.arguments`
- * directly. Falls back to {} on malformed JSON rather than throwing, so a
- * bad payload degrades to the tool's own "missing argument" error message
- * (which the model can recover from) instead of a 500.
+ * Handles both real shapes Vapi has been observed sending for
+ * `function.arguments` — see ToolCall's own doc comment. Falls back to {} on
+ * malformed JSON or an unexpected type rather than throwing, so a bad payload
+ * degrades to the tool's own "missing argument" error message (which the
+ * model can recover from) instead of a 500.
  */
 export function parseToolArguments(call: ToolCall): Record<string, unknown> {
+  const raw = call.function.arguments;
+  if (raw && typeof raw === "object") return raw;
+  if (typeof raw !== "string") return {};
   try {
-    const parsed = JSON.parse(call.function.arguments);
+    const parsed = JSON.parse(raw);
     return typeof parsed === "object" && parsed !== null ? parsed : {};
   } catch {
     return {};
@@ -240,7 +243,9 @@ async function handleCheckAndBookAppointment(
   contactId: string,
   calendarId: string,
   intent: string,
-  requestedTime: unknown
+  requestedTime: unknown,
+  leadSummary: string,
+  conversationNotes: unknown
 ): Promise<string> {
   // These two messages are addressed to the MODEL, not the lead — confirmed
   // live, 2026-09-06: a real call had Iris repeatedly telling the lead
@@ -300,6 +305,22 @@ async function handleCheckAndBookAppointment(
 
   if (exactMatch) {
     const endTime = new Date(new Date(exactMatch).getTime() + APPOINTMENT_DURATION_MINUTES * 60_000).toISOString();
+    // Mark's request, 2026-09-08: a booked appointment only ever carried a
+    // generic "Booked automatically..." note — no lead details at all.
+    // leadSummary is baked in at call-placement time from what's already
+    // known (see calling.ts's buildAppointmentLeadSummary) — never left to
+    // the model to retype. conversationNotes is an OPTIONAL model-supplied
+    // sentence for whatever came up fresh during THIS call (a correction,
+    // something specific mentioned) — appended, not trusted as the whole
+    // note, since it's free text from the model rather than a structured
+    // fact eden-os already tracked.
+    const notes = [
+      "Booked automatically by Iris during a live call.",
+      leadSummary || null,
+      typeof conversationNotes === "string" && conversationNotes.trim() ? conversationNotes.trim() : null,
+    ]
+      .filter(Boolean)
+      .join(" ");
     try {
       await createAppointment(
         calendarId,
@@ -308,7 +329,7 @@ async function handleCheckAndBookAppointment(
           startTime: exactMatch,
           endTime,
           title: `${intent === "seller" ? "Seller" : "Buyer"} callback`,
-          notes: "Booked automatically by Iris during a live call.",
+          notes,
         },
         ghlConfig.locationId,
         ghlConfig.apiKey
@@ -339,17 +360,6 @@ function createToolHandler(handler: (query: Record<string, string>, call: ToolCa
       return res.status(401).send("Invalid signature");
     }
 
-    // TEMPORARY, 2026-09-08: capturing the exact real request body Vapi
-    // sends — check_and_book_appointment still hit "No requestedTime was
-    // given" on a live call even after fixing call.function.arguments
-    // parsing, so something about the real wire shape still doesn't match
-    // what's assumed here. Remove once diagnosed. Fire-and-forget, never
-    // blocks or fails the actual tool response.
-    query(`INSERT INTO debug_tool_webhook_log (query, body) VALUES ($1, $2)`, [
-      JSON.stringify(req.query || {}),
-      JSON.stringify(req.body || {}),
-    ]).catch(() => {});
-
     try {
       const toolCalls: ToolCall[] = req.body?.message?.toolCallList || [];
       const query = req.query as Record<string, string>;
@@ -378,7 +388,15 @@ export function createVapiToolsRouter(): Router {
   router.post(
     "/check-and-book-appointment",
     createToolHandler(async (query, call) =>
-      handleCheckAndBookAppointment(query.clientId, query.contactId, query.calendarId, query.intent, parseToolArguments(call).requestedTime)
+      handleCheckAndBookAppointment(
+        query.clientId,
+        query.contactId,
+        query.calendarId,
+        query.intent,
+        parseToolArguments(call).requestedTime,
+        query.leadSummary,
+        parseToolArguments(call).conversationNotes
+      )
     )
   );
 

@@ -128,13 +128,25 @@ export interface VapiAssistantConfig {
  * Iris invoke the transfer immediately with no announcement or pause).
  * This is the second, code-level line of defense.
  */
+/**
+ * `RegexCondition` matches one specific message by position (default -1,
+ * the most recent) and optional role. `GroupCondition` combines nested
+ * conditions with AND/OR — needed because the top-level `conditions` array
+ * is always ANDed (confirmed against Vapi's own ToolRejectionPlan schema:
+ * "For OR logic at the top level, use a single 'group' condition"). Mark's
+ * live feedback, 2026-09-08: a single regex on the user's last message
+ * wasn't enough — a real call had Iris invoke transferCall having never
+ * said the transfer line at all, skipping straight from the last
+ * qualifying question to the tool call. A regex alone can't express "AND
+ * the assistant's own prior turn said the transfer line," which needs a
+ * second condition targeting role: "assistant" combined via a group.
+ */
+export type VapiRejectionCondition =
+  | { type: "regex"; regex: string; target?: { position?: number; role?: "user" | "assistant" }; negate?: boolean }
+  | { type: "group"; operator: "AND" | "OR"; conditions: VapiRejectionCondition[] };
+
 export interface VapiToolRejectionPlan {
-  conditions: {
-    type: "regex";
-    regex: string;
-    target?: { position?: number; role?: "user" | "assistant" };
-    negate?: boolean;
-  }[];
+  conditions: VapiRejectionCondition[];
 }
 
 export interface VapiTransferCallTool {

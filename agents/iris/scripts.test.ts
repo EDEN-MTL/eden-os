@@ -490,6 +490,26 @@ describe("buildLeadQualificationPrompt", () => {
       expect(prompt).toMatch(/never invoke it silently without saying this first/i);
     });
 
+    /**
+     * Mark's live feedback, 2026-09-08: Iris offered the live transfer while
+     * the lead was still mid-answer on the last qualifying question.
+     */
+    it("gates the transfer behind every verifying and still-needed item being fully answered", () => {
+      const prompt = buildLeadQualificationPrompt(IRIS_CONFIG, BLANK_LEAD, "3 Percent East Coast", "St. John's", false, true, false);
+      expect(prompt).toMatch(/only once EVERY item above is\s*\nactually done/i);
+      expect(prompt).toMatch(/never offer the transfer until\s*\nthe lead has completely finished answering the last thing you asked them/i);
+    });
+
+    /**
+     * Mark's live feedback, 2026-09-08: Iris repeated "hold on a sec" / "this
+     * will just take a sec" in a loop right after the transfer failed,
+     * instead of silently checking the calendar.
+     */
+    it("tells Iris to say nothing at all while the scheduling tool runs after a failed transfer", () => {
+      const prompt = buildLeadQualificationPrompt(IRIS_CONFIG, BLANK_LEAD, "3 Percent East Coast", "St. John's", false, true, false);
+      expect(prompt).toMatch(/go STRAIGHT into scheduling — do not say anything else first/i);
+      expect(prompt).toMatch(/say NOTHING while your scheduling tool is\s*\nrunning — not even once/i);
+    });
 
     it("tells Iris to invoke the transferCall tool when a transfer is available", () => {
       const prompt = buildLeadQualificationPrompt(IRIS_CONFIG, BLANK_LEAD, "3 Percent East Coast", "St. John's", false, true, false);
@@ -508,6 +528,18 @@ describe("buildLeadQualificationPrompt", () => {
     it("tells Iris never to attempt a second transferCall once she's fallen back to scheduling", () => {
       const prompt = buildLeadQualificationPrompt(IRIS_CONFIG, BLANK_LEAD, "3 Percent East Coast", "St. John's", false, true, false);
       expect(prompt).toMatch(/never invoke transferCall a second\s+time in the same call/i);
+    });
+
+    /**
+     * Mark's live feedback, 2026-09-08: a real call had Iris attempt a
+     * transfer, fall back to booking, successfully book an appointment —
+     * and then STILL go back and attempt the transfer a second time right
+     * after the booking had already succeeded.
+     */
+    it("tells Iris a successful transfer or booking ends the connect-the-lead attempt for the whole call", () => {
+      const prompt = buildLeadQualificationPrompt(IRIS_CONFIG, BLANK_LEAD, "3 Percent East Coast", "St. John's", false, true, false);
+      expect(prompt).toMatch(/exactly ONE attempt at connecting the lead to a person/i);
+      expect(prompt).toMatch(/never say the transfer line, never mention connecting them to an\s*\nagent, and never invoke transferCall again/i);
     });
 
     it("tells Iris she has no live-transfer tool, and never to claim one, when none is available", () => {
@@ -546,6 +578,19 @@ describe("buildLeadQualificationPrompt", () => {
       expect(prompt).toMatch(/the tool actually confirmed/i);
     });
 
+    /**
+     * Mark's request, 2026-09-08: a booked appointment should carry lead
+     * details and notes from the conversation, not just a generic booking
+     * note. Structured facts are baked in automatically (calling.ts's
+     * buildAppointmentLeadSummary) — this covers the optional free-text
+     * half only Iris can supply, for whatever came up fresh in the call.
+     */
+    it("tells Iris about the optional conversationNotes argument, for fresh details only", () => {
+      const prompt = buildLeadQualificationPrompt(IRIS_CONFIG, BLANK_LEAD, "3 Percent East Coast", "St. John's", true, true, true);
+      expect(prompt).toMatch(/OPTIONAL conversationNotes argument/i);
+      expect(prompt).toMatch(/never restate the standard facts already covered above/i);
+    });
+
     it("falls back to schedule_callback when no real calendar is available, even with booking tools on", () => {
       const prompt = buildLeadQualificationPrompt(IRIS_CONFIG, BLANK_LEAD, "3 Percent East Coast", "St. John's", true, true, false);
       expect(prompt).toContain("schedule_callback");
@@ -581,6 +626,45 @@ describe("buildLeadQualificationPrompt", () => {
       expect(prompt).toMatch(/never repeat words like "technical issue" or "trouble with the/i);
       expect(prompt).toMatch(/if it fails twice in a\s*\n?row, stop trying/i);
       expect(prompt).toMatch(/do not\s*\n?call check_and_book_appointment again this call/i);
+    });
+  });
+
+  /**
+   * Mark's live feedback, 2026-09-08: a lead asked "who am I speaking with?"
+   * right at pickup and Iris just repeated her own identify question back
+   * at them instead of actually answering who was calling.
+   */
+  it("tells Iris to directly answer if the lead asks who's calling, instead of deflecting", () => {
+    const prompt = buildLeadQualificationPrompt(IRIS_CONFIG, BLANK_LEAD, "3 Percent East Coast", "St. John's", false, true, false);
+    expect(prompt).toMatch(/If\s+what\s+they asked is specifically who's calling or who they're speaking with/i);
+    expect(prompt).toMatch(/ANSWER IT/);
+    expect(prompt).toContain('"This is Iris with 3 Percent East Coast"');
+  });
+
+  describe("ending the call", () => {
+    /**
+     * Mark's live feedback, 2026-09-08: Iris ended a call after her
+     * scheduling tool kept failing, having neither transferred the lead nor
+     * booked anything — a lead left with no outcome at all.
+     */
+    it("tells Iris never to end the call without a real transfer or a real confirmed booking", () => {
+      const prompt = buildLeadQualificationPrompt(IRIS_CONFIG, BLANK_LEAD, "3 Percent East Coast", "St. John's", false, true, false);
+      expect(prompt).toMatch(/never end the call unless ONE of these is actually true/i);
+      expect(prompt).toMatch(/the lead was successfully connected via live transfer/i);
+      expect(prompt).toMatch(/a real appointment was actually confirmed booked/i);
+    });
+
+    /**
+     * Mark's live feedback, 2026-09-08: Iris said "Goodbye" twice in a row
+     * before ending — a real call recording still showed this even after
+     * the first "say it once" fix, so this adds an explicit fallback for
+     * the case where the model somehow gets another turn after endCall.
+     */
+    it("tells Iris to say goodbye exactly once, not repeat it before ending", () => {
+      const prompt = buildLeadQualificationPrompt(IRIS_CONFIG, BLANK_LEAD, "3 Percent East Coast", "St. John's", false, true, false);
+      expect(prompt).toMatch(/say your goodbye line exactly ONCE/i);
+      expect(prompt).toMatch(/never say another farewell word or repeat "goodbye"/i);
+      expect(prompt).toMatch(/if for any reason you get another\s*\nturn after invoking endCall, say NOTHING at all/i);
     });
   });
 });
