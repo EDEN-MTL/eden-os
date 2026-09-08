@@ -178,12 +178,31 @@ export const LIVE_TRANSFER_LINES = {
   // Jacob's live feedback, 2026-09-04: name the concrete benefit (seeing
   // real listings), not just "connect you" — the seller/general lines are
   // unchanged since he only gave feedback on the buyer case.
-  buyer: "Perfect. We'll connect you with one of our buyer agents to send over some available home options.",
-  seller: "Sounds good. I'll connect you with one of our seller agents now.",
-  general: "Perfect. I'll connect you with one of our agents now.",
+  //
+  // Second variant added 2026-09-09 from a real recording of Jacob (the
+  // human ISA) doing a live transfer himself: he gives an honest REASON
+  // for the handoff ("I'm just the assistant, I don't actually have access
+  // to all this stuff") rather than just stating the transfer as a bare
+  // fact — Mark's request: keep the original line, add this as a second
+  // option so Iris can switch between them instead of repeating one
+  // script every call. Every variant keeps the phrase "connect you with"
+  // — calling.ts's transferCall rejectionPlan structurally checks for that
+  // exact substring in Iris's prior turn before allowing the tool call.
+  buyer: [
+    "Perfect. We'll connect you with one of our buyer agents to send over some available home options.",
+    "I'm just the assistant, so let me connect you with one of our buyer agents — they'll have access to send over some real listings.",
+  ],
+  seller: [
+    "Sounds good. I'll connect you with one of our seller agents now.",
+    "I'm just the assistant, so let me connect you with one of our seller agents — they'll be able to walk you through next steps.",
+  ],
+  general: [
+    "Perfect. I'll connect you with one of our agents now.",
+    "I'm just the assistant, so let me connect you with one of our agents.",
+  ],
 };
 
-export function liveTransferLineForIntent(intent: CallIntent): string {
+export function liveTransferLineForIntent(intent: CallIntent): string[] {
   if (intent === "seller" || intent === "downsize") return LIVE_TRANSFER_LINES.seller;
   if (intent === "buyer" || intent === "upgrading") return LIVE_TRANSFER_LINES.buyer;
   return LIVE_TRANSFER_LINES.general;
@@ -210,7 +229,17 @@ export const AGENT_UNAVAILABLE_LINE = "They're busy with another client right no
  * not a "please hold" — see buildLeadQualificationPrompt's transferSection
  * for the no-repeat-filler rule this line replaces.
  */
-export const TRANSFER_ATTEMPT_LINE = "Great — let me get you connected now.";
+/**
+ * Second variant added 2026-09-09 from a real recording of Jacob doing a
+ * live transfer: "if you just want to stay on the line for two seconds,
+ * I'm going to try to transfer you over" — a more concrete, natural way to
+ * ask someone to hold than a generic "let me get you connected." Mark's
+ * request: keep the original, add this as a second option.
+ */
+export const TRANSFER_ATTEMPT_LINES = [
+  "Great — let me get you connected now.",
+  "If you just want to stay on the line for a couple seconds, I'm going to try to transfer you over now.",
+];
 
 /**
  * Open question rather than pre-checked slots — there's no calendar behind
@@ -640,12 +669,13 @@ still mid-answer on the very last question. Never offer the transfer until
 the lead has completely finished answering the last thing you asked them —
 if there's any doubt whether they're done talking, wait and let them
 finish, don't cut in with the transfer line. Once everything is actually
-gathered, present it confidently, don't ask permission, say the line, then
-STOP and wait:
-"${liveTransferLineForIntent(lead.intent)}"
+gathered, present it confidently, don't ask permission — pick ONE of these
+(never repeat the same one call after call), then STOP and wait:
+${liveTransferLineForIntent(lead.intent).map((l) => `- "${l}"`).join("\n")}
 
 Listen to what they say next:
-- Agreement ("okay", "sure", "yeah") → say "${TRANSFER_ATTEMPT_LINE}" so they know what's actually happening, THEN invoke the transferCall tool. Never invoke it silently without saying this first, and never invoke it before they've responded.
+- Agreement ("okay", "sure", "yeah") → say one of these (pick a different one than last time), so they know what's actually happening, THEN invoke the transferCall tool. Never invoke it silently without saying this first, and never invoke it before they've responded:
+${TRANSFER_ATTEMPT_LINES.map((l) => `  - "${l}"`).join("\n")}
 - Unavailable right now ("I'm at work", "can you call me later", "I can't talk") → do NOT invoke transferCall at all. Acknowledge naturally and move straight to the scheduling fallback below instead.
 
 If the transferCall tool comes back without anyone picking up: "${AGENT_UNAVAILABLE_LINE}"
