@@ -9,7 +9,7 @@
 import { readFileSync } from "fs";
 import { join } from "path";
 import { query } from "../../shared/db";
-import { getGhlConfig, listCalendarEvents } from "../../shared/ghl";
+import { getGhlConfig, listCalendarEvents, listOpportunitiesPaginated } from "../../shared/ghl";
 
 const CHECKIN_WINDOW_DAYS = 60;
 
@@ -117,23 +117,72 @@ export async function getCheckinData(token: string): Promise<CheckinData | null>
     rawEvents.push(...events);
   }
 
-  const eventIds = rawEvents.map((e) => e.id);
-  const checkinRows = eventIds.length
+  // Live-transferred calls: opportunities sitting in (or that recently
+  // passed through) the "Live Transferred" pipeline stage — a different
+  // GHL object entirely from a booked calendar appointment, but Jacob
+  // wants both on the same check-in page. `assignedTo` is verified live to
+  // sometimes be a DEAD user id (confirmed via a direct GET /users/{id} ->
+  // 404 — a former team member's account, presumably), so `followers[0]`
+  // is tried first: on every recent row that had a non-empty followers
+  // array, it was a real, current roster member; assignedTo is only the
+  // fallback for the rows where followers was empty.
+  const pipelineId = config.scout?.pipelineId;
+  const liveTransferStageId = config.iris?.liveTransferStageId;
+  const rawLiveTransfers: any[] = [];
+  if (pipelineId && liveTransferStageId) {
+    for await (const opp of listOpportunitiesPaginated(ghlConfig.locationId, {
+      pipelineId,
+      apiKey: ghlConfig.apiKey,
+    })) {
+      if (opp.pipelineStageId !== liveTransferStageId) continue;
+      const changedAt = new Date(opp.lastStageChangeAt || opp.updatedAt).getTime();
+      if (changedAt < start) continue;
+      rawLiveTransfers.push(opp);
+    }
+  }
+
+  interface RawItem {
+    id: string;
+    prospectName: string;
+    appointmentAt: string;
+    status: string;
+    assignedId: string | null;
+  }
+
+  const items: RawItem[] = [
+    ...rawEvents.map((e) => ({
+      id: e.id,
+      prospectName: parseProspectName(e.title || ""),
+      appointmentAt: e.startTime,
+      status: e.appointmentStatus || "unknown",
+      assignedId: e.assignedUserId || null,
+    })),
+    ...rawLiveTransfers.map((o) => ({
+      id: o.id,
+      prospectName: o.name || "Unknown",
+      appointmentAt: o.lastStageChangeAt || o.updatedAt,
+      status: "live transferred",
+      assignedId: (o.followers && o.followers.length ? o.followers[0] : null) || o.assignedTo || null,
+    })),
+  ];
+
+  const itemIds = items.map((i) => i.id);
+  const checkinRows = itemIds.length
     ? await query<CheckinRow>(
         `SELECT ghl_event_id, still_in_conversation, showed_up, deal_progressing, deal_closed, contract_signed
          FROM scout_appointment_checkins WHERE client_id = $1 AND ghl_event_id = ANY($2)`,
-        [clientId, eventIds]
+        [clientId, itemIds]
       )
     : [];
   const checkinByEventId = new Map(checkinRows.map((r) => [r.ghl_event_id, r]));
 
-  function toAppointment(e: any): CheckinAppointment {
-    const saved = checkinByEventId.get(e.id);
+  function toAppointment(item: RawItem): CheckinAppointment {
+    const saved = checkinByEventId.get(item.id);
     return {
-      ghlEventId: e.id,
-      prospectName: parseProspectName(e.title || ""),
-      appointmentAt: e.startTime,
-      status: e.appointmentStatus || "unknown",
+      ghlEventId: item.id,
+      prospectName: item.prospectName,
+      appointmentAt: item.appointmentAt,
+      status: item.status,
       checkboxes: {
         still_in_conversation: saved?.still_in_conversation ?? false,
         showed_up: saved?.showed_up ?? false,
@@ -151,17 +200,20 @@ export async function getCheckinData(token: string): Promise<CheckinData | null>
   const memberIds = new Set(teamsConfig.flatMap((t) => t.members.map((m) => m.ghlUserId)));
   const unassigned: CheckinAppointment[] = [];
 
-  for (const e of rawEvents) {
-    const appt = toAppointment(e);
-    const assignedId: string | undefined = e.assignedUserId;
-    if (assignedId && memberIds.has(assignedId)) {
-      const list = appointmentsByMemberId.get(assignedId) || [];
+  for (const item of items) {
+    const appt = toAppointment(item);
+    if (item.assignedId && memberIds.has(item.assignedId)) {
+      const list = appointmentsByMemberId.get(item.assignedId) || [];
       list.push(appt);
-      appointmentsByMemberId.set(assignedId, list);
+      appointmentsByMemberId.set(item.assignedId, list);
     } else {
       unassigned.push(appt);
     }
   }
+
+  const byMostRecent = (a: CheckinAppointment, b: CheckinAppointment) =>
+    new Date(b.appointmentAt).getTime() - new Date(a.appointmentAt).getTime();
+  unassigned.sort(byMostRecent);
 
   const teams: CheckinTeam[] = teamsConfig.map((team) => ({
     teamName: team.teamName,
@@ -169,7 +221,10 @@ export async function getCheckinData(token: string): Promise<CheckinData | null>
     // Only members who actually have a recent appointment are shown —
     // Jacob was explicit the page shouldn't list the whole roster.
     members: team.members
-      .map((m) => ({ name: m.name, appointments: appointmentsByMemberId.get(m.ghlUserId) || [] }))
+      .map((m) => ({
+        name: m.name,
+        appointments: (appointmentsByMemberId.get(m.ghlUserId) || []).sort(byMostRecent),
+      }))
       .filter((m) => m.appointments.length > 0),
   }));
 

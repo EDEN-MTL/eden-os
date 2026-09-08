@@ -527,10 +527,13 @@ CREATE TABLE IF NOT EXISTS scout_checkin_links (
     created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
--- Our own checkbox state for the check-in page, keyed to the real GHL
--- calendar event id — not a copy of the appointment itself, which is
--- always re-fetched live from GHL so it can never go stale. Absence of a
--- row just means nothing has been checked yet for that appointment.
+-- Our own checkbox state for the check-in page, keyed to a real GHL
+-- record id — not a copy of the item itself, which is always re-fetched
+-- live from GHL so it can never go stale. ghl_event_id holds either a
+-- calendar event id (a booked appointment) or an opportunity id (a
+-- live-transferred call, added 2026-09-09) — both are just opaque GHL
+-- record ids to this table. Absence of a row just means nothing has been
+-- checked yet for that item.
 CREATE TABLE IF NOT EXISTS scout_appointment_checkins (
     id BIGSERIAL PRIMARY KEY,
     client_id TEXT NOT NULL,
