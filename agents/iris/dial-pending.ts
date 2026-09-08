@@ -209,6 +209,7 @@ async function resolveOne(row: PendingCallRow): Promise<void> {
       propertyInterest: lead.propertyInterest,
       bedrooms: lead.bedrooms,
       financing: lead.financing,
+      workingWithRealtor: lead.workingWithRealtor,
       systemPrompt: buildLeadQualificationPrompt(
         promptConfig,
         lead,

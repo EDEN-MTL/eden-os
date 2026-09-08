@@ -243,7 +243,9 @@ async function handleCheckAndBookAppointment(
   contactId: string,
   calendarId: string,
   intent: string,
-  requestedTime: unknown
+  requestedTime: unknown,
+  leadSummary: string,
+  conversationNotes: unknown
 ): Promise<string> {
   // These two messages are addressed to the MODEL, not the lead — confirmed
   // live, 2026-09-06: a real call had Iris repeatedly telling the lead
@@ -303,6 +305,22 @@ async function handleCheckAndBookAppointment(
 
   if (exactMatch) {
     const endTime = new Date(new Date(exactMatch).getTime() + APPOINTMENT_DURATION_MINUTES * 60_000).toISOString();
+    // Mark's request, 2026-09-08: a booked appointment only ever carried a
+    // generic "Booked automatically..." note — no lead details at all.
+    // leadSummary is baked in at call-placement time from what's already
+    // known (see calling.ts's buildAppointmentLeadSummary) — never left to
+    // the model to retype. conversationNotes is an OPTIONAL model-supplied
+    // sentence for whatever came up fresh during THIS call (a correction,
+    // something specific mentioned) — appended, not trusted as the whole
+    // note, since it's free text from the model rather than a structured
+    // fact eden-os already tracked.
+    const notes = [
+      "Booked automatically by Iris during a live call.",
+      leadSummary || null,
+      typeof conversationNotes === "string" && conversationNotes.trim() ? conversationNotes.trim() : null,
+    ]
+      .filter(Boolean)
+      .join(" ");
     try {
       await createAppointment(
         calendarId,
@@ -311,7 +329,7 @@ async function handleCheckAndBookAppointment(
           startTime: exactMatch,
           endTime,
           title: `${intent === "seller" ? "Seller" : "Buyer"} callback`,
-          notes: "Booked automatically by Iris during a live call.",
+          notes,
         },
         ghlConfig.locationId,
         ghlConfig.apiKey
@@ -370,7 +388,15 @@ export function createVapiToolsRouter(): Router {
   router.post(
     "/check-and-book-appointment",
     createToolHandler(async (query, call) =>
-      handleCheckAndBookAppointment(query.clientId, query.contactId, query.calendarId, query.intent, parseToolArguments(call).requestedTime)
+      handleCheckAndBookAppointment(
+        query.clientId,
+        query.contactId,
+        query.calendarId,
+        query.intent,
+        parseToolArguments(call).requestedTime,
+        query.leadSummary,
+        parseToolArguments(call).conversationNotes
+      )
     )
   );
 
