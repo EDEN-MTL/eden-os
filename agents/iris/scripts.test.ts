@@ -176,8 +176,8 @@ describe("callIdentifyLine", () => {
 
 describe("callOpeningContextLine", () => {
   it("uses the city it's given for a seller, not a hardcoded location", () => {
-    const line = callOpeningContextLine("seller", "St. John's", null);
-    expect(line).toContain("St. John's");
+    const lines = callOpeningContextLine("seller", "St. John's", null);
+    expect(lines?.some((l) => l.includes("St. John's"))).toBe(true);
   });
 
   /**
@@ -190,8 +190,8 @@ describe("callOpeningContextLine", () => {
   it("never speaks the raw lead source value, known or not", () => {
     const withSource = callOpeningContextLine("buyer", "St. John's", "1. Home Buyer Form");
     const withoutSource = callOpeningContextLine("buyer", "St. John's", null);
-    expect(withSource).not.toContain("1. Home Buyer Form");
-    expect(withSource).not.toMatch(/reached out through/);
+    expect(withSource?.some((l) => l.includes("1. Home Buyer Form"))).toBe(false);
+    expect(withSource?.some((l) => /reached out through/.test(l))).toBe(false);
     expect(withoutSource).not.toBeNull();
   });
 
@@ -199,11 +199,14 @@ describe("callOpeningContextLine", () => {
    * Jacob's live feedback, 2026-09-08: ending this on a yes/no gate
    * ("...still the plan?") made Iris sound like she was reciting a script.
    * Now a warm statement — Iris flows into her next question rather than
-   * waiting on an explicit "yes" first.
+   * waiting on an explicit "yes" first. Mark's request, 2026-09-09: added
+   * more generic transition variants alongside the original — none of them
+   * should be a yes/no gate either.
    */
-  it("is a warm statement, not a yes/no gate", () => {
-    const line = callOpeningContextLine("buyer", "St. John's", null);
-    expect(line?.trim().endsWith("?")).toBe(false);
+  it("is a warm statement, not a yes/no gate — for every variant", () => {
+    const lines = callOpeningContextLine("buyer", "St. John's", null);
+    expect(lines).not.toBeNull();
+    for (const l of lines!) expect(l.trim().endsWith("?")).toBe(false);
   });
 
   it("returns null for unknown intent rather than inventing a reason for the call", () => {
@@ -709,6 +712,40 @@ describe("buildLeadQualificationPrompt", () => {
       expect(prompt).toMatch(/never say another farewell word or repeat "goodbye"/i);
       expect(prompt).toMatch(/if for any reason you get another\s*\nturn after invoking endCall, say NOTHING at all/i);
     });
+
+    /**
+     * Mark's request, 2026-09-09: an abrupt bare "Goodbye" right after
+     * booking an appointment feels rude — the lead should feel the call
+     * wrapped up naturally (thanked, offered a text-back option), not that
+     * they were suddenly disconnected.
+     */
+    it("tells Iris to give a full thank-you closing after a booked appointment, not a bare goodbye", () => {
+      const prompt = buildLeadQualificationPrompt(IRIS_CONFIG, BLANK_LEAD, "3 Percent East Coast", "St. John's", false, true, false);
+      expect(prompt).toMatch(/that one goodbye line should\s*\nbe a full closing, not a bare "Goodbye"/i);
+      expect(prompt).toContain("Thanks so much for your time today. If you have any other questions, just text us at this number.");
+    });
+  });
+
+  /**
+   * From Mark's 2026-09-09 IRIS safety guardrails: if the person on the
+   * line explicitly denies being the lead, Iris must not assume they are
+   * anyway and must not continue qualification.
+   */
+  it("tells Iris never to assume identity if the person denies being the lead", () => {
+    const prompt = buildLeadQualificationPrompt(IRIS_CONFIG, BLANK_LEAD, "3 Percent East Coast", "St. John's", false, true, false);
+    expect(prompt).toMatch(/explicitly denies being the lead/i);
+    expect(prompt).toMatch(/do NOT continue into qualification/i);
+  });
+
+  /**
+   * From Mark's 2026-09-09 IRIS safety guardrails: never invent discovery
+   * questions beyond what's already listed to verify/gather (credit score,
+   * income, household size, why they're moving, etc.).
+   */
+  it("tells Iris never to invent qualifying questions beyond what's already listed", () => {
+    const prompt = buildLeadQualificationPrompt(IRIS_CONFIG, BLANK_LEAD, "3 Percent East Coast", "St. John's", false, true, false);
+    expect(prompt).toMatch(/never invent\s+additional discovery questions beyond those/i);
+    expect(prompt).toMatch(/credit score, income, household size/i);
   });
 });
 

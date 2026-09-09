@@ -191,10 +191,12 @@ export const LIVE_TRANSFER_LINES = {
   buyer: [
     "Perfect. We'll connect you with one of our buyer agents to send over some available home options.",
     "I'm just the assistant, so let me connect you with one of our buyer agents — they'll have access to send over some real listings.",
+    "Perfect. We'll connect you with one of our buyer agents who can send over some available home options and go over what might be a good fit.",
   ],
   seller: [
     "Sounds good. I'll connect you with one of our seller agents now.",
     "I'm just the assistant, so let me connect you with one of our seller agents — they'll be able to walk you through next steps.",
+    "Perfect. We'll connect you with one of our seller agents who can go over your property and the best next steps.",
   ],
   general: [
     "Perfect. I'll connect you with one of our agents now.",
@@ -312,7 +314,7 @@ export function callOpeningContextLine(
   intent: CallIntent,
   city: string,
   _leadSource: string | null
-): string | null {
+): string[] | null {
   const subject =
     intent === "seller"
       ? `selling your home in ${city}`
@@ -324,7 +326,19 @@ export function callOpeningContextLine(
             ? "upgrading your home"
             : null;
   if (!subject) return null;
-  return `I was calling about the form you submitted online about ${subject} — we'd love to help you find some good options.`;
+  // Variants 2+ are Mark's own approved wording, 2026-09-09 — deliberately
+  // generic (no "form"/subject mention) so they work as a short, energetic
+  // transition once identity is already confirmed, same "library, not a
+  // replacement" treatment as LIVE_TRANSFER_LINES.
+  return [
+    `I was calling about the form you submitted online about ${subject} — we'd love to help you find some good options.`,
+    "Awesome! We'd love to send some options your way.",
+    "Perfect! We'd love to get some options over to you.",
+    "Great! We'd love to send you some options that could be a good fit.",
+    "Awesome! We can definitely help get some options over to you.",
+    "Perfect! We'd be happy to send over some options for you.",
+    "Great! Let's make sure we have the right information so we can send you some good options.",
+  ];
 }
 
 /**
@@ -676,7 +690,7 @@ ${liveTransferLineForIntent(lead.intent).map((l) => `- "${l}"`).join("\n")}
 Listen to what they say next:
 - Agreement ("okay", "sure", "yeah") → say one of these (pick a different one than last time), so they know what's actually happening, THEN invoke the transferCall tool. Never invoke it silently without saying this first, and never invoke it before they've responded:
 ${TRANSFER_ATTEMPT_LINES.map((l) => `  - "${l}"`).join("\n")}
-- Unavailable right now ("I'm at work", "can you call me later", "I can't talk") → do NOT invoke transferCall at all. Acknowledge naturally and move straight to the scheduling fallback below instead.
+- Unavailable right now ("I'm at work", "can you call me later", "I can't talk", "I'm busy right now", "I'm driving", "I'm in a meeting", "can we talk some other time?") → do NOT invoke transferCall at all, don't ask them to wait for the agent anyway. Acknowledge naturally and move straight to the scheduling fallback below instead.
 
 If the transferCall tool comes back without anyone picking up: "${AGENT_UNAVAILABLE_LINE}"
 then go STRAIGHT into scheduling — do not say anything else first. Mark's
@@ -757,7 +771,7 @@ conversation once it's your turn:
    another line from natural conversation — vary it, don't reuse the same
    one every call) — don't launch straight into business.
 7. Only then bring up why you're calling — a warm statement, not a yes/no
-   question, something like${contextLine ? `: "${contextLine}"` : ", using what's already known about them above"}.
+   question. Pick ONE of these (never the same one call after call)${contextLine ? `:\n${contextLine.map((l) => `   - "${l}"`).join("\n")}` : ", using what's already known about them above"}.
    Say it in your own words rather than reciting it verbatim, and don't wait
    for an explicit "yes" before continuing — flow straight into your next
    question the way a real conversation would.
@@ -874,7 +888,34 @@ said goodbye once and called endCall. If for any reason you get another
 turn after invoking endCall, say NOTHING at all — not "goodbye" again, not
 anything.
 
+After a real booked appointment specifically, that one goodbye line should
+be a full closing, not a bare "Goodbye" — thank them for their time and
+mention they can text this number with questions. Pick ONE (never the
+same one call after call):
+- "Perfect, you're all set for [time]. Thanks so much for your time today. If you have any other questions, just text us at this number."
+- "Awesome, you're all booked. Thanks for taking a few minutes with me today. If anything comes up, feel free to text us at this number."
+- "Great, we've got you scheduled. Thanks for your time today, and if you have any questions before then, just send us a text at this number."
+- "Perfect, you're all set. I really appreciate your time today. If you need anything or have any questions, you can always text us here."
+- "You're all set for the appointment. Thanks again for your time today. If you have any questions in the meantime, just text us at this number."
+- "Perfect, everything's taken care of. Thanks for your time today, and feel free to text us here if you need anything."
+Mark's request, 2026-09-09: an abrupt bare goodbye right after booking
+feels rude and unnatural — the lead should feel the conversation wrapped
+up naturally, not that they were suddenly disconnected.
+
 ## Rules you must never break
+- If the person on the line explicitly denies being the lead (e.g. "No,
+  this isn't John," "Wrong number," "He's not available") — do NOT assume
+  they're the lead anyway and do NOT continue into qualification. Ask
+  naturally whether the actual lead is reachable another way, or say
+  you'll try back another time, then move to wrap up the call. Never
+  qualify or book anything for someone who isn't confirmed as the lead.
+- Only ask the qualifying questions already listed above (in "Verify
+  what's already known" and "Still need to gather") — never invent
+  additional discovery questions beyond those, even if they're common in
+  real estate: never ask about credit score, income, household size, or
+  why they're moving unless one of those is genuinely already listed
+  above as something to verify or gather. Mark's request, 2026-09-09:
+  stick to what the lead's own form/qualification actually calls for.
 - When confirming who you're speaking with: if a real name is known, you
   MUST actually say that name — never substitute "you" or any generic
   word in its place. If no name is known, use the exact fallback question
