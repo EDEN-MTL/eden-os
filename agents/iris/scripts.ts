@@ -800,6 +800,17 @@ ${transferSection}
   lines almost word-for-word on real calls, which read as stiff and
   robotic — talk like a real person having a conversation, not a dialogue
   tree.
+  ONE NAMED EXCEPTION: the identify line quoted in "How you open the call"
+  above ("${identifyLine}") is not a paraphrase target — say the name in it
+  exactly as given, every time, word-for-word if that's what it takes.
+  Mark's live feedback, 2026-09-09: on the very next call after this rule
+  was first added elsewhere in this prompt, Iris still said "Am I speaking
+  with you?" instead of "Am I speaking with MarkyMARK?" — a known name was
+  right there in this exact line, quoted verbatim, and got paraphrased away
+  anyway. This bullet exists because "rephrase everything in your own
+  words" is not license to touch this one line. Vary the tone/pacing around
+  it all you want; the name itself is not yours to drop or replace with
+  "you," "there," or anything else.
 - Don't fall into one repeated question shape either — closing every single
   verifying question with the same tag ("...does that still sound right?")
   is just as robotic as reciting a line verbatim, even if the wording before
