@@ -238,29 +238,45 @@ export async function getCheckinData(token: string): Promise<CheckinData | null>
 }
 
 /**
- * Upserts one checkbox's state for one appointment. `field` is validated
- * against the fixed CHECKBOX_FIELDS allowlist before being interpolated
- * into the SQL column list — this is the one place a request body value
- * reaches a column name, so that check isn't optional.
+ * Upserts one appointment's whole checkbox set in a single write — the
+ * page has one "Save all my updates" button rather than saving on every
+ * click, so a save submits every checkbox for an appointment at once.
+ * Every key in `checkboxes` is validated against the fixed CHECKBOX_FIELDS
+ * allowlist before being interpolated into the SQL column list — this is
+ * the one place a request body value reaches a column name, so that check
+ * isn't optional.
  */
 export async function updateCheckinItem(
   token: string,
   ghlEventId: string,
-  field: string,
-  value: boolean
+  checkboxes: Record<string, boolean>
 ): Promise<"ok" | "invalid-token" | "invalid-field"> {
-  if (!(CHECKBOX_FIELDS as readonly string[]).includes(field)) {
-    return "invalid-field";
+  const entries = Object.entries(checkboxes);
+  for (const [field] of entries) {
+    if (!(CHECKBOX_FIELDS as readonly string[]).includes(field)) {
+      return "invalid-field";
+    }
   }
+  if (entries.length === 0) return "ok";
+
   const clientId = await resolveClientId(token);
   if (!clientId) return "invalid-token";
 
+  const columns = entries.map(([field]) => field);
+  const values = entries.map(([, value]) => value);
+  const insertColumns = ["client_id", "ghl_event_id", ...columns].join(", ");
+  const insertPlaceholders = ["$1", "$2", ...columns.map((_, i) => `$${i + 3}`)].join(", ");
+  const updateSet = columns
+    .map((col, i) => `${col} = $${i + 3}`)
+    .concat("updated_at = now()")
+    .join(", ");
+
   await query(
-    `INSERT INTO scout_appointment_checkins (client_id, ghl_event_id, ${field})
-     VALUES ($1, $2, $3)
+    `INSERT INTO scout_appointment_checkins (${insertColumns})
+     VALUES (${insertPlaceholders})
      ON CONFLICT (client_id, ghl_event_id)
-     DO UPDATE SET ${field} = $3, updated_at = now()`,
-    [clientId, ghlEventId, value]
+     DO UPDATE SET ${updateSet}`,
+    [clientId, ghlEventId, ...values]
   );
   return "ok";
 }
@@ -300,10 +316,21 @@ export function renderCheckinPage(): string {
   .checkboxes { margin-top: 10px; display: flex; flex-direction: column; gap: 6px; }
   label.cb { display: flex; align-items: center; gap: 8px; font-size: 13px; cursor: pointer; }
   label.cb input { width: 16px; height: 16px; }
-  .saved-flash { font-size: 11px; color: #2a8a4a; opacity: 0; transition: opacity 0.2s; margin-left: 6px; }
-  .saved-flash.show { opacity: 1; }
+  .appt.failed { border-color: #b00020; }
+  .appt-fail-note { font-size: 11px; color: #b00020; margin-top: 6px; }
   .empty { color: #888; font-size: 14px; padding: 20px 0; }
   .error { color: #b00020; padding: 20px 0; }
+  .save-bar {
+    position: sticky; bottom: 0; left: 0; right: 0; margin-top: 24px;
+    background: #fff; border-top: 1px solid #e3e3e6; padding: 12px 16px;
+    display: flex; align-items: center; gap: 12px; justify-content: space-between;
+  }
+  .save-bar button {
+    background: #1a1a1a; color: #fff; border: none; border-radius: 8px;
+    padding: 10px 18px; font-size: 14px; font-weight: 600; cursor: pointer;
+  }
+  .save-bar button:disabled { background: #999; cursor: default; }
+  .save-status { font-size: 13px; color: #555; }
 </style>
 </head>
 <body>
@@ -331,6 +358,7 @@ export function renderCheckinPage(): string {
   function renderAppointment(a) {
     var div = document.createElement("div");
     div.className = "appt";
+    div.dataset.ghlEventId = a.ghlEventId;
     div.innerHTML =
       '<div class="appt-top"><span class="appt-prospect"></span><span class="appt-meta"></span></div>' +
       '<div class="checkboxes"></div>';
@@ -345,27 +373,59 @@ export function renderCheckinPage(): string {
       var input = document.createElement("input");
       input.type = "checkbox";
       input.checked = !!a.checkboxes[field];
-      var flash = document.createElement("span");
-      flash.className = "saved-flash";
-      flash.textContent = "Saved";
-      input.addEventListener("change", function () {
-        fetch("/api/checkin/" + encodeURIComponent(token) + "/items/" + encodeURIComponent(a.ghlEventId), {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ field: field, value: input.checked })
-        }).then(function (res) {
-          if (res.ok) {
-            flash.classList.add("show");
-            setTimeout(function () { flash.classList.remove("show"); }, 1200);
-          }
-        });
-      });
+      input.dataset.field = field;
       wrap.appendChild(input);
       wrap.appendChild(document.createTextNode(label));
-      wrap.appendChild(flash);
       box.appendChild(wrap);
     });
     return div;
+  }
+
+  // Collects the current checkbox state of every rendered appointment card
+  // and saves them all in one action (one request per card, run in
+  // parallel) — nothing is sent until this fires, so checking boxes alone
+  // never touches the server.
+  function saveAll() {
+    var saveButton = document.getElementById("save-all-btn");
+    var status = document.getElementById("save-status");
+    var cards = document.querySelectorAll(".appt");
+    cards.forEach(function (card) { card.classList.remove("failed"); });
+    var oldNotes = document.querySelectorAll(".appt-fail-note");
+    oldNotes.forEach(function (n) { n.remove(); });
+
+    saveButton.disabled = true;
+    status.textContent = "Saving…";
+
+    var requests = Array.prototype.map.call(cards, function (card) {
+      var checkboxes = {};
+      card.querySelectorAll("input[type=checkbox]").forEach(function (input) {
+        checkboxes[input.dataset.field] = input.checked;
+      });
+      return fetch("/api/checkin/" + encodeURIComponent(token) + "/items/" + encodeURIComponent(card.dataset.ghlEventId), {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ checkboxes: checkboxes })
+      })
+        .then(function (res) { return { card: card, ok: res.ok }; })
+        .catch(function () { return { card: card, ok: false }; });
+    });
+
+    Promise.all(requests).then(function (results) {
+      saveButton.disabled = false;
+      var failed = results.filter(function (r) { return !r.ok; });
+      if (failed.length === 0) {
+        status.textContent = "✓ All changes saved";
+        return;
+      }
+      status.textContent = failed.length + " item(s) failed to save — check your connection and try again.";
+      failed.forEach(function (r) {
+        r.card.classList.add("failed");
+        var note = document.createElement("p");
+        note.className = "appt-fail-note";
+        note.textContent = "Couldn't save this one — try again.";
+        r.card.appendChild(note);
+      });
+    });
   }
 
   function renderTeam(team) {
@@ -422,6 +482,14 @@ export function renderCheckinPage(): string {
         data.unassigned.forEach(function (appt) { section.appendChild(renderAppointment(appt)); });
         main.appendChild(section);
       }
+
+      var saveBar = document.createElement("div");
+      saveBar.className = "save-bar";
+      saveBar.innerHTML =
+        '<span id="save-status" class="save-status">Check off what applies, then save.</span>' +
+        '<button id="save-all-btn" type="button">Save all my updates</button>';
+      main.appendChild(saveBar);
+      document.getElementById("save-all-btn").addEventListener("click", saveAll);
     })
     .catch(function () {
       document.getElementById("client-name").textContent = "Link not found";

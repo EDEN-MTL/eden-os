@@ -8,3 +8,6 @@ dist/
 # Ad-hoc scratch scripts (e.g. one-off sync runners) — never part of the build
 *.tmp.js
 *.tmp.ts
+
+# Personal Claude Code overrides for this project — not shared with the team
+.claude/settings.local.json

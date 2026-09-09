@@ -29,13 +29,18 @@ export async function getCheckinDataHandler(req: Request, res: Response): Promis
 }
 
 export async function postCheckinItem(req: Request, res: Response): Promise<void> {
-  const { field, value } = req.body || {};
-  if (typeof field !== "string" || typeof value !== "boolean") {
-    res.status(400).json({ error: "Body must be { field: string, value: boolean }" });
+  const { checkboxes } = req.body || {};
+  const isPlainObject = typeof checkboxes === "object" && checkboxes !== null && !Array.isArray(checkboxes);
+  if (
+    !isPlainObject ||
+    Object.keys(checkboxes).length === 0 ||
+    !Object.values(checkboxes).every((v) => typeof v === "boolean")
+  ) {
+    res.status(400).json({ error: "Body must be { checkboxes: Record<string, boolean> } with at least one entry" });
     return;
   }
 
-  const result = await updateCheckinItem(String(req.params.token), String(req.params.ghlEventId), field, value);
+  const result = await updateCheckinItem(String(req.params.token), String(req.params.ghlEventId), checkboxes);
   if (result === "invalid-token") {
     res.status(404).json({ error: "Not found" });
     return;
