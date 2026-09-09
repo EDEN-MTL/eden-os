@@ -55,8 +55,8 @@
       "recheckBeforeEachAttempt": true
     },
     "transferNumbers": {
-      "_comment": "Mark, 2026-09-04: buyer number given explicitly for this one test. No seller number given yet — placeholder below is deliberately not a real phone number so a seller-intent call can never accidentally reach an unintended destination; Vapi/Twilio will reject it outright rather than silently mis-dialing.",
-      "buyer": "+17097018814",
+      "_comment": "Mark, 2026-09-10: buyer number updated to the new GHL 'BUYER LIVE Transfer Number' staff entry. No seller number given yet — placeholder below is deliberately not a real phone number so a seller-intent call can never accidentally reach an unintended destination; Vapi/Twilio will reject it outright rather than silently mis-dialing.",
+      "buyer": "+18199936171",
       "seller": "TODO-no-seller-transfer-number-yet"
     }
   },
