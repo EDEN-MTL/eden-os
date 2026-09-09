@@ -266,8 +266,8 @@ describe("getCheckinData", () => {
 });
 
 describe("updateCheckinItem", () => {
-  it("rejects a field outside the fixed checkbox allowlist", async () => {
-    const result = await updateCheckinItem("token", "evt-1", "not_a_real_column", true);
+  it("rejects a checkboxes object containing a field outside the fixed allowlist, without writing anything", async () => {
+    const result = await updateCheckinItem("token", "evt-1", { not_a_real_column: true });
     expect(result).toBe("invalid-field");
     expect(db.query).not.toHaveBeenCalled();
   });
@@ -275,23 +275,28 @@ describe("updateCheckinItem", () => {
   it("returns invalid-token for an unresolvable token without writing anything", async () => {
     db.query.mockResolvedValueOnce([]); // resolveClientId finds nothing
 
-    const result = await updateCheckinItem("bad-token", "evt-1", "showed_up", true);
+    const result = await updateCheckinItem("bad-token", "evt-1", { showed_up: true });
     expect(result).toBe("invalid-token");
     expect(db.query).toHaveBeenCalledTimes(1);
   });
 
-  it("upserts the checkbox column for a valid token and field", async () => {
+  it("upserts every checkbox column for a valid token in one call", async () => {
     db.query
       .mockResolvedValueOnce([{ client_id: "3-percent-east-coast" }]) // resolveClientId
       .mockResolvedValueOnce([]); // the upsert itself
 
-    const result = await updateCheckinItem("good-token", "evt-1", "deal_closed", true);
+    const result = await updateCheckinItem("good-token", "evt-1", { deal_closed: true, showed_up: false });
 
     expect(result).toBe("ok");
-    expect(db.query).toHaveBeenLastCalledWith(expect.stringContaining("deal_closed"), [
-      "3-percent-east-coast",
-      "evt-1",
-      true,
-    ]);
+    expect(db.query).toHaveBeenLastCalledWith(
+      expect.stringMatching(/deal_closed.*showed_up|showed_up.*deal_closed/s),
+      ["3-percent-east-coast", "evt-1", true, false]
+    );
+  });
+
+  it("no-ops without touching the database when given an empty checkboxes object", async () => {
+    const result = await updateCheckinItem("good-token", "evt-1", {});
+    expect(result).toBe("ok");
+    expect(db.query).not.toHaveBeenCalled();
   });
 });

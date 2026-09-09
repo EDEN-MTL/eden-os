@@ -52,10 +52,31 @@ describe("getCheckinDataHandler", () => {
 });
 
 describe("postCheckinItem", () => {
-  it("responds 400 when the body isn't { field: string, value: boolean }", async () => {
+  it("responds 400 when the body has no checkboxes object", async () => {
     const res = fakeRes();
 
     await postCheckinItem({ params: { token: "t", ghlEventId: "e" }, body: { field: "showed_up" } } as any, res);
+
+    expect(res.status).toHaveBeenCalledWith(400);
+    expect(checkin.updateCheckinItem).not.toHaveBeenCalled();
+  });
+
+  it("responds 400 when checkboxes is an empty object", async () => {
+    const res = fakeRes();
+
+    await postCheckinItem({ params: { token: "t", ghlEventId: "e" }, body: { checkboxes: {} } } as any, res);
+
+    expect(res.status).toHaveBeenCalledWith(400);
+    expect(checkin.updateCheckinItem).not.toHaveBeenCalled();
+  });
+
+  it("responds 400 when a checkboxes value isn't a boolean", async () => {
+    const res = fakeRes();
+
+    await postCheckinItem(
+      { params: { token: "t", ghlEventId: "e" }, body: { checkboxes: { showed_up: "yes" } } } as any,
+      res
+    );
 
     expect(res.status).toHaveBeenCalledWith(400);
     expect(checkin.updateCheckinItem).not.toHaveBeenCalled();
@@ -66,19 +87,19 @@ describe("postCheckinItem", () => {
     const res = fakeRes();
 
     await postCheckinItem(
-      { params: { token: "bad", ghlEventId: "e" }, body: { field: "showed_up", value: true } } as any,
+      { params: { token: "bad", ghlEventId: "e" }, body: { checkboxes: { showed_up: true } } } as any,
       res
     );
 
     expect(res.status).toHaveBeenCalledWith(404);
   });
 
-  it("responds 400 when the field isn't one of the known checkboxes", async () => {
+  it("responds 400 when a field isn't one of the known checkboxes", async () => {
     checkin.updateCheckinItem.mockResolvedValueOnce("invalid-field");
     const res = fakeRes();
 
     await postCheckinItem(
-      { params: { token: "t", ghlEventId: "e" }, body: { field: "not_real", value: true } } as any,
+      { params: { token: "t", ghlEventId: "e" }, body: { checkboxes: { not_real: true } } } as any,
       res
     );
 
@@ -86,16 +107,20 @@ describe("postCheckinItem", () => {
     expect(res.json).toHaveBeenCalledWith({ error: "Invalid field" });
   });
 
-  it("responds ok on a successful update", async () => {
+  it("responds ok on a successful update, passing the whole checkboxes object through", async () => {
     checkin.updateCheckinItem.mockResolvedValueOnce("ok");
     const res = fakeRes();
 
     await postCheckinItem(
-      { params: { token: "t", ghlEventId: "e" }, body: { field: "showed_up", value: true } } as any,
+      {
+        params: { token: "t", ghlEventId: "e" },
+        body: { checkboxes: { showed_up: true, deal_closed: false } },
+      } as any,
       res
     );
 
     expect(res.status).not.toHaveBeenCalled();
     expect(res.json).toHaveBeenCalledWith({ ok: true });
+    expect(checkin.updateCheckinItem).toHaveBeenCalledWith("t", "e", { showed_up: true, deal_closed: false });
   });
 });
