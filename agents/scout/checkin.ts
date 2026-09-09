@@ -143,15 +143,17 @@ export async function getCheckinData(token: string): Promise<CheckinData | null>
 
   interface RawItem {
     id: string;
+    contactId: string | null;
     prospectName: string;
     appointmentAt: string;
     status: string;
     assignedId: string | null;
   }
 
-  const items: RawItem[] = [
+  let items: RawItem[] = [
     ...rawEvents.map((e) => ({
       id: e.id,
+      contactId: e.contactId || null,
       prospectName: parseProspectName(e.title || ""),
       appointmentAt: e.startTime,
       status: e.appointmentStatus || "unknown",
@@ -159,12 +161,30 @@ export async function getCheckinData(token: string): Promise<CheckinData | null>
     })),
     ...rawLiveTransfers.map((o) => ({
       id: o.id,
+      contactId: o.contactId || null,
       prospectName: o.name || "Unknown",
       appointmentAt: o.lastStageChangeAt || o.updatedAt,
       status: "live transferred",
       assignedId: (o.followers && o.followers.length ? o.followers[0] : null) || o.assignedTo || null,
     })),
   ];
+
+  // Manual per-client overrides for cases GHL's own assignedUserId/followers
+  // can't resolve (a person Jacob knows the real owner of) or that should
+  // simply not show up here at all (e.g. a duplicate/dead lead) — keyed by
+  // GHL contactId, not by name, since names aren't guaranteed unique and a
+  // contactId is stable. See config's `checkinOverrides`.
+  const overrides = config.checkinOverrides || {};
+  const manualAssignments: Record<string, string> = overrides.assignments || {};
+  const hiddenContactIds: string[] = overrides.hidden || [];
+
+  if (hiddenContactIds.length > 0) {
+    items = items.filter((item) => !item.contactId || !hiddenContactIds.includes(item.contactId));
+  }
+  items = items.map((item) => {
+    const override = item.contactId ? manualAssignments[item.contactId] : undefined;
+    return override ? { ...item, assignedId: override } : item;
+  });
 
   const itemIds = items.map((i) => i.id);
   const checkinRows = itemIds.length

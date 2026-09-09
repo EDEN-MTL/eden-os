@@ -142,6 +142,15 @@ export interface ClientConfig {
     teamLead: string;
     members: { name: string; ghlUserId: string }[];
   }[];
+  // Manual per-contact fixes for the check-in page, keyed by GHL contactId
+  // (stable, unlike a display name): `assignments` overrides/supplies the
+  // team-member assignment GHL itself couldn't resolve; `hidden` drops a
+  // contact from the page entirely (e.g. a dead lead not worth a team
+  // lead's time). See agents/scout/checkin.ts.
+  checkinOverrides?: {
+    assignments?: Record<string, string>;
+    hidden?: string[];
+  };
 }
 
 // ─── Slack Message Types ───
