@@ -588,7 +588,7 @@ describe("buildLeadQualificationPrompt", () => {
 
     it("tells Iris never to assume a time is open — the tool decides", () => {
       const prompt = buildLeadQualificationPrompt(IRIS_CONFIG, BLANK_LEAD, "3 Percent East Coast", "St. John's", true, true, true);
-      expect(prompt).toMatch(/never assume a\s*\n?time is open/i);
+      expect(prompt).toMatch(/never assume a\s+time\s+is\s+open/i);
       expect(prompt).toMatch(/the tool tells you/i);
       expect(prompt).toMatch(/never say a time is available or booked/i);
       expect(prompt).toMatch(/the tool actually confirmed/i);
@@ -618,14 +618,28 @@ describe("buildLeadQualificationPrompt", () => {
      * time works best for you?" up front on a real test call instead of
      * just checking and proposing a time herself — the lead shouldn't have
      * to invent a time from nothing when Iris can just go look and offer
-     * one. Only ask the lead directly once every real same-day option has
-     * been proposed and declined.
+     * one. Only propose a guessed time when the lead hasn't stated a
+     * preference; a real ask-directly fallback still exists once every
+     * real same-day option has been proposed and declined.
      */
-    it("tells Iris to propose a real time herself first, never ask the lead's preference up front", () => {
+    it("tells Iris to propose a real time herself only once the lead has no stated preference", () => {
       const prompt = buildLeadQualificationPrompt(IRIS_CONFIG, BLANK_LEAD, "3 Percent East Coast", "St. John's", true, true, true);
-      expect(prompt).toMatch(/do not open by asking what day\/time works for them/i);
-      expect(prompt).toMatch(/before asking the lead anything/i);
+      expect(prompt).toMatch(/only when the lead hasn't given you any preference at all/i);
       expect(prompt).toMatch(/only once you've proposed every real option left for today/i);
+    });
+
+    /**
+     * Mark's live feedback, 2026-09-10: a lead countered a proposed 6:30
+     * slot with "how about 7?" and Iris never checked whether 7 was
+     * actually open — she just declared 6:30 "locked in" and moved on
+     * without ever running the tool against the time the lead actually
+     * asked for.
+     */
+    it("tells Iris to check the lead's own stated time preference before falling back to her own guess", () => {
+      const prompt = buildLeadQualificationPrompt(IRIS_CONFIG, BLANK_LEAD, "3 Percent East Coast", "St. John's", true, true, true);
+      expect(prompt).toMatch(/listen for a day\/time preference from the lead before you book anything/i);
+      expect(prompt).toMatch(/that is your very next\s*\n?check_and_book_appointment attempt/i);
+      expect(prompt).toMatch(/check that time next — their stated preference always wins/i);
     });
 
     /**
