@@ -523,8 +523,8 @@ describe("buildLeadQualificationPrompt", () => {
      */
     it("tells Iris to say nothing at all while the scheduling tool runs after a failed transfer", () => {
       const prompt = buildLeadQualificationPrompt(IRIS_CONFIG, BLANK_LEAD, "3 Percent East Coast", "St. John's", false, true, false);
-      expect(prompt).toMatch(/go STRAIGHT into scheduling — do not say anything else first/i);
-      expect(prompt).toMatch(/say NOTHING while your scheduling tool is\s*\nrunning — not even once/i);
+      expect(prompt).toMatch(/go STRAIGHT into scheduling — do not say\s+anything else first/i);
+      expect(prompt).toMatch(/say NOTHING while your scheduling tool is\s+running — not even once/i);
     });
 
     it("tells Iris to invoke the transferCall tool when a transfer is available", () => {
