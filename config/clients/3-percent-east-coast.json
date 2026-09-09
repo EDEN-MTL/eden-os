@@ -136,6 +136,22 @@
     }
   ],
   "_teamsNote": "Verified live against GET /users/?locationId=t3ypFoQY6EC5IJfj2UYl on 2026-09-09 — every name here is a real GHL user at this location with the ghlUserId shown. Note the correct spelling is 'Stephanie McGrath' (GHL's own user record), not 'Mcgrawth'. This roster maps a booked appointment's assignedUserId (from GHL's calendar events) to a named team for agents/scout/checkin.ts's bi-weekly check-in page; assignedUserId is only populated once someone manually claims the booking in GHL, so appointments without it show up as 'needs routing' on that page rather than under a team.",
+  "checkinOverrides": {
+    "_comment": "Jacob, 2026-09-09: 3 appointments GHL never attributed to a team member — he supplied the real owner from memory. Keyed by contactId (verified live via listCalendarEvents), not by name: wtAtWTf3NYQce0vUM3zn = Lisa - Rick Freake -> Brittany Penney, OMO6Ewqd1Dt4YFeLaVqv = Kelly McEntegart -> Genna Hickey, O4KaZVjI6cp8WxoCAvG2 = Kingsley Amos -> Andrew Fleming (Ashley Fleming Team). The other 6 people previously shown in 'needs routing' (Hubert Coombs, Navjot Kanwar, Simran Jit Singh, Alvin Skinner, Indu Singh Matta, Wanda Spurrell — all live-transferred opportunities whose assignedTo pointed at a deleted GHL user, confirmed via a direct GET /users/{id} -> 404) are hidden below per his explicit request to trim the list down to just these three.",
+    "assignments": {
+      "wtAtWTf3NYQce0vUM3zn": "99ZRGYPQoZG6pdBj3Bpz",
+      "OMO6Ewqd1Dt4YFeLaVqv": "XnTRNyagVeoyvpqDAHda",
+      "O4KaZVjI6cp8WxoCAvG2": "FtUDZ9FJqayyTS9SYanf"
+    },
+    "hidden": [
+      "A5nqSRi9c6HxgxMgeZWW",
+      "6LZhEpY6xvvdNhIp0cTm",
+      "HiVBF2joOQYI1HqLE3sh",
+      "J19dnljxPtyWqGjbB6z6",
+      "Ewt7erbnmhE0izwTfEFR",
+      "hxcX0fynkVT1NWjyET7J"
+    ]
+  },
   "scout": {
     "_comment": "Lead intake mapping for 3% East Coast, from Mark's GHL discovery (2026-08-25), verified against the live location before being committed. Every stage ID he mapped resolved correctly. Two values were corrected — see _corrections.",
     "_corrections": {

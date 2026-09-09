@@ -263,6 +263,70 @@ describe("getCheckinData", () => {
     expect(data!.teams[0].members).toHaveLength(0);
     expect(data!.unassigned).toHaveLength(0);
   });
+
+  it("checkinOverrides.assignments reassigns an event GHL couldn't attribute, keyed by contactId", async () => {
+    db.query.mockResolvedValueOnce([{ client_id: "3-percent-east-coast" }]).mockResolvedValueOnce([]);
+    readFileSyncMock.mockReturnValueOnce(
+      JSON.stringify({
+        clientName: "3 Percent East Coast",
+        scout: { calendars: { buyer: "buyer-cal", seller: "seller-cal" } },
+        teams: [
+          {
+            teamName: "Ashley Fleming Team",
+            teamLead: "Ashley Fleming",
+            members: [{ name: "Andrew Fleming", ghlUserId: "andrew-id" }],
+          },
+        ],
+        checkinOverrides: { assignments: { "contact-kingsley": "andrew-id" } },
+      })
+    );
+    ghl.getGhlConfig.mockResolvedValueOnce({ apiKey: "key", locationId: "loc" });
+    ghl.listCalendarEvents
+      .mockResolvedValueOnce([
+        {
+          id: "evt-kingsley",
+          contactId: "contact-kingsley",
+          title: "Buyer Consultation with Kingsley Amos",
+          startTime: "2026-08-27T18:00:00-02:30",
+          appointmentStatus: "confirmed",
+          // no assignedUserId — GHL never attributed this one
+        },
+      ])
+      .mockResolvedValueOnce([]);
+
+    const data = await getCheckinData("good-token");
+
+    expect(data!.unassigned).toHaveLength(0);
+    expect(data!.teams[0].members[0].appointments[0].prospectName).toBe("Kingsley Amos");
+  });
+
+  it("checkinOverrides.hidden drops a contact entirely, even from unassigned", async () => {
+    db.query.mockResolvedValueOnce([{ client_id: "3-percent-east-coast" }]); // no checkin-rows query: itemIds ends up empty
+    readFileSyncMock.mockReturnValueOnce(
+      JSON.stringify({
+        clientName: "3 Percent East Coast",
+        scout: { calendars: { buyer: "buyer-cal", seller: "seller-cal" } },
+        teams: [],
+        checkinOverrides: { hidden: ["contact-hubert"] },
+      })
+    );
+    ghl.getGhlConfig.mockResolvedValueOnce({ apiKey: "key", locationId: "loc" });
+    ghl.listCalendarEvents
+      .mockResolvedValueOnce([
+        {
+          id: "evt-hubert",
+          contactId: "contact-hubert",
+          title: "Buyer Consultation with Hubert Coombs",
+          startTime: "2026-08-25T10:00:00-02:30",
+          appointmentStatus: "confirmed",
+        },
+      ])
+      .mockResolvedValueOnce([]);
+
+    const data = await getCheckinData("good-token");
+
+    expect(data!.unassigned).toHaveLength(0);
+  });
 });
 
 describe("updateCheckinItem", () => {
