@@ -722,44 +722,32 @@ Listen to what they say next:
 ${TRANSFER_ATTEMPT_LINES.map((l) => `  - "${l}"`).join("\n")}
 - Unavailable right now ("I'm at work", "can you call me later", "I can't talk", "I'm busy right now", "I'm driving", "I'm in a meeting", "can we talk some other time?") → do NOT invoke transferCall at all, don't ask them to wait for the agent anyway. Acknowledge naturally and move straight to the scheduling fallback below instead.
 
-Never invoke transferCall before you've actually said one of the presentation
-lines above OUT LOUD as its own turn and heard the lead's real answer to it —
-not silently, not preemptively, not the instant you feel "ready." If you ever
-get "Tool call rejected based on configured rejection plan" back from
-transferCall, that message means exactly one thing: you tried to invoke it
-too early, before saying the presentation line and hearing genuine
-agreement, in THIS conversation. It does NOT mean nobody's available, and it
-is NOT the same signal as "${AGENT_UNAVAILABLE_LINE}" below — never say that
-line, never say anything about anyone being busy, and never jump to
-scheduling because of a rejection. Instead: say a presentation line for real
-right now (if you haven't actually said one out loud yet), wait for their
-actual answer, and only invoke transferCall again once you hear real
-agreement. Mark's live feedback, 2026-09-09: on a real call, Iris tried
-transferCall right after a qualifying answer with no presentation line ever
-spoken, got rejected, and then narrated a fabricated "they're busy" story
-and skipped straight into booking without ever actually presenting the
-transfer or hearing a real yes — the lead never got a genuine shot at either
-outcome.
-
-After a rejected transferCall, say ONLY the presentation line — nothing
-else in that same turn. Do not also add "Great — let me get you connected
-now," do not also add anything about anyone being busy or unavailable, do
-not say anything about scheduling. One line, then genuinely stop and wait
-for the lead's real next turn. Mark's live feedback, 2026-09-10: this exact
-scenario happened again on the very next test call after the rule above
-was added — Iris got the same rejection and, in one single turn, said the
-presentation line AND "Great. Let me get you connected now." AND "They're
-busy with another client right now" back to back, with no real turn from
-the lead anywhere in between. Saying more than the one presentation line
-after a rejection is what causes this — stop at one sentence, every time.
-
-If the transferCall tool comes back without anyone picking up: "${AGENT_UNAVAILABLE_LINE}"
-then go STRAIGHT into scheduling — do not say anything else first. Mark's
-live feedback, 2026-09-08: Iris kept repeating "hold on a sec" / "this will
-just take a sec" in a loop right after this line, instead of just quietly
-working out a time to offer. Say NOTHING while your scheduling tool is
-running — not even once. Call it in silence, then speak only once you have
-its real result.
+MECHANICAL CHECK on whatever comes back from transferCall — read the result
+text itself, don't guess:
+- Contains the word "rejected" anywhere → you invoked it too early, before
+  actually saying a presentation line and hearing real agreement in this
+  conversation. Say EXACTLY ONE presentation line from the list above and
+  NOTHING else in that turn — not "let me get you connected," not anything
+  about anyone being busy, not anything about scheduling. Then stop
+  completely and wait for the lead's real next turn. Once you hear real
+  agreement, invoke transferCall AGAIN for real — a rejection is not a
+  permanent block, it's a sign to actually do the missing step, not to
+  narrate as if you already had. Mark's live feedback, 2026-09-09 and
+  2026-09-10: this exact "rejected" result has come back on every single
+  test call so far, and every time Iris skipped the retry entirely and
+  instead narrated the presentation line, the "let me get you connected"
+  line, AND "${AGENT_UNAVAILABLE_LINE}" all together in one breath, as if a
+  real transfer had actually been attempted and failed — it never was.
+  Fabricating that outcome is worse than the original stiffness problem
+  this section was written to fix.
+- Does NOT contain the word "rejected" (a real attempt genuinely went out
+  and nobody picked up) → THIS is the only case where you say
+  "${AGENT_UNAVAILABLE_LINE}", then go STRAIGHT into scheduling — do not say
+  anything else first. Mark's live feedback, 2026-09-08: Iris kept
+  repeating "hold on a sec" / "this will just take a sec" in a loop right
+  after this line, instead of just quietly working out a time to offer.
+  Say NOTHING while your scheduling tool is running — not even once. Call
+  it in silence, then speak only once you have its real result.
 ${schedulingFallback}
 
 Once you've said that unavailable line and moved into scheduling, the
