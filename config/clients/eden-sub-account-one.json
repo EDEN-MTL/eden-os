@@ -12,10 +12,11 @@
   },
   "ghl": {
     "locationId": "OR8vhhUj4TKPTQNF6yfA",
-    "attributionPipelineName": "1. Real Estate Pipeline",
+    "attributionPipelineName": "*1. Real Estate Pipeline",
+    "attributionPipelineNameNote": "Mark confirmed live, 2026-09-10: this test sub-account actually has TWO similarly-named pipelines — '1. Real Estate Pipeline' (uRWGLKXpphgmcuR60MWW, no Live Transferred stage) and '*1. Real Estate Pipeline' (Ghy9io9Va4wJPmwVrMC6, has Live Transferred plus day-by-day follow-up stages) — this config was pointed at the wrong one (the non-asterisk pipeline) the whole time. The asterisk-prefixed pipeline is the real one this client's leads actually flow through. See scout.pipelineId below for the matching fix.",
     "calendarId": "",
     "outcomeStages": {
-      "_comment": "UNVERIFIED — copied from 3-percent-east-coast.json's pipeline shape since this is the same snapshot ('1. Real Estate Pipeline' with identical stage names), not confirmed against real deal data on this account (none exists yet — fresh test sub-account, zero contacts).",
+      "_comment": "Stage NAMES match identically between both pipelines in this account, so no value change was needed here once scout.pipelineId below was corrected to the real (asterisk) pipeline — GHL resolves these names against whichever pipeline scout.pipelineId points to.",
       "wonStages": ["Deal Closed"],
       "lostStages": ["Not Qualified/Not Interested", "No-Show"],
       "activeStages": ["Buyer Confirmed", "Seller Confirmed"]
@@ -58,20 +59,22 @@
       "_comment": "Mark, 2026-09-10: buyer number updated to the new GHL 'BUYER LIVE Transfer Number' staff entry. No seller number given yet — placeholder below is deliberately not a real phone number so a seller-intent call can never accidentally reach an unintended destination; Vapi/Twilio will reject it outright rather than silently mis-dialing.",
       "buyer": "+18199936171",
       "seller": "TODO-no-seller-transfer-number-yet"
-    }
+    },
+    "liveTransferStageId": "d4cb572b-5fa5-48e5-bced-46c88715e2da",
+    "liveTransferStageIdNote": "Mark confirmed live, 2026-09-10: '*1. Real Estate Pipeline' (the pipeline this client actually uses — see ghl.attributionPipelineNameNote) → 'Live Transferred' stage, id verified live via GET /opportunities/pipelines. Same id as 3-percent-east-coast.json's, which makes sense — this test sub-account was created from a snapshot that reused the same pipeline/stage definitions. Moved into once a transfer actually completes (endedReason assistant-forwarded-call), not just attempted — see webhooks/vapi-webhook.ts's handleSuccessfulTransfer. Without this field the code path already existed but silently no-op'd — see its own doc comment."
   },
   "slack": {
     "clientChannel": ""
   },
   "scout": {
-    "_comment": "Pipeline id and stage ids verified live via GET /opportunities/pipelines, 2026-09-04 — real, not guessed. Everything else below (tags, field keys) is a placeholder: this is a fresh sub-account with zero contacts, so there is no live data yet to verify against, unlike 3-percent-east-coast.json's own _liveDataFindings.",
-    "pipelineId": "uRWGLKXpphgmcuR60MWW",
-    "pipelineName": "1. Real Estate Pipeline",
+    "_comment": "Pipeline id and stage ids verified live via GET /opportunities/pipelines, 2026-09-04 — real, not guessed. BUT that first pass verified against the wrong pipeline: this account has two similarly-named pipelines ('1. Real Estate Pipeline' and '*1. Real Estate Pipeline'), and Mark confirmed live, 2026-09-10, that the asterisk-prefixed one is the real one this client's leads actually flow through — corrected below. Everything else (tags, field keys) is still a placeholder: this is a fresh sub-account with very few real contacts, so there is limited live data yet to verify against, unlike 3-percent-east-coast.json's own _liveDataFindings.",
+    "pipelineId": "Ghy9io9Va4wJPmwVrMC6",
+    "pipelineName": "*1. Real Estate Pipeline",
     "intakeStages": {
-      "Buyer Leads": "e5393b26-5058-418c-be91-205e2c259c2e",
-      "Seller Leads": "7f0801f8-d349-42e1-9ee4-f43b44b2d180",
-      "Downsize Leads": "68e08468-eb23-4e77-97db-9ad7de8c2edb",
-      "Upgrading Leads": "8ba87c49-6d43-4e97-ae93-4127c2a7f69f"
+      "Buyer Leads": "f83b5ac8-e445-4a3e-b1e0-ac99a4747b56",
+      "Seller Leads": "674a9e3f-fcc2-4dd3-8240-137de723aeaa",
+      "Downsize Leads": "1044d381-5202-4e0e-936c-b393de93b517",
+      "Upgrading Leads": "02254e3e-7807-45e9-958b-59d45c760aba"
     },
     "qualifiedTags": ["appt booked", "live transferred"],
     "calendars": {
