@@ -362,10 +362,21 @@ async function handleCheckAndBookAppointment(
   if (alternatives.length === 0) {
     return "That time isn't available and nothing else real is open in the next few days. Do not invent a time — tell the lead a teammate will follow up directly to find one.";
   }
+  // Each alternative is given as BOTH a spoken phrase (say this part to the
+  // lead) and its exact ISO instant (pass this back verbatim, do not
+  // recompute it). Confirmed live, 2026-09-09: without the ISO string here,
+  // the model had nothing but the bare spoken phrase ("Thursday 9:00 AM")
+  // to reconstruct a timestamp from on the next call — it kept rebuilding
+  // "9:00 AM" as literal UTC ("...T09:00:00.000Z", 4 hours off from the
+  // real America/Toronto instant this same response had just resolved),
+  // so every subsequent attempt missed the real slot and the same three
+  // "unavailable" alternatives kept coming back in an infinite loop. Since
+  // the model already has the real instant right here, there is no reason
+  // to make it redo that conversion itself.
   return (
-    "That exact time isn't available. Real open times instead: " +
-    alternatives.map((s) => formatSpoken(s, timeZone)).join(", ") +
-    ". Offer these to the lead and call this tool again with whichever one they pick to actually book it."
+    "That exact time isn't available. Real open times instead (say the spoken part to the lead; if they pick one, call this tool again with its exact isoTime value, copied verbatim — do not recompute a timestamp from the spoken time yourself): " +
+    alternatives.map((s) => `{spoken: "${formatSpoken(s, timeZone)}", isoTime: "${new Date(s).toISOString()}"}`).join(", ") +
+    "."
   );
 }
 
