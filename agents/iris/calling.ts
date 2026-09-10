@@ -362,17 +362,31 @@ export function buildCallPayload(
   // tool result and invokes endCall right after with no accompanying
   // day/time confirmation at all — sometimes not even a "Goodbye". A
   // prompt instruction alone kept not holding, same lesson as
-  // transferCall's own rejectionPlan above. Only rejects when a real
-  // booking happened THIS call (a "Booked for" tool result appears
-  // somewhere in the transcript) and no assistant turn since then ever
-  // said a day name or today/tonight/tomorrow — never blocks a legitimate
-  // endCall after a successful transfer, an explicit lead goodbye, or an
-  // unresponsive lead, since none of those paths ever produce a "Booked
-  // for" result to begin with. Confirmed against Vapi's own OpenAPI schema
-  // that CreateEndCallToolDTO supports rejectionPlan and that liquid
-  // conditions receive `messages` in OpenAI chat-completions shape
-  // (role/content) — NOT yet confirmed against a real live call, unlike
-  // transferCall's regex conditions; watch the next test call closely.
+  // transferCall's own rejectionPlan above. Confirmed against Vapi's own
+  // OpenAPI schema that CreateEndCallToolDTO supports rejectionPlan and
+  // that liquid conditions receive `messages` in OpenAI chat-completions
+  // shape (role/content) — NOT yet confirmed against a real live call,
+  // unlike transferCall's regex conditions; watch the next test call
+  // closely.
+  //
+  // Extended same day, Mark's instruction: Iris must never hang up on her
+  // own unless she's actually finished confirming the appointment WITH the
+  // lead — not just spoken the day/time, but heard back from them
+  // afterward — the only exception being a genuinely unresponsive lead,
+  // which already ends with the exact "I'll hold off for now" line per the
+  // prompt's own two-check-in rule. So this now rejects in TWO cases: (1)
+  // a real booking happened and no assistant turn since ever said a
+  // day/time at all (the original bug), or (2) a real booking happened, the
+  // day/time WAS said, but nothing followed it — no reply from the lead,
+  // and Iris hasn't reached that exact final "gone quiet" line either.
+  // Deliberately does NOT require a user reply unconditionally — that would
+  // strand a genuinely ghosted lead's call forever, which is a worse
+  // failure than the bug this is fixing. Never blocks a legitimate endCall
+  // after a successful transfer, an explicit lead goodbye, or an
+  // unresponsive lead who's been through the two-check-in sequence, since
+  // none of those paths ever produce a "Booked for" result to begin with
+  // (transfer/goodbye) or they satisfy the "hold off for now" escape valve
+  // (unresponsive after a booking specifically).
   tools.push({
     type: "endCall",
     rejectionPlan: {
@@ -382,6 +396,7 @@ export function buildCallPayload(
           liquid:
             "{%- assign bookedForFound = false -%}" +
             "{%- assign confirmedAfter = false -%}" +
+            "{%- assign heardBack = false -%}" +
             "{%- for msg in messages -%}" +
             "{%- if msg.content contains 'Booked for' -%}" +
             "{%- assign bookedForFound = true -%}" +
@@ -391,9 +406,15 @@ export function buildCallPayload(
             "{%- if c contains 'monday' or c contains 'tuesday' or c contains 'wednesday' or c contains 'thursday' or c contains 'friday' or c contains 'saturday' or c contains 'sunday' or c contains 'today' or c contains 'tonight' or c contains 'tomorrow' -%}" +
             "{%- assign confirmedAfter = true -%}" +
             "{%- endif -%}" +
+            "{%- if confirmedAfter and c contains 'hold off for now' -%}" +
+            "{%- assign heardBack = true -%}" +
+            "{%- endif -%}" +
+            "{%- endif -%}" +
+            "{%- if confirmedAfter and msg.role == 'user' -%}" +
+            "{%- assign heardBack = true -%}" +
             "{%- endif -%}" +
             "{%- endfor -%}" +
-            "{%- if bookedForFound and confirmedAfter == false -%}true{%- else -%}false{%- endif -%}",
+            "{%- if bookedForFound and heardBack == false -%}true{%- else -%}false{%- endif -%}",
         },
       ],
     },
