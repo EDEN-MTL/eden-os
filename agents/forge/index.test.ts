@@ -186,6 +186,39 @@ describe("Forge — create_ad_creative and create_ad", () => {
     );
   });
 
+  it("passes urlTags through for create_ad_creative — the only place Meta honors ad-level attribution stamping", async () => {
+    executeManualMock.mockResolvedValueOnce({ status: "executed", result: { after: { id: "creative_2" } } });
+    vi.mocked(chatWithTools)
+      .mockResolvedValueOnce({
+        content: [
+          toolUseBlock("call_1", "create_ad_creative", {
+            clientId: "3-percent-east-coast",
+            name: "Listing ad v2",
+            imageHash: "img_xyz789",
+            headline: "New listing",
+            primaryText: "Book a showing today.",
+            linkUrl: "https://example.com/listing",
+            urlTags: "utm_campaign={{campaign.id}}&utm_content={{ad.id}}&utm_term={{adset.id}}&fbclid={{fbclid}}",
+          }),
+        ],
+        stop_reason: "tool_use",
+      } as any)
+      .mockResolvedValueOnce(endTurn("Creative created with attribution tags."));
+
+    await forgeAgent.generateReply("key4b", "create the creative with attribution tags");
+
+    expect(executeManualMock).toHaveBeenCalledWith(
+      "create_ad_creative",
+      "creative",
+      "",
+      "Listing ad v2",
+      expect.objectContaining({
+        urlTags: "utm_campaign={{campaign.id}}&utm_content={{ad.id}}&utm_term={{adset.id}}&fbclid={{fbclid}}",
+      }),
+      "jacob-via-chat"
+    );
+  });
+
   it("snake_cases adsetId/creativeId for create_ad, matching what executor.dispatch expects", async () => {
     // Real correctness property, not stylistic: ActionExecutor.dispatch's
     // "create_ad" case reads payload.adset_id/payload.creative_id, not
