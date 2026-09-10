@@ -355,7 +355,49 @@ export function buildCallPayload(
   // end once Iris is genuinely done, regardless of intent/transfer/callback
   // state. See buildLeadQualificationPrompt's "Ending the call" section for
   // when she's told to use it.
-  tools.push({ type: "endCall" });
+  //
+  // rejectionPlan added 2026-09-11 as a structural backstop for a bug the
+  // prompt's own "MECHANICAL GATE" section already tried to fix three
+  // separate times on three different real calls: Iris gets a "Booked for"
+  // tool result and invokes endCall right after with no accompanying
+  // day/time confirmation at all — sometimes not even a "Goodbye". A
+  // prompt instruction alone kept not holding, same lesson as
+  // transferCall's own rejectionPlan above. Only rejects when a real
+  // booking happened THIS call (a "Booked for" tool result appears
+  // somewhere in the transcript) and no assistant turn since then ever
+  // said a day name or today/tonight/tomorrow — never blocks a legitimate
+  // endCall after a successful transfer, an explicit lead goodbye, or an
+  // unresponsive lead, since none of those paths ever produce a "Booked
+  // for" result to begin with. Confirmed against Vapi's own OpenAPI schema
+  // that CreateEndCallToolDTO supports rejectionPlan and that liquid
+  // conditions receive `messages` in OpenAI chat-completions shape
+  // (role/content) — NOT yet confirmed against a real live call, unlike
+  // transferCall's regex conditions; watch the next test call closely.
+  tools.push({
+    type: "endCall",
+    rejectionPlan: {
+      conditions: [
+        {
+          type: "liquid",
+          liquid:
+            "{%- assign bookedForFound = false -%}" +
+            "{%- assign confirmedAfter = false -%}" +
+            "{%- for msg in messages -%}" +
+            "{%- if msg.content contains 'Booked for' -%}" +
+            "{%- assign bookedForFound = true -%}" +
+            "{%- endif -%}" +
+            "{%- if bookedForFound and msg.role == 'assistant' -%}" +
+            "{%- assign c = msg.content | downcase -%}" +
+            "{%- if c contains 'monday' or c contains 'tuesday' or c contains 'wednesday' or c contains 'thursday' or c contains 'friday' or c contains 'saturday' or c contains 'sunday' or c contains 'today' or c contains 'tonight' or c contains 'tomorrow' -%}" +
+            "{%- assign confirmedAfter = true -%}" +
+            "{%- endif -%}" +
+            "{%- endif -%}" +
+            "{%- endfor -%}" +
+            "{%- if bookedForFound and confirmedAfter == false -%}true{%- else -%}false{%- endif -%}",
+        },
+      ],
+    },
+  });
 
   return {
     phoneNumberId: vapiConfig.phoneNumberId,
