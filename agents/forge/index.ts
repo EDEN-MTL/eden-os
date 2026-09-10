@@ -250,7 +250,7 @@ const TOOLS: ToolDef[] = [
   {
     name: "create_ad_creative",
     description:
-      "Creates the actual ad content — image (via a hash from upload_ad_image), headline, body copy, and destination link — as a Meta ad creative object. This is not an ad by itself; pair it with create_ad. Ad creatives are immutable after creation (Meta rejects edits to anything but name/status), so a correction means creating a new one, not patching this one.",
+      "Creates the actual ad content — image (via a hash from upload_ad_image), headline, body copy, and destination link — as a Meta ad creative object. This is not an ad by itself; pair it with create_ad. Ad creatives are immutable after creation (Meta rejects edits to anything but name/status), so a correction means creating a new one, not patching this one. ALWAYS set urlTags unless the client has explicitly said not to track attribution — without it, GHL leads can never be matched back to the campaign/adset/ad that produced them, and CPL/ROAS reads as 0 forever even when the client has real revenue.",
     input_schema: {
       type: "object",
       properties: {
@@ -262,6 +262,11 @@ const TOOLS: ToolDef[] = [
         linkUrl: { type: "string", description: "Where a click goes — the landing page." },
         callToActionType: { type: "string", description: "e.g. LEARN_MORE, SIGN_UP, GET_QUOTE. Defaults to LEARN_MORE." },
         description: { type: "string", description: "Secondary line under the headline on feed placements. Optional." },
+        urlTags: {
+          type: "string",
+          description:
+            "Query string appended to linkUrl at serve time, e.g. \"utm_campaign={{campaign.id}}&utm_content={{ad.id}}&utm_term={{adset.id}}&fbclid={{fbclid}}\" using Meta's dynamic tags. This is the ONLY place in the campaign/adset/ad/creative hierarchy where Meta actually honors this field — do not try to set it anywhere else. The landing page must separately capture these URL params into the lead form for attribution to actually complete; ask if you're not sure that's wired up for this client.",
+        },
       },
       required: ["clientId", "name", "imageHash", "headline", "primaryText", "linkUrl"],
     },
@@ -436,6 +441,7 @@ class ForgeAgent extends BaseAgent {
               name: input.name, imageHash: input.imageHash, headline: input.headline,
               primaryText: input.primaryText, linkUrl: input.linkUrl,
               callToActionType: input.callToActionType, description: input.description,
+              urlTags: input.urlTags,
             },
             "jacob-via-chat"
           )
