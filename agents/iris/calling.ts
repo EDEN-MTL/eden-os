@@ -193,11 +193,20 @@ export function buildCallPayload(
           transferPlan: {
             mode: "warm-transfer-experimental",
             transferAssistant: {
-              // Short bare greeting, same reasoning as callOpeningGreeting
-              // for the main call — Mark, 2026-09-05: don't launch into the
-              // briefing before the operator has even said anything back.
+              // Bare greeting only, and it does NOT speak first — same
+              // pattern as the main call's own opening (callOpeningGreeting
+              // / firstMessageMode "assistant-waits-for-user"). Mark's live
+              // feedback, 2026-09-11: this was previously set to
+              // "assistant-speaks-first", which had Iris say "Hi!" the
+              // instant the operator's line connected, before they'd said
+              // anything at all — a real operator experienced this as
+              // being talked at the moment they picked up. Waiting lets the
+              // operator say their own "Hello?" first, the way a real
+              // transferred call actually feels; if they stay silent, Vapi
+              // itself says a bare "Hi!" on Iris's behalf after a moment,
+              // same fallback the main call already relies on.
               firstMessage: "Hi!",
-              firstMessageMode: "assistant-speaks-first",
+              firstMessageMode: "assistant-waits-for-user",
               maxDurationSeconds: 120,
               silenceTimeoutSeconds: 30,
               model: {
@@ -207,14 +216,18 @@ export function buildCallPayload(
                   {
                     role: "system",
                     content:
-                      `You just said "Hi!" to whoever picked up — wait for them to respond, then ask ` +
-                      `"This is Iris with ${params.brandName}. Who am I speaking with?" and wait for their ` +
-                      "name. Greet them by name once given (e.g. \"Hi Jason\"), then immediately give this " +
-                      `exact briefing, adjusting only for natural phrasing: "${briefing}" — then confirm ` +
-                      "they're ready to take the call. Once they confirm, say ONE bridging line out loud " +
-                      "before doing anything else — something like \"Perfect, connecting you now — " +
-                      `${params.firstName !== "there" ? params.firstName : "the lead"} is on the line, go ` +
-                      "ahead\" (use the operator's own name if they gave one, e.g. " +
+                      "You do NOT speak first — wait for the operator to say something (a real " +
+                      "\"Hello?\" or anything else) once their line connects, the way a person naturally " +
+                      "does when they pick up. If they stay silent for a few seconds, the system says a " +
+                      "bare \"Hi!\" on your behalf automatically — that isn't something you choose to say, " +
+                      "it just happens. Either way, once it's your turn, react to whatever they actually " +
+                      `said, then ask "This is Iris with ${params.brandName}. Who am I speaking with?" and ` +
+                      "wait for their name. Greet them by name once given (e.g. \"Hi Jason\"), then " +
+                      `immediately give this exact briefing, adjusting only for natural phrasing: "${briefing}" ` +
+                      "— then confirm they're ready to take the call. Once they confirm, say ONE bridging " +
+                      "line out loud before doing anything else — something like \"Perfect, connecting you " +
+                      `now — ${params.firstName !== "there" ? params.firstName : "the lead"} is on the ` +
+                      "line, go ahead\" (use the operator's own name if they gave one, e.g. " +
                       "\"Perfect Jason, connecting you now\"). Mark's live feedback, 2026-09-10, after " +
                       "watching a real transfer succeed: neither side got any spoken cue that the merge " +
                       "had actually happened — the operator didn't know the lead was live on the line yet, " +
@@ -224,7 +237,16 @@ export function buildCallPayload(
                       "transfer. After transferSuccessful, your job is done — never end the call yourself; " +
                       "let the operator and the lead continue the conversation on their own. Keep " +
                       "everything you say brief — the whole briefing should take a few seconds, not a full " +
-                      "CRM readout.",
+                      "CRM readout. If the operator starts talking while you're mid-sentence, stop, listen " +
+                      "to what they actually said, and respond to that first — but don't just drop the rest " +
+                      "of your briefing because you got cut off. Once you've responded to whatever they " +
+                      "said, pick back up with whatever you still hadn't gotten to yet (their name, the " +
+                      "briefing, confirming they're ready, or the bridging line) — the operator still needs " +
+                      "that information even if the delivery got interrupted partway through. Whenever you " +
+                      "say a number out loud — the lead's budget, a phone number, anything numeric in the " +
+                      "briefing — say it the way a person actually would (\"around four hundred to five " +
+                      "hundred thousand\"), never digit by digit (\"4-0-0 to 5-0-0 k\") or like you're " +
+                      "reading a spreadsheet cell.",
                   },
                 ],
               },

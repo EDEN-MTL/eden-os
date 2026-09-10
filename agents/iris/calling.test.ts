@@ -124,6 +124,30 @@ describe("buildCallPayload", () => {
     });
 
     /**
+     * Mark's live feedback, 2026-09-11: the transferAssistant previously
+     * used "assistant-speaks-first", so it said "Hi!" the instant the
+     * operator's line connected, before they'd said anything at all — a
+     * real operator experienced this as being talked at the moment they
+     * picked up. Should behave like the main call's own opening instead:
+     * wait for them to speak first.
+     */
+    it("waits for the operator to speak first, same as the main call's own opening", () => {
+      const payload = buildCallPayload({ ...BASE_PARAMS, transferNumber: "+17097058841" }, VAPI_CONFIG);
+      const tool = payload.assistant.model.tools?.find((t) => t.type === "transferCall");
+      if (tool?.type !== "transferCall") throw new Error("expected transferCall tool");
+      expect(tool.destinations[0].transferPlan.transferAssistant.firstMessageMode).toBe("assistant-waits-for-user");
+    });
+
+    it("tells the transfer assistant to resume its briefing after being interrupted, and to say numbers naturally", () => {
+      const payload = buildCallPayload({ ...BASE_PARAMS, transferNumber: "+17097058841" }, VAPI_CONFIG);
+      const tool = payload.assistant.model.tools?.find((t) => t.type === "transferCall");
+      if (tool?.type !== "transferCall") throw new Error("expected transferCall tool");
+      const briefingPrompt = tool.destinations[0].transferPlan.transferAssistant.model.messages[0].content;
+      expect(briefingPrompt).toMatch(/pick back up with whatever you still hadn't gotten to yet/i);
+      expect(briefingPrompt).toMatch(/never digit by digit/i);
+    });
+
+    /**
      * Mark's rule, 2026-09-06: never transfer without having told the lead
      * first and heard something back — confirmed live once already that
      * the prompt instruction alone isn't a guarantee (one real call had

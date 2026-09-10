@@ -160,7 +160,7 @@ export interface VapiTransferCallTool {
       mode: "warm-transfer-experimental";
       transferAssistant: {
         firstMessage: string;
-        firstMessageMode: "assistant-speaks-first";
+        firstMessageMode: "assistant-speaks-first" | "assistant-waits-for-user" | "assistant-speaks-first-with-model-generated-message";
         maxDurationSeconds: number;
         silenceTimeoutSeconds: number;
         model: {
