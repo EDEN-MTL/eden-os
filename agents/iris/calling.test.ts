@@ -114,9 +114,18 @@ describe("buildCallPayload", () => {
    * prompt-only fixes, so it now also has a structural gate — same idiom
    * as transferCall's rejectionPlan above. Only reject when a real booking
    * happened and nothing since ever named a day/time.
+   *
+   * Extended same day, Mark's instruction: Iris must not hang up on her
+   * own until she's actually heard back from the lead after confirming
+   * the day/time — unless the lead's gone quiet, in which case the exact
+   * "hold off for now" line (the prompt's own two-check-in final line) is
+   * the escape valve. No Liquid interpreter is available in this test
+   * environment, so these assertions check the template's structure and
+   * key substrings rather than executing it — the real semantics can only
+   * be confirmed live, same as transferCall's own regex conditions were.
    */
   describe("endCall tool", () => {
-    it("has a rejectionPlan that only fires once a real booking exists with no confirmation after it", () => {
+    it("has a rejectionPlan requiring both a spoken day/time AND hearing back from the lead", () => {
       const payload = buildCallPayload(BASE_PARAMS, VAPI_CONFIG);
       const tool = payload.assistant.model.tools?.find((t) => t.type === "endCall");
       if (tool?.type !== "endCall") throw new Error("expected endCall tool");
@@ -125,6 +134,11 @@ describe("buildCallPayload", () => {
       expect(condition.liquid).toContain("Booked for");
       expect(condition.liquid).toContain("friday");
       expect(condition.liquid).toContain("tomorrow");
+      // The "heard back" half: either a user reply, or the exact final
+      // gone-quiet line, after the day/time was actually confirmed.
+      expect(condition.liquid).toContain("heardBack");
+      expect(condition.liquid).toContain("hold off for now");
+      expect(condition.liquid).toContain("msg.role == 'user'");
     });
   });
 
