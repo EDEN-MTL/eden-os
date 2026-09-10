@@ -211,7 +211,15 @@ export function buildCallPayload(
                       `"This is Iris with ${params.brandName}. Who am I speaking with?" and wait for their ` +
                       "name. Greet them by name once given (e.g. \"Hi Jason\"), then immediately give this " +
                       `exact briefing, adjusting only for natural phrasing: "${briefing}" — then confirm ` +
-                      "they're ready to take the call. Once they confirm, immediately call " +
+                      "they're ready to take the call. Once they confirm, say ONE bridging line out loud " +
+                      "before doing anything else — something like \"Perfect, connecting you now — " +
+                      `${params.firstName !== "there" ? params.firstName : "the lead"} is on the line, go ` +
+                      "ahead\" (use the operator's own name if they gave one, e.g. " +
+                      "\"Perfect Jason, connecting you now\"). Mark's live feedback, 2026-09-10, after " +
+                      "watching a real transfer succeed: neither side got any spoken cue that the merge " +
+                      "had actually happened — the operator didn't know the lead was live on the line yet, " +
+                      "and the lead had no idea who they'd just been connected to. This bridging line exists " +
+                      "so neither person has to guess. ONLY once you've said it, immediately call " +
                       "transferSuccessful. Use transferCancel for voicemail, no answer, or a declined " +
                       "transfer. After transferSuccessful, your job is done — never end the call yourself; " +
                       "let the operator and the lead continue the conversation on their own. Keep " +
