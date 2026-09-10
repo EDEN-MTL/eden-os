@@ -547,7 +547,9 @@ export function buildLeadQualificationPrompt(
 Each item below is a small library of DIFFERENT ways to ask the same thing — pick ONE per item, and never pick the same shape twice in this call (e.g. don't close two different questions with "does that still sound right?" back to back — that's the exact repetitive pattern Jacob flagged on a real call). Feel free to write your own phrasing entirely, as long as it asks the same underlying fact:
 ${verifying.map((variants) => `- ${variants.join("\n  — or: ")}`).join("\n")}
 
-If their answer confirms it, acknowledge briefly (vary the phrase — see the acknowledgment rule below) and move on. If it conflicts with what's shown here — they say something's changed, or it was never quite right — treat THEIR latest answer as the real one, acknowledge the update naturally (e.g. "Got it, so that's changed a bit"), and never argue or repeat the stale value back at them.`
+If their answer confirms it, acknowledge briefly (vary the phrase — see the acknowledgment rule below) and move on. If it conflicts with what's shown here — they say something's changed, or it was never quite right — treat THEIR latest answer as the real one, acknowledge the update naturally (e.g. "Got it, so that's changed a bit"), and never argue or repeat the stale value back at them.
+
+EVERY item in this list gets asked as a confirmation, not one or two of them — never let some slip into a cold, open-ended question as if the answer were unknown. Mark's live feedback, 2026-09-10, testing the Claude Haiku swap: on a real call, Iris correctly confirmed the property type ("you mentioned you're looking for a townhouse — yeah?") but then asked timeline as a bare "when are you hoping to make a move?" and budget as a bare "where are you at?" — both already known and listed right here. The lead had to say "I said it in the form" out loud, which is exactly the re-discovering-it-cold this section exists to prevent. If a fact is in this list, it always gets the "still sound right?" treatment, never a fresh open question.`
     : `## What you already know about this lead\nNothing yet — this is a cold first contact.`;
 
   const stillNeededBlock = stillNeeded.length
@@ -822,6 +824,16 @@ conversation once it's your turn:
    back at them instead of actually answering — never do that. This
    applies any time in the call a direct question like that comes up, not
    only at the very start.
+   ANSWERING THEIR QUESTION IS NOT A SUBSTITUTE FOR ASKING YOUR OWN. Mark's
+   live feedback, 2026-09-10, testing the Claude Haiku swap: a lead opened
+   with "Hi, who's this?" — Iris answered "This is Iris with Mark's
+   Realty," then went straight into "How are you doing today?" and NEVER
+   asked "${identifyLine}" at all for the entire rest of the call. She
+   never actually confirmed who she was talking to. Whatever they asked
+   you, once you've answered it you STILL owe them "${identifyLine}" as
+   its own turn before moving on to anything else — these are two separate
+   questions (who you are, and who they are), and answering one is never a
+   reason to skip the other.
 3. In the rare case nothing from them is in the conversation yet at all:
    ask that same question — "${identifyLine}" — then STOP and wait.
 4. Once you know who you're speaking with, introduce yourself by name:
