@@ -104,7 +104,28 @@ describe("buildCallPayload", () => {
 
   it("wires only the always-available endCall tool when nothing else (transferNumber, contactId) is given", () => {
     const payload = buildCallPayload(BASE_PARAMS, VAPI_CONFIG);
-    expect(payload.assistant.model.tools).toEqual([{ type: "endCall" }]);
+    expect(payload.assistant.model.tools).toHaveLength(1);
+    expect(payload.assistant.model.tools?.[0].type).toBe("endCall");
+  });
+
+  /**
+   * Mark's live feedback, 2026-09-11: this exact "Booked for" +
+   * unconfirmed-endCall bug happened a third time despite two rounds of
+   * prompt-only fixes, so it now also has a structural gate — same idiom
+   * as transferCall's rejectionPlan above. Only reject when a real booking
+   * happened and nothing since ever named a day/time.
+   */
+  describe("endCall tool", () => {
+    it("has a rejectionPlan that only fires once a real booking exists with no confirmation after it", () => {
+      const payload = buildCallPayload(BASE_PARAMS, VAPI_CONFIG);
+      const tool = payload.assistant.model.tools?.find((t) => t.type === "endCall");
+      if (tool?.type !== "endCall") throw new Error("expected endCall tool");
+      const condition = tool.rejectionPlan?.conditions[0];
+      if (condition?.type !== "liquid") throw new Error("expected a liquid condition");
+      expect(condition.liquid).toContain("Booked for");
+      expect(condition.liquid).toContain("friday");
+      expect(condition.liquid).toContain("tomorrow");
+    });
   });
 
   it("always wires the endCall tool, regardless of what else is available", () => {

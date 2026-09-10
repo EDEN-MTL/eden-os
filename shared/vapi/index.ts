@@ -143,7 +143,8 @@ export interface VapiAssistantConfig {
  */
 export type VapiRejectionCondition =
   | { type: "regex"; regex: string; target?: { position?: number; role?: "user" | "assistant" }; negate?: boolean }
-  | { type: "group"; operator: "AND" | "OR"; conditions: VapiRejectionCondition[] };
+  | { type: "group"; operator: "AND" | "OR"; conditions: VapiRejectionCondition[] }
+  | { type: "liquid"; liquid: string };
 
 export interface VapiToolRejectionPlan {
   conditions: VapiRejectionCondition[];
@@ -197,13 +198,28 @@ export interface VapiFunctionTool {
 /**
  * Confirmed against Vapi's own OpenAPI schema (CreateEndCallToolDTO),
  * 2026-09-06: minimal shape is just `{ type: "endCall" }`, same as
- * transferCall/function above — no separate messages/rejectionPlan needed.
- * Lets Iris actually hang up once she's said her goodbye, instead of
- * lingering or looping (confirmed live: without this, a real test call had
- * Iris say "I don't have the ability to hang up the call myself").
+ * transferCall/function above. Lets Iris actually hang up once she's said
+ * her goodbye, instead of lingering or looping (confirmed live: without
+ * this, a real test call had Iris say "I don't have the ability to hang up
+ * the call myself").
+ *
+ * rejectionPlan added 2026-09-11, confirmed CreateEndCallToolDTO supports
+ * it (same shape as transferCall's) via api.vapi.ai/api-json. This is a
+ * structural backstop for the exact same category of bug the prompt's own
+ * "MECHANICAL GATE" section already tried to fix three separate times: on
+ * three different real calls, Iris got a "Booked for" result and invoked
+ * endCall with no accompanying day/time confirmation at all, sometimes not
+ * even a "Goodbye" — a prompt instruction alone kept not holding. See
+ * agents/iris/calling.ts's buildCallPayload for the actual liquid
+ * condition, which only rejects when a real booking happened THIS call and
+ * nothing afterward ever confirmed it out loud — never blocks a legitimate
+ * endCall after a successful transfer, an explicit lead goodbye, or an
+ * unresponsive lead, since those paths never produce a "Booked for" result
+ * to begin with.
  */
 export interface VapiEndCallTool {
   type: "endCall";
+  rejectionPlan?: VapiToolRejectionPlan;
 }
 
 export type VapiTool = VapiTransferCallTool | VapiFunctionTool | VapiEndCallTool;
