@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildCallPayload, PlaceCallParams } from "./calling";
+import { BOOKING_CONFIRMATION_LINES, buildCallPayload, PlaceCallParams } from "./calling";
 
 /**
  * Only buildCallPayload is tested here — it's the pure part. placeCall()
@@ -117,11 +117,17 @@ describe("buildCallPayload", () => {
    * condition at all, only genuine user/assistant turns are. Redesigned
    * around the book_appointment/check_availability split (see calling.ts):
    * book_appointment now carries its own Vapi-guaranteed spoken
-   * confirmation ("you're all booked"), and THIS gate looks for that
-   * genuinely-spoken phrase instead of tool-result text. No Liquid
-   * interpreter is available in this test environment, so these
-   * assertions check the template's structure and key substrings rather
-   * than executing it — the real semantics can only be confirmed live.
+   * confirmation, and THIS gate looks for that genuinely-spoken content
+   * instead of tool-result text. No Liquid interpreter is available in
+   * this test environment, so these assertions check the template's
+   * structure and key substrings rather than executing it — the real
+   * semantics can only be confirmed live.
+   *
+   * Updated 2026-09-12: BOOKING_CONFIRMATION_LINES randomizes across 5
+   * variants, so the gate can no longer key on the single literal "you're
+   * all booked" phrase (only one variant still contains it) — it now
+   * checks for "notification" AND "text" together, which every variant
+   * contains (see that constant's own comment in calling.ts).
    */
   describe("endCall tool", () => {
     it("has a rejectionPlan requiring hearing back from the lead after Vapi's own booking confirmation", () => {
@@ -130,12 +136,21 @@ describe("buildCallPayload", () => {
       if (tool?.type !== "endCall") throw new Error("expected endCall tool");
       const condition = tool.rejectionPlan?.conditions[0];
       if (condition?.type !== "liquid") throw new Error("expected a liquid condition");
-      expect(condition.liquid).toContain("you're all booked");
+      expect(condition.liquid).toContain("notification");
+      expect(condition.liquid).toContain("text");
       // The "heard back" half: either a user reply, or the exact final
       // gone-quiet line, after the booking confirmation was spoken.
       expect(condition.liquid).toContain("heardBack");
       expect(condition.liquid).toContain("hold off for now");
       expect(condition.liquid).toContain("msg.role == 'user'");
+      // Every one of the randomized confirmation variants must actually
+      // satisfy this gate's detection condition — otherwise a call that
+      // happens to draw that variant would silently never unblock endCall.
+      for (const line of BOOKING_CONFIRMATION_LINES) {
+        const c = line.toLowerCase();
+        expect(c).toContain("notification");
+        expect(c).toContain("text");
+      }
     });
   });
 
@@ -390,6 +405,11 @@ describe("buildCallPayload", () => {
      * shared/vapi and this file's own comment above book_appointment's
      * wiring. Only book_appointment ever creates a real booking, so only
      * it carries Vapi's guaranteed request-complete confirmation.
+     *
+     * Updated 2026-09-12: content is randomized across
+     * BOOKING_CONFIRMATION_LINES (Mark's spec — a single fixed line
+     * sounded repetitive across calls), so this checks membership in that
+     * list rather than one exact string.
      */
     it("wires a guaranteed request-complete confirmation on book_appointment, with control returned to Iris afterward", () => {
       const payload = buildCallPayload(withCalendar, VAPI_CONFIG);
@@ -398,7 +418,7 @@ describe("buildCallPayload", () => {
       const message = tool.messages?.find((m) => m.type === "request-complete");
       expect(message).toBeDefined();
       expect(message?.role).toBe("assistant");
-      expect(message?.content).toContain("you're all booked");
+      expect(BOOKING_CONFIRMATION_LINES).toContain(message?.content);
       expect(message?.endCallAfterSpokenEnabled).not.toBe(true);
     });
   });
