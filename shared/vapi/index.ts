@@ -181,6 +181,34 @@ export interface VapiTransferCallTool {
  * {results: [{toolCallId, result}]} back. Used for schedule_callback; see
  * webhooks/vapi-tools.ts for the server side.
  */
+/**
+ * Confirmed against Vapi's own OpenAPI schema (CreateFunctionToolDTO /
+ * ToolMessageComplete), 2026-09-11: a tool can carry its own `messages` —
+ * Vapi speaks these automatically based on how the webhook responds,
+ * independent of whatever the model does next. `role: "assistant"` means
+ * `content` is spoken verbatim and, per the schema, "only this message
+ * will be spoken and the model will not be requested to come up with a
+ * response" — i.e. this is NOT a hint the model can rephrase or skip, it's
+ * Vapi's own guaranteed TTS output. Built for book_appointment below after
+ * three straight real calls had a genuine "Booked for" result followed by
+ * endCall with nothing spoken at all — no amount of prompt wording held,
+ * so this moves the one required confirmation out of the model's hands
+ * entirely. `content` has no confirmed templating/variable-interpolation
+ * syntax in this schema, so it can't echo back the exact day/time booked
+ * — acceptable since Iris already speaks the specific time herself when
+ * she proposes it, just before this tool is called to actually lock it
+ * in. `endCallAfterSpokenEnabled: false` (the default) leaves control with
+ * the model afterward, so it can still wait for the lead's real response
+ * before invoking endCall itself — see buildLeadQualificationPrompt's
+ * "Ending the call" section.
+ */
+export interface VapiToolMessage {
+  type: "request-start" | "request-complete" | "request-failed" | "request-response-delayed";
+  role?: "assistant" | "system";
+  content?: string;
+  endCallAfterSpokenEnabled?: boolean;
+}
+
 export interface VapiFunctionTool {
   type: "function";
   function: {
@@ -193,6 +221,7 @@ export interface VapiFunctionTool {
     };
   };
   server: { url: string; secret?: string };
+  messages?: VapiToolMessage[];
 }
 
 /**

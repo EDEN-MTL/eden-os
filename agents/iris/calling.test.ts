@@ -111,31 +111,28 @@ describe("buildCallPayload", () => {
   /**
    * Mark's live feedback, 2026-09-11: this exact "Booked for" +
    * unconfirmed-endCall bug happened a third time despite two rounds of
-   * prompt-only fixes, so it now also has a structural gate — same idiom
-   * as transferCall's rejectionPlan above. Only reject when a real booking
-   * happened and nothing since ever named a day/time.
-   *
-   * Extended same day, Mark's instruction: Iris must not hang up on her
-   * own until she's actually heard back from the lead after confirming
-   * the day/time — unless the lead's gone quiet, in which case the exact
-   * "hold off for now" line (the prompt's own two-check-in final line) is
-   * the escape valve. No Liquid interpreter is available in this test
-   * environment, so these assertions check the template's structure and
-   * key substrings rather than executing it — the real semantics can only
-   * be confirmed live, same as transferCall's own regex conditions were.
+   * prompt-only fixes, and a first structural gate (keyed off the tool's
+   * own "Booked for" result text) was CONFIRMED LIVE not to fire — the
+   * leading theory being that tool-result text isn't visible to a liquid
+   * condition at all, only genuine user/assistant turns are. Redesigned
+   * around the book_appointment/check_availability split (see calling.ts):
+   * book_appointment now carries its own Vapi-guaranteed spoken
+   * confirmation ("you're all booked"), and THIS gate looks for that
+   * genuinely-spoken phrase instead of tool-result text. No Liquid
+   * interpreter is available in this test environment, so these
+   * assertions check the template's structure and key substrings rather
+   * than executing it — the real semantics can only be confirmed live.
    */
   describe("endCall tool", () => {
-    it("has a rejectionPlan requiring both a spoken day/time AND hearing back from the lead", () => {
+    it("has a rejectionPlan requiring hearing back from the lead after Vapi's own booking confirmation", () => {
       const payload = buildCallPayload(BASE_PARAMS, VAPI_CONFIG);
       const tool = payload.assistant.model.tools?.find((t) => t.type === "endCall");
       if (tool?.type !== "endCall") throw new Error("expected endCall tool");
       const condition = tool.rejectionPlan?.conditions[0];
       if (condition?.type !== "liquid") throw new Error("expected a liquid condition");
-      expect(condition.liquid).toContain("Booked for");
-      expect(condition.liquid).toContain("friday");
-      expect(condition.liquid).toContain("tomorrow");
+      expect(condition.liquid).toContain("you're all booked");
       // The "heard back" half: either a user reply, or the exact final
-      // gone-quiet line, after the day/time was actually confirmed.
+      // gone-quiet line, after the booking confirmation was spoken.
       expect(condition.liquid).toContain("heardBack");
       expect(condition.liquid).toContain("hold off for now");
       expect(condition.liquid).toContain("msg.role == 'user'");
@@ -305,14 +302,20 @@ describe("buildCallPayload", () => {
    * Mark, 2026-09-06: replaces schedule_callback entirely for a call where
    * a real callbackCalendarId resolved — never both at once, so Iris has
    * exactly one clear way to handle scheduling per call.
+   *
+   * Split into check_availability + book_appointment 2026-09-11 (was one
+   * combined check_and_book_appointment tool) so book_appointment alone
+   * could safely carry Vapi's own guaranteed spoken confirmation — see
+   * this describe block's own tests below and VapiToolMessage's doc
+   * comment in shared/vapi.
    */
-  describe("check_and_book_appointment tool", () => {
+  describe("check_availability / book_appointment tools", () => {
     const withCalendar: PlaceCallParams = { ...BASE_PARAMS, contactId: "contact-1", calendarId: "cal-123" };
 
-    it("replaces schedule_callback when a calendarId is given", () => {
+    it("replaces schedule_callback with both tools when a calendarId is given", () => {
       const payload = buildCallPayload(withCalendar, VAPI_CONFIG);
       const names = payload.assistant.model.tools?.filter((t) => t.type === "function").map((t) => (t.type === "function" ? t.function.name : ""));
-      expect(names).toEqual(["check_and_book_appointment"]);
+      expect(names).toEqual(["check_availability", "book_appointment"]);
     });
 
     it("is omitted (falls back to schedule_callback) when no calendarId is given", () => {
@@ -321,22 +324,32 @@ describe("buildCallPayload", () => {
       expect(names).toEqual(["schedule_callback"]);
     });
 
-    it("bakes clientId, contactId, calendarId, and a buyer/seller intent into the tool's server URL", () => {
+    it("bakes clientId, contactId, calendarId, and a buyer/seller intent into both tools' server URLs", () => {
       const payload = buildCallPayload({ ...withCalendar, intent: "seller" }, VAPI_CONFIG);
-      const tool = payload.assistant.model.tools?.find((t) => t.type === "function" && t.function.name === "check_and_book_appointment");
-      if (tool?.type !== "function") throw new Error("expected function tool");
-      const url = new URL(tool.server.url);
-      expect(url.searchParams.get("clientId")).toBe("3-percent-east-coast");
-      expect(url.searchParams.get("contactId")).toBe("contact-1");
-      expect(url.searchParams.get("calendarId")).toBe("cal-123");
-      expect(url.searchParams.get("intent")).toBe("seller");
+      for (const name of ["check_availability", "book_appointment"]) {
+        const tool = payload.assistant.model.tools?.find((t) => t.type === "function" && t.function.name === name);
+        if (tool?.type !== "function") throw new Error(`expected ${name} function tool`);
+        const url = new URL(tool.server.url);
+        expect(url.searchParams.get("clientId")).toBe("3-percent-east-coast");
+        expect(url.searchParams.get("contactId")).toBe("contact-1");
+        expect(url.searchParams.get("calendarId")).toBe("cal-123");
+        expect(url.searchParams.get("intent")).toBe("seller");
+      }
     });
 
-    it("requires a requestedTime argument from the model", () => {
+    it("requires a requestedTime argument for check_availability, and never books anything itself", () => {
       const payload = buildCallPayload(withCalendar, VAPI_CONFIG);
-      const tool = payload.assistant.model.tools?.find((t) => t.type === "function" && t.function.name === "check_and_book_appointment");
+      const tool = payload.assistant.model.tools?.find((t) => t.type === "function" && t.function.name === "check_availability");
       if (tool?.type !== "function") throw new Error("expected function tool");
       expect(tool.function.parameters.required).toEqual(["requestedTime"]);
+      expect(tool.messages).toBeUndefined();
+    });
+
+    it("requires an isoTime argument for book_appointment", () => {
+      const payload = buildCallPayload(withCalendar, VAPI_CONFIG);
+      const tool = payload.assistant.model.tools?.find((t) => t.type === "function" && t.function.name === "book_appointment");
+      if (tool?.type !== "function") throw new Error("expected function tool");
+      expect(tool.function.parameters.required).toEqual(["isoTime"]);
     });
 
     /**
@@ -344,15 +357,15 @@ describe("buildCallPayload", () => {
      * generic "Booked automatically..." note — no lead details at all.
      * leadSummary is baked in at call-placement time from what's already
      * known, never left to the model to retype (see
-     * webhooks/vapi-tools.ts's handleCheckAndBookAppointment for how this
-     * gets appended to the appointment's notes).
+     * webhooks/vapi-tools.ts's handleBookAppointment for how this gets
+     * appended to the appointment's notes).
      */
-    it("bakes a lead-facts summary into the tool's server URL", () => {
+    it("bakes a lead-facts summary into book_appointment's server URL", () => {
       const payload = buildCallPayload(
         { ...withCalendar, intent: "buyer", firstName: "Jason", propertyInterest: "condo", bedrooms: "2", budget: "$500k", timeline: "3 months", workingWithRealtor: false },
         VAPI_CONFIG
       );
-      const tool = payload.assistant.model.tools?.find((t) => t.type === "function" && t.function.name === "check_and_book_appointment");
+      const tool = payload.assistant.model.tools?.find((t) => t.type === "function" && t.function.name === "book_appointment");
       if (tool?.type !== "function") throw new Error("expected function tool");
       const url = new URL(tool.server.url);
       const summary = url.searchParams.get("leadSummary");
@@ -364,12 +377,29 @@ describe("buildCallPayload", () => {
       expect(summary).toContain("not working with a realtor");
     });
 
-    it("offers an optional conversationNotes argument for anything fresh from the call, not required", () => {
+    it("offers an optional conversationNotes argument on book_appointment for anything fresh from the call, not required", () => {
       const payload = buildCallPayload(withCalendar, VAPI_CONFIG);
-      const tool = payload.assistant.model.tools?.find((t) => t.type === "function" && t.function.name === "check_and_book_appointment");
+      const tool = payload.assistant.model.tools?.find((t) => t.type === "function" && t.function.name === "book_appointment");
       if (tool?.type !== "function") throw new Error("expected function tool");
       expect(tool.function.parameters.properties).toHaveProperty("conversationNotes");
       expect(tool.function.parameters.required).not.toContain("conversationNotes");
+    });
+
+    /**
+     * The whole point of the split — see VapiToolMessage's doc comment in
+     * shared/vapi and this file's own comment above book_appointment's
+     * wiring. Only book_appointment ever creates a real booking, so only
+     * it carries Vapi's guaranteed request-complete confirmation.
+     */
+    it("wires a guaranteed request-complete confirmation on book_appointment, with control returned to Iris afterward", () => {
+      const payload = buildCallPayload(withCalendar, VAPI_CONFIG);
+      const tool = payload.assistant.model.tools?.find((t) => t.type === "function" && t.function.name === "book_appointment");
+      if (tool?.type !== "function") throw new Error("expected function tool");
+      const message = tool.messages?.find((m) => m.type === "request-complete");
+      expect(message).toBeDefined();
+      expect(message?.role).toBe("assistant");
+      expect(message?.content).toContain("you're all booked");
+      expect(message?.endCallAfterSpokenEnabled).not.toBe(true);
     });
   });
 });
