@@ -270,6 +270,20 @@ export function buildCallPayload(
     // handle scheduling," not two overlapping ones. Mark, 2026-09-06: built
     // once a real test calendar existed to verify against live (never
     // invent availability — see AGENT_UNAVAILABLE_FOLLOW_UP's history).
+    //
+    // Split into two tools 2026-09-11 (previously one combined
+    // check_and_book_appointment): three straight real calls had a genuine
+    // "Booked for" result followed immediately by endCall with nothing
+    // spoken at all — no prompt wording held. Vapi tools support a
+    // `messages: [{type: "request-complete"}]` config that speaks a
+    // guaranteed confirmation the instant a tool call succeeds,
+    // independent of the model — but Vapi has no way to attach that only
+    // to the "actually booked" branch of a single tool's response; a
+    // combined tool's "success" (the webhook responded) and "a real
+    // booking happened" aren't the same fact. Splitting into a read-only
+    // check and a book-only tool makes them the same fact for
+    // book_appointment specifically, so it's the only one that carries
+    // this guarantee. See VapiToolMessage's own doc comment in shared/vapi.
     const audience = params.intent === "seller" || params.intent === "downsize" ? "seller" : "buyer";
     const qs = new URLSearchParams({
       clientId: params.clientId,
@@ -278,30 +292,54 @@ export function buildCallPayload(
       intent: audience,
       // Baked in at call-placement time from what Scout/this call already
       // know — never left to the model to retype, same reasoning as
-      // buildAgentBriefing's briefing string. See handleCheckAndBookAppointment.
+      // buildAgentBriefing's briefing string. See handleBookAppointment.
       leadSummary: buildAppointmentLeadSummary(params, audience),
     }).toString();
 
     tools.push({
       type: "function",
       function: {
-        name: "check_and_book_appointment",
+        name: "check_availability",
         description:
-          "Checks a specific time against the REAL calendar and books it immediately if it's open. If " +
-          "that exact time isn't available, returns the nearest REAL open times instead — never invents " +
+          "Checks a specific time against the REAL calendar — never books anything, never invents " +
           "availability. Call this for ANY specific day/time you're about to propose or confirm, whether " +
-          "the lead named it or you suggested it (e.g. 'about 3 hours from now') — never assume a time is " +
-          "open just because it sounds reasonable. If it comes back with alternatives, offer them to the " +
-          "lead and call this tool again once they pick one, to actually book it.",
+          "the lead named it or you suggested it (e.g. 'about 3 hours from now'). If it comes back " +
+          "available or with real alternatives, and the lead agrees to one, call book_appointment with " +
+          "that exact isoTime to actually lock it in — this tool alone never creates a booking.",
         parameters: {
           type: "object",
           properties: {
             requestedTime: {
               type: "string",
               description:
-                "The exact moment to check/book, as an ISO 8601 timestamp, computed relative to the " +
-                "current date and time given to you at the top of this prompt — never a bare time like " +
-                "'2pm' with no date.",
+                "The exact moment to check, as an ISO 8601 timestamp, computed relative to the current " +
+                "date and time given to you at the top of this prompt — never a bare time like '2pm' with " +
+                "no date.",
+            },
+          },
+          required: ["requestedTime"],
+        },
+      },
+      server: { url: `${vapiConfig.serverUrl}/tools/check-availability?${qs}`, secret: vapiConfig.webhookSecret },
+    });
+
+    tools.push({
+      type: "function",
+      function: {
+        name: "book_appointment",
+        description:
+          "Actually creates a real appointment on the calendar — the ONLY tool that does. Only ever call " +
+          "this with an exact isoTime value you already got back from check_availability (either as the " +
+          "confirmed exact match, or as one of the real alternatives the lead agreed to) — never a time " +
+          "you haven't checked first.",
+        parameters: {
+          type: "object",
+          properties: {
+            isoTime: {
+              type: "string",
+              description:
+                "The exact isoTime value from check_availability's response, copied character for " +
+                "character — never recomputed from the spoken phrase.",
             },
             conversationNotes: {
               type: "string",
@@ -313,10 +351,26 @@ export function buildCallPayload(
                 "entirely if there's nothing beyond the standard facts.",
             },
           },
-          required: ["requestedTime"],
+          required: ["isoTime"],
         },
       },
-      server: { url: `${vapiConfig.serverUrl}/tools/check-and-book-appointment?${qs}`, secret: vapiConfig.webhookSecret },
+      server: { url: `${vapiConfig.serverUrl}/tools/book-appointment?${qs}`, secret: vapiConfig.webhookSecret },
+      // Guaranteed, model-independent confirmation — see this file's own
+      // comment above and VapiToolMessage's doc comment in shared/vapi.
+      // Can't echo the exact day/time (no confirmed templating in this
+      // schema), which is fine — Iris already said the specific time
+      // herself when proposing it, just before this tool locks it in.
+      // endCallAfterSpokenEnabled defaults to false, so control returns to
+      // Iris afterward to actually wait for the lead's response before she
+      // invokes endCall herself — see buildLeadQualificationPrompt's
+      // "Ending the call" section.
+      messages: [
+        {
+          type: "request-complete",
+          role: "assistant",
+          content: "Perfect, you're all booked! Thanks so much for your time today — if anything comes up, just text us at this number.",
+        },
+      ],
     });
   } else if (vapiConfig.serverUrl && params.contactId) {
     const qs = new URLSearchParams({
@@ -362,46 +416,34 @@ export function buildCallPayload(
   // tool result and invokes endCall right after with no accompanying
   // day/time confirmation at all — sometimes not even a "Goodbye". A
   // prompt instruction alone kept not holding, same lesson as
-  // transferCall's own rejectionPlan above. Confirmed against Vapi's own
-  // OpenAPI schema that CreateEndCallToolDTO supports rejectionPlan and
-  // that liquid conditions receive `messages` in OpenAI chat-completions
-  // shape (role/content).
+  // transferCall's own rejectionPlan above.
   //
-  // CONFIRMED LIVE, 2026-09-11 (the very next test call after this
-  // shipped): this did NOT fire. A real "Booked for Friday 2:00 PM" result
-  // came back, Iris invoked endCall ~1.3s later with zero words spoken in
-  // between, and the tool_call_result was "Success." — the rejectionPlan
-  // never blocked it. Leading hypothesis, not yet confirmed: Vapi's docs
+  // CONFIRMED LIVE, 2026-09-11, this exact version did NOT fire: a real
+  // "Booked for Friday 2:00 PM" result came back, Iris invoked endCall
+  // ~1.3s later with zero words spoken in between, and the tool succeeded
+  // — the rejectionPlan never blocked it. Leading hypothesis: Vapi's docs
   // describe the liquid `messages` variable as carrying role "user",
   // "assistant", "system" — tool-call results may not be included in that
-  // array at all, in which case `msg.content contains 'Booked for'` can
-  // never match anything, since that text only ever exists inside a tool
-  // result, never in something Iris herself says. If true, this condition
-  // is currently inert (fails open — harmless, but provides none of the
-  // protection the comments below describe). Left in place rather than
-  // removed since it's not actively harmful and may be salvageable, but
-  // do NOT treat it as a working safeguard until this is actually
-  // re-verified live — the prompt-level rules are the only confirmed-real
-  // protection right now.
+  // array at all, in which case checking for the literal tool-result text
+  // "Booked for" could never match anything, since that string only ever
+  // existed inside a tool result, never in something Iris herself said.
   //
-  // Extended same day, Mark's instruction: Iris must never hang up on her
-  // own unless she's actually finished confirming the appointment WITH the
-  // lead — not just spoken the day/time, but heard back from them
-  // afterward — the only exception being a genuinely unresponsive lead,
-  // which already ends with the exact "I'll hold off for now" line per the
-  // prompt's own two-check-in rule. So this now rejects in TWO cases: (1)
-  // a real booking happened and no assistant turn since ever said a
-  // day/time at all (the original bug), or (2) a real booking happened, the
-  // day/time WAS said, but nothing followed it — no reply from the lead,
-  // and Iris hasn't reached that exact final "gone quiet" line either.
-  // Deliberately does NOT require a user reply unconditionally — that would
-  // strand a genuinely ghosted lead's call forever, which is a worse
-  // failure than the bug this is fixing. Never blocks a legitimate endCall
-  // after a successful transfer, an explicit lead goodbye, or an
-  // unresponsive lead who's been through the two-check-in sequence, since
-  // none of those paths ever produce a "Booked for" result to begin with
-  // (transfer/goodbye) or they satisfy the "hold off for now" escape valve
-  // (unresponsive after a booking specifically).
+  // Redesigned same day around the book_appointment/check_availability
+  // split above: rather than looking for tool-result text that may not be
+  // visible here, this now looks for Vapi's OWN guaranteed spoken
+  // confirmation ("you're all booked") — genuinely assistant-role content,
+  // not a tool result, so far more likely to actually be in scope for a
+  // liquid condition. Combined with Mark's instruction that Iris must
+  // never hang up on her own until she's actually heard back from the
+  // lead afterward (or the lead's gone quiet, ending with the exact "I'll
+  // hold off for now" line from the two-check-in rule): rejects unless
+  // EITHER a user message follows that confirmation, or the "hold off for
+  // now" line was reached. Never blocks a legitimate endCall after a
+  // successful transfer, an explicit lead goodbye, or an unresponsive
+  // lead who's been through the two-check-in sequence, since none of
+  // those paths ever produce the "you're all booked" confirmation to
+  // begin with (transfer/goodbye) or they satisfy the escape valve.
+  // Still unverified against a real live call — watch the next test.
   tools.push({
     type: "endCall",
     rejectionPlan: {
@@ -409,27 +451,23 @@ export function buildCallPayload(
         {
           type: "liquid",
           liquid:
-            "{%- assign bookedForFound = false -%}" +
-            "{%- assign confirmedAfter = false -%}" +
+            "{%- assign bookedFound = false -%}" +
             "{%- assign heardBack = false -%}" +
             "{%- for msg in messages -%}" +
-            "{%- if msg.content contains 'Booked for' -%}" +
-            "{%- assign bookedForFound = true -%}" +
-            "{%- endif -%}" +
-            "{%- if bookedForFound and msg.role == 'assistant' -%}" +
+            "{%- if msg.role == 'assistant' -%}" +
             "{%- assign c = msg.content | downcase -%}" +
-            "{%- if c contains 'monday' or c contains 'tuesday' or c contains 'wednesday' or c contains 'thursday' or c contains 'friday' or c contains 'saturday' or c contains 'sunday' or c contains 'today' or c contains 'tonight' or c contains 'tomorrow' -%}" +
-            "{%- assign confirmedAfter = true -%}" +
+            "{%- if c contains \"you're all booked\" -%}" +
+            "{%- assign bookedFound = true -%}" +
             "{%- endif -%}" +
-            "{%- if confirmedAfter and c contains 'hold off for now' -%}" +
+            "{%- if bookedFound and c contains 'hold off for now' -%}" +
             "{%- assign heardBack = true -%}" +
             "{%- endif -%}" +
             "{%- endif -%}" +
-            "{%- if confirmedAfter and msg.role == 'user' -%}" +
+            "{%- if bookedFound and msg.role == 'user' -%}" +
             "{%- assign heardBack = true -%}" +
             "{%- endif -%}" +
             "{%- endfor -%}" +
-            "{%- if bookedForFound and heardBack == false -%}true{%- else -%}false{%- endif -%}",
+            "{%- if bookedFound and heardBack == false -%}true{%- else -%}false{%- endif -%}",
         },
       ],
     },

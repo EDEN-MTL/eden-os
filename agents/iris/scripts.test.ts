@@ -580,18 +580,18 @@ describe("buildLeadQualificationPrompt", () => {
    * same situation.
    */
   describe("calendarAvailable", () => {
-    it("tells Iris to use check_and_book_appointment, never schedule_callback, when a real calendar is available", () => {
+    it("tells Iris to use check_availability and book_appointment, never schedule_callback, when a real calendar is available", () => {
       const prompt = buildLeadQualificationPrompt(IRIS_CONFIG, BLANK_LEAD, "3 Percent East Coast", "St. John's", true, true, true);
-      expect(prompt).toContain("check_and_book_appointment");
+      expect(prompt).toContain("check_availability");
+      expect(prompt).toContain("book_appointment");
       expect(prompt).not.toContain("schedule_callback");
     });
 
-    it("tells Iris never to assume a time is open — the tool decides", () => {
+    it("tells Iris never to assume a time is open — check_availability decides", () => {
       const prompt = buildLeadQualificationPrompt(IRIS_CONFIG, BLANK_LEAD, "3 Percent East Coast", "St. John's", true, true, true);
       expect(prompt).toMatch(/never assume a\s+time\s+is\s+open/i);
-      expect(prompt).toMatch(/the tool tells you/i);
-      expect(prompt).toMatch(/never say a time is available or booked/i);
-      expect(prompt).toMatch(/the tool actually confirmed/i);
+      expect(prompt).toMatch(/check_availability tells you/i);
+      expect(prompt).toMatch(/every isoTime you ever pass to book_appointment/i);
     });
 
     /**
@@ -610,7 +610,8 @@ describe("buildLeadQualificationPrompt", () => {
     it("falls back to schedule_callback when no real calendar is available, even with booking tools on", () => {
       const prompt = buildLeadQualificationPrompt(IRIS_CONFIG, BLANK_LEAD, "3 Percent East Coast", "St. John's", true, true, false);
       expect(prompt).toContain("schedule_callback");
-      expect(prompt).not.toContain("check_and_book_appointment");
+      expect(prompt).not.toContain("check_availability");
+      expect(prompt).not.toContain("book_appointment");
     });
 
     /**
@@ -637,9 +638,9 @@ describe("buildLeadQualificationPrompt", () => {
      */
     it("tells Iris to check the lead's own stated time preference before falling back to her own guess", () => {
       const prompt = buildLeadQualificationPrompt(IRIS_CONFIG, BLANK_LEAD, "3 Percent East Coast", "St. John's", true, true, true);
-      expect(prompt).toMatch(/listen for a day\/time preference from the lead before you book anything/i);
-      expect(prompt).toMatch(/that is your very next\s*\n?check_and_book_appointment attempt/i);
-      expect(prompt).toMatch(/check that time next — their stated preference always wins/i);
+      expect(prompt).toMatch(/listen for a day\/time preference from the lead before you check anything/i);
+      expect(prompt).toMatch(/that is your very next\s*\n?check_availability attempt/i);
+      expect(prompt).toMatch(/check THAT time next via\s+check_availability again — their stated preference always wins/i);
     });
 
     /**
@@ -653,9 +654,9 @@ describe("buildLeadQualificationPrompt", () => {
      */
     it("tells Iris never to blame a fake technical issue on the lead, and to stop retrying after two failures", () => {
       const prompt = buildLeadQualificationPrompt(IRIS_CONFIG, BLANK_LEAD, "3 Percent East Coast", "St. John's", true, true, true);
-      expect(prompt).toMatch(/never repeat words like "technical issue" or "trouble with the/i);
+      expect(prompt).toMatch(/never repeat\s+words like "technical issue" or "trouble with the/i);
       expect(prompt).toMatch(/if it fails twice in a\s*\n?row, stop trying/i);
-      expect(prompt).toMatch(/do not\s*\n?call check_and_book_appointment again this call/i);
+      expect(prompt).toMatch(/do not\s*\n?call book_appointment again\s*\nthis call/i);
     });
 
     /**
@@ -665,10 +666,10 @@ describe("buildLeadQualificationPrompt", () => {
      * second separate appointment nobody wanted. Confirmed live against
      * the real GHL calendar: both appointments existed simultaneously.
      */
-    it("tells Iris never to call check_and_book_appointment again once it's already booked one", () => {
+    it("tells Iris never to call book_appointment again once it's already booked one", () => {
       const prompt = buildLeadQualificationPrompt(IRIS_CONFIG, BLANK_LEAD, "3 Percent East Coast", "St. John's", true, true, true);
-      expect(prompt).toMatch(/NEVER call check_and_book_appointment again\s*\nafter that, for the rest of this call/i);
-      expect(prompt).toMatch(/this tool can only create appointments,\s*\nnever move or cancel one/i);
+      expect(prompt).toMatch(/NEVER call book_appointment again after a\s*\nsuccess, for the rest of this call/i);
+      expect(prompt).toMatch(/it can only create appointments, never move or cancel\s*\none/i);
     });
   });
 
@@ -711,7 +712,7 @@ describe("buildLeadQualificationPrompt", () => {
       const prompt = buildLeadQualificationPrompt(IRIS_CONFIG, BLANK_LEAD, "3 Percent East Coast", "St. John's", false, true, false);
       expect(prompt).toMatch(/never end the call unless ONE of these is actually true/i);
       expect(prompt).toMatch(/the lead was successfully connected via live transfer/i);
-      expect(prompt).toMatch(/a real appointment was actually confirmed booked/i);
+      expect(prompt).toMatch(/a real appointment or callback was actually confirmed/i);
     });
 
     /**
@@ -729,14 +730,19 @@ describe("buildLeadQualificationPrompt", () => {
 
     /**
      * Mark's request, 2026-09-09: an abrupt bare "Goodbye" right after
-     * booking an appointment feels rude — the lead should feel the call
-     * wrapped up naturally (thanked, offered a text-back option), not that
-     * they were suddenly disconnected.
+     * booking an appointment feels rude. That closing used to be something
+     * Iris composed herself (six approved variants) — as of 2026-09-11,
+     * after this exact confirmation went unspoken on three separate real
+     * calls despite prompt fixes, Vapi speaks a guaranteed confirmation
+     * automatically instead (see calling.ts's book_appointment wiring and
+     * its own test). This checks the prompt tells Iris NOT to add her own
+     * version on top of it, not that she composes one herself anymore.
      */
-    it("tells Iris to give a full thank-you closing after a booked appointment, not a bare goodbye", () => {
-      const prompt = buildLeadQualificationPrompt(IRIS_CONFIG, BLANK_LEAD, "3 Percent East Coast", "St. John's", false, true, false);
-      expect(prompt).toMatch(/that one goodbye line should\s*\nbe a full closing, not a bare "Goodbye"/i);
-      expect(prompt).toContain("Thanks so much for your time today. If you have any other questions, just text us at this number.");
+    it("tells Iris not to add her own closing on top of Vapi's guaranteed booking confirmation", () => {
+      const prompt = buildLeadQualificationPrompt(IRIS_CONFIG, BLANK_LEAD, "3 Percent East Coast", "St. John's", true, true, true);
+      expect(prompt).toMatch(/vapi speaks a guaranteed\s+confirmation automatically/i);
+      expect(prompt).toMatch(/say NOTHING right after that tool\s+succeeds/i);
+      expect(prompt).toMatch(/don't second-guess it or\s+add your own version on top/i);
     });
   });
 
