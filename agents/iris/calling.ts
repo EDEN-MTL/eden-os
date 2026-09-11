@@ -365,9 +365,24 @@ export function buildCallPayload(
   // transferCall's own rejectionPlan above. Confirmed against Vapi's own
   // OpenAPI schema that CreateEndCallToolDTO supports rejectionPlan and
   // that liquid conditions receive `messages` in OpenAI chat-completions
-  // shape (role/content) — NOT yet confirmed against a real live call,
-  // unlike transferCall's regex conditions; watch the next test call
-  // closely.
+  // shape (role/content).
+  //
+  // CONFIRMED LIVE, 2026-09-11 (the very next test call after this
+  // shipped): this did NOT fire. A real "Booked for Friday 2:00 PM" result
+  // came back, Iris invoked endCall ~1.3s later with zero words spoken in
+  // between, and the tool_call_result was "Success." — the rejectionPlan
+  // never blocked it. Leading hypothesis, not yet confirmed: Vapi's docs
+  // describe the liquid `messages` variable as carrying role "user",
+  // "assistant", "system" — tool-call results may not be included in that
+  // array at all, in which case `msg.content contains 'Booked for'` can
+  // never match anything, since that text only ever exists inside a tool
+  // result, never in something Iris herself says. If true, this condition
+  // is currently inert (fails open — harmless, but provides none of the
+  // protection the comments below describe). Left in place rather than
+  // removed since it's not actively harmful and may be salvageable, but
+  // do NOT treat it as a working safeguard until this is actually
+  // re-verified live — the prompt-level rules are the only confirmed-real
+  // protection right now.
   //
   // Extended same day, Mark's instruction: Iris must never hang up on her
   // own unless she's actually finished confirming the appointment WITH the
