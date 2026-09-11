@@ -168,6 +168,13 @@ export interface VapiTransferCallTool {
           provider: string;
           model: string;
           messages: { role: "system"; content: string }[];
+          // Confirmed live against Vapi's own OpenAPI schema (TransferAssistantModel),
+          // 2026-09-12: transferSuccessful/transferCancel are ALWAYS added
+          // automatically regardless of what's given here — this is purely
+          // for ADDITIONAL custom function tools during the warm-transfer
+          // whisper stage (e.g. agent identification — see calling.ts's
+          // match_transfer_agent/assign_transfer_owner).
+          tools?: VapiFunctionTool[];
         };
       };
       fallbackPlan: { message: string; endCallEnabled: false };

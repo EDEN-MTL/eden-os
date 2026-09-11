@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { resolveRequestedTime, parseToolArguments, ToolCall } from "./vapi-tools";
+import { resolveRequestedTime, parseToolArguments, matchTransferAgentCandidates, ToolCall } from "./vapi-tools";
+import { GhlUser } from "../shared/ghl";
 
 /**
  * Round two of this bug, 2026-09-08. First fix assumed Vapi's own OpenAPI
@@ -85,5 +86,54 @@ describe("resolveRequestedTime", () => {
 
   it("returns null for an unparseable string", () => {
     expect(resolveRequestedTime("not a time", "America/Toronto")).toBeNull();
+  });
+});
+
+/**
+ * Mark's spec, 2026-09-12: post-transfer agent identification. "Andrew"
+ * spoken should match a real "Andrew Fleming" user; an exact full name
+ * should match too; two real Andrews should come back as both candidates
+ * (ambiguous) rather than silently picking one — the confirmation step in
+ * calling.ts's transferAssistant prompt depends on getting real candidates
+ * back, not a single silent guess.
+ */
+describe("matchTransferAgentCandidates", () => {
+  const andrewFleming: GhlUser = { id: "u1", firstName: "Andrew", lastName: "Fleming", name: "Andrew Fleming" };
+  const andrewSmith: GhlUser = { id: "u2", firstName: "Andrew", lastName: "Smith", name: "Andrew Smith" };
+  const jason: GhlUser = { id: "u3", firstName: "Jason", lastName: "Lee", name: "Jason Lee" };
+  const roster = [andrewFleming, andrewSmith, jason];
+
+  it("matches a bare first name to the one real user with that first name", () => {
+    expect(matchTransferAgentCandidates("Jason", [jason])).toEqual([jason]);
+  });
+
+  it("matches an exact full name", () => {
+    expect(matchTransferAgentCandidates("Andrew Fleming", roster)).toEqual([andrewFleming]);
+  });
+
+  it("is case-insensitive", () => {
+    expect(matchTransferAgentCandidates("jason lee", roster)).toEqual([jason]);
+    expect(matchTransferAgentCandidates("JASON", roster)).toEqual([jason]);
+  });
+
+  it("returns every candidate when a first name matches more than one real user, rather than guessing one", () => {
+    const result = matchTransferAgentCandidates("Andrew", roster);
+    expect(result).toHaveLength(2);
+    expect(result).toEqual(expect.arrayContaining([andrewFleming, andrewSmith]));
+  });
+
+  it("returns no candidates for a name that matches nobody real", () => {
+    expect(matchTransferAgentCandidates("Xavier", roster)).toEqual([]);
+  });
+
+  it("returns no candidates for an empty or blank name", () => {
+    expect(matchTransferAgentCandidates("", roster)).toEqual([]);
+    expect(matchTransferAgentCandidates("   ", roster)).toEqual([]);
+  });
+
+  it("falls back to a loose substring match for a partially-heard name", () => {
+    // "Flemish" as a mishearing of "Fleming" — the exact scenario the
+    // spec's own "reality check" section calls out.
+    expect(matchTransferAgentCandidates("Fleming", roster)).toEqual([andrewFleming]);
   });
 });

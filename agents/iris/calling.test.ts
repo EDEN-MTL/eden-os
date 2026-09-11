@@ -268,6 +268,70 @@ describe("buildCallPayload", () => {
       const payload = buildCallPayload(BASE_PARAMS, VAPI_CONFIG);
       expect(payload.assistant.model.tools?.find((t) => t.type === "transferCall")).toBeUndefined();
     });
+
+    /**
+     * Mark's spec, 2026-09-12: once a live transfer connects, identify who
+     * picked up and assign the lead to them in the CRM. Confirmed live
+     * against Vapi's own OpenAPI schema (TransferAssistantModel) that its
+     * `tools` array is real and additive to transferSuccessful/transferCancel.
+     */
+    describe("post-transfer agent identification", () => {
+      const withContact: PlaceCallParams = { ...BASE_PARAMS, transferNumber: "+17097058841", contactId: "contact-1" };
+
+      function transferTool(payload: ReturnType<typeof buildCallPayload>) {
+        const tool = payload.assistant.model.tools?.find((t) => t.type === "transferCall");
+        if (tool?.type !== "transferCall") throw new Error("expected transferCall tool");
+        return tool;
+      }
+
+      it("wires match_transfer_agent and assign_transfer_owner on the transfer assistant when a real contactId exists", () => {
+        const payload = buildCallPayload(withContact, VAPI_CONFIG);
+        const tools = transferTool(payload).destinations[0].transferPlan.transferAssistant.model.tools;
+        const names = tools?.map((t) => t.function.name);
+        expect(names).toEqual(["match_transfer_agent", "assign_transfer_owner"]);
+      });
+
+      it("omits the identification tools entirely when there's no real contactId to assign", () => {
+        const payload = buildCallPayload({ ...BASE_PARAMS, transferNumber: "+17097058841" }, VAPI_CONFIG);
+        const tools = transferTool(payload).destinations[0].transferPlan.transferAssistant.model.tools;
+        expect(tools).toBeUndefined();
+      });
+
+      it("requires a spokenName argument for match_transfer_agent, read-only, no messages", () => {
+        const payload = buildCallPayload(withContact, VAPI_CONFIG);
+        const tools = transferTool(payload).destinations[0].transferPlan.transferAssistant.model.tools;
+        const match = tools?.find((t) => t.function.name === "match_transfer_agent");
+        expect(match?.function.parameters.required).toEqual(["spokenName"]);
+        expect(match?.messages).toBeUndefined();
+      });
+
+      it("makes matchedUserId optional on assign_transfer_owner, for the genuine no-match fallback", () => {
+        const payload = buildCallPayload(withContact, VAPI_CONFIG);
+        const tools = transferTool(payload).destinations[0].transferPlan.transferAssistant.model.tools;
+        const assign = tools?.find((t) => t.function.name === "assign_transfer_owner");
+        expect(assign?.function.parameters.properties).toHaveProperty("matchedUserId");
+        expect(assign?.function.parameters.required ?? []).not.toContain("matchedUserId");
+      });
+
+      it("bakes clientId and contactId into both identification tools' server URLs", () => {
+        const payload = buildCallPayload(withContact, VAPI_CONFIG);
+        const tools = transferTool(payload).destinations[0].transferPlan.transferAssistant.model.tools;
+        for (const tool of tools ?? []) {
+          const url = new URL(tool.server.url);
+          expect(url.searchParams.get("clientId")).toBe("3-percent-east-coast");
+          expect(url.searchParams.get("contactId")).toBe("contact-1");
+        }
+      });
+
+      it("tells the transfer assistant to confirm a matched name before assigning, and never to guess", () => {
+        const payload = buildCallPayload(withContact, VAPI_CONFIG);
+        const briefingPrompt = transferTool(payload).destinations[0].transferPlan.transferAssistant.model.messages[0].content;
+        expect(briefingPrompt).toMatch(/call match_transfer_agent with exactly what they said/i);
+        expect(briefingPrompt).toMatch(/NEVER call assign_transfer_owner before the operator has explicitly confirmed/i);
+        expect(briefingPrompt).toMatch(/AMBIGUOUS/);
+        expect(briefingPrompt).toMatch(/NO_MATCH/);
+      });
+    });
   });
 
   describe("schedule_callback tool", () => {

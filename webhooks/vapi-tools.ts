@@ -1,6 +1,6 @@
 import crypto from "crypto";
 import { Request, Response, Router } from "express";
-import { getGhlConfig, addContactTags, updateContact, getCustomFieldDefs, getCalendarSlots, createAppointment, updateAppointment, listCalendarEvents, getLocationTimezone } from "../shared/ghl";
+import { getGhlConfig, addContactTags, updateContact, getCustomFieldDefs, getCalendarSlots, createAppointment, updateAppointment, listCalendarEvents, listLocationUsers, getLocationTimezone, GhlUser } from "../shared/ghl";
 import { buildKeyToId } from "../agents/scout/intake";
 import { loadIrisConfig } from "../agents/iris";
 import { scheduleExplicitCallback } from "../agents/iris/dial-pending";
@@ -592,6 +592,102 @@ async function handleRescheduleAppointment(
   };
 }
 
+/**
+ * Fuzzy-matches a spoken name against the real team roster. Mark's spec,
+ * 2026-09-12: "Andrew" should match "Andrew Fleming"; an exact full-name
+ * utterance should match too; ambiguous cases (two Andrews) come back as
+ * more than one candidate so the caller can ask which one, rather than
+ * silently picking one.
+ *
+ * Exported for direct unit testing — pure, no network — since the handler
+ * itself needs a real GHL account to exercise end to end (same reasoning
+ * as handleBookAppointment/handleCheckAvailability not being unit tested).
+ */
+export function matchTransferAgentCandidates(spokenName: string, users: GhlUser[]): GhlUser[] {
+  const spoken = spokenName.trim().toLowerCase();
+  if (!spoken) return [];
+
+  const exactFull = users.filter((u) => u.name.toLowerCase() === spoken);
+  if (exactFull.length > 0) return exactFull;
+
+  const firstNameMatches = users.filter((u) => u.firstName.toLowerCase() === spoken);
+  if (firstNameMatches.length > 0) return firstNameMatches;
+
+  // Loose fallback for a partially-heard or slightly mangled name.
+  return users.filter((u) => u.name.toLowerCase().includes(spoken) || spoken.includes(u.firstName.toLowerCase()));
+}
+
+/**
+ * Read-only — never assigns anything itself, same split pattern as
+ * check_availability/book_appointment. See matchTransferAgentCandidates
+ * for the actual matching logic; this just resolves the live roster and
+ * turns the result into guidance the model can act on.
+ */
+async function handleMatchTransferAgent(clientId: string, spokenName: unknown): Promise<string> {
+  if (typeof spokenName !== "string" || !spokenName.trim()) {
+    return "No name was given — this is an error in how you called the tool. Ask the operator their name again, then call this tool with what they say.";
+  }
+
+  const ghlConfig = await getGhlConfig(clientId);
+  if (!ghlConfig) {
+    return "Could not check the team roster right now — do not guess or invent a match. Tell the operator you'll make sure the lead gets logged correctly, and continue the transfer normally.";
+  }
+
+  let users: GhlUser[];
+  try {
+    users = await listLocationUsers(ghlConfig.locationId, ghlConfig.apiKey);
+  } catch (error) {
+    console.error(`[VAPI-TOOLS] listLocationUsers failed for ${clientId}:`, error instanceof Error ? error.message : error);
+    return "Could not check the team roster right now — do not guess or invent a match. Tell the operator you'll make sure the lead gets logged correctly, and continue the transfer normally.";
+  }
+
+  const candidates = matchTransferAgentCandidates(spokenName, users);
+
+  if (candidates.length === 1) {
+    const u = candidates[0];
+    return `MATCH: id="${u.id}" name="${u.name}" — confirm this exact name with the operator before doing anything else (e.g. "Got it, is this ${u.name}?"). Only call assign_transfer_owner with this id once they clearly say yes. If they say no, ask for their name again and call this tool again with what they say.`;
+  }
+
+  if (candidates.length > 1) {
+    const names = candidates.map((u) => `"${u.name}" (id="${u.id}")`).join(", ");
+    return `AMBIGUOUS: multiple team members match "${spokenName}" — ${names}. Ask the operator which one they are by name, then call this tool again with their full answer.`;
+  }
+
+  return `NO_MATCH: no team member found matching "${spokenName}". Ask the operator to repeat their name once, then call this tool again with what they say. If this is the second time in a row you've gotten NO_MATCH for this call, stop retrying — call assign_transfer_owner with no matchedUserId instead, and continue the transfer normally.`;
+}
+
+/**
+ * The ONLY tool that actually changes anything — sets the contact's real
+ * owner once a name has been explicitly confirmed, or tags the lead for
+ * manual follow-up when the operator's identity couldn't be resolved.
+ * matchedUserId must be an id handleMatchTransferAgent's own MATCH/AMBIGUOUS
+ * result already produced — the model is never trusted to invent or retype
+ * one, same principle as book_appointment's isoTime.
+ */
+async function handleAssignTransferOwner(clientId: string, contactId: string, matchedUserId: unknown): Promise<string> {
+  const ghlConfig = await getGhlConfig(clientId);
+  if (!ghlConfig) {
+    return "Could not reach the CRM right now — continue the call normally, a teammate will fix the assignment directly.";
+  }
+
+  const userId = typeof matchedUserId === "string" && matchedUserId.trim() ? matchedUserId.trim() : null;
+
+  try {
+    if (userId) {
+      await updateContact(contactId, { assignedTo: userId }, ghlConfig.locationId, ghlConfig.apiKey);
+    } else {
+      await addContactTags(contactId, ["transfer_unassigned"], ghlConfig.locationId, ghlConfig.apiKey);
+    }
+  } catch (error) {
+    console.error(`[VAPI-TOOLS] assign_transfer_owner failed for ${clientId}/${contactId}:`, error instanceof Error ? error.message : error);
+    return "Could not update the CRM right now — continue the call normally, a teammate will fix the assignment directly.";
+  }
+
+  return userId
+    ? "Lead assigned to the confirmed team member. Continue the call normally — no need to mention this to the operator."
+    : "Lead tagged for manual follow-up. Continue the call normally — no need to mention this to the operator.";
+}
+
 function createToolHandler(handler: (query: Record<string, string>, call: ToolCall) => Promise<string>) {
   return async (req: Request, res: Response) => {
     const secret = process.env.VAPI_WEBHOOK_SECRET;
@@ -689,6 +785,16 @@ export function createVapiToolsRouter(): Router {
     createBookAppointmentHandler(async (query, call) =>
       handleRescheduleAppointment(query.clientId, query.contactId, query.calendarId, parseToolArguments(call).isoTime)
     )
+  );
+
+  router.post(
+    "/match-transfer-agent",
+    createToolHandler(async (query, call) => handleMatchTransferAgent(query.clientId, parseToolArguments(call).spokenName))
+  );
+
+  router.post(
+    "/assign-transfer-owner",
+    createToolHandler(async (query, call) => handleAssignTransferOwner(query.clientId, query.contactId, parseToolArguments(call).matchedUserId))
   );
 
   return router;

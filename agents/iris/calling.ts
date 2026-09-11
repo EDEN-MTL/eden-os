@@ -19,7 +19,7 @@
  * it here once a fresh re-check confirms the lead still hasn't been
  * touched). Both go through the same two gates below either way.
  */
-import { createCall, getVapiEnvConfig, CreateCallPayload, VapiCallResult, VapiTool } from "../../shared/vapi";
+import { createCall, getVapiEnvConfig, CreateCallPayload, VapiCallResult, VapiTool, VapiFunctionTool } from "../../shared/vapi";
 import { query } from "../../shared/db";
 import { isCallingEnabled } from "./calling-settings";
 import { CallIntent } from "./qualification";
@@ -165,6 +165,96 @@ export function buildCallPayload(
   if (params.transferNumber) {
     const audience = params.intent === "seller" || params.intent === "downsize" ? "seller" : "buyer";
     const briefing = buildAgentBriefing(params, audience);
+
+    // Mark's spec, 2026-09-12: once a live transfer connects, identify
+    // which real team member picked up and assign the lead to them in the
+    // CRM — rather than leaving every transferred lead's owner unset.
+    // Wired only when there's a real contactId to assign (same gate as the
+    // booking tools) — match_transfer_agent/assign_transfer_owner have
+    // nothing to act on otherwise (e.g. scripts/test-iris-call.ts's bare
+    // connectivity test has no real contact). Confirmed live, 2026-09-12,
+    // against Vapi's own OpenAPI schema (TransferAssistantModel): the
+    // transferAssistant's own `tools` array is real and additive —
+    // transferSuccessful/transferCancel stay available regardless.
+    const transferToolsQs = new URLSearchParams({ clientId: params.clientId, contactId: params.contactId || "" }).toString();
+    const identificationTools: VapiFunctionTool[] =
+      vapiConfig.serverUrl && params.contactId
+        ? [
+            {
+              type: "function",
+              function: {
+                name: "match_transfer_agent",
+                description:
+                  "Matches a spoken name against the REAL team roster for this location — never books, " +
+                  "assigns, or changes anything itself. Call this the moment the operator gives their name, " +
+                  "before greeting them or giving the briefing. Returns MATCH (one confident real match), " +
+                  "AMBIGUOUS (more than one real match — ask which), or NO_MATCH (no real match at all).",
+                parameters: {
+                  type: "object",
+                  properties: {
+                    spokenName: {
+                      type: "string",
+                      description: "Exactly what the operator said when asked their name — never your own guess or a name you invented.",
+                    },
+                  },
+                  required: ["spokenName"],
+                },
+              },
+              server: { url: `${vapiConfig.serverUrl}/tools/match-transfer-agent?${transferToolsQs}`, secret: vapiConfig.webhookSecret },
+            },
+            {
+              type: "function",
+              function: {
+                name: "assign_transfer_owner",
+                description:
+                  "Actually assigns this lead to a real team member in the CRM — the ONLY tool that does " +
+                  "this. Only ever call this with a matchedUserId you already got back from " +
+                  "match_transfer_agent's own MATCH or AMBIGUOUS result, copied character for character — " +
+                  "never one you typed or guessed yourself. Omit matchedUserId entirely only after a genuine " +
+                  "NO_MATCH that didn't resolve even after one retry — this tags the lead for manual " +
+                  "follow-up instead of guessing.",
+                parameters: {
+                  type: "object",
+                  properties: {
+                    matchedUserId: {
+                      type: "string",
+                      description: "The exact id from match_transfer_agent's MATCH/AMBIGUOUS result — omit only when giving up after NO_MATCH.",
+                    },
+                  },
+                },
+              },
+              server: { url: `${vapiConfig.serverUrl}/tools/assign-transfer-owner?${transferToolsQs}`, secret: vapiConfig.webhookSecret },
+            },
+          ]
+        : [];
+
+    const agentIdentificationClause =
+      identificationTools.length > 0
+        ? ` Before greeting them by name, you have one extra step: match their name to a real team ` +
+          `member so the lead gets assigned correctly. The moment they give you their name, call ` +
+          `match_transfer_agent with exactly what they said — never guess who it might be yourself. ` +
+          `- If it comes back MATCH (one confident real match): confirm the EXACT name it gave you ` +
+          `before doing anything else — pick ONE, vary each time: "Got it, is this [name]?" / "Just to ` +
+          `confirm, I have [name], right?" / "Perfect — [name], correct?" (always the real name from the ` +
+          `tool's own result, never your own guess or expansion of what they said). If they confirm, call ` +
+          `assign_transfer_owner with that exact id. If they say no, ask them to repeat their name ("Sorry, ` +
+          `I didn't catch that — can you repeat your name?") and call match_transfer_agent again with ` +
+          `whatever they say next. ` +
+          `- If it comes back AMBIGUOUS (multiple real matches): ask the clarifying question using the ` +
+          `ACTUAL candidate names it gave you, e.g. "I have a couple of Andrews — just to confirm, is this ` +
+          `Andrew Fleming or Andrew Smith?" Once they pick one, confirm it the same way as a single match, ` +
+          `then call assign_transfer_owner with that person's id. ` +
+          `- If it comes back NO_MATCH: ask them to repeat their name once ("Sorry, can you repeat your ` +
+          `name?"), then call match_transfer_agent again with what they say. If it's STILL NO_MATCH after ` +
+          `that one retry, stop trying — call assign_transfer_owner with no matchedUserId at all, and move ` +
+          `on with the call exactly as normal. Never guess a name or invent a match just to avoid this ` +
+          `outcome. ` +
+          `NEVER call assign_transfer_owner before the operator has explicitly confirmed a specific name ` +
+          `(or you've genuinely exhausted the one retry above) — assigning the wrong person is worse than ` +
+          `leaving it unassigned for a teammate to fix. Keep this whole exchange quick, a couple of extra ` +
+          `turns, not a new conversation.`
+        : "";
+
     tools.push({
       type: "transferCall",
       // Structural backup for the prompt's own "say the line, wait, only
@@ -251,7 +341,8 @@ export function buildCallPayload(
                       "bare \"Hi!\" on your behalf automatically — that isn't something you choose to say, " +
                       "it just happens. Either way, once it's your turn, react to whatever they actually " +
                       `said, then ask "This is Iris with ${params.brandName}. Who am I speaking with?" and ` +
-                      "wait for their name. Greet them by name once given (e.g. \"Hi Jason\"), then " +
+                      `wait for their name.${agentIdentificationClause} Greet them by name once given (e.g. ` +
+                      "\"Hi Jason\"), then " +
                       `immediately give this exact briefing, adjusting only for natural phrasing: "${briefing}" ` +
                       "— then confirm they're ready to take the call. Once they confirm, say ONE bridging " +
                       "line out loud before doing anything else — something like \"Perfect, connecting you " +
@@ -278,6 +369,7 @@ export function buildCallPayload(
                       "reading a spreadsheet cell.",
                   },
                 ],
+                tools: identificationTools.length > 0 ? identificationTools : undefined,
               },
             },
             // endCallEnabled: false is what returns control to Iris (rather
