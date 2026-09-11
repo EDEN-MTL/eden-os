@@ -5,6 +5,7 @@ import { eventBus } from "../../shared/events";
 import { NormalisedLead } from "../scout/intake";
 import { IrisConfig } from "./qualification";
 import { query } from "../../shared/db";
+import { clampToLegalCallingWindow } from "./cadence";
 
 class IrisAgent extends BaseAgent {
   constructor() {
@@ -181,15 +182,24 @@ eventBus.subscribe("lead.enriched", async (event) => {
   }
 
   try {
+    // Mark's instruction, 2026-09-11: real calling-hours compliance — the
+    // 5-minute SMS-head-start delay alone has no time-of-day check at all,
+    // so a lead who fills out a form at 2am would otherwise get called at
+    // 2:05am. Computed in JS (not a plain SQL interval) so
+    // clampToLegalCallingWindow can push it to the next 8am-9pm window, in
+    // the CLIENT's own configured business timezone, when it lands outside
+    // one.
+    const timeZone = config.timezone || "America/St_Johns";
+    const callAfter = clampToLegalCallingWindow(new Date(Date.now() + CALL_DELAY_MINUTES * 60 * 1000), timeZone);
     await query(
       `INSERT INTO iris_pending_calls (client_id, contact_id, lead, call_after)
-       VALUES ($1, $2, $3, now() + interval '${CALL_DELAY_MINUTES} minutes')
+       VALUES ($1, $2, $3, $4)
        ON CONFLICT (client_id, contact_id) DO NOTHING`,
-      [event.clientId, lead.contactId, JSON.stringify(lead)]
+      [event.clientId, lead.contactId, JSON.stringify(lead), callAfter]
     );
     console.log(
-      `[IRS] Queued a dial for ${lead.name || lead.contactId} (${lead.phone}) in ${CALL_DELAY_MINUTES} minutes ` +
-        `— waiting for the GHL SMS automation to send first.`
+      `[IRS] Queued a dial for ${lead.name || lead.contactId} (${lead.phone}) at ${callAfter.toISOString()} ` +
+        `— waiting for the GHL SMS automation to send first, and for a legal calling hour.`
     );
   } catch (error) {
     console.error(`[IRS] Failed to queue dial for ${lead.contactId}:`, error instanceof Error ? error.message : error);

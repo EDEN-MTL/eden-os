@@ -115,6 +115,54 @@ function zonedHourToUtc(year: number, monthIndex: number, day: number, hour: num
   return new Date(asIfUtc + offsetMs);
 }
 
+/** 8am–9pm, Mark's explicit instruction, 2026-09-11 — see clampToLegalCallingWindow. */
+const LEGAL_CALLING_START_HOUR = 8;
+const LEGAL_CALLING_END_HOUR = 21;
+
+/**
+ * Pushes a candidate instant forward to the next legal calling window
+ * (8am-9pm, in the CLIENT's own configured business timezone — never the
+ * lead's, which this system doesn't reliably know) if it falls outside
+ * that window. Real compliance requirement, not a UX nicety: contacting a
+ * consumer outside a defined daily window is restricted regardless of how
+ * the timing was arrived at. Three real gaps this closes, all confirmed
+ * live, 2026-09-11: the immediate ~5-minute post-intake dial
+ * (agents/iris/index.ts) had no time-of-day check at all — a lead who
+ * fills out a form at 2am got called at 2:05am; dial-pending.ts's
+ * already-past-the-slot retry fallback ("try again in 5 minutes") had the
+ * same gap; and a lead's own stated callback preference during a live call
+ * was never checked against business hours before being scheduled.
+ *
+ * Same "render in zone via toLocaleString, read back with local getters"
+ * technique as nextAttemptTime below — the server's own getHours()/getDate()
+ * etc. read as if they were in `timeZone`, not the server's real one, once
+ * the Date has been round-tripped through toLocaleString(..., {timeZone}).
+ */
+export function clampToLegalCallingWindow(candidate: Date, timeZone: string): Date {
+  const inZone = new Date(candidate.toLocaleString("en-US", { timeZone }));
+  const hour = inZone.getHours();
+  if (hour >= LEGAL_CALLING_START_HOUR && hour < LEGAL_CALLING_END_HOUR) return candidate;
+
+  // Before the window opens today → push to 8am today. At/after it closes
+  // → push to 8am tomorrow. Either way, land on 8am exactly.
+  const dayOffset = hour < LEGAL_CALLING_START_HOUR ? 0 : 1;
+  const target = new Date(inZone);
+  target.setDate(target.getDate() + dayOffset);
+  return zonedHourToUtc(target.getFullYear(), target.getMonth(), target.getDate(), LEGAL_CALLING_START_HOUR, timeZone);
+}
+
+/**
+ * Whether a candidate instant already falls within the legal calling
+ * window, without shifting it — for callers that need to reject/ask again
+ * rather than silently reschedule (a lead's own explicitly stated callback
+ * time shouldn't be silently moved without telling them; see
+ * webhooks/vapi-tools.ts's handleScheduleCallback).
+ */
+export function isWithinLegalCallingWindow(candidate: Date, timeZone: string): boolean {
+  const hour = new Date(candidate.toLocaleString("en-US", { timeZone })).getHours();
+  return hour >= LEGAL_CALLING_START_HOUR && hour < LEGAL_CALLING_END_HOUR;
+}
+
 /**
  * Wall-clock time for a given attempt, in the client's timezone. Attempt 1
  * always returns null — it's the immediate ~5-minute-after-intake dial

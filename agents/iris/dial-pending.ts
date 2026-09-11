@@ -27,7 +27,7 @@ import { NormalisedLead } from "../scout/intake";
 import { loadIrisConfig, loadClientBranding } from "./index";
 import { buildLeadQualificationPrompt } from "./scripts";
 import { placeCall, CallingDisabledError } from "./calling";
-import { decideNextAttempt, nextAttemptTime } from "./cadence";
+import { decideNextAttempt, nextAttemptTime, clampToLegalCallingWindow } from "./cadence";
 import { transferNumberForIntent, callbackCalendarForIntent } from "./qualification";
 import { getGhlConfig, getLocationTimezone } from "../../shared/ghl";
 
@@ -101,13 +101,17 @@ export async function reopenForNextAttempt(
   const decision = decideNextAttempt(config.outreachCadence, attemptsMade, { firstTouch: true });
   if (decision !== "attempt") return false;
 
-  let callAfter = nextAttemptTime(config.outreachCadence, attemptsMade + 1, createdAt, config.timezone || CLIENT_TIMEZONE);
+  const timeZone = config.timezone || CLIENT_TIMEZONE;
+  let callAfter = nextAttemptTime(config.outreachCadence, attemptsMade + 1, createdAt, timeZone);
   if (!callAfter) return false;
   // Same clamp as the old eager-reschedule path — a lead that comes in
   // outside the 10am-2pm window can make the next slot's theoretical time
-  // already past by the time this runs.
+  // already past by the time this runs. clampToLegalCallingWindow added
+  // 2026-09-11 — this fallback used to be a bare "+5 minutes from now"
+  // with no time-of-day check at all, meaning a retry due at, say, 11pm
+  // could fire immediately instead of waiting for a legal hour.
   if (callAfter.getTime() <= Date.now()) {
-    callAfter = new Date(Date.now() + 5 * 60 * 1000);
+    callAfter = clampToLegalCallingWindow(new Date(Date.now() + 5 * 60 * 1000), timeZone);
   }
 
   await query(
