@@ -680,6 +680,21 @@ describe("buildLeadQualificationPrompt", () => {
     });
 
     /**
+     * Mark's spec, 2026-09-12 (section 36.2): even Iris's own first guessed
+     * time (the "no preference given" branch) must be presented and agreed
+     * to before book_appointment is called — the prior wording had her book
+     * it immediately on a guess, relying only on Vapi's post-booking
+     * confirmation to cover for it. That's a different guarantee (never
+     * hang up unconfirmed) than this one (never book unconfirmed).
+     */
+    it("tells Iris to wait for real agreement before booking even her own first guessed time, never booking on a guess", () => {
+      const prompt = buildLeadQualificationPrompt(IRIS_CONFIG, BLANK_LEAD, "3 Percent East Coast", "St. John's", true, true, true);
+      expect(prompt).toMatch(/then STOP and wait for their\s+actual answer/i);
+      expect(prompt).toMatch(/never book on a\s+guess, even when it's your very own first guessed time/i);
+      expect(prompt).not.toMatch(/don't wait for a reply first/i);
+    });
+
+    /**
      * Confirmed live, 2026-09-06: a real call had Iris stuck in a loop
      * telling the lead "I'm having trouble with the time format" over and
      * over, even after they clearly reconfirmed the same time twice — an
@@ -779,6 +794,21 @@ describe("buildLeadQualificationPrompt", () => {
       expect(prompt).toMatch(/vapi speaks a guaranteed\s+confirmation automatically/i);
       expect(prompt).toMatch(/say NOTHING right after that tool\s+succeeds/i);
       expect(prompt).toMatch(/don't second-guess it or\s+add your own version on top/i);
+    });
+
+    /**
+     * Mark's spec, 2026-09-12 ("END CALL LOGIC — APPOINTMENT CONFIRMED"):
+     * a real question or new concern right after the booking confirmation
+     * is not the same as a closing acknowledgment ("okay", "thanks") —
+     * the prior wording treated any reply at all as permission to hang up,
+     * which would have ended the call over an unanswered question.
+     */
+    it("tells Iris to answer a real question or concern after the booking confirmation, not treat it as permission to hang up", () => {
+      const prompt = buildLeadQualificationPrompt(IRIS_CONFIG, BLANK_LEAD, "3 Percent East Coast", "St. John's", true, true, true);
+      expect(prompt).toMatch(/a real question, hesitation, or new concern is NOT\s+the same as a closing acknowledgment/i);
+      expect(prompt).toMatch(/answer or address it naturally first.*\n.*and do NOT invoke endCall yet/i);
+      expect(prompt).toMatch(/never treat every reply as\s+automatic permission to hang up/i);
+      expect(prompt).toMatch(/never reopen\s+qualification or restart any part of the earlier conversation/i);
     });
   });
 

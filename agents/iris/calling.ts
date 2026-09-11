@@ -27,6 +27,22 @@ import { AGENT_UNAVAILABLE_LINE, buildVoicemailMessage, callOpeningGreeting } fr
 
 export class CallingDisabledError extends Error {}
 
+/**
+ * Mark's spec, 2026-09-12 ("END CALL LOGIC — APPOINTMENT CONFIRMED"):
+ * book_appointment's guaranteed request-complete confirmation, randomized
+ * per call so Iris doesn't sound identical on every booking. Deliberately
+ * every variant contains BOTH "notification" and "text" — the endCall
+ * rejectionPlan below detects any of these by checking for that pair
+ * rather than hardcoding all five phrases.
+ */
+export const BOOKING_CONFIRMATION_LINES = [
+  "Perfect, your appointment is all set. You'll receive a notification with all the details shortly. If you have any questions, just text us back on this number.",
+  "Alright, you're all booked in! You'll get a notification with the details in a bit. If anything comes up, just text us here.",
+  "Great, your appointment has been confirmed. You'll receive a notification shortly with all the details. Feel free to text us at this number if you need anything.",
+  "Awesome, you're all set! You'll get a quick notification with all the info. If you have any questions, just send us a text here.",
+  "Perfect, everything's booked. You'll receive a notification with the details shortly. If anything comes up, just text us anytime.",
+];
+
 export interface PlaceCallParams {
   clientId: string;
   brandName: string;
@@ -368,7 +384,13 @@ export function buildCallPayload(
         {
           type: "request-complete",
           role: "assistant",
-          content: "Perfect, you're all booked! Thanks so much for your time today — if anything comes up, just text us at this number.",
+          // Randomized per call, Mark's spec 2026-09-12 ("END CALL LOGIC —
+          // APPOINTMENT CONFIRMED"): a single fixed line sounded repetitive
+          // call after call. All five variants deliberately share both
+          // "notification" and "text" so the endCall rejectionPlan's liquid
+          // check below can detect any of them without hardcoding five
+          // separate phrases.
+          content: BOOKING_CONFIRMATION_LINES[Math.floor(Math.random() * BOOKING_CONFIRMATION_LINES.length)],
         },
       ],
     });
@@ -431,19 +453,26 @@ export function buildCallPayload(
   // Redesigned same day around the book_appointment/check_availability
   // split above: rather than looking for tool-result text that may not be
   // visible here, this now looks for Vapi's OWN guaranteed spoken
-  // confirmation ("you're all booked") — genuinely assistant-role content,
-  // not a tool result, so far more likely to actually be in scope for a
-  // liquid condition. Combined with Mark's instruction that Iris must
-  // never hang up on her own until she's actually heard back from the
-  // lead afterward (or the lead's gone quiet, ending with the exact "I'll
-  // hold off for now" line from the two-check-in rule): rejects unless
-  // EITHER a user message follows that confirmation, or the "hold off for
-  // now" line was reached. Never blocks a legitimate endCall after a
-  // successful transfer, an explicit lead goodbye, or an unresponsive
-  // lead who's been through the two-check-in sequence, since none of
-  // those paths ever produce the "you're all booked" confirmation to
-  // begin with (transfer/goodbye) or they satisfy the escape valve.
-  // Still unverified against a real live call — watch the next test.
+  // confirmation — genuinely assistant-role content, not a tool result, so
+  // far more likely to actually be in scope for a liquid condition.
+  // Combined with Mark's instruction that Iris must never hang up on her
+  // own until she's actually heard back from the lead afterward (or the
+  // lead's gone quiet, ending with the exact "I'll hold off for now" line
+  // from the two-check-in rule): rejects unless EITHER a user message
+  // follows that confirmation, or the "hold off for now" line was reached.
+  // Never blocks a legitimate endCall after a successful transfer, an
+  // explicit lead goodbye, or an unresponsive lead who's been through the
+  // two-check-in sequence, since none of those paths ever produce this
+  // confirmation to begin with (transfer/goodbye) or they satisfy the
+  // escape valve.
+  //
+  // Updated 2026-09-12 for BOOKING_CONFIRMATION_LINES' 5 randomized
+  // variants: checks for "notification" AND "text" together (every variant
+  // contains both — see that constant's own comment) rather than the single
+  // literal "you're all booked" phrase, which only one of the five variants
+  // still contains. Confirmed live 2026-09-11 with the single-phrase
+  // version of this gate — the mechanism itself (liquid seeing genuinely
+  // spoken assistant content) is proven; this only widens the match.
   tools.push({
     type: "endCall",
     rejectionPlan: {
@@ -456,7 +485,7 @@ export function buildCallPayload(
             "{%- for msg in messages -%}" +
             "{%- if msg.role == 'assistant' -%}" +
             "{%- assign c = msg.content | downcase -%}" +
-            "{%- if c contains \"you're all booked\" -%}" +
+            "{%- if c contains 'notification' and c contains 'text' -%}" +
             "{%- assign bookedFound = true -%}" +
             "{%- endif -%}" +
             "{%- if bookedFound and c contains 'hold off for now' -%}" +
