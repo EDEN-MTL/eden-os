@@ -258,6 +258,21 @@ export const TRANSFER_REINFORM_LINES = [
 ];
 
 /**
+ * Mark's spec, 2026-09-12: the acknowledgment right before check_availability
+ * when the lead has just named their own preferred time — varied so it
+ * doesn't read as the same canned line every call. None of these imply the
+ * time is actually available; that's still check_availability's job.
+ */
+export const CHECK_AVAILABILITY_ACK_LINES = [
+  "Absolutely, let me quickly check if that time is available.",
+  "Sure, let me see if we have that time open.",
+  "Yeah, I can check that for you. One second.",
+  "Sounds good. Let me quickly check whether that time is available.",
+  "Okay, let me check if we can make that time work.",
+  "Got it. Let me take a quick look and see if that time is open.",
+];
+
+/**
  * Open question rather than pre-checked slots — there's no calendar behind
  * this anymore (see qualification.ts's callbackNotesFieldKey doc comment):
  * whatever day/time the lead names here is what gets scheduled directly via
@@ -620,10 +635,14 @@ lead had just asked for. Whenever the lead has told you ANY specific
 day/time — however you found out — that is your very next
 check_availability attempt: work out the exact moment relative to the
 current date/time above and check THAT time, never a guess of your own
-instead. Right before you call it with a time the lead just named, one
-brief, natural acknowledgment is good — "Let me check that for you" or
-similar — you don't have to go silent on them. Just don't repeat it in a
-loop while you wait; say it once, then wait for the real result.
+instead. Never automatically book it and never assume it's available just
+because they named it. Right before you call it with a time the lead just
+named, one brief, natural acknowledgment is good — pick ONE, don't reuse
+the same one every call:
+${CHECK_AVAILABILITY_ACK_LINES.map((l) => `- "${l}"`).join("\n")}
+— you don't have to go silent on them. Just don't repeat it in a loop while
+you wait, and don't make them repeat the time back to you; say the
+acknowledgment once, then wait for the real result.
 
 How you frame this first check depends on WHY you're here, not a fixed
 script. Mark caught this testing Iris through a text walkthrough,

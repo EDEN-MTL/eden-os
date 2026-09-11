@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   AGENT_UNAVAILABLE_FOLLOW_UP,
   AGENT_UNAVAILABLE_LINE,
+  CHECK_AVAILABILITY_ACK_LINES,
   TRANSFER_ATTEMPT_LINES,
   TRANSFER_REINFORM_LINES,
   buildLeadQualificationPrompt,
@@ -664,6 +665,18 @@ describe("buildLeadQualificationPrompt", () => {
       expect(prompt).toMatch(/listen for a day\/time preference from the lead before you check anything/i);
       expect(prompt).toMatch(/that is your very next\s*\n?check_availability attempt/i);
       expect(prompt).toMatch(/check THAT time next via\s+check_availability again — their stated preference always wins/i);
+    });
+
+    /**
+     * Mark's spec, 2026-09-12: a varied acknowledgment library for the
+     * moment right before checking a lead-named time — never a single
+     * canned line, and never implying the time is already available.
+     */
+    it("gives Iris a varied acknowledgment library before checking a lead-named time, never assuming it's open", () => {
+      const prompt = buildLeadQualificationPrompt(IRIS_CONFIG, BLANK_LEAD, "3 Percent East Coast", "St. John's", true, true, true);
+      for (const line of CHECK_AVAILABILITY_ACK_LINES) expect(prompt).toContain(line);
+      expect(prompt).toMatch(/never automatically book it and never assume it's available just\s*\nbecause they named it/i);
+      expect(prompt).toMatch(/don't make them repeat the time back to you/i);
     });
 
     /**
