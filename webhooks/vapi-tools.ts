@@ -4,6 +4,7 @@ import { getGhlConfig, addContactTags, updateContact, getCustomFieldDefs, getCal
 import { buildKeyToId } from "../agents/scout/intake";
 import { loadIrisConfig } from "../agents/iris";
 import { scheduleExplicitCallback } from "../agents/iris/dial-pending";
+import { isWithinLegalCallingWindow } from "../agents/iris/cadence";
 
 /**
  * Server-side handler for the schedule_callback function tool Vapi calls
@@ -183,6 +184,16 @@ async function handleScheduleCallback(clientId: string, contactId: string, callb
     return "That's too far out to schedule automatically. Do not claim to have scheduled anything — tell the lead a teammate will reach out directly to confirm a time that far ahead.";
   }
 
+  const timeZone = loadIrisConfig(clientId)?.timezone || "America/St_Johns";
+  // Mark's instruction, 2026-09-11: real calling-hours compliance — a lead's
+  // own stated preferred callback time was never checked against business
+  // hours before. Reject rather than silently move it: the lead chose this
+  // time on purpose, so ask again instead of surprising them with a
+  // different one they never agreed to.
+  if (!isWithinLegalCallingWindow(when, timeZone)) {
+    return `That time is outside legal calling hours (8am-9pm, ${timeZone}) — do not schedule it. Ask the lead for a different time within that window instead, and call this tool again once they give one. Do not tell them there's a technical issue — this is a real business-hours rule, not an error.`;
+  }
+
   const scheduled = await scheduleExplicitCallback(clientId, contactId, when);
   if (!scheduled) {
     return "Could not schedule the callback — could not verify the lead's record right now. Do not claim to have scheduled anything; tell the lead a teammate will follow up directly instead.";
@@ -190,7 +201,6 @@ async function handleScheduleCallback(clientId: string, contactId: string, callb
 
   await recordCallbackNote(clientId, contactId, when);
 
-  const timeZone = loadIrisConfig(clientId)?.timezone;
   return `Callback scheduled for ${formatSpoken(when.toISOString(), timeZone)}. Confirm this back to the lead in plain language — just the day and time (e.g. "Saturday at 5 PM"), and only give the exact date if they ask for it.`;
 }
 

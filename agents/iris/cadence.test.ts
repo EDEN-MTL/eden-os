@@ -1,5 +1,13 @@
 import { describe, expect, it } from "vitest";
-import { decideNextAttempt, describeAttempt, nextAttempt, nextAttemptTime, totalAttempts } from "./cadence";
+import {
+  decideNextAttempt,
+  describeAttempt,
+  nextAttempt,
+  nextAttemptTime,
+  totalAttempts,
+  clampToLegalCallingWindow,
+  isWithinLegalCallingWindow,
+} from "./cadence";
 import { OutreachCadenceConfig } from "./qualification";
 
 const cadence: OutreachCadenceConfig = { attemptsPerDay: 2, days: 4, recheckBeforeEachAttempt: true };
@@ -128,5 +136,71 @@ describe("nextAttemptTime", () => {
 
   it("returns null once past the end of the sequence", () => {
     expect(nextAttemptTime(cadence, 9, sequenceStart, TZ)).toBeNull();
+  });
+});
+
+/**
+ * Mark's instruction, 2026-09-11: real calling-hours compliance, 8am-9pm in
+ * the CLIENT's own configured business timezone. Three real gaps this
+ * closes, all confirmed live the same day: the immediate ~5-minute
+ * post-intake dial had no time-of-day check at all (a 2am form submission
+ * got called at 2:05am), dial-pending.ts's already-past-the-slot retry
+ * fallback had the same gap, and a lead's own stated callback preference
+ * was never checked against business hours before being scheduled.
+ */
+describe("clampToLegalCallingWindow / isWithinLegalCallingWindow", () => {
+  const TZ = "America/St_Johns";
+
+  function localHour(date: Date): number {
+    return Number(
+      new Intl.DateTimeFormat("en-US", { timeZone: TZ, hour: "numeric", hour12: false }).format(date)
+    );
+  }
+
+  function localDate(date: Date): string {
+    const parts = Object.fromEntries(
+      new Intl.DateTimeFormat("en-US", { timeZone: TZ, year: "numeric", month: "2-digit", day: "2-digit" })
+        .formatToParts(date)
+        .map((p) => [p.type, p.value])
+    );
+    return `${parts.year}-${parts.month}-${parts.day}`;
+  }
+
+  it("leaves a time already inside 8am-9pm untouched", () => {
+    // 2026-09-02T14:00:00Z is 11:30 local (NDT, UTC-02:30).
+    const candidate = new Date("2026-09-02T14:00:00Z");
+    expect(clampToLegalCallingWindow(candidate, TZ)).toEqual(candidate);
+    expect(isWithinLegalCallingWindow(candidate, TZ)).toBe(true);
+  });
+
+  it("pushes a too-early time (2am local) forward to 8am the same day", () => {
+    // 2026-09-02T04:30:00Z is 02:00 local.
+    const candidate = new Date("2026-09-02T04:30:00Z");
+    expect(isWithinLegalCallingWindow(candidate, TZ)).toBe(false);
+    const clamped = clampToLegalCallingWindow(candidate, TZ);
+    expect(localHour(clamped)).toBe(8);
+    expect(localDate(clamped)).toBe(localDate(candidate));
+  });
+
+  it("pushes a too-late time (11pm local) forward to 8am the NEXT day, not later the same day", () => {
+    // 2026-09-02T01:30:00Z is 23:00 local on 2026-09-01.
+    const candidate = new Date("2026-09-02T01:30:00Z");
+    expect(isWithinLegalCallingWindow(candidate, TZ)).toBe(false);
+    const clamped = clampToLegalCallingWindow(candidate, TZ);
+    expect(localHour(clamped)).toBe(8);
+    expect(localDate(clamped)).toBe("2026-09-02");
+  });
+
+  it("treats exactly 9pm local as outside the window (end hour is exclusive)", () => {
+    // 2026-09-02T23:30:00Z is 21:00 local.
+    const candidate = new Date("2026-09-02T23:30:00Z");
+    expect(isWithinLegalCallingWindow(candidate, TZ)).toBe(false);
+  });
+
+  it("treats exactly 8am local as inside the window (start hour is inclusive)", () => {
+    // 2026-09-02T10:30:00Z is 08:00 local.
+    const candidate = new Date("2026-09-02T10:30:00Z");
+    expect(isWithinLegalCallingWindow(candidate, TZ)).toBe(true);
+    expect(clampToLegalCallingWindow(candidate, TZ)).toEqual(candidate);
   });
 });
