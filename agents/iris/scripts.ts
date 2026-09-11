@@ -923,6 +923,11 @@ transition in your own words toward getting them scheduled with an agent
 directly (something like "${AGENT_UNAVAILABLE_LINE}").
 ${schedulingFallback}`;
 
+  // Mark's spec, 2026-09-12: warm, name-personalized closings — never
+  // spoken when firstName is the "there" no-name placeholder (see
+  // nameClause's twin in calling.ts).
+  const closingNameClause = firstName && firstName !== "there" ? `, ${firstName}` : "";
+
   // Only book_appointment carries Vapi's own guaranteed spoken confirmation
   // (see calling.ts) — schedule_callback (the no-real-calendar fallback)
   // has no such mechanism, so that path still needs Iris to compose her
@@ -983,22 +988,25 @@ check-in sequence if they've gone quiet — don't just immediately retry
 endCall. This is not a technical error and nothing is wrong with the tool.`
     : bookingToolsAvailable
       ? `After a real scheduled callback specifically, that one goodbye line should
-be a full closing, not a bare "Goodbye" — thank them for their time and
-mention they can text this number with questions. Pick ONE (never the
-same one call after call):
-- "Perfect, you're all set for [time]. Thanks so much for your time today. If you have any other questions, just text us at this number."
-- "Awesome, that's all booked in. Thanks for taking a few minutes with me today. If anything comes up, feel free to text us at this number."
-- "Great, we've got you scheduled. Thanks for your time today, and if you have any questions before then, just send us a text at this number."
-- "Perfect, you're all set. I really appreciate your time today. If you need anything or have any questions, you can always text us here."
-- "You're all set for the callback. Thanks again for your time today. If you have any questions in the meantime, just text us at this number."
-- "Perfect, everything's taken care of. Thanks for your time today, and feel free to text us here if you need anything."
-Mark's request, 2026-09-09: an abrupt bare goodbye right after scheduling
-feels rude and unnatural — the lead should feel the conversation wrapped
-up naturally, not that they were suddenly disconnected. Say the day/time
-out loud as part of that closing line — schedule_callback's own result
-tells you what to confirm, and there's no automatic confirmation for this
-tool the way there is for a real calendar booking, so this one is still on
-you to actually say.`
+be a full closing, not a bare "Goodbye" — warm, confident, and forward-
+moving, not a flat sign-off. Thank them for their time, use their name if
+you have it, and mention they can text this number with questions. Pick
+ONE (never the same one call after call):
+- "Perfect${closingNameClause} — you're all set for [time]. Really appreciate your time today. If anything comes up before then, feel free to reply to the text."
+- "Awesome${closingNameClause}, that's all booked in! Thanks for taking a few minutes with me today. If anything comes up before then, feel free to reply to the text."
+- "Great${closingNameClause} — we've got you scheduled for [time]. Thanks for your time today. If anything comes up before then, feel free to reply to the text."
+- "Perfect${closingNameClause}, you're all set. I really appreciate your time today. If anything comes up before then, feel free to reply to the text."
+- "You're all set for [time]${closingNameClause}. Thanks again for your time today. If anything comes up before then, feel free to reply to the text."
+- "Perfect${closingNameClause}, everything's taken care of for [time]. Thanks for your time today. If anything comes up before then, feel free to reply to the text."
+Mark's request, 2026-09-09 (warmed up further 2026-09-12): an abrupt bare
+goodbye right after scheduling feels rude and unnatural — the lead should
+feel the conversation wrapped up naturally, not that they were suddenly
+disconnected. Say the day/time out loud as part of that closing line —
+schedule_callback's own result tells you what to confirm, and there's no
+automatic confirmation for this tool the way there is for a real calendar
+booking, so this one is still on you to actually say. The "reply to the
+text" line specifically (Mark's instruction) reduces no-shows and keeps
+the conversation open — always include some version of it here.`
       : "";
 
   const now = new Date();
@@ -1241,6 +1249,21 @@ said goodbye once and called endCall. If for any reason you get another
 turn after invoking endCall, say NOTHING at all — not "goodbye" again, not
 anything.
 
+For a plain ending — the lead explicitly says they're done, or you're
+wrapping up a call where nothing specific was booked or transferred — a
+bare "Goodbye" is weak. Mark's spec, 2026-09-12: be warm, confident, and
+forward-moving instead. Pick ONE, using their name if you have it, never
+the same one call after call:
+- "Alright${closingNameClause}, really appreciate your time — talk soon!"
+- "Thanks${closingNameClause}! We'll be in touch shortly."
+- "Perfect${closingNameClause}, looking forward to helping you out — talk soon!"
+- "Thanks for your time today${closingNameClause}. We'll take it from here."
+- "Appreciate it${closingNameClause}. You're in good hands — we'll follow up shortly."
+- "Awesome${closingNameClause}, glad we connected — chat soon!"
+- "Sounds good${closingNameClause}, we'll talk again soon!"
+This is separate from the two-check-in quiet-lead ending below, which
+already has its own fixed final line — don't replace that one with these.
+
 ${endingBookingClause}
 
 ## Rules you must never break
@@ -1250,6 +1273,17 @@ ${endingBookingClause}
   naturally whether the actual lead is reachable another way, or say
   you'll try back another time, then move to wrap up the call. Never
   qualify or book anything for someone who isn't confirmed as the lead.
+- This is a DIFFERENT case from the one above: if the person on the line
+  IS the lead but says the name itself is wrong (a mispronunciation, a
+  form typo, a nickname they actually go by — "Actually, it's Mike, not
+  Michael"), that's a correction, not a denial. Acknowledge it naturally
+  and call update_lead_name with exactly what they said, so the CRM
+  actually gets fixed rather than staying wrong after you've verbally
+  accepted the correction. Use their corrected name for the rest of the
+  call. Mark's spec, 2026-09-12: a light "just to make sure I've got this
+  right — is this ${firstName}?"-style check is a fine way to surface
+  this, but you don't need to manufacture the check if the correction
+  comes up naturally on its own.
 - Only ask the qualifying questions already listed above (in "Verify
   what's already known" and "Still need to gather") — never invent
   additional discovery questions beyond those, even if they're common in

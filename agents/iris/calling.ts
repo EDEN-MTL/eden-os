@@ -27,34 +27,47 @@ import { AGENT_UNAVAILABLE_LINE, buildVoicemailMessage, callOpeningGreeting } fr
 
 export class CallingDisabledError extends Error {}
 
+/** "there" is the no-real-name placeholder used throughout this file (see buildAgentBriefing etc.) — never spoken as a name. */
+function nameClause(firstName: string): string {
+  return firstName && firstName !== "there" ? `, ${firstName}` : "";
+}
+
 /**
  * Mark's spec, 2026-09-12 ("END CALL LOGIC — APPOINTMENT CONFIRMED"):
  * book_appointment's guaranteed request-complete confirmation, randomized
- * per call so Iris doesn't sound identical on every booking. Deliberately
- * every variant contains BOTH "notification" and "text" — the endCall
- * rejectionPlan below detects any of these by checking for that pair
- * rather than hardcoding all five phrases.
+ * per call so Iris doesn't sound identical on every booking, personalized
+ * with the lead's own name, and closing with Mark's own suggested
+ * "reply to the text" line (reduces no-shows, keeps the conversation
+ * open). Deliberately every variant contains BOTH "notification" and
+ * "text" — the endCall rejectionPlan below detects any of these by
+ * checking for that pair rather than hardcoding all five phrases.
  */
-export const BOOKING_CONFIRMATION_LINES = [
-  "Perfect, your appointment is all set. You'll receive a notification with all the details shortly. If you have any questions, just text us back on this number.",
-  "Alright, you're all booked in! You'll get a notification with the details in a bit. If anything comes up, just text us here.",
-  "Great, your appointment has been confirmed. You'll receive a notification shortly with all the details. Feel free to text us at this number if you need anything.",
-  "Awesome, you're all set! You'll get a quick notification with all the info. If you have any questions, just send us a text here.",
-  "Perfect, everything's booked. You'll receive a notification with the details shortly. If anything comes up, just text us anytime.",
-];
+export function bookingConfirmationLines(firstName: string): string[] {
+  const who = nameClause(firstName);
+  return [
+    `Perfect${who} — your appointment is all set. You'll receive a notification with all the details shortly. If anything comes up before then, feel free to reply to the text.`,
+    `Alright${who}, you're all booked in! You'll get a notification with the details in a bit. If anything comes up before then, feel free to reply to the text.`,
+    `Great${who} — your appointment has been confirmed. You'll receive a notification shortly with all the details. If anything comes up before then, feel free to reply to the text.`,
+    `Awesome${who}, you're all set! You'll get a quick notification with all the info. If anything comes up before then, feel free to reply to the text.`,
+    `Perfect${who}, everything's booked. You'll receive a notification with the details shortly. If anything comes up before then, feel free to reply to the text.`,
+  ];
+}
 
 /**
  * Mark's spec, 2026-09-12: reschedule_appointment's own guaranteed
- * request-complete confirmation, parallel to BOOKING_CONFIRMATION_LINES.
+ * request-complete confirmation, parallel to bookingConfirmationLines.
  * Every variant also contains BOTH "notification" and "text" so the same
  * endCall rejectionPlan gate below detects a reschedule confirmation too,
  * with no separate gate logic needed for it.
  */
-export const RESCHEDULE_CONFIRMATION_LINES = [
-  "Great, I've updated your appointment to the new time — you'll get a notification with the details, and you can always text us here if anything changes.",
-  "Awesome, you're all set for the new time. You'll get a notification with the updated details — just text us here if anything comes up.",
-  "Perfect, your appointment's been moved to the new time. You'll get a notification shortly — text us at this number if you need anything.",
-];
+export function rescheduleConfirmationLines(firstName: string): string[] {
+  const who = nameClause(firstName);
+  return [
+    `Great${who} — I've updated your appointment to the new time. You'll get a notification with the details, and if anything comes up before then, feel free to reply to the text.`,
+    `Awesome${who}, you're all set for the new time. You'll get a notification with the updated details. If anything comes up before then, feel free to reply to the text.`,
+    `Perfect${who}, your appointment's been moved to the new time. You'll get a notification shortly. If anything comes up before then, feel free to reply to the text.`,
+  ];
+}
 
 export interface PlaceCallParams {
   clientId: string;
@@ -161,6 +174,37 @@ export function buildCallPayload(
   const firstMessage = callOpeningGreeting();
 
   const tools: VapiTool[] = [];
+
+  // Mark's spec, 2026-09-12: a backup for the lead's own name being wrong
+  // on file (misheard, a form typo, a nickname) — separate from the
+  // pre-call gate (agents/iris/index.ts, dial-pending.ts) that already
+  // refuses to dial at all when no name exists. Available whenever there's
+  // a real contactId to correct, independent of calendar/transfer setup.
+  if (vapiConfig.serverUrl && params.contactId) {
+    const nameQs = new URLSearchParams({ clientId: params.clientId, contactId: params.contactId }).toString();
+    tools.push({
+      type: "function",
+      function: {
+        name: "update_lead_name",
+        description:
+          "Corrects the lead's name on file in the CRM — only call this when the lead confirms they ARE " +
+          "the right person but says the name itself is wrong (a mispronunciation, a form typo, a nickname " +
+          "they go by instead). Never call this when someone denies being the lead entirely — that's a " +
+          "different case (see the rule on that below).",
+        parameters: {
+          type: "object",
+          properties: {
+            correctedName: {
+              type: "string",
+              description: "Exactly the corrected name the lead gave you — never a guess or a name you invented.",
+            },
+          },
+          required: ["correctedName"],
+        },
+      },
+      server: { url: `${vapiConfig.serverUrl}/tools/update-lead-name?${nameQs}`, secret: vapiConfig.webhookSecret },
+    });
+  }
 
   if (params.transferNumber) {
     const audience = params.intent === "seller" || params.intent === "downsize" ? "seller" : "buyer";
@@ -417,6 +461,9 @@ export function buildCallPayload(
       leadSummary: buildAppointmentLeadSummary(params, audience),
     }).toString();
 
+    const bookingLines = bookingConfirmationLines(params.firstName);
+    const rescheduleLines = rescheduleConfirmationLines(params.firstName);
+
     tools.push({
       type: "function",
       function: {
@@ -495,7 +542,7 @@ export function buildCallPayload(
           // "notification" and "text" so the endCall rejectionPlan's liquid
           // check below can detect any of them without hardcoding five
           // separate phrases.
-          content: BOOKING_CONFIRMATION_LINES[Math.floor(Math.random() * BOOKING_CONFIRMATION_LINES.length)],
+          content: bookingLines[Math.floor(Math.random() * bookingLines.length)],
         },
       ],
     });
@@ -541,7 +588,7 @@ export function buildCallPayload(
         {
           type: "request-complete",
           role: "assistant",
-          content: RESCHEDULE_CONFIRMATION_LINES[Math.floor(Math.random() * RESCHEDULE_CONFIRMATION_LINES.length)],
+          content: rescheduleLines[Math.floor(Math.random() * rescheduleLines.length)],
         },
       ],
     });
@@ -617,7 +664,7 @@ export function buildCallPayload(
   // confirmation to begin with (transfer/goodbye) or they satisfy the
   // escape valve.
   //
-  // Updated 2026-09-12 for BOOKING_CONFIRMATION_LINES' 5 randomized
+  // Updated 2026-09-12 for bookingConfirmationLines' 5 randomized
   // variants: checks for "notification" AND "text" together (every variant
   // contains both — see that constant's own comment) rather than the single
   // literal "you're all booked" phrase, which only one of the five variants

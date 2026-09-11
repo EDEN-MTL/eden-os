@@ -184,6 +184,15 @@ async function resolveOne(row: PendingCallRow): Promise<void> {
     await finish(row.id, "failed", "no phone on file");
     return;
   }
+  // Mark's spec, 2026-09-12: never place a call without a confirmed lead
+  // name — same rule as index.ts's lead.enriched check, re-verified here
+  // right before the actual dial (mirroring the phone check right above,
+  // in case a fresher snapshot ever changes this by the time a later
+  // cadence attempt runs).
+  if (!lead.name) {
+    await finish(row.id, "failed", "no confirmed name on file");
+    return;
+  }
 
   const attemptNumber = row.attempts_made + 1;
   const transferNumber = transferNumberForIntent(config, lead.intent) ?? undefined;

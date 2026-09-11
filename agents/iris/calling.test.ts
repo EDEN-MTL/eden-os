@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { BOOKING_CONFIRMATION_LINES, RESCHEDULE_CONFIRMATION_LINES, buildCallPayload, PlaceCallParams } from "./calling";
+import { bookingConfirmationLines, rescheduleConfirmationLines, buildCallPayload, PlaceCallParams } from "./calling";
 
 /**
  * Only buildCallPayload is tested here — it's the pure part. placeCall()
@@ -123,7 +123,7 @@ describe("buildCallPayload", () => {
    * structure and key substrings rather than executing it — the real
    * semantics can only be confirmed live.
    *
-   * Updated 2026-09-12: BOOKING_CONFIRMATION_LINES randomizes across 5
+   * Updated 2026-09-12: bookingConfirmationLines randomizes across 5
    * variants, so the gate can no longer key on the single literal "you're
    * all booked" phrase (only one variant still contains it) — it now
    * checks for "notification" AND "text" together, which every variant
@@ -146,7 +146,7 @@ describe("buildCallPayload", () => {
       // Every one of the randomized confirmation variants must actually
       // satisfy this gate's detection condition — otherwise a call that
       // happens to draw that variant would silently never unblock endCall.
-      for (const line of BOOKING_CONFIRMATION_LINES) {
+      for (const line of bookingConfirmationLines("Sam")) {
         const c = line.toLowerCase();
         expect(c).toContain("notification");
         expect(c).toContain("text");
@@ -334,13 +334,49 @@ describe("buildCallPayload", () => {
     });
   });
 
+  /**
+   * Mark's spec, 2026-09-12: a name correction from the lead has to
+   * actually reach the CRM, not just be accepted verbally. Available
+   * whenever there's a real contactId — independent of calendar/transfer
+   * setup, since correcting a name isn't tied to either of those.
+   */
+  describe("update_lead_name tool", () => {
+    it("is wired whenever a real contactId exists, regardless of calendar or transfer setup", () => {
+      const payload = buildCallPayload({ ...BASE_PARAMS, contactId: "contact-1" }, VAPI_CONFIG);
+      const tool = payload.assistant.model.tools?.find((t) => t.type === "function" && t.function.name === "update_lead_name");
+      expect(tool).toBeDefined();
+    });
+
+    it("is omitted when there's no real contactId to correct", () => {
+      const payload = buildCallPayload(BASE_PARAMS, VAPI_CONFIG);
+      const tool = payload.assistant.model.tools?.find((t) => t.type === "function" && t.function.name === "update_lead_name");
+      expect(tool).toBeUndefined();
+    });
+
+    it("requires a correctedName argument", () => {
+      const payload = buildCallPayload({ ...BASE_PARAMS, contactId: "contact-1" }, VAPI_CONFIG);
+      const tool = payload.assistant.model.tools?.find((t) => t.type === "function" && t.function.name === "update_lead_name");
+      if (tool?.type !== "function") throw new Error("expected function tool");
+      expect(tool.function.parameters.required).toEqual(["correctedName"]);
+    });
+
+    it("bakes clientId and contactId into its server URL", () => {
+      const payload = buildCallPayload({ ...BASE_PARAMS, contactId: "contact-1" }, VAPI_CONFIG);
+      const tool = payload.assistant.model.tools?.find((t) => t.type === "function" && t.function.name === "update_lead_name");
+      if (tool?.type !== "function") throw new Error("expected function tool");
+      const url = new URL(tool.server.url);
+      expect(url.searchParams.get("clientId")).toBe("3-percent-east-coast");
+      expect(url.searchParams.get("contactId")).toBe("contact-1");
+    });
+  });
+
   describe("schedule_callback tool", () => {
     const withContactId: PlaceCallParams = { ...BASE_PARAMS, contactId: "contact-1" };
 
     it("is added only when serverUrl AND contactId are both present", () => {
       const payload = buildCallPayload(withContactId, VAPI_CONFIG);
       const names = payload.assistant.model.tools?.filter((t) => t.type === "function").map((t) => (t.type === "function" ? t.function.name : ""));
-      expect(names).toEqual(["schedule_callback"]);
+      expect(names).toEqual(["update_lead_name", "schedule_callback"]);
     });
 
     it("is omitted when serverUrl is unset, even with contactId given", () => {
@@ -394,13 +430,13 @@ describe("buildCallPayload", () => {
     it("replaces schedule_callback with all three tools when a calendarId is given", () => {
       const payload = buildCallPayload(withCalendar, VAPI_CONFIG);
       const names = payload.assistant.model.tools?.filter((t) => t.type === "function").map((t) => (t.type === "function" ? t.function.name : ""));
-      expect(names).toEqual(["check_availability", "book_appointment", "reschedule_appointment"]);
+      expect(names).toEqual(["update_lead_name", "check_availability", "book_appointment", "reschedule_appointment"]);
     });
 
     it("is omitted (falls back to schedule_callback) when no calendarId is given", () => {
       const payload = buildCallPayload({ ...BASE_PARAMS, contactId: "contact-1" }, VAPI_CONFIG);
       const names = payload.assistant.model.tools?.filter((t) => t.type === "function").map((t) => (t.type === "function" ? t.function.name : ""));
-      expect(names).toEqual(["schedule_callback"]);
+      expect(names).toEqual(["update_lead_name", "schedule_callback"]);
     });
 
     it("bakes clientId, contactId, calendarId, and a buyer/seller intent into all three tools' server URLs", () => {
@@ -471,9 +507,10 @@ describe("buildCallPayload", () => {
      * it carries Vapi's guaranteed request-complete confirmation.
      *
      * Updated 2026-09-12: content is randomized across
-     * BOOKING_CONFIRMATION_LINES (Mark's spec — a single fixed line
-     * sounded repetitive across calls), so this checks membership in that
-     * list rather than one exact string.
+     * bookingConfirmationLines (Mark's spec — a single fixed line
+     * sounded repetitive across calls), personalized with the lead's own
+     * first name, so this checks membership in that list rather than one
+     * exact string.
      */
     it("wires a guaranteed request-complete confirmation on book_appointment, with control returned to Iris afterward", () => {
       const payload = buildCallPayload(withCalendar, VAPI_CONFIG);
@@ -482,7 +519,8 @@ describe("buildCallPayload", () => {
       const message = tool.messages?.find((m) => m.type === "request-complete");
       expect(message).toBeDefined();
       expect(message?.role).toBe("assistant");
-      expect(BOOKING_CONFIRMATION_LINES).toContain(message?.content);
+      expect(bookingConfirmationLines("Sam")).toContain(message?.content);
+      expect(message?.content).toContain("Sam");
       expect(message?.endCallAfterSpokenEnabled).not.toBe(true);
     });
 
@@ -513,13 +551,37 @@ describe("buildCallPayload", () => {
       const message = tool.messages?.find((m) => m.type === "request-complete");
       expect(message).toBeDefined();
       expect(message?.role).toBe("assistant");
-      expect(RESCHEDULE_CONFIRMATION_LINES).toContain(message?.content);
+      expect(rescheduleConfirmationLines("Sam")).toContain(message?.content);
+      expect(message?.content).toContain("Sam");
       expect(message?.endCallAfterSpokenEnabled).not.toBe(true);
-      for (const line of RESCHEDULE_CONFIRMATION_LINES) {
+      for (const line of rescheduleConfirmationLines("Sam")) {
         const c = line.toLowerCase();
         expect(c).toContain("notification");
         expect(c).toContain("text");
       }
     });
+  });
+});
+
+/**
+ * Mark's spec, 2026-09-12: closing lines should feel warm and personalized
+ * rather than a bare "Goodbye" — the lead's name where known, and a
+ * trailing "reply to the text" nudge (reduces no-shows, keeps the
+ * conversation open).
+ */
+describe("bookingConfirmationLines / rescheduleConfirmationLines", () => {
+  it("personalizes every variant with the lead's real first name", () => {
+    for (const line of bookingConfirmationLines("Jason")) expect(line).toContain("Jason");
+    for (const line of rescheduleConfirmationLines("Jason")) expect(line).toContain("Jason");
+  });
+
+  it("never says the 'there' placeholder as if it were a real name", () => {
+    for (const line of bookingConfirmationLines("there")) expect(line).not.toContain("there,");
+    for (const line of rescheduleConfirmationLines("there")) expect(line).not.toContain("there,");
+  });
+
+  it("includes the 'reply to the text' pro-tip on every variant", () => {
+    for (const line of bookingConfirmationLines("Jason")) expect(line).toMatch(/feel free to reply to the text/i);
+    for (const line of rescheduleConfirmationLines("Jason")) expect(line).toMatch(/feel free to reply to the text/i);
   });
 });
