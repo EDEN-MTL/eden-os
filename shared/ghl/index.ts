@@ -63,6 +63,31 @@ export async function getLocationTimezone(locationId: string, apiKey?: string): 
   return resp?.location?.timezone || null;
 }
 
+export interface GhlUser {
+  id: string;
+  firstName: string;
+  lastName: string;
+  name: string;
+}
+
+/**
+ * Real staff users on this location — for matching a spoken name to a real
+ * agent after a live transfer connects (see webhooks/vapi-tools.ts's
+ * handleMatchTransferAgent). Confirmed live, 2026-09-12: GHL's real
+ * /users/search endpoint needs a companyId, not just a locationId — despite
+ * `/users` and `/users/?locationId=...` both existing as plausible-looking
+ * paths, neither actually works (404 and a scope/timeout error
+ * respectively, tested live). /locations/{id} is the only way to resolve
+ * that companyId first; there is no shortcut.
+ */
+export async function listLocationUsers(locationId: string, apiKey?: string): Promise<GhlUser[]> {
+  const location = await ghlRequest(`/locations/${locationId}`, { locationId, apiKey });
+  const companyId = location?.location?.companyId;
+  if (!companyId) return [];
+  const result = await ghlRequest(`/users/search?companyId=${companyId}&locationId=${locationId}`, { locationId, apiKey });
+  return result?.users || [];
+}
+
 // ─── Contacts ───
 
 export async function getContact(
