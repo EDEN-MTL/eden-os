@@ -176,6 +176,16 @@ eventBus.subscribe("lead.enriched", async (event) => {
     console.log(`[IRS] ${lead.name || lead.contactId} has no phone on file — cannot qualify by voice.`);
     return;
   }
+  // Mark's spec, 2026-09-12: never place a call without a confirmed lead
+  // name — lead.name here already reflects Scout's own GHL-contact/form
+  // lookup (agents/scout/intake.ts), so a null value means genuinely no
+  // name was found anywhere, not just an unchecked field. Re-checked again
+  // right before the actual dial in dial-pending.ts, same dual-check
+  // pattern as lead.phone above (queue time here, dial time there).
+  if (!lead.name) {
+    console.log(`[IRS] ${lead.contactId} has no confirmed name on file — not calling until one exists.`);
+    return;
+  }
   if (!lead.firstTouch) {
     console.log(`[IRS] ${lead.name || lead.contactId} already worked — not opening a new sequence.`);
     return;

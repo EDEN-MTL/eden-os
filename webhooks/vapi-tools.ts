@@ -688,6 +688,39 @@ async function handleAssignTransferOwner(clientId: string, contactId: string, ma
     : "Lead tagged for manual follow-up. Continue the call normally — no need to mention this to the operator.";
 }
 
+/**
+ * Corrects the lead's name on file — the only tool Iris has for this, so
+ * a name correction actually reaches GHL instead of just being accepted
+ * verbally and left wrong in the CRM. Mark's spec, 2026-09-12: this is
+ * for when the LEAD confirms they're the right person but the name itself
+ * is wrong (misheard, a form typo, a nickname) — never call this for "no,
+ * this isn't [name]" (a wrong-person case, already covered by the
+ * standing "don't assume identity" rule).
+ */
+async function handleUpdateLeadName(clientId: string, contactId: string, correctedName: unknown): Promise<string> {
+  if (typeof correctedName !== "string" || !correctedName.trim()) {
+    return "No corrected name was given — this is an error in how you called the tool. Ask them to repeat their name, then call this tool with what they say.";
+  }
+
+  const ghlConfig = await getGhlConfig(clientId);
+  if (!ghlConfig) {
+    return "Could not reach the CRM right now — continue the call normally, a teammate will fix this directly.";
+  }
+
+  const parts = correctedName.trim().split(/\s+/);
+  const firstName = parts[0];
+  const lastName = parts.slice(1).join(" ") || undefined;
+
+  try {
+    await updateContact(contactId, { firstName, lastName }, ghlConfig.locationId, ghlConfig.apiKey);
+  } catch (error) {
+    console.error(`[VAPI-TOOLS] update_lead_name failed for ${clientId}/${contactId}:`, error instanceof Error ? error.message : error);
+    return "Could not update the CRM right now — continue the call normally, a teammate will fix this directly.";
+  }
+
+  return "Name corrected in the CRM. Continue the call normally, using the corrected name from here on.";
+}
+
 function createToolHandler(handler: (query: Record<string, string>, call: ToolCall) => Promise<string>) {
   return async (req: Request, res: Response) => {
     const secret = process.env.VAPI_WEBHOOK_SECRET;
@@ -795,6 +828,11 @@ export function createVapiToolsRouter(): Router {
   router.post(
     "/assign-transfer-owner",
     createToolHandler(async (query, call) => handleAssignTransferOwner(query.clientId, query.contactId, parseToolArguments(call).matchedUserId))
+  );
+
+  router.post(
+    "/update-lead-name",
+    createToolHandler(async (query, call) => handleUpdateLeadName(query.clientId, query.contactId, parseToolArguments(call).correctedName))
   );
 
   return router;

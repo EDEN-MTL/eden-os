@@ -851,6 +851,18 @@ describe("buildLeadQualificationPrompt", () => {
     });
 
     /**
+     * Mark's spec, 2026-09-12: a bare "Goodbye" is weak for the plain-
+     * ending case (lead says they're done, nothing was booked or
+     * transferred) — warm, name-personalized variants instead, distinct
+     * from the two-check-in quiet-lead ending's own fixed final line.
+     */
+    it("gives Iris warm, name-personalized closing variants for a plain ending, distinct from the quiet-lead final line", () => {
+      const prompt = buildLeadQualificationPrompt(IRIS_CONFIG, { ...BLANK_LEAD, name: "Jason Lee" }, "3 Percent East Coast", "St. John's", false, true, false);
+      expect(prompt).toContain('"Alright, Jason, really appreciate your time — talk soon!"');
+      expect(prompt).toMatch(/separate from the two-check-in quiet-lead ending below/i);
+    });
+
+    /**
      * Mark's request, 2026-09-09: an abrupt bare "Goodbye" right after
      * booking an appointment feels rude. That closing used to be something
      * Iris composed herself (six approved variants) — as of 2026-09-11,
@@ -865,6 +877,20 @@ describe("buildLeadQualificationPrompt", () => {
       expect(prompt).toMatch(/vapi\s+speaks a guaranteed\s+confirmation automatically/i);
       expect(prompt).toMatch(/say\s+NOTHING right after (?:that|either) tool\s+succeeds/i);
       expect(prompt).toMatch(/don't second-guess it or\s+add your own version on top/i);
+    });
+
+    /**
+     * Mark's spec, 2026-09-12: closing lines should be warm, name-
+     * personalized, and end with the "reply to the text" nudge (reduces
+     * no-shows, keeps the conversation open) — for the schedule_callback
+     * path specifically, since it has no Vapi-guaranteed confirmation of
+     * its own and Iris still composes this closing herself.
+     */
+    it("personalizes the schedule_callback closing with the lead's name and the 'reply to the text' nudge", () => {
+      const prompt = buildLeadQualificationPrompt(IRIS_CONFIG, { ...BLANK_LEAD, name: "Jason Lee" }, "3 Percent East Coast", "St. John's", true, true, false);
+      expect(prompt).toMatch(/warm, confident, and forward-\s+moving, not a flat sign-off/i);
+      expect(prompt).toContain('"Perfect, Jason — you\'re all set for [time].');
+      expect(prompt.match(/feel free to reply to the text/gi)?.length).toBeGreaterThanOrEqual(6);
     });
 
     /**
@@ -892,6 +918,18 @@ describe("buildLeadQualificationPrompt", () => {
     const prompt = buildLeadQualificationPrompt(IRIS_CONFIG, BLANK_LEAD, "3 Percent East Coast", "St. John's", false, true, false);
     expect(prompt).toMatch(/explicitly denies being the lead/i);
     expect(prompt).toMatch(/do NOT continue into qualification/i);
+  });
+
+  /**
+   * Mark's spec, 2026-09-12: a name correction ("it's Mike, not Michael")
+   * is a different case from denying being the lead entirely — the CRM
+   * needs to actually get fixed, not just verbally acknowledged.
+   */
+  it("tells Iris to call update_lead_name on a name correction, distinct from denying being the lead", () => {
+    const prompt = buildLeadQualificationPrompt(IRIS_CONFIG, { ...BLANK_LEAD, name: "Michael Test" }, "3 Percent East Coast", "St. John's", false, true, false);
+    expect(prompt).toMatch(/This is a DIFFERENT case from the one above/i);
+    expect(prompt).toMatch(/call update_lead_name with exactly what they said/i);
+    expect(prompt).toMatch(/is this Michael\?/i);
   });
 
   /**
