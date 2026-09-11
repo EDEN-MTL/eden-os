@@ -244,6 +244,20 @@ export const TRANSFER_ATTEMPT_LINES = [
 ];
 
 /**
+ * Mark's spec, 2026-09-11 (section 24.9D): the first-round re-check when the
+ * lead is silent right after the transfer presentation line — a short
+ * confirmation, not a repeat of the full presentation. Varied so it doesn't
+ * read as a mechanical retry of the same question.
+ */
+export const TRANSFER_REINFORM_LINES = [
+  "Are you okay if I connect you with an agent now?",
+  "Would you like me to connect you with one of our agents?",
+  "Is now still a good time to connect you with someone?",
+  "Would it be okay if I brought one of our agents on the line?",
+  "Are you ready for me to connect you with an agent?",
+];
+
+/**
  * Open question rather than pre-checked slots — there's no calendar behind
  * this anymore (see qualification.ts's callbackNotesFieldKey doc comment):
  * whatever day/time the lead names here is what gets scheduled directly via
@@ -786,7 +800,13 @@ Listen to what they say next:
 - Agreement ("okay", "sure", "yeah") → say one of these (pick a different one than last time), so they know what's actually happening, THEN invoke the transferCall tool. Never invoke it silently without saying this first, and never invoke it before they've responded:
 ${TRANSFER_ATTEMPT_LINES.map((l) => `  - "${l}"`).join("\n")}
 - Unavailable right now ("I'm at work", "can you call me later", "I can't talk", "I'm busy right now", "I'm driving", "I'm in a meeting", "can we talk some other time?") → do NOT invoke transferCall at all, don't ask them to wait for the agent anyway. Acknowledge naturally and move straight to the scheduling fallback below instead.
-- Silence (they say nothing at all right after you present the transfer — not agreement, not stating they're unavailable, just quiet) → do NOT invoke transferCall and do NOT assume either agreement or unavailability. Mark's instruction, 2026-09-11: this specifically might mean they missed what you just said (distracted, phone muted for a second, stepped away) rather than that they're ignoring you or done with the call — treat it as a separate case from ordinary silence elsewhere in the call, not the standard "lead goes quiet" rule right away. Re-state the transfer plainly ONE time, so they can't miss it a second time — something like "Just letting you know, I'm going to go ahead and connect you with one of our agents now — you still there?" or a natural equivalent — then STOP and wait again. If they respond to that with agreement, treat it as the Agreement case above; if they say they're unavailable, treat it as the Unavailable case above. Only if they're STILL silent after this one re-statement does it become genuine unresponsiveness — from there, follow the standard "if the lead goes quiet" two-check-in rule (see "Rules you must never break" below) rather than repeating the transfer re-statement itself again.
+- Silence (they say nothing at all right after you present the transfer — not agreement, not stating they're unavailable, just quiet) → do NOT invoke transferCall and do NOT assume either agreement or unavailability. Silence is NEVER consent to transfer — treat it as a HARD RULE, not a judgment call. Mark's spec, 2026-09-11 (section 24.9): this specifically might mean they missed what you just said (distracted, phone muted for a second, stepped away) rather than that they're ignoring you or done with the call, so it gets its own two-round check before it's treated as ordinary silence elsewhere in the call:
+  - ROUND 1: re-check with a short confirmation, not a repeat of the full presentation — pick ONE, don't reuse the same one call after call:
+${TRANSFER_REINFORM_LINES.map((l) => `    - "${l}"`).join("\n")}
+    Then STOP and wait again. If they respond with agreement now, treat it as the Agreement case above. If they say they're unavailable, treat it as the Unavailable case above.
+  - ROUND 2 (only if STILL silent after round 1): this is now specifically about whether they're still on the line at all, not the transfer itself — ask something like "Hey, are you still there?" (using their name naturally if you have it), then STOP and wait again. If they respond now, read what they actually said — agreement still means Agreement above, unavailable still means Unavailable above; don't assume agreement just because they finally said something.
+  - Only if they're STILL silent after BOTH rounds does it become genuine unresponsiveness — never transfer at that point either. From there, follow the standard "if the lead goes quiet" two-check-in rule (see "Rules you must never break" below) rather than repeating either transfer check again.
+  Note: this is entirely separate from the agent actually ringing after a real transfer is invoked — that ring/hold time is on Vapi's and the destination line's side, not something you wait out yourself. These two rounds only ever apply to the lead's own silence BEFORE you've invoked transferCall at all.
 
 MECHANICAL CHECK on whatever comes back from transferCall — read the result
 text itself, don't guess:
