@@ -3,6 +3,7 @@ import {
   AGENT_UNAVAILABLE_FOLLOW_UP,
   AGENT_UNAVAILABLE_LINE,
   TRANSFER_ATTEMPT_LINES,
+  TRANSFER_REINFORM_LINES,
   buildLeadQualificationPrompt,
   buildVoicemailMessage,
   BUYER_QUESTIONS,
@@ -559,17 +560,25 @@ describe("buildLeadQualificationPrompt", () => {
     });
 
     /**
-     * Mark's instruction, 2026-09-11: an extra layer for the case the lead
-     * just missed the transfer announcement (distracted, muted for a
-     * second) rather than either agreeing or saying they're unavailable —
-     * Iris should re-state the transfer plainly once before treating it as
-     * ordinary silence.
+     * Mark's spec, 2026-09-11 (section 24.9): an extra two-round layer for
+     * the case the lead just missed the transfer announcement (distracted,
+     * muted for a second) rather than either agreeing or saying they're
+     * unavailable — a short re-confirm first, then a still-there check,
+     * never assuming consent from silence at either stage.
      */
-    it("tells Iris to re-state the transfer once on silence before falling back to the standard quiet-lead rule", () => {
+    it("tells Iris silence is never consent, and to re-check in two rounds before falling back to the standard quiet-lead rule", () => {
       const prompt = buildLeadQualificationPrompt(IRIS_CONFIG, BLANK_LEAD, "3 Percent East Coast", "St. John's", false, true, false);
       expect(prompt).toMatch(/do NOT invoke transferCall and do NOT assume either agreement or unavailability/i);
-      expect(prompt).toMatch(/Re-state the transfer plainly ONE time/i);
+      expect(prompt).toMatch(/Silence is NEVER consent to transfer/i);
+      expect(prompt).toMatch(/ROUND 1: re-check with a short confirmation/i);
+      for (const line of TRANSFER_REINFORM_LINES) expect(prompt).toContain(line);
+      expect(prompt).toMatch(/ROUND 2 \(only if STILL silent after round 1\)/i);
       expect(prompt).toMatch(/follow the standard "if the lead goes quiet" two-check-in rule/i);
+    });
+
+    it("clarifies the silence-before-transfer rounds are separate from the agent's own ring/hold time", () => {
+      const prompt = buildLeadQualificationPrompt(IRIS_CONFIG, BLANK_LEAD, "3 Percent East Coast", "St. John's", false, true, false);
+      expect(prompt).toMatch(/separate from the agent actually ringing after a real transfer is invoked/i);
     });
 
     it("tells Iris she has no live-transfer tool, and never to claim one, when none is available", () => {
