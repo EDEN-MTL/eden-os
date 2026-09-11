@@ -482,6 +482,48 @@ describe("buildLeadQualificationPrompt", () => {
     expect(prompt).toMatch(/more than ONCE while a tool call is/i);
   });
 
+  describe("identity name-drop", () => {
+    /**
+     * Mark's live feedback, 2026-09-09: on the call right after this rule
+     * was first added, Iris still said "Am I speaking with you?" instead of
+     * using the real known name — the standing rule that identifyLine is
+     * not a paraphrase target.
+     */
+    it("tells Iris the identify line is not a paraphrase target, and must be said word-for-word", () => {
+      const prompt = buildLeadQualificationPrompt(IRIS_CONFIG, { ...BLANK_LEAD, name: "Justin" }, "3 Percent East Coast", "St. John's", false, true, false);
+      expect(prompt).toMatch(/is not a paraphrase target — say the name in it\s+exactly as given/i);
+      expect(prompt).toContain("Hi, am I speaking with Justin?");
+    });
+
+    /**
+     * Mark's live feedback, 2026-09-11 (recurred again on a real call,
+     * 2026-09-11, using MONKEY EATING EAGLE as the lead's name): a lead
+     * asked "who's this?", Iris correctly answered "This is Iris with
+     * [brand]," then in the SAME breath paraphrased the identify question
+     * into "Am I speaking with the lead who submitted the form about
+     * buying a home?" instead of using the real name — a distinct trigger
+     * from the plain paraphrase and mid-interruption cases already covered,
+     * since the drop happened specifically when combined with answering
+     * "who's calling" in one turn.
+     */
+    it("tells Iris the identify line must stay exact even when said in the same breath as answering 'who's calling'", () => {
+      const prompt = buildLeadQualificationPrompt(IRIS_CONFIG, { ...BLANK_LEAD, name: "Justin" }, "3 Percent East Coast", "St. John's", false, true, false);
+      expect(prompt).toMatch(/Saying both in the same breath is fine/i);
+      expect(prompt).toMatch(/the identify\s+question itself still has to be "Hi, am I speaking with Justin\?" word-for-word/i);
+      expect(prompt).toMatch(/Am I speaking with the lead who submitted the form about\s+buying a home\?/i);
+    });
+
+    /**
+     * Same real call: having already dropped the name once, Iris then
+     * falsely told the lead she didn't have their name at all, when it was
+     * right there in the prompt the whole time.
+     */
+    it("tells Iris dropping the name once is never a reason to also claim she never had it", () => {
+      const prompt = buildLeadQualificationPrompt(IRIS_CONFIG, { ...BLANK_LEAD, name: "Justin" }, "3 Percent East Coast", "St. John's", false, true, false);
+      expect(prompt).toMatch(/I don't actually have your name in\s+front of me right now.*is never a reason to also claim you never had it/is);
+    });
+  });
+
   describe("transferAvailable", () => {
     /**
      * Mark's live feedback, 2026-09-08: Iris invoked transferCall silently
