@@ -29,6 +29,20 @@ vi.mock("../../shared/meta", () => ({
 }));
 vi.mock("./ads/actions", () => ({ MetaActions: vi.fn() }));
 
+const getGhlConfigMock = vi.fn();
+const getCustomFieldDefsMock = vi.fn();
+const getContactMock = vi.fn();
+const listContactsPaginatedMock = vi.fn();
+async function* asyncGenOf(items: any[]) {
+  for (const item of items) yield item;
+}
+vi.mock("../../shared/ghl", () => ({
+  getGhlConfig: (...args: unknown[]) => getGhlConfigMock(...args),
+  getCustomFieldDefs: (...args: unknown[]) => getCustomFieldDefsMock(...args),
+  getContact: (...args: unknown[]) => getContactMock(...args),
+  listContactsPaginated: (...args: unknown[]) => listContactsPaginatedMock(...args),
+}));
+
 const executeManualMock = vi.fn();
 vi.mock("./ads/executor", () => ({
   ActionExecutor: class {
@@ -264,5 +278,71 @@ describe("Forge — create_ad_creative and create_ad", () => {
       { creative_id: "creative_2" },
       "jacob-via-chat"
     );
+  });
+});
+
+describe("Forge — check_lead_attribution", () => {
+  beforeEach(() => {
+    getGhlConfigMock.mockReset();
+    getCustomFieldDefsMock.mockReset();
+    getContactMock.mockReset();
+    listContactsPaginatedMock.mockReset();
+  });
+
+  it("reports real attribution status per recent contact, using config/ghl-field-map.3-percent-east-coast.json", async () => {
+    // Real fixture, not a mock: this file actually exists in the repo and
+    // is what the tool reads to resolve fieldKeys — exercising it here
+    // catches a config/code mismatch, not just the happy path.
+    getGhlConfigMock.mockResolvedValueOnce({ apiKey: "key", locationId: "loc_1" });
+    getCustomFieldDefsMock.mockResolvedValueOnce([
+      { id: "fld_fbclid", fieldKey: "contact.fbclid" },
+      { id: "fld_ad_id", fieldKey: "contact.meta_ad_id" },
+    ]);
+    listContactsPaginatedMock.mockReturnValueOnce(asyncGenOf([{ id: "c1" }, { id: "c2" }]));
+    getContactMock.mockImplementation(async (id: string) => {
+      if (id === "c1") {
+        return { contact: { id: "c1", contactName: "Attributed Lead", customFields: [{ id: "fld_ad_id", value: "120200000000001" }] } };
+      }
+      return { contact: { id: "c2", contactName: "Unattributed Lead", customFields: [] } };
+    });
+
+    vi.mocked(chatWithTools)
+      .mockResolvedValueOnce({
+        content: [toolUseBlock("call_1", "check_lead_attribution", { clientId: "3-percent-east-coast" })],
+        stop_reason: "tool_use",
+      } as any)
+      .mockResolvedValueOnce(endTurn("1 of 2 recent leads carries ad attribution."));
+
+    await forgeAgent.generateReply("key7", "check attribution for 3-percent-east-coast");
+
+    const secondCallMessages = vi.mocked(chatWithTools).mock.calls[1][1] as any;
+    const toolResult = JSON.parse(secondCallMessages[secondCallMessages.length - 1].content[0].content);
+
+    expect(toolResult.checked).toBe(2);
+    expect(toolResult.attributedCount).toBe(1);
+    expect(toolResult.results).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ contactId: "c1", attributed: true }),
+        expect.objectContaining({ contactId: "c2", attributed: false }),
+      ])
+    );
+  });
+
+  it("errors plainly when the client has no GHL account configured, rather than guessing", async () => {
+    getGhlConfigMock.mockResolvedValueOnce(null);
+
+    vi.mocked(chatWithTools)
+      .mockResolvedValueOnce({
+        content: [toolUseBlock("call_1", "check_lead_attribution", { clientId: "no-ghl-client" })],
+        stop_reason: "tool_use",
+      } as any)
+      .mockResolvedValueOnce(endTurn("No GHL account configured for that client."));
+
+    await forgeAgent.generateReply("key8", "check attribution for no-ghl-client");
+
+    const secondCallMessages = vi.mocked(chatWithTools).mock.calls[1][1] as any;
+    const toolResultContent = secondCallMessages[secondCallMessages.length - 1].content[0].content;
+    expect(toolResultContent).toMatch(/No GHL account configured/);
+    expect(getCustomFieldDefsMock).not.toHaveBeenCalled();
   });
 });

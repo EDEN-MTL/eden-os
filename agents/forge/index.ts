@@ -31,8 +31,9 @@ import { join } from "path";
 import { BaseAgent } from "../base-agent";
 import { Attachment, ToolDef } from "../../shared/claude";
 import { getMetaConfig, MetaClient } from "../../shared/meta";
+import { getContact, getCustomFieldDefs, getGhlConfig, listContactsPaginated } from "../../shared/ghl";
 import { computeMetrics } from "./ads/metrics";
-import { attributionReport } from "./ads/attribution";
+import { attributionReport, buildFieldIdLookup, extractAttribution, FieldMap } from "./ads/attribution";
 import * as queue from "./ads/queue";
 import { MetaActions } from "./ads/actions";
 import { ActionExecutor } from "./ads/executor";
@@ -52,6 +53,15 @@ function listClientConfigs(): ClientSummary[] {
       const raw = JSON.parse(readFileSync(join(dir, f), "utf-8"));
       return { clientId: raw.clientId, clientName: raw.clientName, industry: raw.industry };
     });
+}
+
+function loadGhlFieldMap(clientId: string): FieldMap | null {
+  try {
+    const path = join(process.cwd(), "config", `ghl-field-map.${clientId}.json`);
+    return JSON.parse(readFileSync(path, "utf-8"));
+  } catch {
+    return null;
+  }
 }
 
 async function requireMetaClient(clientId: string): Promise<MetaClient> {
@@ -207,6 +217,19 @@ const TOOLS: ToolDef[] = [
     },
   },
   {
+    name: "check_lead_attribution",
+    description:
+      "Fetches the N most recent real GHL leads for this client and checks live whether each one actually carries Meta ad attribution (fbclid or meta_campaign/adset/ad id), or is blank. Use this to verify attribution is actually working from real data, instead of assuming from config — a lead's attribution fields can be correctly configured in GHL and still sit empty if the ad's URL never carried the tags, or if leads arrive through a channel (like a native Meta Instant Form) that never touches those fields in the first place. Requires config/ghl-field-map.<clientId>.json to exist for this client.",
+    input_schema: {
+      type: "object",
+      properties: {
+        clientId: { type: "string" },
+        limit: { type: "integer", description: "How many recent contacts to check. Defaults to 10, capped at 25." },
+      },
+      required: ["clientId"],
+    },
+  },
+  {
     name: "create_adset",
     description:
       "Create a new ad set under an existing campaign. Always lands PAUSED. For state/city-level targeting, call search_ad_regions first to resolve names into keys — Meta rejects bare place names. Targeting fields not covered here (custom audiences) exist on the account — ask if you need something this schema doesn't expose rather than guessing at the shape.",
@@ -335,6 +358,54 @@ class ForgeAgent extends BaseAgent {
         const client = await requireMetaClient(input.clientId);
         const results = await client.searchGeoLocations(input.queryText, [input.locationType ?? "region"]);
         return JSON.stringify(results);
+      }
+
+      case "check_lead_attribution": {
+        const ghlConfig = await getGhlConfig(input.clientId);
+        if (!ghlConfig) {
+          throw new Error(`No GHL account configured for client "${input.clientId}".`);
+        }
+        const fieldMap = loadGhlFieldMap(input.clientId);
+        if (!fieldMap) {
+          throw new Error(
+            `No config/ghl-field-map.${input.clientId}.json found — attribution fields haven't been provisioned/mapped for this client yet.`
+          );
+        }
+
+        const limit = Math.min(input.limit ?? 10, 25);
+        const customFieldDefs = await getCustomFieldDefs(ghlConfig.locationId, ghlConfig.apiKey);
+        const idLookup = buildFieldIdLookup(customFieldDefs, fieldMap);
+
+        const recentIds: string[] = [];
+        for await (const c of listContactsPaginated(ghlConfig.locationId, { limit, apiKey: ghlConfig.apiKey })) {
+          recentIds.push(c.id);
+          if (recentIds.length >= limit) break;
+        }
+
+        const contacts = await Promise.all(
+          recentIds.map((id) => getContact(id, ghlConfig.locationId, ghlConfig.apiKey).catch(() => null))
+        );
+
+        const results = contacts
+          .filter((c): c is NonNullable<typeof c> => c !== null)
+          .map((resp: any) => {
+            const contact = resp.contact ?? resp;
+            const attribution = extractAttribution(contact, idLookup);
+            return {
+              contactId: contact.id,
+              name: contact.contactName ?? contact.name ?? null,
+              dateAdded: contact.dateAdded ?? null,
+              attributed: Boolean(attribution.meta_ad_id || attribution.fbclid),
+              attribution,
+            };
+          });
+
+        return JSON.stringify({
+          clientId: input.clientId,
+          checked: results.length,
+          attributedCount: results.filter((r) => r.attributed).length,
+          results,
+        });
       }
 
       case "get_ad_performance": {
