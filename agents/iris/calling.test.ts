@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { BOOKING_CONFIRMATION_LINES, buildCallPayload, PlaceCallParams } from "./calling";
+import { BOOKING_CONFIRMATION_LINES, RESCHEDULE_CONFIRMATION_LINES, buildCallPayload, PlaceCallParams } from "./calling";
 
 /**
  * Only buildCallPayload is tested here — it's the pure part. placeCall()
@@ -327,10 +327,10 @@ describe("buildCallPayload", () => {
   describe("check_availability / book_appointment tools", () => {
     const withCalendar: PlaceCallParams = { ...BASE_PARAMS, contactId: "contact-1", calendarId: "cal-123" };
 
-    it("replaces schedule_callback with both tools when a calendarId is given", () => {
+    it("replaces schedule_callback with all three tools when a calendarId is given", () => {
       const payload = buildCallPayload(withCalendar, VAPI_CONFIG);
       const names = payload.assistant.model.tools?.filter((t) => t.type === "function").map((t) => (t.type === "function" ? t.function.name : ""));
-      expect(names).toEqual(["check_availability", "book_appointment"]);
+      expect(names).toEqual(["check_availability", "book_appointment", "reschedule_appointment"]);
     });
 
     it("is omitted (falls back to schedule_callback) when no calendarId is given", () => {
@@ -339,9 +339,9 @@ describe("buildCallPayload", () => {
       expect(names).toEqual(["schedule_callback"]);
     });
 
-    it("bakes clientId, contactId, calendarId, and a buyer/seller intent into both tools' server URLs", () => {
+    it("bakes clientId, contactId, calendarId, and a buyer/seller intent into all three tools' server URLs", () => {
       const payload = buildCallPayload({ ...withCalendar, intent: "seller" }, VAPI_CONFIG);
-      for (const name of ["check_availability", "book_appointment"]) {
+      for (const name of ["check_availability", "book_appointment", "reschedule_appointment"]) {
         const tool = payload.assistant.model.tools?.find((t) => t.type === "function" && t.function.name === name);
         if (tool?.type !== "function") throw new Error(`expected ${name} function tool`);
         const url = new URL(tool.server.url);
@@ -420,6 +420,42 @@ describe("buildCallPayload", () => {
       expect(message?.role).toBe("assistant");
       expect(BOOKING_CONFIRMATION_LINES).toContain(message?.content);
       expect(message?.endCallAfterSpokenEnabled).not.toBe(true);
+    });
+
+    /**
+     * Mark's spec, 2026-09-12: a lead changing their mind after a real
+     * booking needs a genuine reschedule tool, not a repeated book_appointment
+     * call (which would create a second real appointment) or a brush-off.
+     * Only wired alongside book_appointment (same calendarId/contactId gate).
+     */
+    it("requires an isoTime argument for reschedule_appointment, wired only alongside book_appointment", () => {
+      const payload = buildCallPayload(withCalendar, VAPI_CONFIG);
+      const tool = payload.assistant.model.tools?.find((t) => t.type === "function" && t.function.name === "reschedule_appointment");
+      if (tool?.type !== "function") throw new Error("expected function tool");
+      expect(tool.function.parameters.required).toEqual(["isoTime"]);
+      expect(tool.server.url).toContain("/tools/reschedule-appointment");
+    });
+
+    /**
+     * Same guaranteed-confirmation mechanism as book_appointment, and
+     * deliberately shares the "notification" + "text" anchor so the
+     * existing endCall rejectionPlan gate (below) detects a reschedule
+     * confirmation too, without needing its own separate gate logic.
+     */
+    it("wires a guaranteed request-complete confirmation on reschedule_appointment, matching the endCall gate's anchor words", () => {
+      const payload = buildCallPayload(withCalendar, VAPI_CONFIG);
+      const tool = payload.assistant.model.tools?.find((t) => t.type === "function" && t.function.name === "reschedule_appointment");
+      if (tool?.type !== "function") throw new Error("expected function tool");
+      const message = tool.messages?.find((m) => m.type === "request-complete");
+      expect(message).toBeDefined();
+      expect(message?.role).toBe("assistant");
+      expect(RESCHEDULE_CONFIRMATION_LINES).toContain(message?.content);
+      expect(message?.endCallAfterSpokenEnabled).not.toBe(true);
+      for (const line of RESCHEDULE_CONFIRMATION_LINES) {
+        const c = line.toLowerCase();
+        expect(c).toContain("notification");
+        expect(c).toContain("text");
+      }
     });
   });
 });

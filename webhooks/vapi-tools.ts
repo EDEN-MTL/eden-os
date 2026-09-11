@@ -1,6 +1,6 @@
 import crypto from "crypto";
 import { Request, Response, Router } from "express";
-import { getGhlConfig, addContactTags, updateContact, getCustomFieldDefs, getCalendarSlots, createAppointment, getLocationTimezone } from "../shared/ghl";
+import { getGhlConfig, addContactTags, updateContact, getCustomFieldDefs, getCalendarSlots, createAppointment, updateAppointment, listCalendarEvents, getLocationTimezone } from "../shared/ghl";
 import { buildKeyToId } from "../agents/scout/intake";
 import { loadIrisConfig } from "../agents/iris";
 import { scheduleExplicitCallback } from "../agents/iris/dial-pending";
@@ -486,6 +486,112 @@ async function handleBookAppointment(
   };
 }
 
+/** How far ahead to search when looking up "the" existing appointment to reschedule — see handleRescheduleAppointment. */
+const RESCHEDULE_LOOKUP_WINDOW_DAYS = 30;
+
+/**
+ * Changes an EXISTING real appointment to a new time — the only tool that
+ * does this. Mark's spec, 2026-09-12: a lead changing their mind after a
+ * real booking must get a genuine reschedule, not a duplicate appointment
+ * or a "teammate will follow up" brush-off (the older 2026-09-08
+ * double-booking rule blocked calling book_appointment a second time, but
+ * real GHL update support wasn't confirmed live until now, so that rule
+ * could only ever say no).
+ *
+ * Confirmed live, 2026-09-12: GHL's PUT /calendars/events/appointments/{id}
+ * genuinely updates the SAME appointment record in place (verified against
+ * a real test booking in the eden-sub-account-one test account — same id,
+ * same dateAdded, fresh dateUpdated) — so this UPDATES the existing
+ * appointment rather than cancelling and recreating one. There is never a
+ * window where both an old and a new appointment exist.
+ *
+ * Iris never has to track or pass an appointment id herself — the model
+ * already can't be trusted to carry ids faithfully across turns (see
+ * resolveRequestedTime's whole isoTime saga). Instead this looks up the
+ * contact's own most recent non-cancelled appointment on this calendar
+ * (by dateAdded, which stays stable across repeated reschedules even
+ * though dateUpdated changes each time) — the same one book_appointment
+ * created earlier this call.
+ */
+async function handleRescheduleAppointment(
+  clientId: string,
+  contactId: string,
+  calendarId: string,
+  isoTime: unknown
+): Promise<{ result: string; success: boolean }> {
+  if (typeof isoTime !== "string" || !isoTime) {
+    return {
+      success: false,
+      result:
+        "No isoTime was given — this is an error in how you called the tool, not a real availability problem. " +
+        "Call check_availability first to get a real isoTime value, then call this tool with that exact value. " +
+        "Do not tell the lead there's a technical issue.",
+    };
+  }
+  const requested = new Date(isoTime);
+  if (Number.isNaN(requested.getTime())) {
+    return {
+      success: false,
+      result: `"${isoTime}" is not a valid timestamp — this is an error in how you called the tool. Call check_availability again and use its exact isoTime value verbatim, not a recomputed one. Do not tell the lead there's a technical issue.`,
+    };
+  }
+
+  const ghlConfig = await getGhlConfig(clientId);
+  const config = loadIrisConfig(clientId);
+  if (!ghlConfig || !config) {
+    return { success: false, result: "Could not reach the calendar right now — tell the lead a teammate will confirm the new time directly." };
+  }
+
+  const live = await fetchLiveSlots(clientId, calendarId, config.timezone);
+  if (!live) {
+    return { success: false, result: "Could not reach the calendar right now — tell the lead a teammate will confirm the new time directly." };
+  }
+  const { timeZone, allSlots } = live;
+
+  const exactMatch = allSlots.find((s) => new Date(s).getTime() === requested.getTime());
+  if (!exactMatch) {
+    return {
+      success: false,
+      result:
+        "That exact time is no longer available — it may have just been taken. Do not claim it's rescheduled. Call " +
+        "check_availability again for a fresh real time to offer instead.",
+    };
+  }
+
+  const now = Date.now();
+  const events = await listCalendarEvents(
+    ghlConfig.locationId,
+    calendarId,
+    now - 24 * 3600 * 1000,
+    now + RESCHEDULE_LOOKUP_WINDOW_DAYS * 24 * 3600 * 1000,
+    ghlConfig.apiKey
+  );
+  const existing = events
+    .filter((e: any) => e.contactId === contactId && !e.deleted && e.appointmentStatus !== "cancelled")
+    .sort((a: any, b: any) => new Date(b.dateAdded).getTime() - new Date(a.dateAdded).getTime())[0];
+
+  if (!existing) {
+    return {
+      success: false,
+      result:
+        "No existing appointment was found for this lead to reschedule — do not claim a change was made. Only call this tool after " +
+        "book_appointment has already succeeded once this call; if nothing has actually been booked yet, call book_appointment instead.",
+    };
+  }
+
+  const endTime = new Date(new Date(exactMatch).getTime() + APPOINTMENT_DURATION_MINUTES * 60_000).toISOString();
+  try {
+    await updateAppointment(existing.id, { calendarId, startTime: exactMatch, endTime }, ghlConfig.locationId, ghlConfig.apiKey);
+  } catch (error) {
+    console.error(`[VAPI-TOOLS] updateAppointment failed for ${clientId}/${contactId}:`, error instanceof Error ? error.message : error);
+    return { success: false, result: "That time showed as open but the reschedule failed — do not claim it's changed. Tell the lead a teammate will confirm directly instead." };
+  }
+  return {
+    success: true,
+    result: `Rescheduled to ${formatSpoken(exactMatch, timeZone)}. Vapi will confirm this to the lead automatically — you don't need to repeat it yourself.`,
+  };
+}
+
 function createToolHandler(handler: (query: Record<string, string>, call: ToolCall) => Promise<string>) {
   return async (req: Request, res: Response) => {
     const secret = process.env.VAPI_WEBHOOK_SECRET;
@@ -575,6 +681,13 @@ export function createVapiToolsRouter(): Router {
         query.leadSummary,
         parseToolArguments(call).conversationNotes
       )
+    )
+  );
+
+  router.post(
+    "/reschedule-appointment",
+    createBookAppointmentHandler(async (query, call) =>
+      handleRescheduleAppointment(query.clientId, query.contactId, query.calendarId, parseToolArguments(call).isoTime)
     )
   );
 

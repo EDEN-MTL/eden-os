@@ -43,6 +43,19 @@ export const BOOKING_CONFIRMATION_LINES = [
   "Perfect, everything's booked. You'll receive a notification with the details shortly. If anything comes up, just text us anytime.",
 ];
 
+/**
+ * Mark's spec, 2026-09-12: reschedule_appointment's own guaranteed
+ * request-complete confirmation, parallel to BOOKING_CONFIRMATION_LINES.
+ * Every variant also contains BOTH "notification" and "text" so the same
+ * endCall rejectionPlan gate below detects a reschedule confirmation too,
+ * with no separate gate logic needed for it.
+ */
+export const RESCHEDULE_CONFIRMATION_LINES = [
+  "Great, I've updated your appointment to the new time — you'll get a notification with the details, and you can always text us here if anything changes.",
+  "Awesome, you're all set for the new time. You'll get a notification with the updated details — just text us here if anything comes up.",
+  "Perfect, your appointment's been moved to the new time. You'll get a notification shortly — text us at this number if you need anything.",
+];
+
 export interface PlaceCallParams {
   clientId: string;
   brandName: string;
@@ -391,6 +404,52 @@ export function buildCallPayload(
           // check below can detect any of them without hardcoding five
           // separate phrases.
           content: BOOKING_CONFIRMATION_LINES[Math.floor(Math.random() * BOOKING_CONFIRMATION_LINES.length)],
+        },
+      ],
+    });
+
+    // Mark's spec, 2026-09-12: a lead changing their mind after a real
+    // booking needs a genuine reschedule, not a duplicate appointment or a
+    // "teammate will follow up" brush-off. Only wired alongside
+    // book_appointment (same server/contactId/calendarId gate above) since
+    // there's nothing to reschedule without a real booking tool in the
+    // first place. See handleRescheduleAppointment in webhooks/vapi-tools.ts
+    // — it UPDATES the same appointment record book_appointment created,
+    // confirmed live 2026-09-12, rather than creating a second one.
+    tools.push({
+      type: "function",
+      function: {
+        name: "reschedule_appointment",
+        description:
+          "Changes an EXISTING real appointment (already booked earlier this call via book_appointment) " +
+          "to a new time — the only tool that does this, and safe to call more than once if the lead " +
+          "changes their mind again. Only ever call this with an exact isoTime you already got back from " +
+          "check_availability. Never call this before any appointment exists yet — call book_appointment " +
+          "for that instead.",
+        parameters: {
+          type: "object",
+          properties: {
+            isoTime: {
+              type: "string",
+              description:
+                "The exact isoTime value from check_availability's response, copied character for " +
+                "character — never recomputed from the spoken phrase.",
+            },
+          },
+          required: ["isoTime"],
+        },
+      },
+      server: { url: `${vapiConfig.serverUrl}/tools/reschedule-appointment?${qs}`, secret: vapiConfig.webhookSecret },
+      // Same guaranteed, model-independent confirmation mechanism as
+      // book_appointment above — see that tool's own comment. Every
+      // variant here also contains "notification" and "text", so the
+      // existing endCall rejectionPlan gate below covers a reschedule
+      // confirmation too, with no changes needed to that gate itself.
+      messages: [
+        {
+          type: "request-complete",
+          role: "assistant",
+          content: RESCHEDULE_CONFIRMATION_LINES[Math.floor(Math.random() * RESCHEDULE_CONFIRMATION_LINES.length)],
         },
       ],
     });

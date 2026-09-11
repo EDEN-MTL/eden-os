@@ -531,6 +531,34 @@ export async function createAppointment(
   });
 }
 
+/**
+ * Updates (reschedules) an EXISTING appointment event in place — confirmed
+ * live, 2026-09-12, against a real test booking (PUT
+ * /calendars/events/appointments/{id} with a new startTime/endTime returned
+ * 200 and a fresh dateUpdated, same appointment id, same dateAdded). This is
+ * what makes Iris's reschedule_appointment tool (webhooks/vapi-tools.ts's
+ * handleRescheduleAppointment) a true update rather than a cancel-then-
+ * recreate — there is never a window where both an old and a new
+ * appointment exist for the same booking.
+ */
+export async function updateAppointment(
+  appointmentId: string,
+  data: {
+    calendarId: string;
+    startTime: string;
+    endTime: string;
+  },
+  locationId?: string,
+  apiKey?: string
+): Promise<any> {
+  return ghlRequest(`/calendars/events/appointments/${appointmentId}`, {
+    method: "PUT",
+    body: data,
+    locationId,
+    apiKey,
+  });
+}
+
 // ─── Conversations / SMS ───
 
 export async function sendSMS(

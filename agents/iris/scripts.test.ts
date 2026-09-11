@@ -719,8 +719,37 @@ describe("buildLeadQualificationPrompt", () => {
      */
     it("tells Iris never to call book_appointment again once it's already booked one", () => {
       const prompt = buildLeadQualificationPrompt(IRIS_CONFIG, BLANK_LEAD, "3 Percent East Coast", "St. John's", true, true, true);
-      expect(prompt).toMatch(/NEVER call book_appointment again after a\s*\nsuccess, for the rest of this call/i);
+      expect(prompt).toMatch(/NEVER call book_appointment again after a\s+success, for the\s+rest of this call/i);
       expect(prompt).toMatch(/it can only create appointments, never move or cancel\s*\none/i);
+    });
+
+    /**
+     * Mark's spec, 2026-09-12: a lead changing their mind after a real
+     * booking must get a genuine reschedule via the new
+     * reschedule_appointment tool — a real GHL update confirmed live
+     * 2026-09-12, not the old "teammate will follow up" deflection (which
+     * only ever existed because no real reschedule capability did).
+     */
+    it("gives Iris a real reschedule flow via reschedule_appointment, not a deflection, when the lead changes their mind after booking", () => {
+      const prompt = buildLeadQualificationPrompt(IRIS_CONFIG, BLANK_LEAD, "3 Percent East Coast", "St. John's", true, true, true);
+      expect(prompt).toMatch(/that is a real RESCHEDULE, never a fresh\s+booking/i);
+      expect(prompt).toContain("reschedule_appointment");
+      expect(prompt).toMatch(/updates the SAME appointment record/i);
+      expect(prompt).toMatch(/No problem at all — we can definitely move that for you/i);
+      expect(prompt).toMatch(/Alright, just to confirm — you're good for \[new day\/time\], correct\?/i);
+      expect(prompt).toMatch(/never claim a new time is\s+already set, booked, or locked in/i);
+    });
+
+    /**
+     * Mark's "PRO TIP" instruction: rescheduling shouldn't feel like
+     * restarting the whole booking flow from zero, and repeated changes of
+     * mind should be handled calmly, not with frustration.
+     */
+    it("tells Iris a reschedule should feel like a short continuation, and to stay calm through repeated changes", () => {
+      const prompt = buildLeadQualificationPrompt(IRIS_CONFIG, BLANK_LEAD, "3 Percent East Coast", "St. John's", true, true, true);
+      expect(prompt).toMatch(/should feel like a short continuation, not\s+a restart/i);
+      expect(prompt).toMatch(/never re-run the full original booking script/i);
+      expect(prompt).toMatch(/don't\s+show any frustration, keep acknowledgments short and neutral/i);
     });
   });
 
@@ -791,8 +820,8 @@ describe("buildLeadQualificationPrompt", () => {
      */
     it("tells Iris not to add her own closing on top of Vapi's guaranteed booking confirmation", () => {
       const prompt = buildLeadQualificationPrompt(IRIS_CONFIG, BLANK_LEAD, "3 Percent East Coast", "St. John's", true, true, true);
-      expect(prompt).toMatch(/vapi speaks a guaranteed\s+confirmation automatically/i);
-      expect(prompt).toMatch(/say NOTHING right after that tool\s+succeeds/i);
+      expect(prompt).toMatch(/vapi\s+speaks a guaranteed\s+confirmation automatically/i);
+      expect(prompt).toMatch(/say\s+NOTHING right after (?:that|either) tool\s+succeeds/i);
       expect(prompt).toMatch(/don't second-guess it or\s+add your own version on top/i);
     });
 
