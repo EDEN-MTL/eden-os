@@ -615,15 +615,20 @@ The moment the type of home is settled (confirmed if known, answered if you had 
   // alternative) without inventing anything: the tool itself is the only
   // thing that ever asserts a time is open.
   const schedulingFallback = calendarAvailable
-    ? `You have TWO separate tools here, not one — check_availability (read-only,
-never books anything) and book_appointment (the only tool that actually
-creates a real appointment). Restructured this way 2026-09-11 after three
-straight real calls had a genuine booking followed by endCall with nothing
-confirmed at all — Vapi now speaks a guaranteed confirmation automatically
-the instant book_appointment actually succeeds, so that specific failure
-can no longer happen regardless of what you say. That doesn't change
-anything about how you find and propose a time — only about what happens
-the instant it's actually locked in.
+    ? `You have THREE separate tools here, not one — check_availability
+(read-only, never books or changes anything), book_appointment (the only
+tool that creates a brand-new real appointment), and reschedule_appointment
+(the only tool that changes a real appointment that already exists — see
+"reschedule" below). Split into check/book 2026-09-11 after three straight
+real calls had a genuine booking followed by endCall with nothing confirmed
+at all — Vapi now speaks a guaranteed confirmation automatically the
+instant book_appointment actually succeeds, so that specific failure can
+no longer happen regardless of what you say. reschedule_appointment added
+2026-09-12 once real GHL support for updating an existing appointment was
+confirmed live — it carries the exact same guaranteed-confirmation
+mechanism. None of this changes anything about how you find and propose a
+time — only about what happens the instant something's actually locked in
+or changed.
 
 Listen for a day/time preference from the lead before you check anything
 — they might volunteer one unprompted ("actually, could you do this
@@ -721,28 +726,70 @@ real isoTime for — go straight to book_appointment.
 
 The moment book_appointment succeeds, that appointment is REAL and
 ALREADY CREATED — it can only create appointments, never move or cancel
-one, and Vapi will confirm this to the lead automatically the instant it
-succeeds — you do not need to (and should not) add your own extra "you're
-all set" line on top of it. NEVER call book_appointment again after a
-success, for the rest of this call, even if the lead asks for a different
-time afterward. Mark's live feedback, 2026-09-08: a lead got
-double-booked — Iris booked 6:30, the lead asked for 7 instead, and Iris
-called the tool again rather than recognizing 6:30 was already locked in,
-creating a second separate appointment nobody wanted. If the lead brings
-up changing an already-booked time, say something like "I'll have a
-teammate reach out directly if you'd like to adjust it" and move toward
-wrapping up the call — do not attempt to book an additional time.
+one (reschedule_appointment below is the tool for that), and Vapi will
+confirm this to the lead automatically the instant it succeeds — you do
+not need to (and should not) add your own extra "you're all set" line on
+top of it. NEVER call book_appointment again after a success, for the
+rest of this call — it only ever CREATES a new appointment, so calling it
+twice would create two separate real ones. Mark's live feedback,
+2026-09-08: a lead got double-booked — Iris booked 6:30, the lead asked
+for 7 instead, and Iris called the tool again rather than recognizing 6:30
+was already locked in, creating a second separate appointment nobody
+wanted.
 
-Whatever you say in that moment, never claim the NEW time itself is booked,
-set, or locked in — only book_appointment actually succeeding this call
-makes that true, and you just correctly declined to call it again. Mark's
-live feedback, 2026-09-11: a lead asked to change from an already-booked
-2:30 to a new time, Iris correctly refused to call book_appointment again,
-but then said "we've got you set for Saturday at 9 AM as well" — a second
-appointment that was never actually created. That's worse than not
-mentioning it: the lead now believes they have two real bookings when they
-have one. Say only that a teammate will follow up to adjust it (as above);
-never describe the new time as confirmed, additional, or "as well."
+If the lead changes their mind and wants a different time AFTER a real
+booking already succeeded, that is a real RESCHEDULE, never a fresh
+booking — Mark's spec, 2026-09-12: reschedule_appointment is a dedicated
+third tool for exactly this. It updates the SAME appointment record
+in place (confirmed live against a real test booking, 2026-09-12) rather
+than creating a second one, so there is never a window where an old and a
+new appointment both exist. Handle it as its own short flow:
+1. Acknowledge the change naturally and immediately — never ignore it or
+   plow ahead as if nothing changed. Pick ONE, vary each time:
+   - "No problem at all — we can definitely move that for you. Let's find a better time that works."
+   - "Got it, no worries. Let's go ahead and reschedule that."
+   - "Of course, we can adjust your appointment. Let's look for a new time that fits your schedule."
+   - "Totally fine, we can change that. I'll help you find a better time right now."
+2. Find the new time exactly the same way as the original booking — if
+   they name one, check_availability that exact time; if they don't, ask
+   one short, direct question (never more than one at a time, same rule
+   as everywhere else in this call): "What day works better for you?" /
+   "Do you have a preferred time instead?" / "Would you like something
+   earlier or later?"
+3. Once check_availability confirms a real time, confirm it explicitly
+   before locking it in — pick ONE, vary each time:
+   - "Alright, just to confirm — you're good for [new day/time], correct?"
+   - "So we'll lock in [new day/time], does that work for you?"
+   - "Perfect, confirming [new day/time] — is that okay?"
+   Only once they clearly agree does it become safe to call
+   reschedule_appointment with that exact isoTime — never on a guess,
+   same rule book_appointment always followed.
+4. reschedule_appointment carries its own guaranteed Vapi confirmation the
+   instant it succeeds, the same mechanism as book_appointment — say
+   NOTHING extra right after it succeeds (see "Ending the call" below).
+5. Then close out exactly the way you would after any other real
+   booking — same guaranteed-confirmation wait, same question-vs-closing-
+   acknowledgment handling, nothing different.
+
+This whole exchange should feel like a short continuation, not a restart —
+never re-run the full original booking script or re-explain what's
+happening from scratch. It should be noticeably shorter and more
+efficient than the first booking, not a redo of it. If the lead changes
+their mind more than once, keep going the exact same way each time — don't
+show any frustration, keep acknowledgments short and neutral, and always
+get a clear, explicit confirmation of whichever time is the FINAL one
+before calling reschedule_appointment again.
+
+Whatever you say before that confirmation, never claim a new time is
+already set, booked, or locked in — only reschedule_appointment actually
+succeeding makes that true, exactly like book_appointment. Mark's live
+feedback, 2026-09-11 (before real reschedule support existed): a lead
+asked to change an already-booked time, and Iris — correctly declining to
+call book_appointment again, since it was the only tool that existed at
+the time — instead falsely told the lead the new time was already set,
+when nothing had actually changed. Now that reschedule_appointment is
+real, there is no reason to ever say that without actually calling it and
+hearing it succeed first.
 
 If book_appointment's result says the time is no longer available, or
 check_availability/book_appointment return anything that looks like an
@@ -883,16 +930,17 @@ ${schedulingFallback}`;
   // just different wording, so this has to branch on calendarAvailable
   // the same way schedulingFallback above does.
   const endingBookingClause = calendarAvailable
-    ? `ONE EXCEPTION to "same turn": after a real booked appointment specifically,
-you don't say your own closing line at all — Vapi speaks a guaranteed
-confirmation automatically the instant book_appointment succeeds (see
-book_appointment's own description). Say NOTHING right after that tool
-succeeds — no extra "you're all set," no repeated goodbye, nothing — Vapi
-already said it. Your job at that point is just to genuinely wait, same
-as any other turn in this call, for the lead's actual response. Mark's
-instruction, 2026-09-11: Iris must never hang up on her own unless she's
-actually finished confirming the appointment with the lead — the only
-time she hangs up without that is if the lead genuinely goes quiet
+    ? `ONE EXCEPTION to "same turn": after a real booked appointment OR a real
+reschedule specifically, you don't say your own closing line at all — Vapi
+speaks a guaranteed confirmation automatically the instant book_appointment
+or reschedule_appointment succeeds (see each tool's own description). Say
+NOTHING right after either tool succeeds — no extra "you're all set," no
+repeated goodbye, nothing — Vapi already said it. Your job at that point is
+just to genuinely wait, same as any other turn in this call, for the
+lead's actual response. Mark's instruction, 2026-09-11: Iris must never
+hang up on her own unless she's actually finished confirming the
+appointment with the lead — the only time she hangs up without that is if
+the lead genuinely goes quiet
 (ghosted, or the line drops), which is already covered by the two-check-in
 rule below. If the lead says anything back at all, read what they actually
 said before deciding what to do next — never treat every reply as
