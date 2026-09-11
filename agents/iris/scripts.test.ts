@@ -558,6 +558,20 @@ describe("buildLeadQualificationPrompt", () => {
       expect(prompt).toMatch(/never say the transfer line, never mention connecting them to an\s*\nagent, and never invoke transferCall again/i);
     });
 
+    /**
+     * Mark's instruction, 2026-09-11: an extra layer for the case the lead
+     * just missed the transfer announcement (distracted, muted for a
+     * second) rather than either agreeing or saying they're unavailable —
+     * Iris should re-state the transfer plainly once before treating it as
+     * ordinary silence.
+     */
+    it("tells Iris to re-state the transfer once on silence before falling back to the standard quiet-lead rule", () => {
+      const prompt = buildLeadQualificationPrompt(IRIS_CONFIG, BLANK_LEAD, "3 Percent East Coast", "St. John's", false, true, false);
+      expect(prompt).toMatch(/do NOT invoke transferCall and do NOT assume either agreement or unavailability/i);
+      expect(prompt).toMatch(/Re-state the transfer plainly ONE time/i);
+      expect(prompt).toMatch(/follow the standard "if the lead goes quiet" two-check-in rule/i);
+    });
+
     it("tells Iris she has no live-transfer tool, and never to claim one, when none is available", () => {
       const prompt = buildLeadQualificationPrompt(IRIS_CONFIG, BLANK_LEAD, "3 Percent East Coast", "St. John's", false, false, false);
       expect(prompt).toMatch(/do not have a live-transfer tool/i);
