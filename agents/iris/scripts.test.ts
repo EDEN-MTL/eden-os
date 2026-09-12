@@ -482,6 +482,20 @@ describe("buildLeadQualificationPrompt", () => {
     expect(prompt).toMatch(/more than ONCE while a tool call is/i);
   });
 
+  /**
+   * Mark's live feedback, 2026-09-11: after confirming budget with "And
+   * budget wise, still around 1000000?", Iris asked the NEXT question (a
+   * different topic, area) as "Budget wise, what area are you interested
+   * in?" — carrying the previous question's own topic tag onto an
+   * unrelated question, reading as a garbled half-finished transition.
+   */
+  it("tells Iris not to carry a question's topic tag onto the next, unrelated question", () => {
+    const prompt = buildLeadQualificationPrompt(IRIS_CONFIG, { ...BLANK_LEAD, budget: "$1,000,000" }, "3 Percent East Coast", "St. John's", false, true, false);
+    expect(prompt).toMatch(/the NEXT question opens fresh — never carry the topic tag/i);
+    expect(prompt).toMatch(/Budget\s+wise, what area are you interested/i);
+    expect(prompt).toMatch(/start the next one clean/i);
+  });
+
   describe("identity name-drop", () => {
     /**
      * Mark's live feedback, 2026-09-09: on the call right after this rule
