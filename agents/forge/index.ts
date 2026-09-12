@@ -219,7 +219,7 @@ const TOOLS: ToolDef[] = [
   {
     name: "check_lead_attribution",
     description:
-      "Fetches the N most recent real GHL leads for this client and checks live whether each one actually carries Meta ad attribution (fbclid or meta_campaign/adset/ad id), or is blank. Use this to verify attribution is actually working from real data, instead of assuming from config — a lead's attribution fields can be correctly configured in GHL and still sit empty if the ad's URL never carried the tags, or if the data actually lives somewhere else on the contact entirely (e.g. GHL's own native attribution/activity tracking) rather than in these specific custom fields. Requires config/ghl-field-map.<clientId>.json to exist for this client. Set includeRawSample to see the complete, unfiltered API response for the first contact — use this whenever the summarized fields don't match what's visible in the GHL UI, to find out where the data actually lives in the API response.",
+      "Fetches the N most recent real GHL leads for this client and checks live whether each one actually carries Meta ad attribution (fbclid or meta_campaign/adset/ad id), or is blank. Reads both GHL's native attributionSource (populated automatically by its Facebook/Instagram Lead Ads integration, no per-client setup needed) and, as a fallback, custom fields per config/ghl-field-map.<clientId>.json (needed only for a landing-page click-through source using URL tags) — a field-map file is not required. Use this to verify attribution from real data instead of assuming from config. Set includeRawSample to see the complete, unfiltered API response for the first contact — use this whenever the summarized fields don't match what's visible in the GHL UI, to find out where the data actually lives in the API response.",
     input_schema: {
       type: "object",
       properties: {
@@ -366,13 +366,12 @@ class ForgeAgent extends BaseAgent {
         if (!ghlConfig) {
           throw new Error(`No GHL account configured for client "${input.clientId}".`);
         }
-        const fieldMap = loadGhlFieldMap(input.clientId);
-        if (!fieldMap) {
-          throw new Error(
-            `No config/ghl-field-map.${input.clientId}.json found — attribution fields haven't been provisioned/mapped for this client yet.`
-          );
-        }
-
+        // No field-map file is fine — GHL's native attributionSource (see
+        // extractAttribution) needs no per-client custom-field provisioning
+        // at all. The field map only adds fallback coverage for a client
+        // whose leads arrive some other way (a landing-page click-through
+        // with URL tags, for instance).
+        const fieldMap = loadGhlFieldMap(input.clientId) ?? {};
         const limit = Math.min(input.limit ?? 10, 25);
         const customFieldDefs = await getCustomFieldDefs(ghlConfig.locationId, ghlConfig.apiKey);
         const idLookup = buildFieldIdLookup(customFieldDefs, fieldMap);
