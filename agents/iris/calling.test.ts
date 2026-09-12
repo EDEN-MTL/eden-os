@@ -146,7 +146,7 @@ describe("buildCallPayload", () => {
       // Every one of the randomized confirmation variants must actually
       // satisfy this gate's detection condition — otherwise a call that
       // happens to draw that variant would silently never unblock endCall.
-      for (const line of bookingConfirmationLines("Sam")) {
+      for (const line of bookingConfirmationLines()) {
         const c = line.toLowerCase();
         expect(c).toContain("notification");
         expect(c).toContain("text");
@@ -582,9 +582,12 @@ describe("buildCallPayload", () => {
      *
      * Updated 2026-09-12: content is randomized across
      * bookingConfirmationLines (Mark's spec — a single fixed line
-     * sounded repetitive across calls), personalized with the lead's own
-     * first name, so this checks membership in that list rather than one
-     * exact string.
+     * sounded repetitive across calls), so this checks membership in that
+     * list rather than one exact string. Deliberately NOT personalized
+     * with the lead's name (reverted 2026-09-12 — see bookingConfirmationLines'
+     * own comment): this content is fixed before the call starts and
+     * spoken by Vapi directly, so it can never reflect a name the lead
+     * corrects mid-call the way Iris's own live speech can.
      */
     it("wires a guaranteed request-complete confirmation on book_appointment, with control returned to Iris afterward", () => {
       const payload = buildCallPayload(withCalendar, VAPI_CONFIG);
@@ -593,8 +596,7 @@ describe("buildCallPayload", () => {
       const message = tool.messages?.find((m) => m.type === "request-complete");
       expect(message).toBeDefined();
       expect(message?.role).toBe("assistant");
-      expect(bookingConfirmationLines("Sam")).toContain(message?.content);
-      expect(message?.content).toContain("Sam");
+      expect(bookingConfirmationLines()).toContain(message?.content);
       expect(message?.endCallAfterSpokenEnabled).not.toBe(true);
     });
 
@@ -625,10 +627,9 @@ describe("buildCallPayload", () => {
       const message = tool.messages?.find((m) => m.type === "request-complete");
       expect(message).toBeDefined();
       expect(message?.role).toBe("assistant");
-      expect(rescheduleConfirmationLines("Sam")).toContain(message?.content);
-      expect(message?.content).toContain("Sam");
+      expect(rescheduleConfirmationLines()).toContain(message?.content);
       expect(message?.endCallAfterSpokenEnabled).not.toBe(true);
-      for (const line of rescheduleConfirmationLines("Sam")) {
+      for (const line of rescheduleConfirmationLines()) {
         const c = line.toLowerCase();
         expect(c).toContain("notification");
         expect(c).toContain("text");
@@ -643,19 +644,27 @@ describe("buildCallPayload", () => {
  * trailing "reply to the text" nudge (reduces no-shows, keeps the
  * conversation open).
  */
+/**
+ * Mark's live feedback, 2026-09-12: a real call had the lead correct his
+ * name early on ("Mark", not the form's "Manny") — Iris correctly used
+ * "Mark" in her own speech for the rest of the call, but the guaranteed
+ * booking confirmation (fixed before the call started) still said
+ * "Manny." Reverted personalization on these two specifically — they're
+ * spoken by Vapi directly, never passing through the model, so they can
+ * never reflect a live correction the way Iris's own generated speech can.
+ */
 describe("bookingConfirmationLines / rescheduleConfirmationLines", () => {
-  it("personalizes every variant with the lead's real first name", () => {
-    for (const line of bookingConfirmationLines("Jason")) expect(line).toContain("Jason");
-    for (const line of rescheduleConfirmationLines("Jason")) expect(line).toContain("Jason");
-  });
-
-  it("never says the 'there' placeholder as if it were a real name", () => {
-    for (const line of bookingConfirmationLines("there")) expect(line).not.toContain("there,");
-    for (const line of rescheduleConfirmationLines("there")) expect(line).not.toContain("there,");
+  it("never references a lead name at all, since this content can't react to a live name correction", () => {
+    for (const line of bookingConfirmationLines()) {
+      expect(line).not.toMatch(/\b(Jason|Sam|Manny|Mark)\b/);
+    }
+    for (const line of rescheduleConfirmationLines()) {
+      expect(line).not.toMatch(/\b(Jason|Sam|Manny|Mark)\b/);
+    }
   });
 
   it("includes the 'reply to the text' pro-tip on every variant", () => {
-    for (const line of bookingConfirmationLines("Jason")) expect(line).toMatch(/feel free to reply to the text/i);
-    for (const line of rescheduleConfirmationLines("Jason")) expect(line).toMatch(/feel free to reply to the text/i);
+    for (const line of bookingConfirmationLines()) expect(line).toMatch(/feel free to reply to the text/i);
+    for (const line of rescheduleConfirmationLines()) expect(line).toMatch(/feel free to reply to the text/i);
   });
 });
