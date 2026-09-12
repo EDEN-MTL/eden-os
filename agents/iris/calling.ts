@@ -27,29 +27,32 @@ import { AGENT_UNAVAILABLE_LINE, buildVoicemailMessage, callOpeningGreeting } fr
 
 export class CallingDisabledError extends Error {}
 
-/** "there" is the no-real-name placeholder used throughout this file (see buildAgentBriefing etc.) — never spoken as a name. */
-function nameClause(firstName: string): string {
-  return firstName && firstName !== "there" ? `, ${firstName}` : "";
-}
-
 /**
  * Mark's spec, 2026-09-12 ("END CALL LOGIC — APPOINTMENT CONFIRMED"):
  * book_appointment's guaranteed request-complete confirmation, randomized
- * per call so Iris doesn't sound identical on every booking, personalized
- * with the lead's own name, and closing with Mark's own suggested
- * "reply to the text" line (reduces no-shows, keeps the conversation
- * open). Deliberately every variant contains BOTH "notification" and
- * "text" — the endCall rejectionPlan below detects any of these by
- * checking for that pair rather than hardcoding all five phrases.
+ * per call so Iris doesn't sound identical on every booking, and closing
+ * with Mark's own suggested "reply to the text" line (reduces no-shows,
+ * keeps the conversation open). Deliberately every variant contains BOTH
+ * "notification" and "text" — the endCall rejectionPlan below detects any
+ * of these by checking for that pair rather than hardcoding all five
+ * phrases.
+ *
+ * Deliberately NOT personalized with the lead's name (reverted 2026-09-12
+ * after a real call): this content is fixed at call-PLACEMENT time and
+ * spoken by Vapi directly — the model never gets a chance to intercept or
+ * correct it. A real call had the lead correct his name early on ("Mark",
+ * not the form's "Manny") — Iris correctly used "Mark" for the rest of
+ * the call in her own speech, but this guaranteed line, baked in before
+ * the call even started, still said "Manny." A channel the model can't
+ * fix must never risk saying a name that could go stale mid-call.
  */
-export function bookingConfirmationLines(firstName: string): string[] {
-  const who = nameClause(firstName);
+export function bookingConfirmationLines(): string[] {
   return [
-    `Perfect${who} — your appointment is all set. You'll receive a notification with all the details shortly. If anything comes up before then, feel free to reply to the text.`,
-    `Alright${who}, you're all booked in! You'll get a notification with the details in a bit. If anything comes up before then, feel free to reply to the text.`,
-    `Great${who} — your appointment has been confirmed. You'll receive a notification shortly with all the details. If anything comes up before then, feel free to reply to the text.`,
-    `Awesome${who}, you're all set! You'll get a quick notification with all the info. If anything comes up before then, feel free to reply to the text.`,
-    `Perfect${who}, everything's booked. You'll receive a notification with the details shortly. If anything comes up before then, feel free to reply to the text.`,
+    "Perfect — your appointment is all set. You'll receive a notification with all the details shortly. If anything comes up before then, feel free to reply to the text.",
+    "Alright, you're all booked in! You'll get a notification with the details in a bit. If anything comes up before then, feel free to reply to the text.",
+    "Great — your appointment has been confirmed. You'll receive a notification shortly with all the details. If anything comes up before then, feel free to reply to the text.",
+    "Awesome, you're all set! You'll get a quick notification with all the info. If anything comes up before then, feel free to reply to the text.",
+    "Perfect, everything's booked. You'll receive a notification with the details shortly. If anything comes up before then, feel free to reply to the text.",
   ];
 }
 
@@ -58,14 +61,14 @@ export function bookingConfirmationLines(firstName: string): string[] {
  * request-complete confirmation, parallel to bookingConfirmationLines.
  * Every variant also contains BOTH "notification" and "text" so the same
  * endCall rejectionPlan gate below detects a reschedule confirmation too,
- * with no separate gate logic needed for it.
+ * with no separate gate logic needed for it. Not personalized, same
+ * reasoning as bookingConfirmationLines above.
  */
-export function rescheduleConfirmationLines(firstName: string): string[] {
-  const who = nameClause(firstName);
+export function rescheduleConfirmationLines(): string[] {
   return [
-    `Great${who} — I've updated your appointment to the new time. You'll get a notification with the details, and if anything comes up before then, feel free to reply to the text.`,
-    `Awesome${who}, you're all set for the new time. You'll get a notification with the updated details. If anything comes up before then, feel free to reply to the text.`,
-    `Perfect${who}, your appointment's been moved to the new time. You'll get a notification shortly. If anything comes up before then, feel free to reply to the text.`,
+    "Great — I've updated your appointment to the new time. You'll get a notification with the details, and if anything comes up before then, feel free to reply to the text.",
+    "Awesome, you're all set for the new time. You'll get a notification with the updated details. If anything comes up before then, feel free to reply to the text.",
+    "Perfect, your appointment's been moved to the new time. You'll get a notification shortly. If anything comes up before then, feel free to reply to the text.",
   ];
 }
 
@@ -522,8 +525,8 @@ export function buildCallPayload(
       leadSummary: buildAppointmentLeadSummary(params, audience),
     }).toString();
 
-    const bookingLines = bookingConfirmationLines(params.firstName);
-    const rescheduleLines = rescheduleConfirmationLines(params.firstName);
+    const bookingLines = bookingConfirmationLines();
+    const rescheduleLines = rescheduleConfirmationLines();
 
     tools.push({
       type: "function",

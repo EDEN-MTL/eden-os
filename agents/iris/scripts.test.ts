@@ -536,6 +536,21 @@ describe("buildLeadQualificationPrompt", () => {
       const prompt = buildLeadQualificationPrompt(IRIS_CONFIG, { ...BLANK_LEAD, name: "Justin" }, "3 Percent East Coast", "St. John's", false, true, false);
       expect(prompt).toMatch(/I don't actually have your name in\s+front of me right now.*is never a reason to also claim you never had it/is);
     });
+
+    /**
+     * Mark's live feedback, 2026-09-12: a THIRD real call, same exact
+     * trigger ("who's this?" answered and paraphrased in the same breath)
+     * — descriptive guidance alone didn't hold across two prior real
+     * calls, so this is now a literal, mechanical two-sentence rule
+     * instead of prose framing.
+     */
+    it("gives Iris a literal two-sentence mechanical rule for the who's-calling case, after two prior calls kept recurring", () => {
+      const prompt = buildLeadQualificationPrompt(IRIS_CONFIG, { ...BLANK_LEAD, name: "Justin" }, "3 Percent East Coast", "St. John's", false, true, false);
+      expect(prompt).toMatch(/a third real call, same exact\s+trigger/i);
+      expect(prompt).toMatch(/Sentence 1, word for word: "This is Iris with 3 Percent East Coast\."/);
+      expect(prompt).toMatch(/Sentence 2, word for word: "Hi, am I speaking with Justin\?"/);
+      expect(prompt).toMatch(/copy\s+sentence 2 character for character/i);
+    });
   });
 
   describe("transferAvailable", () => {
@@ -957,6 +972,21 @@ describe("buildLeadQualificationPrompt", () => {
     expect(prompt).toMatch(/This is a DIFFERENT case from the one above/i);
     expect(prompt).toMatch(/call update_lead_name with exactly what they said/i);
     expect(prompt).toMatch(/is this Michael\?/i);
+  });
+
+  /**
+   * Mark's live feedback, 2026-09-12: on a real call the identify line got
+   * dropped entirely, the lead had to volunteer his own name unprompted
+   * ("Are you going to add my name?" ... "My name is Mark"), and Iris
+   * never called update_lead_name even though she correctly used "Mark"
+   * for the rest of her own speech — the CRM still showed the stale form
+   * name. This covers that case explicitly, not just a spoken correction.
+   */
+  it("tells Iris to call update_lead_name even when the lead volunteers their name unprompted, not just on a correction", () => {
+    const prompt = buildLeadQualificationPrompt(IRIS_CONFIG, { ...BLANK_LEAD, name: "Michael Test" }, "3 Percent East Coast", "St. John's", false, true, false);
+    expect(prompt).toMatch(/you\s+never actually said their name at all/i);
+    expect(prompt).toMatch(/the lead has to volunteer their\s+own name unprompted/i);
+    expect(prompt).toMatch(/Are\s+you going to add my name\?/i);
   });
 
   /**
