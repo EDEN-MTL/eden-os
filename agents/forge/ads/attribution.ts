@@ -3,20 +3,35 @@
  * campaigns/ad sets/ads.
  *
  * Two things happen here:
- *   1. syncLeads — pulls GHL contacts + opportunities, resolves each
- *      contact's custom fields (per config/ghl-field-map.<client>.json) into
- *      fbclid, utm_ fields, and meta_id values, and upserts one row per
- *      contact into the ad_leads table.
+ *   1. syncLeads — pulls GHL contacts + opportunities, resolves attribution
+ *      (see extractAttribution below) into fbclid, utm_ fields, and meta_id
+ *      values, and upserts one row per contact into the ad_leads table.
  *   2. attributionReport — aggregates spend (from meta_performance_snapshots,
  *      populated by jobs/sync.ts from the Meta side) against lead counts,
  *      pipeline stage, and closed deal value, joined by Meta campaign/adset/
  *      ad id, so "which ad actually produced revenue" is answerable.
  *
- * The join key is Meta's own numeric campaign/adset/ad id, expected to be
- * present in the lead's utm_campaign/utm_content/utm_term or dedicated
- * meta_*_id custom fields (see the field-map config for how those get
- * populated). Without that URL-tagging setup on the ad side, this join
- * has nothing to key on.
+ * The join key is Meta's own numeric campaign/adset/ad id. There are TWO
+ * independent ways it can reach a GHL contact — checked live, 2026-09-11,
+ * for 3-percent-east-coast:
+ *   (a) Native GHL attribution (contact.attributionSource /
+ *       lastAttributionSource) — populated automatically by GHL's own
+ *       Facebook/Instagram Lead Ads integration, with real
+ *       campaignId/adSetId/adId/utm* fields, no setup required on our side
+ *       at all. This is what every 3-percent-east-coast lead actually
+ *       carries. Confirmed by pulling a real contact's raw API response
+ *       (check_lead_attribution's includeRawSample) after config/ghl-field-
+ *       map-based custom fields came back null on 15/15 recent leads — the
+ *       data was never missing, this code just never looked at the right
+ *       field.
+ *   (b) Custom fields (per config/ghl-field-map.<client>.json), populated
+ *       only if the ad's URL itself carries Meta's dynamic tags AND the
+ *       landing page captures them into the form — the click-through path,
+ *       for a client without GHL's native Facebook integration doing the
+ *       sync (or a lead source other than a Meta Lead Ad entirely).
+ * extractAttribution merges both, preferring (a) whenever a contact has it
+ * since it doesn't depend on any per-client setup at all, and falling back
+ * to (b) only for the fields it doesn't cover.
  */
 import { getCustomFieldDefs, listContactsPaginated, listOpportunitiesPaginated, listPipelines } from "../../../shared/ghl";
 import { query } from "../../../shared/db";
@@ -49,6 +64,27 @@ export function buildFieldIdLookup(customFieldDefs: any[], fieldMap: FieldMap): 
   return lookup;
 }
 
+/**
+ * Reads GHL's own native attribution object — real, verified shape as of
+ * 2026-09-11: contact.attributionSource (first touch) or
+ * lastAttributionSource (most recent), both carrying the same fields.
+ * Requires zero per-client configuration; GHL populates this itself for
+ * any lead its Facebook/Instagram Lead Ads integration syncs in.
+ */
+function extractNativeAttribution(contact: any): Record<string, string | null> {
+  const src = contact.attributionSource ?? contact.lastAttributionSource;
+  if (!src) return {};
+  return {
+    utm_source: src.utmSource ?? null,
+    utm_medium: src.utmMedium ?? null,
+    utm_campaign: src.utmCampaign ?? null,
+    utm_content: src.utmContent ?? null,
+    meta_campaign_id: src.campaignId ?? null,
+    meta_adset_id: src.adSetId ?? null,
+    meta_ad_id: src.adId ?? null,
+  };
+}
+
 export function extractAttribution(contact: any, idLookup: Record<string, string>): Record<string, string | null> {
   const valuesById = new Map<string, string>();
   for (const cf of contact.customFields || []) {
@@ -57,6 +93,13 @@ export function extractAttribution(contact: any, idLookup: Record<string, string
   const out: Record<string, string | null> = {};
   for (const [internalName, fieldId] of Object.entries(idLookup)) {
     out[internalName] = valuesById.get(fieldId) ?? null;
+  }
+  // GHL's native attribution (see extractNativeAttribution) needs no
+  // per-client field provisioning at all and is what every Facebook/
+  // Instagram Lead Ads sync actually populates — prefer it over a custom
+  // field whenever present, rather than the other way around.
+  for (const [key, value] of Object.entries(extractNativeAttribution(contact))) {
+    if (value !== null) out[key] = value;
   }
   return out;
 }

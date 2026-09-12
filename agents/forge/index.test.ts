@@ -345,4 +345,31 @@ describe("Forge — check_lead_attribution", () => {
     expect(toolResultContent).toMatch(/No GHL account configured/);
     expect(getCustomFieldDefsMock).not.toHaveBeenCalled();
   });
+
+  it("includes the complete unfiltered first contact only when includeRawSample is set", async () => {
+    getGhlConfigMock.mockResolvedValueOnce({ apiKey: "key", locationId: "loc_1" });
+    getCustomFieldDefsMock.mockResolvedValueOnce([{ id: "fld_ad_id", fieldKey: "contact.meta_ad_id" }]);
+    listContactsPaginatedMock.mockReturnValueOnce(asyncGenOf([{ id: "c1" }]));
+    const rawContact = {
+      id: "c1",
+      customFields: [],
+      // The whole point: a real field GHL actually returns that this
+      // tool's own summary doesn't know to look for yet.
+      attributionSource: { campaignId: "120200000000001", utmMedium: "paid social" },
+    };
+    getContactMock.mockResolvedValueOnce({ contact: rawContact });
+
+    vi.mocked(chatWithTools)
+      .mockResolvedValueOnce({
+        content: [toolUseBlock("call_1", "check_lead_attribution", { clientId: "3-percent-east-coast", includeRawSample: true })],
+        stop_reason: "tool_use",
+      } as any)
+      .mockResolvedValueOnce(endTurn("Here's the raw shape."));
+
+    await forgeAgent.generateReply("key9", "check attribution with raw sample");
+
+    const secondCallMessages = vi.mocked(chatWithTools).mock.calls[1][1] as any;
+    const toolResult = JSON.parse(secondCallMessages[secondCallMessages.length - 1].content[0].content);
+    expect(toolResult.rawSample).toEqual({ contact: rawContact });
+  });
 });
