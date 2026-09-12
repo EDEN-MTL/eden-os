@@ -575,6 +575,19 @@ describe("buildLeadQualificationPrompt", () => {
     });
 
     /**
+     * Mark's spec, 2026-09-12: a live transfer previously left the ISA
+     * notes field untouched — the receiving agent had no summary at all
+     * unless a callback happened instead. Called once qualification is
+     * done, before presenting either outcome, silently.
+     */
+    it("tells Iris to save ISA notes once qualification is done, silently, using the final corrected values", () => {
+      const prompt = buildLeadQualificationPrompt(IRIS_CONFIG, BLANK_LEAD, "3 Percent East Coast", "St. John's", false, true, false);
+      expect(prompt).toMatch(/call save_isa_notes ONCE with a\s*\nstructured summary/i);
+      expect(prompt).toMatch(/Call it silently, in the background —\s*\nnever announce it or mention it to the lead/i);
+      expect(prompt).toMatch(/Use the FINAL, corrected\s*\nvalues if anything changed/i);
+    });
+
+    /**
      * Mark's live feedback, 2026-09-08: Iris repeated "hold on a sec" / "this
      * will just take a sec" in a loop right after the transfer failed,
      * instead of silently checking the calendar.

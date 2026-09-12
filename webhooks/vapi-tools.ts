@@ -166,6 +166,45 @@ async function recordCallbackNote(clientId: string, contactId: string, when: Dat
   }
 }
 
+/**
+ * Writes Iris's own structured qualification summary to the SAME field
+ * recordCallbackNote already uses (config.callbackNotesFieldKey — GHL's
+ * isa_notes-equivalent field, which surfaces on the contact's opportunity
+ * card). Mark's spec, 2026-09-12: a live transfer previously left this
+ * field untouched — the receiving agent had no summary at all unless a
+ * callback happened instead. Called by Iris herself (the main call, not
+ * the transfer assistant) right before presenting the transfer or
+ * scheduling fallback, since she's the one who actually gathered — and
+ * heard any live corrections to — the qualification facts; the transfer
+ * assistant on the other end never has that context.
+ */
+async function handleSaveIsaNotes(clientId: string, contactId: string, notes: unknown): Promise<string> {
+  if (typeof notes !== "string" || !notes.trim()) {
+    return "No notes were given — this is an error in how you called the tool. Compose the structured summary and call this tool again.";
+  }
+
+  const ghlConfig = await getGhlConfig(clientId);
+  const config = loadIrisConfig(clientId);
+  if (!ghlConfig || !config) {
+    return "Could not reach the CRM right now — continue the call normally, a teammate will fill this in directly.";
+  }
+
+  try {
+    const defs = await getCustomFieldDefs(ghlConfig.locationId, ghlConfig.apiKey);
+    const fieldId = buildKeyToId(defs).get(config.callbackNotesFieldKey);
+    if (!fieldId) {
+      console.warn(`[VAPI-TOOLS] callbackNotesFieldKey "${config.callbackNotesFieldKey}" did not resolve to a field id for ${clientId} — skipping ISA notes.`);
+      return "Could not reach the CRM right now — continue the call normally, a teammate will fill this in directly.";
+    }
+    await updateContact(contactId, { customFields: [{ id: fieldId, value: notes.trim() }] }, ghlConfig.locationId, ghlConfig.apiKey);
+  } catch (error) {
+    console.error(`[VAPI-TOOLS] Failed to write ISA notes for contact ${contactId}:`, error instanceof Error ? error.message : error);
+    return "Could not reach the CRM right now — continue the call normally, a teammate will fill this in directly.";
+  }
+
+  return "ISA notes saved. Continue the call normally — no need to mention this to the lead.";
+}
+
 async function handleScheduleCallback(clientId: string, contactId: string, callbackTime: unknown): Promise<string> {
   if (typeof callbackTime !== "string" || !callbackTime) {
     return "Could not schedule the callback — no valid time was provided. Do not claim to have scheduled anything; tell the lead a teammate will follow up directly instead.";
@@ -833,6 +872,11 @@ export function createVapiToolsRouter(): Router {
   router.post(
     "/update-lead-name",
     createToolHandler(async (query, call) => handleUpdateLeadName(query.clientId, query.contactId, parseToolArguments(call).correctedName))
+  );
+
+  router.post(
+    "/save-isa-notes",
+    createToolHandler(async (query, call) => handleSaveIsaNotes(query.clientId, query.contactId, parseToolArguments(call).notes))
   );
 
   return router;

@@ -185,13 +185,50 @@ describe("buildCallPayload", () => {
       expect(tool.destinations[0].transferPlan.transferAssistant.firstMessageMode).toBe("assistant-waits-for-user");
     });
 
-    it("tells the transfer assistant to resume its briefing after being interrupted, and to say numbers naturally", () => {
+    it("tells the transfer assistant to resume after being interrupted, and to say numbers naturally", () => {
       const payload = buildCallPayload({ ...BASE_PARAMS, transferNumber: "+17097058841" }, VAPI_CONFIG);
       const tool = payload.assistant.model.tools?.find((t) => t.type === "transferCall");
       if (tool?.type !== "transferCall") throw new Error("expected transferCall tool");
       const briefingPrompt = tool.destinations[0].transferPlan.transferAssistant.model.messages[0].content;
-      expect(briefingPrompt).toMatch(/pick back up with whatever you still hadn't gotten to yet/i);
+      expect(briefingPrompt).toMatch(/pick back up with it once you've responded/i);
       expect(briefingPrompt).toMatch(/never digit by digit/i);
+    });
+
+    /**
+     * Mark's spec, 2026-09-12: IRIS was piling her introduction and her own
+     * question onto the operator's greeting the instant they answered,
+     * reading as an abrupt "Hey, this is Iris, who am I speaking with?" —
+     * the fix is genuinely separate turns: reciprocate, THEN introduce,
+     * THEN ask, each its own pause.
+     */
+    it("has the transfer assistant reciprocate the greeting as its own turn before introducing itself", () => {
+      const payload = buildCallPayload({ ...BASE_PARAMS, transferNumber: "+17097058841" }, VAPI_CONFIG);
+      const tool = payload.assistant.model.tools?.find((t) => t.type === "transferCall");
+      if (tool?.type !== "transferCall") throw new Error("expected transferCall tool");
+      const prompt = tool.destinations[0].transferPlan.transferAssistant.model.messages[0].content;
+      expect(prompt).toMatch(/do\s+NOT immediately pile your introduction and your own question/i);
+      expect(prompt).toMatch(/Reciprocate whatever greeting they actually gave you/i);
+      expect(prompt).toMatch(/Say only that, then STOP and wait/i);
+      expect(prompt).toMatch(/Only then introduce yourself/i);
+      expect(prompt).toMatch(/Only then ask "Who am I speaking with\?"/i);
+    });
+
+    /**
+     * Mark's spec, 2026-09-12: a deliberate reversal from the prior design —
+     * the merge (transferSuccessful) must happen BEFORE any lead-facing
+     * introduction, so the lead only hears the handoff line once actually
+     * connected, and IRIS must go fully silent immediately after it.
+     */
+    it("tells the transfer assistant to merge before introducing the agent to the lead, then go silent", () => {
+      const payload = buildCallPayload({ ...BASE_PARAMS, transferNumber: "+17097058841" }, VAPI_CONFIG);
+      const tool = payload.assistant.model.tools?.find((t) => t.type === "transferCall");
+      if (tool?.type !== "transferCall") throw new Error("expected transferCall tool");
+      const prompt = tool.destinations[0].transferPlan.transferAssistant.model.messages[0].content;
+      expect(prompt).toMatch(/silently, no spoken line beforehand this time/i);
+      expect(prompt).toMatch(/the merge itself must happen BEFORE any lead-facing\s+introduction/i);
+      expect(prompt).toMatch(/The MOMENT transferSuccessful succeeds, say ONE handoff line/i);
+      expect(prompt).toMatch(/Then IMMEDIATELY\s+go silent/i);
+      expect(prompt).toMatch(/never speak again for the rest of this call/i);
     });
 
     /**
@@ -370,13 +407,50 @@ describe("buildCallPayload", () => {
     });
   });
 
+  /**
+   * Mark's spec, 2026-09-12: a live transfer previously left the ISA notes
+   * field untouched entirely — the receiving agent had no summary at all
+   * unless a callback happened instead. Wired on Iris's own main-call
+   * tools (not the transfer assistant), since she's the one who heard any
+   * live corrections to the form/Scout data.
+   */
+  describe("save_isa_notes tool", () => {
+    it("is wired whenever a real contactId exists, regardless of calendar or transfer setup", () => {
+      const payload = buildCallPayload({ ...BASE_PARAMS, contactId: "contact-1" }, VAPI_CONFIG);
+      const tool = payload.assistant.model.tools?.find((t) => t.type === "function" && t.function.name === "save_isa_notes");
+      expect(tool).toBeDefined();
+    });
+
+    it("is omitted when there's no real contactId", () => {
+      const payload = buildCallPayload(BASE_PARAMS, VAPI_CONFIG);
+      const tool = payload.assistant.model.tools?.find((t) => t.type === "function" && t.function.name === "save_isa_notes");
+      expect(tool).toBeUndefined();
+    });
+
+    it("requires a notes argument", () => {
+      const payload = buildCallPayload({ ...BASE_PARAMS, contactId: "contact-1" }, VAPI_CONFIG);
+      const tool = payload.assistant.model.tools?.find((t) => t.type === "function" && t.function.name === "save_isa_notes");
+      if (tool?.type !== "function") throw new Error("expected function tool");
+      expect(tool.function.parameters.required).toEqual(["notes"]);
+    });
+
+    it("bakes clientId and contactId into its server URL", () => {
+      const payload = buildCallPayload({ ...BASE_PARAMS, contactId: "contact-1" }, VAPI_CONFIG);
+      const tool = payload.assistant.model.tools?.find((t) => t.type === "function" && t.function.name === "save_isa_notes");
+      if (tool?.type !== "function") throw new Error("expected function tool");
+      const url = new URL(tool.server.url);
+      expect(url.searchParams.get("clientId")).toBe("3-percent-east-coast");
+      expect(url.searchParams.get("contactId")).toBe("contact-1");
+    });
+  });
+
   describe("schedule_callback tool", () => {
     const withContactId: PlaceCallParams = { ...BASE_PARAMS, contactId: "contact-1" };
 
     it("is added only when serverUrl AND contactId are both present", () => {
       const payload = buildCallPayload(withContactId, VAPI_CONFIG);
       const names = payload.assistant.model.tools?.filter((t) => t.type === "function").map((t) => (t.type === "function" ? t.function.name : ""));
-      expect(names).toEqual(["update_lead_name", "schedule_callback"]);
+      expect(names).toEqual(["update_lead_name", "save_isa_notes", "schedule_callback"]);
     });
 
     it("is omitted when serverUrl is unset, even with contactId given", () => {
@@ -430,13 +504,13 @@ describe("buildCallPayload", () => {
     it("replaces schedule_callback with all three tools when a calendarId is given", () => {
       const payload = buildCallPayload(withCalendar, VAPI_CONFIG);
       const names = payload.assistant.model.tools?.filter((t) => t.type === "function").map((t) => (t.type === "function" ? t.function.name : ""));
-      expect(names).toEqual(["update_lead_name", "check_availability", "book_appointment", "reschedule_appointment"]);
+      expect(names).toEqual(["update_lead_name", "save_isa_notes", "check_availability", "book_appointment", "reschedule_appointment"]);
     });
 
     it("is omitted (falls back to schedule_callback) when no calendarId is given", () => {
       const payload = buildCallPayload({ ...BASE_PARAMS, contactId: "contact-1" }, VAPI_CONFIG);
       const names = payload.assistant.model.tools?.filter((t) => t.type === "function").map((t) => (t.type === "function" ? t.function.name : ""));
-      expect(names).toEqual(["update_lead_name", "schedule_callback"]);
+      expect(names).toEqual(["update_lead_name", "save_isa_notes", "schedule_callback"]);
     });
 
     it("bakes clientId, contactId, calendarId, and a buyer/seller intent into all three tools' server URLs", () => {
