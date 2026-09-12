@@ -51,6 +51,59 @@ describe("extractAttribution", () => {
     const result = extractAttribution({}, { fbclid: "f1" });
     expect(result.fbclid).toBeNull();
   });
+
+  it("prefers GHL's native attributionSource over a custom field value when both are present", () => {
+    // Real shape, pulled live from a 3-percent-east-coast contact
+    // (check_lead_attribution's includeRawSample) on 2026-09-11 — GHL's
+    // own Facebook Lead Ads integration populates this with zero
+    // per-client setup, and it's what every real lead actually carries.
+    const contact = {
+      customFields: [{ id: "f3", value: "stale-custom-field-value" }],
+      attributionSource: {
+        campaignId: "120247476389410259",
+        adSetId: "120247476389600259",
+        adId: "120247476389590259",
+        utmSource: "facebook",
+        utmMedium: "Testing | Buyer | Static AUG 2026",
+        utmCampaign: "Aug 2026 | Buyer Campaign | EDEN",
+        utmContent: "Aug 2026 image 1",
+      },
+    };
+    const result = extractAttribution(contact, { meta_ad_id: "f3" });
+    expect(result).toEqual({
+      meta_ad_id: "120247476389590259",
+      meta_campaign_id: "120247476389410259",
+      meta_adset_id: "120247476389600259",
+      utm_source: "facebook",
+      utm_medium: "Testing | Buyer | Static AUG 2026",
+      utm_campaign: "Aug 2026 | Buyer Campaign | EDEN",
+      utm_content: "Aug 2026 image 1",
+    });
+  });
+
+  it("falls back to lastAttributionSource when attributionSource is absent", () => {
+    const contact = { lastAttributionSource: { adId: "ad_last_touch" } };
+    const result = extractAttribution(contact, {});
+    expect(result.meta_ad_id).toBe("ad_last_touch");
+  });
+
+  it("falls back to the custom field value for a key native attribution doesn't cover", () => {
+    const contact = {
+      customFields: [{ id: "f1", value: "fbclid.abc" }],
+      attributionSource: { adId: "ad_1" }, // no fbclid on the native object
+    };
+    const result = extractAttribution(contact, { fbclid: "f1" });
+    expect(result.fbclid).toBe("fbclid.abc");
+    expect(result.meta_ad_id).toBe("ad_1");
+  });
+
+  it("works with no field map at all when native attribution is present", () => {
+    // check_lead_attribution no longer requires config/ghl-field-map.<id>.json
+    // to exist — native attribution needs no per-client field provisioning.
+    const contact = { attributionSource: { adId: "ad_1", campaignId: "camp_1" } };
+    const result = extractAttribution(contact, {});
+    expect(result).toEqual({ meta_ad_id: "ad_1", meta_campaign_id: "camp_1" });
+  });
 });
 
 describe("deriveWon", () => {
