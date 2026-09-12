@@ -219,12 +219,13 @@ const TOOLS: ToolDef[] = [
   {
     name: "check_lead_attribution",
     description:
-      "Fetches the N most recent real GHL leads for this client and checks live whether each one actually carries Meta ad attribution (fbclid or meta_campaign/adset/ad id), or is blank. Use this to verify attribution is actually working from real data, instead of assuming from config — a lead's attribution fields can be correctly configured in GHL and still sit empty if the ad's URL never carried the tags, or if leads arrive through a channel (like a native Meta Instant Form) that never touches those fields in the first place. Requires config/ghl-field-map.<clientId>.json to exist for this client.",
+      "Fetches the N most recent real GHL leads for this client and checks live whether each one actually carries Meta ad attribution (fbclid or meta_campaign/adset/ad id), or is blank. Use this to verify attribution is actually working from real data, instead of assuming from config — a lead's attribution fields can be correctly configured in GHL and still sit empty if the ad's URL never carried the tags, or if the data actually lives somewhere else on the contact entirely (e.g. GHL's own native attribution/activity tracking) rather than in these specific custom fields. Requires config/ghl-field-map.<clientId>.json to exist for this client. Set includeRawSample to see the complete, unfiltered API response for the first contact — use this whenever the summarized fields don't match what's visible in the GHL UI, to find out where the data actually lives in the API response.",
     input_schema: {
       type: "object",
       properties: {
         clientId: { type: "string" },
         limit: { type: "integer", description: "How many recent contacts to check. Defaults to 10, capped at 25." },
+        includeRawSample: { type: "boolean", description: "Include the complete, unfiltered raw API response for the first contact fetched, for inspecting fields this tool doesn't already know to look for. Defaults to false." },
       },
       required: ["clientId"],
     },
@@ -386,26 +387,30 @@ class ForgeAgent extends BaseAgent {
           recentIds.map((id) => getContact(id, ghlConfig.locationId, ghlConfig.apiKey).catch(() => null))
         );
 
-        const results = contacts
-          .filter((c): c is NonNullable<typeof c> => c !== null)
-          .map((resp: any) => {
-            const contact = resp.contact ?? resp;
-            const attribution = extractAttribution(contact, idLookup);
-            return {
-              contactId: contact.id,
-              name: contact.contactName ?? contact.name ?? null,
-              dateAdded: contact.dateAdded ?? null,
-              attributed: Boolean(attribution.meta_ad_id || attribution.fbclid),
-              attribution,
-            };
-          });
+        const validContacts = contacts.filter((c): c is NonNullable<typeof c> => c !== null);
+        const results = validContacts.map((resp: any) => {
+          const contact = resp.contact ?? resp;
+          const attribution = extractAttribution(contact, idLookup);
+          return {
+            contactId: contact.id,
+            name: contact.contactName ?? contact.name ?? null,
+            dateAdded: contact.dateAdded ?? null,
+            attributed: Boolean(attribution.meta_ad_id || attribution.fbclid),
+            attribution,
+          };
+        });
 
-        return JSON.stringify({
+        const output: Record<string, unknown> = {
           clientId: input.clientId,
           checked: results.length,
           attributedCount: results.filter((r) => r.attributed).length,
           results,
-        });
+        };
+        if (input.includeRawSample && validContacts.length > 0) {
+          output.rawSample = validContacts[0];
+        }
+
+        return JSON.stringify(output);
       }
 
       case "get_ad_performance": {
