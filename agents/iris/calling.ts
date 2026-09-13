@@ -627,8 +627,9 @@ export function buildCallPayload(
           "Changes an EXISTING real appointment (already booked earlier this call via book_appointment) " +
           "to a new time — the only tool that does this, and safe to call more than once if the lead " +
           "changes their mind again. Only ever call this with an exact isoTime you already got back from " +
-          "check_availability. Never call this before any appointment exists yet — call book_appointment " +
-          "for that instead.",
+          "check_availability, AND the exact appointmentId book_appointment's own result gave you this " +
+          "call. Never call this before book_appointment has actually succeeded once this call — call " +
+          "book_appointment for that instead.",
         parameters: {
           type: "object",
           properties: {
@@ -638,8 +639,15 @@ export function buildCallPayload(
                 "The exact isoTime value from check_availability's response, copied character for " +
                 "character — never recomputed from the spoken phrase.",
             },
+            appointmentId: {
+              type: "string",
+              description:
+                "The exact appointmentId from book_appointment's own success result this call, copied " +
+                "character for character — never invented or reused across different calls. This is what " +
+                "makes sure the right appointment gets changed rather than a guess.",
+            },
           },
-          required: ["isoTime"],
+          required: ["isoTime", "appointmentId"],
         },
       },
       server: { url: `${vapiConfig.serverUrl}/tools/reschedule-appointment?${qs}`, secret: vapiConfig.webhookSecret },

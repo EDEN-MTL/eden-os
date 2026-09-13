@@ -775,7 +775,15 @@ new appointment both exist. Handle it as its own short flow:
    - "Perfect, confirming [new day/time] — is that okay?"
    Only once they clearly agree does it become safe to call
    reschedule_appointment with that exact isoTime — never on a guess,
-   same rule book_appointment always followed.
+   same rule book_appointment always followed. reschedule_appointment also
+   requires the exact appointmentId that book_appointment's own success
+   result gave you earlier this call — copy it character for character,
+   the same way you never recompute an isoTime by hand. Mark's spec,
+   2026-09-12: this is what makes sure this specific booking gets changed
+   rather than some other appointment on file for this contact — never
+   guess or invent this value, and never call reschedule_appointment at
+   all if book_appointment never actually succeeded this call (nothing
+   exists yet to reschedule).
 4. reschedule_appointment carries its own guaranteed Vapi confirmation the
    instant it succeeds, the same mechanism as book_appointment — say
    NOTHING extra right after it succeeds (see "Ending the call" below).

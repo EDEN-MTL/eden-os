@@ -502,8 +502,9 @@ async function handleBookAppointment(
   ]
     .filter(Boolean)
     .join(" ");
+  let created: any;
   try {
-    await createAppointment(
+    created = await createAppointment(
       calendarId,
       {
         contactId,
@@ -519,9 +520,21 @@ async function handleBookAppointment(
     console.error(`[VAPI-TOOLS] createAppointment failed for ${clientId}/${contactId}:`, error instanceof Error ? error.message : error);
     return { success: false, result: "That time showed as open but the booking failed — do not claim it's booked. Tell the lead a teammate will confirm directly instead." };
   }
+  // Confirmed live, 2026-09-12 (same shape as GHL's own GET/PUT appointment
+  // responses): the create response carries the new appointment's real id
+  // at the top level. Handed back to the model so a LATER
+  // reschedule_appointment call in this same conversation can target THIS
+  // exact appointment by id, rather than handleRescheduleAppointment
+  // having to guess "the most recent one" for this contact — which would
+  // risk grabbing a different, unrelated appointment from an earlier call
+  // entirely, especially in a test account where the same handful of
+  // contacts get re-dialed and re-booked repeatedly.
+  const appointmentId = created?.id;
   return {
     success: true,
-    result: `Booked for ${formatSpoken(exactMatch, timeZone)}. Vapi will confirm this to the lead automatically — you don't need to repeat it yourself.`,
+    result: appointmentId
+      ? `Booked for ${formatSpoken(exactMatch, timeZone)}. appointmentId: "${appointmentId}" — if the lead wants to change this specific booking later in this same call, pass this exact value to reschedule_appointment. Vapi will confirm this booking to the lead automatically — you don't need to repeat it yourself.`
+      : `Booked for ${formatSpoken(exactMatch, timeZone)}. Vapi will confirm this to the lead automatically — you don't need to repeat it yourself.`,
   };
 }
 
@@ -556,7 +569,8 @@ async function handleRescheduleAppointment(
   clientId: string,
   contactId: string,
   calendarId: string,
-  isoTime: unknown
+  isoTime: unknown,
+  appointmentId: unknown
 ): Promise<{ result: string; success: boolean }> {
   if (typeof isoTime !== "string" || !isoTime) {
     return {
@@ -605,16 +619,32 @@ async function handleRescheduleAppointment(
     now + RESCHEDULE_LOOKUP_WINDOW_DAYS * 24 * 3600 * 1000,
     ghlConfig.apiKey
   );
-  const existing = events
-    .filter((e: any) => e.contactId === contactId && !e.deleted && e.appointmentStatus !== "cancelled")
-    .sort((a: any, b: any) => new Date(b.dateAdded).getTime() - new Date(a.dateAdded).getTime())[0];
+  const openForContact = (e: any) => e.contactId === contactId && !e.deleted && e.appointmentStatus !== "cancelled";
+
+  // Prefer the exact appointmentId book_appointment handed back this same
+  // call — confirmed live, 2026-09-12: without this, "most recent by
+  // dateAdded for this contact" is a guess that can grab the WRONG
+  // appointment. A contact can carry a real, older, unrelated appointment
+  // from a completely different earlier call (this test account re-dials
+  // and re-books the same handful of contacts constantly) — if the model
+  // ever invokes reschedule_appointment without book_appointment actually
+  // having succeeded THIS call (a prompt violation, not something this
+  // server can prevent the model from attempting), the old recency-guess
+  // logic would silently modify that unrelated older booking instead of
+  // refusing. Falls back to the recency guess only when no id was given,
+  // for calls made before this id hand-off existed.
+  const requestedId = typeof appointmentId === "string" && appointmentId.trim() ? appointmentId.trim() : null;
+  const existing = requestedId
+    ? events.find((e: any) => e.id === requestedId && openForContact(e))
+    : events.filter(openForContact).sort((a: any, b: any) => new Date(b.dateAdded).getTime() - new Date(a.dateAdded).getTime())[0];
 
   if (!existing) {
     return {
       success: false,
-      result:
-        "No existing appointment was found for this lead to reschedule — do not claim a change was made. Only call this tool after " +
-        "book_appointment has already succeeded once this call; if nothing has actually been booked yet, call book_appointment instead.",
+      result: requestedId
+        ? `No open appointment matching id "${requestedId}" was found for this lead — do not claim a change was made. Only call this tool with the exact appointmentId book_appointment gave you this call; if nothing has actually been booked yet this call, call book_appointment instead.`
+        : "No existing appointment was found for this lead to reschedule — do not claim a change was made. Only call this tool after " +
+          "book_appointment has already succeeded once this call; if nothing has actually been booked yet, call book_appointment instead.",
     };
   }
 
@@ -855,7 +885,13 @@ export function createVapiToolsRouter(): Router {
   router.post(
     "/reschedule-appointment",
     createBookAppointmentHandler(async (query, call) =>
-      handleRescheduleAppointment(query.clientId, query.contactId, query.calendarId, parseToolArguments(call).isoTime)
+      handleRescheduleAppointment(
+        query.clientId,
+        query.contactId,
+        query.calendarId,
+        parseToolArguments(call).isoTime,
+        parseToolArguments(call).appointmentId
+      )
     )
   );
 
