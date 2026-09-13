@@ -606,12 +606,29 @@ describe("buildCallPayload", () => {
      * call (which would create a second real appointment) or a brush-off.
      * Only wired alongside book_appointment (same calendarId/contactId gate).
      */
-    it("requires an isoTime argument for reschedule_appointment, wired only alongside book_appointment", () => {
+    it("requires isoTime and appointmentId arguments for reschedule_appointment, wired only alongside book_appointment", () => {
       const payload = buildCallPayload(withCalendar, VAPI_CONFIG);
       const tool = payload.assistant.model.tools?.find((t) => t.type === "function" && t.function.name === "reschedule_appointment");
       if (tool?.type !== "function") throw new Error("expected function tool");
-      expect(tool.function.parameters.required).toEqual(["isoTime"]);
+      expect(tool.function.parameters.required).toEqual(["isoTime", "appointmentId"]);
       expect(tool.server.url).toContain("/tools/reschedule-appointment");
+    });
+
+    /**
+     * Mark's live audit, 2026-09-13: without a real appointmentId,
+     * handleRescheduleAppointment could only guess "the most recent
+     * appointment for this contact" — which risks grabbing a real, older,
+     * unrelated appointment from a completely different earlier call
+     * (this test account re-dials and re-books the same contacts
+     * repeatedly). Requiring the exact id book_appointment handed back
+     * closes that gap.
+     */
+    it("requires the exact appointmentId, never letting the model guess or omit it", () => {
+      const payload = buildCallPayload(withCalendar, VAPI_CONFIG);
+      const tool = payload.assistant.model.tools?.find((t) => t.type === "function" && t.function.name === "reschedule_appointment");
+      if (tool?.type !== "function") throw new Error("expected function tool");
+      expect(tool.function.parameters.properties).toHaveProperty("appointmentId");
+      expect(tool.function.description).toMatch(/exact appointmentId book_appointment's own result gave you/i);
     });
 
     /**

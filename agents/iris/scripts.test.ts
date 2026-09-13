@@ -825,6 +825,19 @@ describe("buildLeadQualificationPrompt", () => {
     });
 
     /**
+     * Mark's live audit, 2026-09-13: reschedule_appointment previously
+     * could only guess "the most recent appointment for this contact" —
+     * risking grabbing a real, unrelated, older appointment from a
+     * completely different earlier call. Requiring the exact
+     * appointmentId book_appointment handed back closes that gap.
+     */
+    it("tells Iris reschedule_appointment requires the exact appointmentId from book_appointment's own result", () => {
+      const prompt = buildLeadQualificationPrompt(IRIS_CONFIG, BLANK_LEAD, "3 Percent East Coast", "St. John's", true, true, true);
+      expect(prompt).toMatch(/requires the exact appointmentId that book_appointment's own success\s+result gave you earlier this call/i);
+      expect(prompt).toMatch(/never\s+guess or invent this value/i);
+    });
+
+    /**
      * Mark's "PRO TIP" instruction: rescheduling shouldn't feel like
      * restarting the whole booking flow from zero, and repeated changes of
      * mind should be handled calmly, not with frustration.
