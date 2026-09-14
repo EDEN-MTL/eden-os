@@ -483,6 +483,18 @@ describe("buildLeadQualificationPrompt", () => {
   });
 
   /**
+   * Confirmed live, 2026-09-14: a budget written as "$1.5M - $2.5M" got
+   * read back as "1 dollar and 50 cents to 2 dollars and 50 cents" — the
+   * M/K shorthand was misread as a decimal point followed by cents.
+   */
+  it("tells Iris M/K budget shorthand means million/thousand, never cents or a decimal", () => {
+    const prompt = buildLeadQualificationPrompt(IRIS_CONFIG, BLANK_LEAD, "3 Percent East Coast", "St. John's", false, true, false);
+    expect(prompt).toMatch(/"\$1\.5M - \$2\.5M" got read back as "1 dollar and 50 cents/i);
+    expect(prompt).toMatch(/"\$1\.5M"\s+means one point five MILLION dollars/i);
+    expect(prompt).toMatch(/never read\s+the digits and the letter as if the letter were a currency symbol/i);
+  });
+
+  /**
    * Mark's live feedback, 2026-09-11: after confirming budget with "And
    * budget wise, still around 1000000?", Iris asked the NEXT question (a
    * different topic, area) as "Budget wise, what area are you interested
@@ -924,6 +936,18 @@ describe("buildLeadQualificationPrompt", () => {
       expect(prompt).toContain('"Perfect. We\'ll talk to you then. Have a great day!"');
       expect(prompt).toContain('"Perfect, [name]. Thanks so much for your time, and we\'ll talk to you then."');
       expect(prompt).toMatch(/not a system reciting "your appointment has\s+been successfully confirmed"/i);
+    });
+
+    /**
+     * Mark's live feedback, 2026-09-14: a lead said a bare "Okay" after
+     * the booking confirmation — since "okay" wasn't explicitly spelled
+     * out in the closing-acknowledgment trigger list, Iris fell back to a
+     * flat "Goodbye" instead of the warm-closing bank above.
+     */
+    it("treats a bare 'okay' as a closing acknowledgment, not just the longer listed phrases", () => {
+      const prompt = buildLeadQualificationPrompt(IRIS_CONFIG, BLANK_LEAD, "3 Percent East Coast", "St. John's", true, true, true);
+      expect(prompt).toMatch(/A plain closing acknowledgment — "okay," "perfect,"/i);
+      expect(prompt).toMatch(/Don't require an exact match against this list/i);
     });
 
     /**
