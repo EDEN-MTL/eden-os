@@ -385,7 +385,7 @@ describe("buildLeadQualificationPrompt", () => {
   it("skips filler acknowledgment and goes straight to the identify question on a bare pickup", () => {
     const prompt = buildLeadQualificationPrompt(IRIS_CONFIG, BLANK_LEAD, "3 Percent East Coast", "St. John's", false, true, false);
     expect(prompt).toMatch(/skip any filler like/i);
-    expect(prompt).toMatch(/great, thanks for picking\s+up!/i);
+    expect(prompt).toMatch(/great,\s+thanks for picking\s+up!/i);
   });
 
   it("tells Iris to mirror the lead's tone and hold it for the rest of the call", () => {
@@ -498,58 +498,37 @@ describe("buildLeadQualificationPrompt", () => {
 
   describe("identity name-drop", () => {
     /**
-     * Mark's live feedback, 2026-09-09: on the call right after this rule
-     * was first added, Iris still said "Am I speaking with you?" instead of
-     * using the real known name — the standing rule that identifyLine is
-     * not a paraphrase target.
+     * Mark's spec, 2026-09-13: after the identity name-drop bug recurred
+     * on multiple real calls despite several rounds of prose reinforcement,
+     * consolidated into one tight mechanical rule set (forbidden list,
+     * correct list, identity lock) instead of accumulating more narrative.
      */
-    it("tells Iris the identify line is not a paraphrase target, and must be said word-for-word", () => {
+    it("tells Iris the lead's name is already known, and gives her the exact mechanical identify sequence", () => {
       const prompt = buildLeadQualificationPrompt(IRIS_CONFIG, { ...BLANK_LEAD, name: "Justin" }, "3 Percent East Coast", "St. John's", false, true, false);
-      expect(prompt).toMatch(/is not a paraphrase target — say the name in it\s+exactly as given/i);
-      expect(prompt).toContain("Hi, am I speaking with Justin?");
+      expect(prompt).toMatch(/This call NEVER discovers who the lead is/i);
+      expect(prompt).toContain('"Hi, am I speaking with Justin?"');
+      expect(prompt).toMatch(/no exceptions and no creative rewording/i);
     });
 
-    /**
-     * Mark's live feedback, 2026-09-11 (recurred again on a real call,
-     * 2026-09-11, using MONKEY EATING EAGLE as the lead's name): a lead
-     * asked "who's this?", Iris correctly answered "This is Iris with
-     * [brand]," then in the SAME breath paraphrased the identify question
-     * into "Am I speaking with the lead who submitted the form about
-     * buying a home?" instead of using the real name — a distinct trigger
-     * from the plain paraphrase and mid-interruption cases already covered,
-     * since the drop happened specifically when combined with answering
-     * "who's calling" in one turn.
-     */
-    it("tells Iris the identify line must stay exact even when said in the same breath as answering 'who's calling'", () => {
+    it("gives Iris an explicit forbidden-phrasing list, never describing the lead instead of naming them", () => {
       const prompt = buildLeadQualificationPrompt(IRIS_CONFIG, { ...BLANK_LEAD, name: "Justin" }, "3 Percent East Coast", "St. John's", false, true, false);
-      expect(prompt).toMatch(/Saying both in the same breath is fine/i);
-      expect(prompt).toMatch(/the identify\s+question itself still has to be "Hi, am I speaking with Justin\?" word-for-word/i);
-      expect(prompt).toMatch(/Am I speaking with the lead who submitted the form about\s+buying a home\?/i);
+      expect(prompt).toMatch(/FORBIDDEN — never say any version of these/i);
+      expect(prompt).toContain('"Am I speaking to you?"');
+      expect(prompt).toMatch(/Am I speaking to the lead\/person who submitted the \(buyer\/seller\) form\?/i);
+      expect(prompt).toMatch(/Are you the person\/buyer\/seller who submitted the form\?/i);
     });
 
-    /**
-     * Same real call: having already dropped the name once, Iris then
-     * falsely told the lead she didn't have their name at all, when it was
-     * right there in the prompt the whole time.
-     */
-    it("tells Iris dropping the name once is never a reason to also claim she never had it", () => {
+    it("gives Iris an explicit correct-phrasing list and an identity lock once confirmed", () => {
       const prompt = buildLeadQualificationPrompt(IRIS_CONFIG, { ...BLANK_LEAD, name: "Justin" }, "3 Percent East Coast", "St. John's", false, true, false);
-      expect(prompt).toMatch(/I don't actually have your name in\s+front of me right now.*is never a reason to also claim you never had it/is);
+      expect(prompt).toMatch(/CORRECT — "Hi, am I speaking with Justin\?" itself/i);
+      expect(prompt).toMatch(/IDENTITY LOCK: the moment they confirm/i);
+      expect(prompt).toMatch(/Never ask again in any form/i);
     });
 
-    /**
-     * Mark's live feedback, 2026-09-12: a THIRD real call, same exact
-     * trigger ("who's this?" answered and paraphrased in the same breath)
-     * — descriptive guidance alone didn't hold across two prior real
-     * calls, so this is now a literal, mechanical two-sentence rule
-     * instead of prose framing.
-     */
-    it("gives Iris a literal two-sentence mechanical rule for the who's-calling case, after two prior calls kept recurring", () => {
+    it("points to the consolidated identity rule from the 'How you sound' paraphrase exception, without repeating the whole history", () => {
       const prompt = buildLeadQualificationPrompt(IRIS_CONFIG, { ...BLANK_LEAD, name: "Justin" }, "3 Percent East Coast", "St. John's", false, true, false);
-      expect(prompt).toMatch(/a third real call, same exact\s+trigger/i);
-      expect(prompt).toMatch(/Sentence 1, word for word: "This is Iris with 3 Percent East Coast\."/);
-      expect(prompt).toMatch(/Sentence 2, word for word: "Hi, am I speaking with Justin\?"/);
-      expect(prompt).toMatch(/copy\s+sentence 2 character for character/i);
+      expect(prompt).toMatch(/ONE NAMED EXCEPTION: the identify line \("Hi, am I speaking with Justin\?"\) is not a\s+paraphrase target/i);
+      expect(prompt).toMatch(/see "How you open the\s+call" above for the exact rule/i);
     });
   });
 
