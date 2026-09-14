@@ -898,19 +898,47 @@ describe("buildLeadQualificationPrompt", () => {
 
     /**
      * Mark's request, 2026-09-09: an abrupt bare "Goodbye" right after
-     * booking an appointment feels rude. That closing used to be something
-     * Iris composed herself (six approved variants) — as of 2026-09-11,
-     * after this exact confirmation went unspoken on three separate real
-     * calls despite prompt fixes, Vapi speaks a guaranteed confirmation
-     * automatically instead (see calling.ts's book_appointment wiring and
-     * its own test). This checks the prompt tells Iris NOT to add her own
-     * version on top of it, not that she composes one herself anymore.
+     * booking an appointment feels rude. Vapi speaks a guaranteed
+     * confirmation automatically (see calling.ts's book_appointment
+     * wiring and its own test) as the structural guarantee — but Mark's
+     * spec, 2026-09-13, explicitly reversed the earlier "say NOTHING
+     * extra" rule: now that the guarantee is never at risk, warm
+     * follow-through (even repeating the day/time naturally) is
+     * encouraged, not forbidden.
      */
-    it("tells Iris not to add her own closing on top of Vapi's guaranteed booking confirmation", () => {
+    it("tells Iris warm follow-through after Vapi's guaranteed booking confirmation is encouraged, not forbidden", () => {
       const prompt = buildLeadQualificationPrompt(IRIS_CONFIG, BLANK_LEAD, "3 Percent East Coast", "St. John's", true, true, true);
       expect(prompt).toMatch(/vapi\s+speaks a guaranteed\s+confirmation automatically/i);
-      expect(prompt).toMatch(/say\s+NOTHING right after (?:that|either) tool\s+succeeds/i);
-      expect(prompt).toMatch(/don't second-guess it or\s+add your own version on top/i);
+      expect(prompt).toMatch(/warm, human follow-through is not just allowed, it's\s+expected/i);
+      expect(prompt).toContain('"Okay, you\'re all set for 3:30 PM tomorrow."');
+      expect(prompt).toMatch(/never contradict Vapi's own line/i);
+    });
+
+    /**
+     * Mark's spec, 2026-09-13: after a positive closing acknowledgment,
+     * Iris should acknowledge naturally THEN close warmly with a real,
+     * name-personalized line — not a generic "say a brief acknowledgment."
+     */
+    it("gives Iris a rich acknowledge-then-warmly-close bank for a plain closing acknowledgment after booking", () => {
+      const prompt = buildLeadQualificationPrompt(IRIS_CONFIG, BLANK_LEAD, "3 Percent East Coast", "St. John's", true, true, true);
+      expect(prompt).toContain('"Perfect. We\'ll talk to you then. Have a great day!"');
+      expect(prompt).toContain('"Perfect, [name]. Thanks so much for your time, and we\'ll talk to you then."');
+      expect(prompt).toMatch(/not a system reciting "your appointment has\s+been successfully confirmed"/i);
+    });
+
+    /**
+     * Mark's spec, 2026-09-13, considered and deliberately declined: a
+     * separate one-shot "wait ~2s then say goodbye" path for silence after
+     * a booking. It would trip endCall's own structural rejectionPlan,
+     * which only unblocks on a real reply or the exact "hold off for now"
+     * line — so silence after a booking still goes through the existing
+     * two-check-in sequence, not a new invented closing line.
+     */
+    it("keeps the existing two-check-in sequence for silence after a booking, rather than a new closing line that would trip the endCall gate", () => {
+      const prompt = buildLeadQualificationPrompt(IRIS_CONFIG, BLANK_LEAD, "3 Percent East Coast", "St. John's", true, true, true);
+      expect(prompt).toMatch(/deliberately NOT adopted: a separate\s+one-shot/i);
+      expect(prompt).toMatch(/would get\s+silently rejected by that same check/i);
+      expect(prompt).toMatch(/its final line \("No worries — I'll hold off for now\.\.\."\)/i);
     });
 
     /**
@@ -936,8 +964,8 @@ describe("buildLeadQualificationPrompt", () => {
      */
     it("tells Iris to answer a real question or concern after the booking confirmation, not treat it as permission to hang up", () => {
       const prompt = buildLeadQualificationPrompt(IRIS_CONFIG, BLANK_LEAD, "3 Percent East Coast", "St. John's", true, true, true);
-      expect(prompt).toMatch(/a real question, hesitation, or new concern is NOT\s+the same as a closing acknowledgment/i);
-      expect(prompt).toMatch(/answer or address it naturally first.*\n.*and do NOT invoke endCall yet/i);
+      expect(prompt).toMatch(/a real\s+question, hesitation, or new concern is NOT the same as a closing/i);
+      expect(prompt).toMatch(/answer\s+or address it naturally first.*and do NOT invoke endCall yet/is);
       expect(prompt).toMatch(/never treat every reply as\s+automatic permission to hang up/i);
       expect(prompt).toMatch(/never reopen\s+qualification or restart any part of the earlier conversation/i);
     });
