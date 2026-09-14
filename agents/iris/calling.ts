@@ -23,7 +23,7 @@ import { createCall, getVapiEnvConfig, CreateCallPayload, VapiCallResult, VapiTo
 import { query } from "../../shared/db";
 import { isCallingEnabled } from "./calling-settings";
 import { CallIntent } from "./qualification";
-import { AGENT_UNAVAILABLE_LINE, buildVoicemailMessage, callOpeningGreeting } from "./scripts";
+import { AGENT_UNAVAILABLE_LINE, buildVoicemailMessage, callOpeningGreeting, expandBudgetShorthand } from "./scripts";
 
 export class CallingDisabledError extends Error {}
 
@@ -122,7 +122,7 @@ function buildLeadDetails(params: PlaceCallParams, audience: "buyer" | "seller")
   // client, since no client checked so far has a real area field at all.
   if (params.propertyInterest) details.push(`looking for a ${params.propertyInterest}`);
   if (params.bedrooms) details.push(`${params.bedrooms} bedrooms`);
-  if (params.budget) details.push(`around a ${params.budget} budget`);
+  if (params.budget) details.push(`around a ${expandBudgetShorthand(params.budget)} budget`);
   if (params.timeline) details.push(`hoping to move within ${params.timeline}`);
   if (audience === "buyer" && params.financing) details.push(`financing: ${params.financing}`);
   if (params.workingWithRealtor !== null && params.workingWithRealtor !== undefined) {

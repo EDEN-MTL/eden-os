@@ -14,6 +14,7 @@ import {
   callOpeningContextLine,
   DOWNSIZER_QUESTIONS,
   EDGE_CASE_RESPONSES,
+  expandBudgetShorthand,
   LIVE_TRANSFER_LINES,
   liveTransferLineForIntent,
   NATURAL_TRANSITIONS,
@@ -130,6 +131,42 @@ describe("liveTransferLineForIntent", () => {
 
   it("falls back to the general line for unknown intent", () => {
     expect(liveTransferLineForIntent("unknown")).toBe(LIVE_TRANSFER_LINES.general);
+  });
+});
+
+/**
+ * Confirmed live, 2026-09-14 — TWICE, despite an earlier general "M means
+ * million" style rule elsewhere in the prompt: a budget like "$3.5M" got
+ * spoken back as "3 dollars and 50 cents m". Fixing the data at its
+ * source (this function) rather than relying on the model to correctly
+ * expand shorthand it sees as raw text every time.
+ */
+describe("expandBudgetShorthand", () => {
+  it("expands a plain M-suffixed amount into million", () => {
+    expect(expandBudgetShorthand("$500M")).toBe("$500 million");
+  });
+
+  it("expands a decimal M-suffixed amount into million", () => {
+    expect(expandBudgetShorthand("$3.5M")).toBe("$3.5 million");
+  });
+
+  it("expands a K-suffixed amount into thousand", () => {
+    expect(expandBudgetShorthand("$450k")).toBe("$450 thousand");
+  });
+
+  it("expands both sides of a range independently", () => {
+    expect(expandBudgetShorthand("$3.5M - $5M")).toBe("$3.5 million - $5 million");
+    expect(expandBudgetShorthand("$1.5M - $2.5M")).toBe("$1.5 million - $2.5 million");
+  });
+
+  it("leaves a budget with no M/K shorthand untouched", () => {
+    expect(expandBudgetShorthand("$450,000")).toBe("$450,000");
+    expect(expandBudgetShorthand("1000000")).toBe("1000000");
+  });
+
+  it("is case-insensitive for the M/K suffix", () => {
+    expect(expandBudgetShorthand("$500m")).toBe("$500 million");
+    expect(expandBudgetShorthand("$450K")).toBe("$450 thousand");
   });
 });
 
@@ -316,11 +353,23 @@ describe("buildLeadQualificationPrompt", () => {
    */
   it("verifies budget when known, asks it fresh when not", () => {
     const known = buildLeadQualificationPrompt(IRIS_CONFIG, { ...BLANK_LEAD, intent: "buyer", budget: "$450k" }, "3 Percent East Coast", "St. John's", false, true, false);
-    expect(known).toContain("I also see you mentioned a budget around $450k — does that still sound right?");
+    expect(known).toContain("I also see you mentioned a budget around $450 thousand — does that still sound right?");
     expect(known).not.toContain("What's your budget range?");
 
     const unknown = buildLeadQualificationPrompt(IRIS_CONFIG, { ...BLANK_LEAD, intent: "buyer" }, "3 Percent East Coast", "St. John's", false, true, false);
     expect(unknown).toContain("What's your budget range?");
+  });
+
+  /**
+   * Confirmed live, 2026-09-14 — TWICE, despite an earlier general style
+   * rule: "$3.5M" got read back as "3 dollars and 50 cents m". Fixed at
+   * the source (expandBudgetShorthand) rather than relying on the model
+   * to expand M/K correctly every time it reads the raw string.
+   */
+  it("expands M/K budget shorthand into words before it ever reaches the model", () => {
+    const prompt = buildLeadQualificationPrompt(IRIS_CONFIG, { ...BLANK_LEAD, intent: "buyer", budget: "$3.5M - $5M" }, "3 Percent East Coast", "St. John's", false, true, false);
+    expect(prompt).toContain("$3.5 million - $5 million");
+    expect(prompt).not.toMatch(/\$3\.5M\b/);
   });
 
   it("verifies existing agent representation when known, says nothing when it isn't", () => {

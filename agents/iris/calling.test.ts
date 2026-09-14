@@ -561,7 +561,7 @@ describe("buildCallPayload", () => {
       expect(summary).toContain("Jason");
       expect(summary).toContain("condo");
       expect(summary).toContain("2 bedrooms");
-      expect(summary).toContain("$500k");
+      expect(summary).toContain("$500 thousand");
       expect(summary).toContain("3 months");
       expect(summary).toContain("not working with a realtor");
     });
