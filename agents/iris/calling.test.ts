@@ -200,7 +200,7 @@ describe("buildCallPayload", () => {
      * operator gives any greeting, IRIS responds with ONE combined line that
      * both introduces her and asks who she's speaking with.
      */
-    it("has the transfer assistant introduce itself and ask who's speaking in one combined line", () => {
+    it("has the transfer assistant introduce itself and ask who's speaking in one combined line, with no redundant greeting word", () => {
       const payload = buildCallPayload({ ...BASE_PARAMS, transferNumber: "+17097058841" }, VAPI_CONFIG);
       const tool = payload.assistant.model.tools?.find((t) => t.type === "transferCall");
       if (tool?.type !== "transferCall") throw new Error("expected transferCall tool");
@@ -208,6 +208,10 @@ describe("buildCallPayload", () => {
       expect(prompt).toMatch(/respond in\s+ONE short natural line that both introduces you AND asks who they are/i);
       expect(prompt).toMatch(/This is Iris\. Who am I speaking with\?/i);
       expect(prompt).toMatch(/Then STOP and wait for their name/i);
+      // Real operator feedback, 2026-09-15: opening with "Hi!"/"Hey!" on top
+      // of the operator's own greeting (or the system's silence-fallback
+      // "Hi!") read as a redundant double greeting — the fix drops it.
+      expect(prompt).toMatch(/Skip the greeting word\s+entirely and go straight to the introduction/i);
     });
 
     /**
@@ -220,7 +224,6 @@ describe("buildCallPayload", () => {
       const tool = payload.assistant.model.tools?.find((t) => t.type === "transferCall");
       if (tool?.type !== "transferCall") throw new Error("expected transferCall tool");
       const prompt = tool.destinations[0].transferPlan.transferAssistant.model.messages[0].content;
-      expect(prompt).toMatch(/silently, no spoken line beforehand/i);
       expect(prompt).toMatch(/do NOT immediately introduce the agent to the\s+lead yet/i);
       expect(prompt).toMatch(/are you still there\?/i);
       expect(prompt).toMatch(/TWO checks maximum, never more/i);
@@ -229,6 +232,23 @@ describe("buildCallPayload", () => {
       expect(prompt).toMatch(/Once the lead HAS confirmed they're still there, introduce the agent/i);
       expect(prompt).toMatch(/Then IMMEDIATELY go silent/i);
       expect(prompt).toMatch(/never speak again for the rest of this call/i);
+    });
+
+    /**
+     * Real operator feedback, 2026-09-15 (Jacob, playing the receiving
+     * agent on a live test call): the merge happened silently right after
+     * he acknowledged the briefing, with no announcement at all — he
+     * experienced it as an unannounced jump. Fix: say a brief "connecting
+     * you now" style line first, THEN merge.
+     */
+    it("has the transfer assistant announce the connection before merging, rather than merging silently", () => {
+      const payload = buildCallPayload({ ...BASE_PARAMS, transferNumber: "+17097058841" }, VAPI_CONFIG);
+      const tool = payload.assistant.model.tools?.find((t) => t.type === "transferCall");
+      if (tool?.type !== "transferCall") throw new Error("expected transferCall tool");
+      const prompt = tool.destinations[0].transferPlan.transferAssistant.model.messages[0].content;
+      expect(prompt).toMatch(/say ONE brief\s+transition line telling them you're connecting the call, THEN call\s+transferSuccessful/i);
+      expect(prompt).toMatch(/patch the call through now/i);
+      expect(prompt).toMatch(/don't wait for a reply to this\s+line, it's a heads-up, not a question/i);
     });
 
     /**
@@ -360,12 +380,17 @@ describe("buildCallPayload", () => {
         }
       });
 
-      it("tells the transfer assistant to confirm a matched name before assigning, and never to guess", () => {
+      it("assigns a single confident match directly with no redundant spoken confirmation, but still checks ambiguous ones out loud", () => {
         const payload = buildCallPayload(withContact, VAPI_CONFIG);
         const briefingPrompt = transferTool(payload).destinations[0].transferPlan.transferAssistant.model.messages[0].content;
         expect(briefingPrompt).toMatch(/call match_transfer_agent with exactly what they said/i);
-        expect(briefingPrompt).toMatch(/NEVER call assign_transfer_owner before the operator has explicitly confirmed/i);
+        // Real operator feedback, 2026-09-15: re-confirming a name the
+        // operator just said once ("is this [name]?") on top of already
+        // having asked who they were was redundant — a single MATCH is now
+        // trusted directly, with no spoken confirmation step.
+        expect(briefingPrompt).toMatch(/If it comes back MATCH \(one confident real match\): trust it/i);
         expect(briefingPrompt).toMatch(/AMBIGUOUS/);
+        expect(briefingPrompt).toMatch(/this is the one case that genuinely needs\s+a spoken check/i);
         expect(briefingPrompt).toMatch(/NO_MATCH/);
       });
     });
