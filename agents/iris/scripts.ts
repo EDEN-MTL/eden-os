@@ -487,6 +487,20 @@ function verifyBedroomsLines(bedrooms: string): string[] {
  * removes the ambiguity at the source instead of hoping the model
  * remembers to expand it correctly every time it's read.
  */
+// Real form submissions include the honorific in the name field (e.g. a
+// live test lead submitted as "Mr. Beast Scott") — a naive `split(" ")[0]`
+// took "Mr." as the first name, so Iris asked "Am I speaking with mister?"
+// and the transfer briefing said "I have Mr. on the other line." Stripping
+// known titles before splitting fixes it at the source, same pattern as
+// expandBudgetShorthand above.
+const NAME_TITLES = /^(mr|mrs|ms|miss|mx|dr|prof)\.?\s+/i;
+
+export function extractFirstName(name: string | null | undefined): string {
+  if (!name) return "there";
+  const stripped = name.trim().replace(NAME_TITLES, "").trim();
+  return stripped.split(" ")[0] || "there";
+}
+
 export function expandBudgetShorthand(budget: string): string {
   return budget.replace(/\$(\d+(?:\.\d+)?)\s*([MK])\b/gi, (_match, num: string, unit: string) => {
     const word = unit.toUpperCase() === "M" ? "million" : "thousand";
@@ -553,7 +567,7 @@ export function buildLeadQualificationPrompt(
   transferAvailable: boolean,
   calendarAvailable: boolean
 ): string {
-  const firstName = lead.name?.split(" ")[0] || "there";
+  const firstName = extractFirstName(lead.name);
   const identifyLine = callIdentifyLine(firstName);
   // Moved out of the firstMessage (see callOpeningGreeting) into the
   // opening-sequence instructions below, so the reason for the call is its

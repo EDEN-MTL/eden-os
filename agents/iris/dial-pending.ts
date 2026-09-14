@@ -25,7 +25,7 @@ import { query } from "../../shared/db";
 import { recheckFirstTouch, refreshLead } from "../scout";
 import { NormalisedLead } from "../scout/intake";
 import { loadIrisConfig, loadClientBranding } from "./index";
-import { buildLeadQualificationPrompt } from "./scripts";
+import { buildLeadQualificationPrompt, extractFirstName } from "./scripts";
 import { placeCall, CallingDisabledError } from "./calling";
 import { decideNextAttempt, nextAttemptTime, clampToLegalCallingWindow } from "./cadence";
 import { transferNumberForIntent, callbackCalendarForIntent } from "./qualification";
@@ -214,7 +214,7 @@ async function resolveOne(row: PendingCallRow): Promise<void> {
       brandName: branding.brandName,
       city: branding.city,
       phone: lead.phone,
-      firstName: lead.name?.split(" ")[0] || "there",
+      firstName: extractFirstName(lead.name),
       intent: lead.intent,
       leadSource: lead.leadSource,
       budget: lead.budget,
