@@ -46,8 +46,9 @@
       "_comment": "Same placeholder-field caveat as writeFields above. handleScheduleCallback (webhooks/vapi-tools.ts) degrades gracefully when this key doesn't resolve — the callback still gets scheduled and re-dialed, it just won't have a note attached to the contact until a real isa_notes-equivalent field exists here.",
       "notesFieldKey": "contact.isa_notes",
       "calendarIds": {
-        "_comment": "Mark, 2026-09-06: 'Home Buyer Calendar' created in this test sub-account specifically for Iris's real-time booking. Id verified live via GET /calendars/ — the id shown in GHL's own UI copy button read 'ViJVHWXvLPuvUltgzgVt' (lowercase L), but the API's real id is 'ViJVHWXvLPuvUItgzgVt' (capital I) — same one-glyph transcription trap as buyerCalendarId in 3-percent-east-coast.json. No seller calendar exists yet.",
-        "buyer": "ViJVHWXvLPuvUItgzgVt"
+        "_comment": "Mark, 2026-09-14: switched buyer to 'Home Buyer Test Calendar!' (id EA3RijkTdPmoUjwQTUlu), a ROUND ROBIN calendar (eventType RoundRobin_OptimizeForEqualDistribution), to test whether Iris's booking flow works against GHL's round-robin assignment — 2 real team members in rotation (EDEN MTL, Jacob Murphy), shouldAssignContactToTeamMember:true, confirmed live via GET /calendars/{id}. Verified live the same day that GET /calendars/{id}/free-slots returns the identical {date: {slots: [...]}} shape for this round-robin calendar as for a personal one — check_availability/book_appointment/reschedule_appointment needed no code changes, GHL's own round-robin engine picks the team member automatically on appointment creation, same as a human booking through GHL's UI would. Previous personal calendar ('Home Buyer Calendar', ViJVHWXvLPuvUItgzgVt) left in place below, commented out, in case of rollback — no seller calendar exists yet either way.",
+        "buyer": "EA3RijkTdPmoUjwQTUlu",
+        "_previousBuyer_personal_calendar_2026-09-06": "ViJVHWXvLPuvUItgzgVt"
       }
     },
     "outreachCadence": {
