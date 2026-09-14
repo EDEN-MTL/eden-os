@@ -495,6 +495,58 @@ describe("buildLeadQualificationPrompt", () => {
   });
 
   /**
+   * Mark's live feedback, 2026-09-14: a single call used "This will just
+   * take a sec," "Just a sec," "This will take a sec," and "Hold on a
+   * sec" across four separate tool calls in about a minute — none
+   * individually repeated within one wait (already banned), but the whole
+   * call still sounded robotic since every transition reached for some
+   * "sec" filler variant.
+   */
+  it("tells Iris to vary calendar-checking transitions across the WHOLE call, not just within one wait", () => {
+    const prompt = buildLeadQualificationPrompt(IRIS_CONFIG, { ...BLANK_LEAD, budget: "$500k" }, "3 Percent East Coast", "St. John's", true, true, true);
+    expect(prompt).toMatch(/This ALSO applies ACROSS the whole call, not just within one wait/i);
+    expect(prompt).toMatch(/four separate tool calls in about a minute/i);
+    expect(prompt).toContain("Yeah, absolutely. Let me see what we have open.");
+  });
+
+  /**
+   * Mark's spec, 2026-09-14: an "acknowledge before finding another time"
+   * bank for when a proposed time is declined without a counter-time —
+   * distinct from CHECK_AVAILABILITY_ACK_LINES, which is for a time the
+   * LEAD named.
+   */
+  it("gives Iris a distinct acknowledgment bank for declining a proposed time without naming another", () => {
+    const prompt = buildLeadQualificationPrompt(IRIS_CONFIG, { ...BLANK_LEAD, budget: "$500k" }, "3 Percent East Coast", "St. John's", true, true, true);
+    expect(prompt).toContain("No problem. Let me see what else we have.");
+    expect(prompt).toContain("Gotcha. Let's see what else is open.");
+  });
+
+  /**
+   * Mark's spec, 2026-09-14: if Iris accidentally talks over the lead, she
+   * should apologize and yield rather than continuing — and after any
+   * interruption, never re-ask something the lead already answered.
+   */
+  it("tells Iris to apologize and yield if she interrupts the lead, and never re-ask an already-answered question after", () => {
+    const prompt = buildLeadQualificationPrompt(IRIS_CONFIG, BLANK_LEAD, "3 Percent East Coast", "St. John's", false, true, false);
+    expect(prompt).toMatch(/If\s+you realize YOU were the one talking over THEM/i);
+    expect(prompt).toMatch(/don't say the\s+apology and immediately continue with your own next line/i);
+    expect(prompt).toMatch(/if they already answered the\s+question you were about to ask, don't ask it again/i);
+  });
+
+  /**
+   * Mark's spec, 2026-09-14: genuinely new — hearing issues weren't
+   * handled at all before. Rephrase, don't repeat verbatim, when the lead
+   * can't hear; ask for a repeat, never guess, when Iris can't hear them.
+   */
+  it("tells Iris to rephrase (not repeat verbatim) when the lead can't hear her, and to ask for a repeat rather than guess when she can't hear them", () => {
+    const prompt = buildLeadQualificationPrompt(IRIS_CONFIG, BLANK_LEAD, "3 Percent East Coast", "St. John's", false, true, false);
+    expect(prompt).toMatch(/do NOT just repeat your exact previous line at the same pace/i);
+    expect(prompt).toMatch(/THEN rephrase the same question shorter and simpler/i);
+    expect(prompt).toMatch(/If YOU can't clearly hear the LEAD/i);
+    expect(prompt).toMatch(/Never record or act on\s+information you didn't actually hear clearly/i);
+  });
+
+  /**
    * Mark's live feedback, 2026-09-11: after confirming budget with "And
    * budget wise, still around 1000000?", Iris asked the NEXT question (a
    * different topic, area) as "Budget wise, what area are you interested
