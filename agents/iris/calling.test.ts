@@ -321,6 +321,34 @@ describe("buildCallPayload", () => {
       expect(buyerBriefing).toMatch(/buyer lead/);
     });
 
+    /**
+     * Caught during a self-review, 2026-09-15: buildAgentBriefing's own
+     * string already opens with "I have [name] on the other line, a
+     * [audience] lead..." — an earlier version of the prompt ALSO wrapped
+     * it in a separate hardcoded "I have [name] on the other line." example
+     * sentence right before quoting it, so the model was fed that phrase
+     * twice back to back. Exactly the kind of overlapping-rule redundancy
+     * flagged live on the greeting/name-verification steps, just in the
+     * briefing step instead.
+     */
+    it("does not duplicate 'on the other line' by wrapping the briefing in its own copy of the same phrase", () => {
+      const payload = buildCallPayload(
+        { ...BASE_PARAMS, intent: "buyer", transferNumber: "+17097058841" },
+        VAPI_CONFIG
+      );
+      const tool = payload.assistant.model.tools?.find((t) => t.type === "transferCall");
+      if (tool?.type !== "transferCall") throw new Error("expected transferCall tool");
+      const prompt = tool.destinations[0].transferPlan.transferAssistant.model.messages[0].content;
+      const occurrences = prompt.match(/on the other line/gi) ?? [];
+      // Exactly one: from buildAgentBriefing's own sentence. (A second,
+      // unrelated use of the phrase shows up later for the post-merge agent
+      // introduction — "I've got [Agent Name] on the other line" — which is
+      // a different variant string, not always drawn, so only assert the
+      // briefing itself isn't self-duplicated.)
+      expect(prompt).not.toMatch(/on the other line\.\" followed by these exact facts/i);
+      expect(occurrences.length).toBeGreaterThanOrEqual(1);
+    });
+
     it("is omitted when no transferNumber is given", () => {
       const payload = buildCallPayload(BASE_PARAMS, VAPI_CONFIG);
       expect(payload.assistant.model.tools?.find((t) => t.type === "transferCall")).toBeUndefined();

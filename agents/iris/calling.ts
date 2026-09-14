@@ -435,10 +435,9 @@ export function buildCallPayload(
                       "\"Iris here. Who am I speaking with?\" Then STOP and wait for their name.\n" +
                       `${agentIdentificationClause}` +
                       "\nOnce you have a name — confirmed through the matching above if it applies, or just " +
-                      "given directly otherwise — briefly explain who's on the other line and why, using " +
-                      "ONLY information already verified this call (never invented, never a full CRM dump): " +
-                      `"Perfect, [their name]. I have ${params.firstName !== "there" ? params.firstName : "the lead"} on the other line." followed by these exact facts, ` +
-                      `adjusted only for natural phrasing (never invented or guessed): "${briefing}" — Mark's spec, 2026-09-15: no filler ` +
+                      "given directly otherwise — greet them by it (\"Perfect, [their name].\"), then " +
+                      "briefly explain who's on the other line and why, using ONLY these exact facts, " +
+                      `adjusted only for natural phrasing (never invented or guessed, and never said twice): "${briefing}" — Mark's spec, 2026-09-15: no filler ` +
                       "before this or after it — never \"[lead] is waiting on the other line,\" \"please " +
                       "hold while I connect you,\" \"this will just take a second,\" or anything narrating " +
                       "the mechanics of what you're doing. Keep it to one or two sentences, then STOP and " +
