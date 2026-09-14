@@ -205,13 +205,13 @@ describe("buildCallPayload", () => {
       const tool = payload.assistant.model.tools?.find((t) => t.type === "transferCall");
       if (tool?.type !== "transferCall") throw new Error("expected transferCall tool");
       const prompt = tool.destinations[0].transferPlan.transferAssistant.model.messages[0].content;
-      expect(prompt).toMatch(/respond in\s+ONE short natural line that both introduces you AND asks who they are/i);
+      expect(prompt).toMatch(/respond in\s+ONE short line that both\s+introduces you AND asks who they are/i);
       expect(prompt).toMatch(/This is Iris\. Who am I speaking with\?/i);
       expect(prompt).toMatch(/Then STOP and wait for their name/i);
       // Real operator feedback, 2026-09-15: opening with "Hi!"/"Hey!" on top
       // of the operator's own greeting (or the system's silence-fallback
       // "Hi!") read as a redundant double greeting — the fix drops it.
-      expect(prompt).toMatch(/Skip the greeting word\s+entirely and go straight to the introduction/i);
+      expect(prompt).toMatch(/no greeting word of your own first/i);
     });
 
     /**
@@ -224,7 +224,7 @@ describe("buildCallPayload", () => {
       const tool = payload.assistant.model.tools?.find((t) => t.type === "transferCall");
       if (tool?.type !== "transferCall") throw new Error("expected transferCall tool");
       const prompt = tool.destinations[0].transferPlan.transferAssistant.model.messages[0].content;
-      expect(prompt).toMatch(/do NOT immediately introduce the agent to the\s+lead yet/i);
+      expect(prompt).toMatch(/do NOT introduce the agent to the\s+lead yet/i);
       expect(prompt).toMatch(/are you still there\?/i);
       expect(prompt).toMatch(/TWO checks maximum, never more/i);
       expect(prompt).toMatch(/the lead may have disconnected/i);
@@ -251,9 +251,9 @@ describe("buildCallPayload", () => {
       const prompt = tool.destinations[0].transferPlan.transferAssistant.model.messages[0].content;
       expect(prompt).toMatch(/ask a real, explicit yes\/no question about merging the call/i);
       expect(prompt).toMatch(/Are you ready for me to merge the call\s+now\?/i);
-      expect(prompt).toMatch(/require a genuine "yes"/i);
-      expect(prompt).toMatch(/If they say\s+yes \(or a clear equivalent\), call transferSuccessful right away/i);
-      expect(prompt).toMatch(/If they say no or\s+ask you to wait, hold off/i);
+      expect(prompt).toMatch(/On a genuine yes \(or clear\s+equivalent/i);
+      expect(prompt).toMatch(/call transferSuccessful right away/i);
+      expect(prompt).toMatch(/On a no or a request to wait, hold off/i);
     });
 
     /**
@@ -421,9 +421,8 @@ describe("buildCallPayload", () => {
         // operator just said once ("is this [name]?") on top of already
         // having asked who they were was redundant — a single MATCH is now
         // trusted directly, with no spoken confirmation step.
-        expect(briefingPrompt).toMatch(/If it comes back MATCH \(one confident real match\): trust it/i);
-        expect(briefingPrompt).toMatch(/AMBIGUOUS/);
-        expect(briefingPrompt).toMatch(/this is the one case that genuinely needs\s+a spoken check/i);
+        expect(briefingPrompt).toMatch(/MATCH \(one confident real match\): trust it/i);
+        expect(briefingPrompt).toMatch(/AMBIGUOUS \(multiple real matches\): ask using the ACTUAL/i);
         expect(briefingPrompt).toMatch(/NO_MATCH/);
       });
     });
