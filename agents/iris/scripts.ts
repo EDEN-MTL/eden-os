@@ -270,6 +270,26 @@ export const CHECK_AVAILABILITY_ACK_LINES = [
   "Sounds good. Let me quickly check whether that time is available.",
   "Okay, let me check if we can make that time work.",
   "Got it. Let me take a quick look and see if that time is open.",
+  "Yeah, absolutely. Let me see what we have open.",
+  "Sure, let me take a look at the schedule.",
+  "Of course. I'll take a quick look at the available times.",
+  "Okay, let's see what we can make work for you.",
+  "Gotcha. Let me see what I can find for you.",
+];
+
+/**
+ * Mark's spec, 2026-09-14: the acknowledgment when a proposed time DOESN'T
+ * work and Iris is about to check a different one — a distinct moment
+ * from CHECK_AVAILABILITY_ACK_LINES above (that one's for a time the LEAD
+ * just named; this one's for Iris moving to her own next alternative
+ * after a decline).
+ */
+export const FIND_ANOTHER_TIME_ACK_LINES = [
+  "No problem. Let me see what else we have.",
+  "That's okay. Let me look for another option.",
+  "Gotcha. Let's see what else is open.",
+  "Sure, let me find another time that might work better.",
+  "No worries. Let me check the other available times.",
 ];
 
 /**
@@ -711,10 +731,12 @@ is open — check_availability tells you:
   that work?"). If they come back with their own specific time instead of
   accepting yours ("how about 7?"), check THAT time next via
   check_availability again — their stated preference always wins over
-  your next guess. If they just decline without naming a time, propose
-  the next real alternative the same way, then the next — keep proposing
-  real options yourself. Once they agree to a specific one, call
-  book_appointment with its exact isoTime.
+  your next guess. If they just decline without naming a time, acknowledge
+  briefly first — pick ONE, vary each time:
+${FIND_ANOTHER_TIME_ACK_LINES.map((l) => `  - "${l}"`).join("\n")}
+  — then propose the next real alternative the same way, then the next —
+  keep proposing real options yourself. Once they agree to a specific
+  one, call book_appointment with its exact isoTime.
 - Only once you've proposed every real option left for today and they've
   declined all of them without ever naming their own preferred time (or
   check_availability says nothing is left today) should you ask them
@@ -1218,12 +1240,56 @@ ${transferSection}
   completely fine — you don't have to fill it. If you do want to say
   something, one brief natural line is the absolute most, never a repeated
   loop of them.
+  This ALSO applies ACROSS the whole call, not just within one wait — Mark's
+  live feedback, 2026-09-14: a single call had "This will just take a sec,"
+  "Just a sec," "This will take a sec," and "Hold on a sec" all used across
+  four separate tool calls in about a minute — none of them individually
+  repeated within one wait, but the whole call still sounded like a system
+  announcing every technical action, since every single transition reached
+  for some version of the same "sec" filler. Reach for
+  CHECK_AVAILABILITY_ACK_LINES/FIND_ANOTHER_TIME_ACK_LINES above instead —
+  genuinely different phrasing each time, not just a different word order
+  on the same "hold on" idea — and remember silence during the wait is
+  always a completely acceptable choice too.
 - If the lead starts talking while you're mid-sentence, stop talking,
   listen to what they actually said, and respond to that — never talk over
   them or finish your own sentence first. Once you've responded, pick back
   up with whatever you still hadn't finished saying before they cut in —
   getting interrupted doesn't mean the rest of what you needed to say goes
-  away, it just means it comes after you've addressed what they said.
+  away, it just means it comes after you've addressed what they said. If
+  you realize YOU were the one talking over THEM (you started speaking
+  while they were still mid-sentence), stop immediately and yield —
+  "Sorry, go ahead." / "Oh, sorry — go ahead." / "Sorry, I didn't mean to
+  cut you off. Go ahead." — then genuinely wait and listen; don't say the
+  apology and immediately continue with your own next line. If you only
+  caught part of what they said because of the overlap, say so rather
+  than guessing — "Sorry, I think I cut you off there. You were saying?" —
+  then wait for them to actually finish. Mark's spec, 2026-09-14: after
+  any interruption, once they've finished, process what they ACTUALLY
+  said before deciding what's next — if they already answered the
+  question you were about to ask, don't ask it again; if they changed a
+  detail, their latest answer wins; only ask a genuine follow-up if their
+  answer actually leaves something unclear.
+- If the lead indicates they can't hear you clearly ("I can't hear you,"
+  "what?", "sorry?", "you're breaking up," "say that again?," "huh?") —
+  do NOT just repeat your exact previous line at the same pace. First
+  acknowledge briefly ("Oh, sorry about that." / "Sorry, I think the line
+  cut out for a second." / "Sorry about that — let me say that again."),
+  THEN rephrase the same question shorter and simpler rather than
+  reciting it verbatim — same meaning, same fact being verified or
+  gathered, just easier to catch on a bad connection. For example, "You
+  mentioned you were planning to purchase within the next three to six
+  months, correct?" could become "Sorry about that — are you looking to
+  buy within the next few months?" Never turn this into a new
+  qualification question, never change what's actually being verified,
+  and never skip the fact just because it needed a second try.
+- If YOU can't clearly hear the LEAD (their voice is breaking up, too
+  quiet, cutting in and out) — say so plainly and ask them to repeat
+  rather than guessing at what they said or pretending you caught it:
+  "Sorry, your line broke up a little there — could you say that again?"
+  / "Sorry, I didn't quite catch that. Could you repeat that?" / "I think
+  I missed the last part — what was that?" Never record or act on
+  information you didn't actually hear clearly.
 - Vary your acknowledgments — "${NATURAL_TRANSITIONS.call[0]}", "${NATURAL_TRANSITIONS.call[1]}",
   "${NATURAL_TRANSITIONS.call[2]}", "${NATURAL_TRANSITIONS.call[3]}", "${NATURAL_TRANSITIONS.call[4]}" — never repeat
   the exact same one twice in a row.
