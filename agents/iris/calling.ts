@@ -438,23 +438,27 @@ export function buildCallPayload(
                       "given directly otherwise — greet them by it (\"Perfect, [their name].\"), then " +
                       "briefly explain who's on the other line and why, using ONLY these exact facts, " +
                       `adjusted only for natural phrasing (never invented or guessed, and never said twice): "${briefing}" — Mark's spec, 2026-09-15: no filler ` +
-                      "before this or after it — never \"[lead] is waiting on the other line,\" \"please " +
-                      "hold while I connect you,\" \"this will just take a second,\" or anything narrating " +
-                      "the mechanics of what you're doing. Keep it to one or two sentences, then STOP and " +
-                      "wait for them to acknowledge they're ready (\"got it\", \"okay\", \"sounds good\" or " +
-                      "similar). If they ask a real question you can actually answer from the briefing, " +
-                      "answer it; otherwise just wait.\n" +
-                      "ONLY once the operator has actually acknowledged readiness do you say ONE brief " +
-                      "transition line telling them you're connecting the call, THEN call " +
-                      "transferSuccessful. Real operator feedback, 2026-09-15: an earlier version of this " +
-                      "flow merged silently right after the acknowledgment with no such line at all, and " +
-                      "the operator experienced the merge as an unannounced jump — say the line first so " +
-                      "it's clear what's about to happen. Pick ONE, vary each time: \"Alright, I'm going to " +
-                      "patch the call through now.\" / \"Perfect, connecting you now.\" / \"Okay, I'll patch " +
-                      "you in now.\" / \"Great, connecting the call now.\" / \"Alright, patching you through " +
-                      "now.\" Then call transferSuccessful right after — don't wait for a reply to this " +
-                      "line, it's a heads-up, not a question. Use transferCancel instead for voicemail, no " +
-                      "answer, or a declined transfer.\n" +
+                      "before this — never \"[lead] is waiting on the other line,\" \"please hold while I " +
+                      "connect you,\" or anything narrating the mechanics of what you're doing. Keep the " +
+                      "briefing itself to one or two sentences. If they ask a real question you can " +
+                      "actually answer from the briefing, answer it first.\n" +
+                      "Then ask a real, explicit yes/no question about merging the call — never just wait " +
+                      "for a vague acknowledgment to the briefing and merge on that alone. Real operator " +
+                      "feedback, 2026-09-15 (Jacob, reviewing a test call with Mark): an earlier version of " +
+                      "this flow gave the briefing, waited for something like \"got it\"/\"okay\", and then " +
+                      "merged silently on that — the operator experienced this as an unannounced jump, " +
+                      "since he never actually said yes to a merge, only acknowledged hearing the summary. " +
+                      "Mark's fix: go back to asking directly, and require a genuine \"yes\" (or clear " +
+                      "equivalent — \"yep\", \"go ahead\", \"sure\", \"ready\") before merging, not just any " +
+                      "acknowledgment. Pick ONE, vary each time: \"Are you ready for me to merge the call " +
+                      "now?\" / \"Ready for me to bring them on?\" / \"Should I go ahead and connect you " +
+                      "now?\" / \"Ready to merge you in?\" Then STOP and wait for their answer. If they say " +
+                      "yes (or a clear equivalent), call transferSuccessful right away — no further line " +
+                      "needed, the question itself already said what's about to happen. If they say no or " +
+                      "ask you to wait, hold off and wait for them to tell you when they're ready, then ask " +
+                      "again. If they ask a real question instead of answering, answer it, then re-ask the " +
+                      "merge question. Use transferCancel instead for voicemail, no answer, or a declined " +
+                      "transfer.\n" +
                       "The MOMENT transferSuccessful succeeds, do NOT immediately introduce the agent to the " +
                       "lead yet — Mark's spec, 2026-09-15: first confirm the lead is actually still there. " +
                       `Say ONE check, using their name: "Hey ${params.firstName !== "there" ? params.firstName : "there"}, are you still there?" / ` +

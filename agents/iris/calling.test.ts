@@ -236,19 +236,24 @@ describe("buildCallPayload", () => {
 
     /**
      * Real operator feedback, 2026-09-15 (Jacob, playing the receiving
-     * agent on a live test call): the merge happened silently right after
-     * he acknowledged the briefing, with no announcement at all — he
-     * experienced it as an unannounced jump. Fix: say a brief "connecting
-     * you now" style line first, THEN merge.
+     * agent on a live test call, reviewed with Mark from the actual call
+     * recording): the merge happened silently right after a vague "okay"
+     * to the briefing, with no real question asked — Jacob never actually
+     * said yes to a merge, only acknowledged hearing the summary. Fix,
+     * per Jacob's own described preference from an earlier version of this
+     * flow: ask a real yes/no question ("are you ready for me to merge the
+     * call now?") and require an explicit yes before merging.
      */
-    it("has the transfer assistant announce the connection before merging, rather than merging silently", () => {
+    it("asks a real yes/no question before merging, rather than merging on a vague acknowledgment", () => {
       const payload = buildCallPayload({ ...BASE_PARAMS, transferNumber: "+17097058841" }, VAPI_CONFIG);
       const tool = payload.assistant.model.tools?.find((t) => t.type === "transferCall");
       if (tool?.type !== "transferCall") throw new Error("expected transferCall tool");
       const prompt = tool.destinations[0].transferPlan.transferAssistant.model.messages[0].content;
-      expect(prompt).toMatch(/say ONE brief\s+transition line telling them you're connecting the call, THEN call\s+transferSuccessful/i);
-      expect(prompt).toMatch(/patch the call through now/i);
-      expect(prompt).toMatch(/don't wait for a reply to this\s+line, it's a heads-up, not a question/i);
+      expect(prompt).toMatch(/ask a real, explicit yes\/no question about merging the call/i);
+      expect(prompt).toMatch(/Are you ready for me to merge the call\s+now\?/i);
+      expect(prompt).toMatch(/require a genuine "yes"/i);
+      expect(prompt).toMatch(/If they say\s+yes \(or a clear equivalent\), call transferSuccessful right away/i);
+      expect(prompt).toMatch(/If they say no or\s+ask you to wait, hold off/i);
     });
 
     /**
