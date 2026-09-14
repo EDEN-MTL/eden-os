@@ -15,6 +15,7 @@ import {
   DOWNSIZER_QUESTIONS,
   EDGE_CASE_RESPONSES,
   expandBudgetShorthand,
+  extractFirstName,
   LIVE_TRANSFER_LINES,
   liveTransferLineForIntent,
   NATURAL_TRANSITIONS,
@@ -167,6 +168,31 @@ describe("expandBudgetShorthand", () => {
   it("is case-insensitive for the M/K suffix", () => {
     expect(expandBudgetShorthand("$500m")).toBe("$500 million");
     expect(expandBudgetShorthand("$450K")).toBe("$450 thousand");
+  });
+});
+
+describe("extractFirstName", () => {
+  it("returns the first name as-is when there's no honorific", () => {
+    expect(extractFirstName("Jason Miller")).toBe("Jason");
+  });
+
+  it("strips a leading honorific before taking the first name", () => {
+    // Confirmed live, 2026-09-14: a test lead submitted as "Mr. Beast Scott"
+    // came back as firstName "Mr." — Iris asked "Am I speaking with mister?"
+    // and the transfer briefing said "I have Mr. on the other line."
+    expect(extractFirstName("Mr. Beast Scott")).toBe("Beast");
+    expect(extractFirstName("Mrs Jane Doe")).toBe("Jane");
+    expect(extractFirstName("Dr. Smith")).toBe("Smith");
+  });
+
+  it("is case-insensitive for the honorific", () => {
+    expect(extractFirstName("MR. Beast")).toBe("Beast");
+  });
+
+  it("falls back to \"there\" when there's no name at all", () => {
+    expect(extractFirstName(null)).toBe("there");
+    expect(extractFirstName(undefined)).toBe("there");
+    expect(extractFirstName("")).toBe("there");
   });
 });
 
