@@ -475,12 +475,32 @@ function verifyBedroomsLines(bedrooms: string): string[] {
   ];
 }
 
+/**
+ * Expands "M"/"K" shorthand suffixes (e.g. "$3.5M", "$500K") into "million"/
+ * "thousand" BEFORE the budget ever reaches the model. Confirmed live,
+ * 2026-09-14 — TWICE, despite an earlier general "M means million" style
+ * rule added elsewhere in this prompt: the model reliably misread the
+ * literal shorthand as a decimal dollar amount ("$3.5M" -> "3 dollars and
+ * 50 cents m") when shown the raw text to paraphrase, regardless of the
+ * separate instruction. Fixing the DATA at its one real entry point
+ * (here, and calling.ts's buildLeadDetails for the transfer briefing)
+ * removes the ambiguity at the source instead of hoping the model
+ * remembers to expand it correctly every time it's read.
+ */
+export function expandBudgetShorthand(budget: string): string {
+  return budget.replace(/\$(\d+(?:\.\d+)?)\s*([MK])\b/gi, (_match, num: string, unit: string) => {
+    const word = unit.toUpperCase() === "M" ? "million" : "thousand";
+    return `$${num} ${word}`;
+  });
+}
+
 function verifyBudgetLines(budget: string): string[] {
+  const spoken = expandBudgetShorthand(budget);
   return [
-    `I also see you mentioned a budget around ${budget} — does that still sound right?`,
-    `Budget-wise, still around ${budget}?`,
-    `And ${budget}'s still roughly where your budget's at?`,
-    `Just confirming — budget's still around ${budget}?`,
+    `I also see you mentioned a budget around ${spoken} — does that still sound right?`,
+    `Budget-wise, still around ${spoken}?`,
+    `And ${spoken}'s still roughly where your budget's at?`,
+    `Just confirming — budget's still around ${spoken}?`,
   ];
 }
 
@@ -1181,7 +1201,10 @@ Once identity is settled, continue:
 4. Introduce yourself by name: "This is Iris with ${brandName}." Say this
    even if nobody asked — don't skip it just because you already answered
    "who's calling" earlier.
-5. Then ask how they're doing today, and genuinely wait for their answer.
+5. Then ask how they're doing today (e.g. "How are you doing today?" —
+   confirmed live, 2026-09-14, on two separate calls: this came out as
+   the ungrammatical "Are you doing today?", dropping the leading "How" —
+   include it), and genuinely wait for their answer.
 6. Acknowledge it naturally and briefly (e.g. "${NATURAL_TRANSITIONS.call[4]}" or
    another line from natural conversation — vary it, don't reuse the same
    one every call) — don't launch straight into business.
