@@ -195,39 +195,39 @@ describe("buildCallPayload", () => {
     });
 
     /**
-     * Mark's spec, 2026-09-12: IRIS was piling her introduction and her own
-     * question onto the operator's greeting the instant they answered,
-     * reading as an abrupt "Hey, this is Iris, who am I speaking with?" —
-     * the fix is genuinely separate turns: reciprocate, THEN introduce,
-     * THEN ask, each its own pause.
+     * Mark's spec, 2026-09-15: simplified from the previous 3-separate-turn
+     * design (reciprocate, THEN introduce, THEN ask) — the moment the
+     * operator gives any greeting, IRIS responds with ONE combined line that
+     * both introduces her and asks who she's speaking with.
      */
-    it("has the transfer assistant reciprocate the greeting as its own turn before introducing itself", () => {
+    it("has the transfer assistant introduce itself and ask who's speaking in one combined line", () => {
       const payload = buildCallPayload({ ...BASE_PARAMS, transferNumber: "+17097058841" }, VAPI_CONFIG);
       const tool = payload.assistant.model.tools?.find((t) => t.type === "transferCall");
       if (tool?.type !== "transferCall") throw new Error("expected transferCall tool");
       const prompt = tool.destinations[0].transferPlan.transferAssistant.model.messages[0].content;
-      expect(prompt).toMatch(/do\s+NOT immediately pile your introduction and your own question/i);
-      expect(prompt).toMatch(/Reciprocate whatever greeting they actually gave you/i);
-      expect(prompt).toMatch(/Say only that, then STOP and wait/i);
-      expect(prompt).toMatch(/Only then introduce yourself/i);
-      expect(prompt).toMatch(/Only then ask "Who am I speaking with\?"/i);
+      expect(prompt).toMatch(/respond in\s+ONE short natural line that both introduces you AND asks who they are/i);
+      expect(prompt).toMatch(/This is Iris\. Who am I speaking with\?/i);
+      expect(prompt).toMatch(/Then STOP and wait for their name/i);
     });
 
     /**
-     * Mark's spec, 2026-09-12: a deliberate reversal from the prior design —
-     * the merge (transferSuccessful) must happen BEFORE any lead-facing
-     * introduction, so the lead only hears the handoff line once actually
-     * connected, and IRIS must go fully silent immediately after it.
+     * Mark's spec, 2026-09-15: after the merge, IRIS must confirm the lead
+     * is actually still there (max 2 checks) BEFORE introducing the agent —
+     * only once confirmed does she introduce the agent and go fully silent.
      */
-    it("tells the transfer assistant to merge before introducing the agent to the lead, then go silent", () => {
+    it("tells the transfer assistant to confirm the lead is still there after merge, capped at 2 checks, then introduce the agent and go silent", () => {
       const payload = buildCallPayload({ ...BASE_PARAMS, transferNumber: "+17097058841" }, VAPI_CONFIG);
       const tool = payload.assistant.model.tools?.find((t) => t.type === "transferCall");
       if (tool?.type !== "transferCall") throw new Error("expected transferCall tool");
       const prompt = tool.destinations[0].transferPlan.transferAssistant.model.messages[0].content;
-      expect(prompt).toMatch(/silently, no spoken line beforehand this time/i);
-      expect(prompt).toMatch(/the merge itself must happen BEFORE any lead-facing\s+introduction/i);
-      expect(prompt).toMatch(/The MOMENT transferSuccessful succeeds, say ONE handoff line/i);
-      expect(prompt).toMatch(/Then IMMEDIATELY\s+go silent/i);
+      expect(prompt).toMatch(/silently, no spoken line beforehand/i);
+      expect(prompt).toMatch(/do NOT immediately introduce the agent to the\s+lead yet/i);
+      expect(prompt).toMatch(/are you still there\?/i);
+      expect(prompt).toMatch(/TWO checks maximum, never more/i);
+      expect(prompt).toMatch(/the lead may have disconnected/i);
+      expect(prompt).toMatch(/do NOT claim the transfer succeeded/i);
+      expect(prompt).toMatch(/Once the lead HAS confirmed they're still there, introduce the agent/i);
+      expect(prompt).toMatch(/Then IMMEDIATELY go silent/i);
       expect(prompt).toMatch(/never speak again for the rest of this call/i);
     });
 
