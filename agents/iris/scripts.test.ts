@@ -669,6 +669,28 @@ describe("buildLeadQualificationPrompt", () => {
       expect(prompt).toMatch(/ONE NAMED EXCEPTION: the identify line \("Hi, am I speaking with Justin\?"\) is not a\s+paraphrase target/i);
       expect(prompt).toMatch(/see "How you open the\s+call" above for the exact rule/i);
     });
+
+    /**
+     * Real operator/lead feedback, 2026-09-15: on a bare pickup or when
+     * nothing's been said yet, Iris was saying only a bare "Hi" and
+     * waiting for the lead to ask who she was before actually introducing
+     * herself — same class of bug just fixed on the transfer-assistant
+     * opening. Fixed by folding the self-introduction directly into steps
+     * 1 and 3, matching step 2's already-correct pattern, and removing the
+     * old separate step 4 (now redundant — she introduces herself in the
+     * very first turn instead of after identity is confirmed).
+     */
+    it("has Iris introduce herself in the same turn as the identity question on a bare pickup, not a bare 'Hi' that waits to be asked", () => {
+      const prompt = buildLeadQualificationPrompt(IRIS_CONFIG, { ...BLANK_LEAD, name: "Justin" }, "3 Percent East Coast", "St. John's", false, true, false);
+      expect(prompt).toMatch(/Bare pickup \("Hello\?", "Hey", "Yeah\?"\) → skip any filler/i);
+      expect(prompt).toContain('say\n   "This is Iris with 3 Percent East Coast." THEN "Hi, am I speaking with Justin?"');
+      expect(prompt).toMatch(/Never just a bare "Hi" that waits for them to ask who you are/i);
+      expect(prompt).toMatch(/Nothing from them yet at all → say "This is Iris with 3 Percent East Coast\."/i);
+      // The old separate "introduce yourself" step is gone — she already
+      // did it in her opening turn, and is told not to repeat it.
+      expect(prompt).toMatch(/you already introduced yourself by\s+name in your opening turn above — never introduce yourself a second time/i);
+      expect(prompt).not.toMatch(/4\. Introduce yourself by name/i);
+    });
   });
 
   describe("transferAvailable", () => {
