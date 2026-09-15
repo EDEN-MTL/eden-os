@@ -62,9 +62,15 @@ describe("buildCallPayload", () => {
    * call the lead said "Hello?", the model took a bit over 5s to
    * generate the (now longer) combined opening line, and this hook fired
    * its own bare "Hi!" into that gap before the model's real line
-   * landed, looking exactly like the "bare hi that waits to be asked"
-   * bug that had just been fixed in the prompt — except the prompt was
-   * never the problem, this hook was racing the model's own response.
+   * landed. 8s gives more headroom.
+   *
+   * triggerResetMode fixed "onUserSpeech" → "never", 2026-09-15: confirmed
+   * live (timestamps) and via Vapi's own docs that "onUserSpeech" resets
+   * the trigger COUNT on every lead utterance, letting this "one-shot"
+   * hook re-arm and fire again later in the call — a real call had it
+   * fire a second, nonsensical bare "Hi." ~18s after the lead's last
+   * words, mid-reschedule-offer. "never" (Vapi's own default) makes this
+   * a genuine once-per-call nudge, as originally intended.
    */
   it("waits for the lead to speak first, with a one-shot nudge if they stay silent", () => {
     const payload = buildCallPayload(BASE_PARAMS, VAPI_CONFIG);
@@ -73,7 +79,7 @@ describe("buildCallPayload", () => {
       {
         on: "customer.speech.timeout",
         do: [{ type: "say", exact: "Hi!" }],
-        options: { timeoutSeconds: 8, triggerMaxCount: 1, triggerResetMode: "onUserSpeech" },
+        options: { timeoutSeconds: 8, triggerMaxCount: 1, triggerResetMode: "never" },
       },
     ]);
   });
