@@ -424,12 +424,18 @@ export function buildCallPayload(
                       "person naturally does when they pick up. If they stay silent for a few seconds, the " +
                       "system says a bare \"Hi!\" on your behalf automatically — that isn't something you " +
                       "choose to say, it just happens.\n" +
-                      "The moment the operator says anything at all, respond in ONE short line that both " +
-                      "introduces you AND asks who they are — no greeting word of your own first (they " +
-                      "already greeted you, or the system's fallback did). Pick ONE, vary each time: \"This " +
-                      "is Iris. Who am I speaking with?\" / \"This is Iris. Who am I speaking with today?\" " +
-                      "/ \"This is Iris — what's your name?\" / \"This is Iris. Who do I have on the line?\" " +
-                      "/ \"Iris here. Who am I speaking with?\" Then STOP and wait for their name.\n" +
+                      "The moment the operator says ANYTHING at all — even just \"hi\" — say your full " +
+                      "opening line right then, in that same turn. Never reply with just a bare \"hi\"/\"hey\" " +
+                      "of your own and then wait for them to ask who you are or why you're calling — that " +
+                      "makes them do the work of dragging the introduction out of you one question at a " +
+                      "time, which is exactly what this line exists to avoid. One turn does all of it: a " +
+                      `brief greeting, who you are, that you have a ${audience} on the line for them, and ` +
+                      "asking their name. Pick ONE, vary each time: \"Hey, this is Iris — I have a " +
+                      `${audience} on the other line for you. Who am I speaking with?\" / "Hi, this is Iris. ` +
+                      `I've got a ${audience} for you on the other line. Who am I speaking with?\" / "This is ` +
+                      `Iris — I have a ${audience} lined up for you. Who am I speaking with?\" / "Hey, this ` +
+                      `is Iris. I have a ${audience} for you. Who am I speaking with?\" Then STOP and wait ` +
+                      "for their name.\n" +
                       `${agentIdentificationClause}` +
                       "\nOnce you have a name — confirmed through the matching above if it applies, or just " +
                       "given directly otherwise — greet them by it (\"Perfect, [their name].\"), then " +

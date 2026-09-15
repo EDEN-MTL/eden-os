@@ -195,23 +195,25 @@ describe("buildCallPayload", () => {
     });
 
     /**
-     * Mark's spec, 2026-09-15: simplified from the previous 3-separate-turn
-     * design (reciprocate, THEN introduce, THEN ask) — the moment the
-     * operator gives any greeting, IRIS responds with ONE combined line that
-     * both introduces her and asks who she's speaking with.
+     * Real operator feedback, 2026-09-15 (Jacob, on the actual "Vladimir"
+     * test call, listened back with Mark): the transfer assistant was still
+     * saying a bare "hi" and waiting for the operator to explicitly ask
+     * "who's this?" before actually introducing itself — a live regression
+     * against the "one combined line" design. Fix: say the FULL opening
+     * (greeting + identity + why you're calling + name-ask) in one turn the
+     * moment the operator says anything at all, never a bare reciprocation
+     * that waits to be asked. Mark's own new addition: fold "I have a
+     * buyer/seller on the other line for you" into that same line too.
      */
-    it("has the transfer assistant introduce itself and ask who's speaking in one combined line, with no redundant greeting word", () => {
+    it("has the transfer assistant say its full opening (identity, purpose, name-ask) in one turn, never a bare greeting that waits to be asked", () => {
       const payload = buildCallPayload({ ...BASE_PARAMS, transferNumber: "+17097058841" }, VAPI_CONFIG);
       const tool = payload.assistant.model.tools?.find((t) => t.type === "transferCall");
       if (tool?.type !== "transferCall") throw new Error("expected transferCall tool");
       const prompt = tool.destinations[0].transferPlan.transferAssistant.model.messages[0].content;
-      expect(prompt).toMatch(/respond in\s+ONE short line that both\s+introduces you AND asks who they are/i);
-      expect(prompt).toMatch(/This is Iris\. Who am I speaking with\?/i);
-      expect(prompt).toMatch(/Then STOP and wait for their name/i);
-      // Real operator feedback, 2026-09-15: opening with "Hi!"/"Hey!" on top
-      // of the operator's own greeting (or the system's silence-fallback
-      // "Hi!") read as a redundant double greeting — the fix drops it.
-      expect(prompt).toMatch(/no greeting word of your own first/i);
+      expect(prompt).toMatch(/say your full\s+opening line right then, in that same turn/i);
+      expect(prompt).toMatch(/Never reply with just a bare\s+"hi"\/"hey" of your own and then wait for them to ask/i);
+      expect(prompt).toMatch(/I have a buyer on the other line for you\. Who am I speaking with\?/i);
+      expect(prompt).toMatch(/Then STOP and wait\s+for their name/i);
     });
 
     /**
