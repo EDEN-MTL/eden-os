@@ -377,17 +377,33 @@ export function buildCallPayload(
                 // instead, confirmed to actually compile via a live regex
                 // engine rather than trusting the vendor's own (apparently
                 // broken) example.
+                // Expanded 2026-09-16, confirmed live: a real call had the
+                // lead reply "No problem." to the transfer announcement,
+                // then later explicitly ask "Can you do live transfer
+                // again?" — neither matched this regex, so THREE separate
+                // legitimate transfer attempts got rejected by this
+                // structural gate, and Iris fell back to offering a
+                // callback instead of ever actually dialing. Added "no
+                // problem"/"that's fine"/"sure thing" as natural
+                // acknowledgment phrasings, and the bare word "transfer"
+                // to catch an explicit request like the one above.
                 type: "regex",
-                regex: "\\b([Yy]es|[Yy]eah|[Yy]ep|[Yy]up|[Ss]ure|[Oo]k|[Oo]kay|[Ff]ine|[Aa]lright|[Dd]efinitely|[Aa]bsolutely|[Pp]lease)\\b|[Ss]ounds good|[Gg]o ahead|[Tt]hat works",
+                regex:
+                  "\\b([Yy]es|[Yy]eah|[Yy]ep|[Yy]up|[Ss]ure|[Oo]k|[Oo]kay|[Ff]ine|[Aa]lright|[Dd]efinitely|[Aa]bsolutely|[Pp]lease|[Tt]ransfer)\\b|[Ss]ounds good|[Gg]o ahead|[Tt]hat works|[Nn]o problem|[Tt]hat's fine|[Tt]hat's ok(?:ay)?|[Ss]ure thing",
                 target: { position: -1, role: "user" },
                 negate: true,
               },
               {
-                // "connect you with" is the one substring every
-                // LIVE_TRANSFER_LINES variant (buyer/seller/general) shares
-                // — see scripts.ts's LIVE_TRANSFER_LINES.
+                // "connect you with"/"connect with you" covers every
+                // LIVE_TRANSFER_LINES variant (buyer/seller/general — see
+                // scripts.ts) AND AGENT_UNAVAILABLE_LINE's own "love to
+                // connect with you" phrasing, so a retry attempt right
+                // after a fallback line still passes this check. Widened
+                // 2026-09-16 from "connect you with" only, confirmed live
+                // that a retry attempt landed right after a message using
+                // the "with you" word order instead.
                 type: "regex",
-                regex: "[Cc]onnect you with",
+                regex: "[Cc]onnect (?:you with|with you)",
                 target: { position: -2, role: "assistant" },
                 negate: true,
               },

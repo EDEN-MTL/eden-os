@@ -318,6 +318,16 @@ describe("buildCallPayload", () => {
       expect(regex.test("sounds good")).toBe(true);
       expect(regex.test("what do you mean")).toBe(false);
       expect(regex.test("no, not right now")).toBe(false);
+      // Confirmed live, 2026-09-16: a real call had the lead reply "No
+      // problem." to the transfer announcement, then later explicitly ask
+      // "Can you do live transfer again?" — neither matched the old
+      // regex, so three separate legitimate transfer attempts got
+      // rejected by this gate and the call fell back to offering a
+      // callback instead of ever actually dialing.
+      expect(regex.test("No problem.")).toBe(true);
+      expect(regex.test("Can you do live transfer again?")).toBe(true);
+      expect(regex.test("That's fine")).toBe(true);
+      expect(regex.test("Sure thing")).toBe(true);
     });
 
     /**
@@ -344,6 +354,11 @@ describe("buildCallPayload", () => {
       expect(regex.test("Sounds good. I'll connect you with one of our seller agents now.")).toBe(true);
       expect(regex.test("Perfect. I'll connect you with one of our agents now.")).toBe(true);
       expect(regex.test("How many bedrooms and bathrooms do you need?")).toBe(false);
+      // Widened 2026-09-16 to also match AGENT_UNAVAILABLE_LINE's own word
+      // order ("love to connect WITH you") — confirmed live that a retry
+      // attempt landed right after this exact fallback line was spoken,
+      // and the old "connect you with"-only regex didn't match it.
+      expect(regex.test("They're busy with another client right now, but they'd love to connect with you.")).toBe(true);
     });
 
     it("briefs the receiving agent as 'seller' for seller/downsize intent and 'buyer' for buyer/upgrading", () => {
