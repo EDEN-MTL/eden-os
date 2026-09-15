@@ -8,8 +8,8 @@ import {
   buildLeadQualificationPrompt,
   buildVoicemailMessage,
   BUYER_QUESTIONS,
+  buildCallOpeningLine,
   callIdentifyLine,
-  callOpeningGreeting,
   callbackRecapLine,
   callOpeningContextLine,
   DOWNSIZER_QUESTIONS,
@@ -208,14 +208,6 @@ describe("NATURAL_TRANSITIONS", () => {
   it("offers more than one variant per channel, so Iris isn't stuck repeating one phrase", () => {
     expect(NATURAL_TRANSITIONS.sms.length).toBeGreaterThan(1);
     expect(NATURAL_TRANSITIONS.call.length).toBeGreaterThan(1);
-  });
-});
-
-describe("callOpeningGreeting", () => {
-  it("is a bare greeting only — no name, no brand, no question", () => {
-    const line = callOpeningGreeting();
-    expect(line).not.toMatch(/\?/);
-    expect(line.length).toBeLessThan(10);
   });
 });
 
@@ -457,12 +449,6 @@ describe("buildLeadQualificationPrompt", () => {
     expect(prompt).toContain("Still looking for 3 bedrooms?");
   });
 
-  it("skips filler acknowledgment and goes straight to the identify question on a bare pickup", () => {
-    const prompt = buildLeadQualificationPrompt(IRIS_CONFIG, BLANK_LEAD, "3 Percent East Coast", "St. John's", false, true, false);
-    expect(prompt).toMatch(/skip any filler like/i);
-    expect(prompt).toMatch(/great,\s+thanks for picking\s+up!/i);
-  });
-
   it("tells Iris to mirror the lead's tone and hold it for the rest of the call", () => {
     const prompt = buildLeadQualificationPrompt(IRIS_CONFIG, BLANK_LEAD, "3 Percent East Coast", "St. John's", false, true, false);
     expect(prompt).toMatch(/mirror the lead, then hold it/i);
@@ -642,11 +628,11 @@ describe("buildLeadQualificationPrompt", () => {
      * consolidated into one tight mechanical rule set (forbidden list,
      * correct list, identity lock) instead of accumulating more narrative.
      */
-    it("tells Iris the lead's name is already known, and gives her the exact mechanical identify sequence", () => {
+    it("tells Iris the lead's name is already known, and that the identify question already got asked automatically", () => {
       const prompt = buildLeadQualificationPrompt(IRIS_CONFIG, { ...BLANK_LEAD, name: "Justin" }, "3 Percent East Coast", "St. John's", false, true, false);
       expect(prompt).toMatch(/This call NEVER discovers who the lead is/i);
       expect(prompt).toContain('"Hi, am I speaking with Justin?"');
-      expect(prompt).toMatch(/no exceptions and no creative rewording/i);
+      expect(prompt).toMatch(/your job from here is just to read their response/i);
     });
 
     it("gives Iris an explicit forbidden-phrasing list, never describing the lead instead of naming them", () => {
@@ -671,49 +657,32 @@ describe("buildLeadQualificationPrompt", () => {
     });
 
     /**
-     * Real operator/lead feedback, 2026-09-15: on a bare pickup or when
-     * nothing's been said yet, Iris was saying only a bare "Hi" and
-     * waiting for the lead to ask who she was before actually introducing
-     * herself — same class of bug just fixed on the transfer-assistant
-     * opening. Fixed by folding the self-introduction directly into steps
-     * 1 and 3, matching step 2's already-correct pattern, and removing the
-     * old separate step 4 (now redundant — she introduces herself in the
-     * very first turn instead of after identity is confirmed).
-     *
-     * Refined further, 2026-09-15 (Mark's own written spec): made "Hi,
-     * this is Iris with [company]. Am I speaking with [name]?" the single
-     * CANONICAL default line — "Hi" belongs to the greeting/self-intro at
-     * the front, not repeated a second time in front of the identity
-     * question — rather than one of several rotated variants.
+     * Root cause found live, 2026-09-16: the recurring "Iris says a bare
+     * 'Hi.' and waits to be asked who she is" bug survived several rounds
+     * of prompt fixes (folding the self-intro into the opening steps, a
+     * stark wrong/right contrast) because it was NEVER a model or prompt
+     * problem — confirmed via Vapi's own docs that firstMessage is spoken
+     * VERBATIM the instant the other party speaks, before the model gets
+     * a turn at all, under firstMessageMode "assistant-waits-for-user".
+     * Fixed by making firstMessage itself the full canonical opening line
+     * (buildCallOpeningLine, wired in calling.ts) instead of a bare "Hi!".
+     * The prompt's job now is just to tell the model this already
+     * happened, so it never repeats or paraphrases it.
      */
-    it("has Iris introduce herself in the same turn as the identity question on a bare pickup, not a bare 'Hi' that waits to be asked", () => {
+    it("tells Iris her opening line is already spoken for her automatically, and never to repeat it", () => {
       const prompt = buildLeadQualificationPrompt(IRIS_CONFIG, { ...BLANK_LEAD, name: "Justin" }, "3 Percent East Coast", "St. John's", false, true, false);
-      expect(prompt).toMatch(/Bare pickup \("Hello\?", "Hey", "Yeah\?"\) → skip any filler/i);
-      expect(prompt).toContain('"Hi, this is Iris with 3 Percent East Coast. Am I speaking with Justin?" — this is the canonical default');
-      expect(prompt).toMatch(/Never just a bare "Hi" that waits for them to ask\s+who you are/i);
-      expect(prompt).toMatch(/Nothing from them yet at all → say\s+"Hi, this is Iris with 3 Percent East Coast\. Am I speaking with Justin\?"/i);
-      // The old separate "introduce yourself" step is gone — she already
-      // did it in her opening turn, and is told not to repeat it.
-      expect(prompt).toMatch(/you already introduced yourself by\s+name in your opening turn above — never introduce yourself a second time/i);
-      expect(prompt).not.toMatch(/4\. Introduce yourself by name/i);
+      expect(prompt).toMatch(/Your opening line is spoken FOR you, automatically, the instant/i);
+      expect(prompt).toContain('"Hi, this is Iris with 3 Percent East Coast. Am I speaking with Justin?"');
+      expect(prompt).toMatch(/mechanical platform behavior, not something you generate or choose to/i);
+      expect(prompt).toMatch(/NEVER say it again, never/i);
+      expect(prompt).toMatch(/never say a bare "Hi" of/i);
     });
 
-    /**
-     * Confirmed live, 2026-09-15: despite the "one combined turn" rule
-     * above, a real call still had Iris say a bare "Hi." on pickup, wait
-     * to be told off ("Do not say hi. Immediately say your name."), and
-     * only then give the full line — timestamps showed this landed
-     * ~1.25s after the lead's "Hello?", ruling out the idle-timeout hook
-     * (8s) as the cause; the model just didn't follow the rule. Added a
-     * stark ✗ WRONG / ✓ RIGHT contrast directly next to the rule as one
-     * more attempt at reinforcement before treating this as a known
-     * model-adherence ceiling, same as the identity name-drop issue.
-     */
-    it("gives Iris a stark wrong/right contrast for the bare-pickup opening, not just prose", () => {
+    it("gives Iris a clear branch for how to react to the lead's response to the already-spoken identify question", () => {
       const prompt = buildLeadQualificationPrompt(IRIS_CONFIG, { ...BLANK_LEAD, name: "Justin" }, "3 Percent East Coast", "St. John's", false, true, false);
-      expect(prompt).toMatch(/✗ WRONG \(confirmed live, 2026-09-15/i);
-      expect(prompt).toMatch(/Lead: "Hello\?" → You: "Hi\." → \[wait for them to ask who\s+you are\]/i);
-      expect(prompt).toMatch(/✓ RIGHT: Lead: "Hello\?" → You:\s+"Hi, this is Iris with 3 Percent East Coast\. Am I speaking with Justin\?"/i);
+      expect(prompt).toMatch(/They confirm \("yeah," "yep," "speaking," or\s+similar\) → identity is\s+CONFIRMED/i);
+      expect(prompt).toMatch(/They seem confused, ask you to repeat, or say something that doesn't\s+actually answer it → say "Hi, am I speaking with Justin\?" again, word for word/i);
+      expect(prompt).toMatch(/They explicitly deny being the lead → follow the wrong-number handling/i);
     });
   });
 
