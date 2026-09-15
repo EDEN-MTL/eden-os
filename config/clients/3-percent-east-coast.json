@@ -61,6 +61,8 @@
     "fatigueThresholdNote": "Was 0.7, which is mathematically impossible to stay under: frequency is impressions/reach, so any running ad is >= 1. All 63 ad sets exceeded it, meaning it would have flagged everything as fatigued forever. Their actual range is 1.48 avg / 1.88 max, so 3.0 sits above normal operation but still catches genuine fatigue."
   },
   "iris": {
+    "timezone": "America/St_Johns",
+    "timezoneNote": "Added 2026-09-16 before going live: this field was missing, so Iris was relying on dial-pending.ts's hardcoded 'America/St_Johns' default, which only happened to be correct because this was the sole client Iris ran against when that default was written. dial-pending.ts already fetches GHL's own live location timezone as the primary source (real data for this client, unlike eden-sub-account-one's known-wrong 'Pacific/Honolulu' snapshot) and only falls back to this field if that live fetch fails — this is the safety net for that fallback, made explicit per this repo's own rule against hardcoding client specifics in agent code.",
     "qualificationQuestions": [
       "Are you looking to buy or sell?",
       "What area are you interested in?",
