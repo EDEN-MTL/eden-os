@@ -55,6 +55,16 @@ describe("buildCallPayload", () => {
    * he answered still felt premature — real people let the other person
    * speak first. "assistant-waits-for-user" makes that genuine; the hook
    * is what stops Iris waiting forever if the lead never says anything.
+   *
+   * timeoutSeconds bumped 5 → 8, 2026-09-15: confirmed live (real
+   * transcript) this hook's timer restarts the moment the LEAD's own
+   * speech ends, not just "before they ever say anything" — on a real
+   * call the lead said "Hello?", the model took a bit over 5s to
+   * generate the (now longer) combined opening line, and this hook fired
+   * its own bare "Hi!" into that gap before the model's real line
+   * landed, looking exactly like the "bare hi that waits to be asked"
+   * bug that had just been fixed in the prompt — except the prompt was
+   * never the problem, this hook was racing the model's own response.
    */
   it("waits for the lead to speak first, with a one-shot nudge if they stay silent", () => {
     const payload = buildCallPayload(BASE_PARAMS, VAPI_CONFIG);
@@ -63,7 +73,7 @@ describe("buildCallPayload", () => {
       {
         on: "customer.speech.timeout",
         do: [{ type: "say", exact: "Hi!" }],
-        options: { timeoutSeconds: 5, triggerMaxCount: 1, triggerResetMode: "onUserSpeech" },
+        options: { timeoutSeconds: 8, triggerMaxCount: 1, triggerResetMode: "onUserSpeech" },
       },
     ]);
   });
