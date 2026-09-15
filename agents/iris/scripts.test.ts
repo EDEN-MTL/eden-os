@@ -679,13 +679,19 @@ describe("buildLeadQualificationPrompt", () => {
      * 1 and 3, matching step 2's already-correct pattern, and removing the
      * old separate step 4 (now redundant — she introduces herself in the
      * very first turn instead of after identity is confirmed).
+     *
+     * Refined further, 2026-09-15 (Mark's own written spec): made "Hi,
+     * this is Iris with [company]. Am I speaking with [name]?" the single
+     * CANONICAL default line — "Hi" belongs to the greeting/self-intro at
+     * the front, not repeated a second time in front of the identity
+     * question — rather than one of several rotated variants.
      */
     it("has Iris introduce herself in the same turn as the identity question on a bare pickup, not a bare 'Hi' that waits to be asked", () => {
       const prompt = buildLeadQualificationPrompt(IRIS_CONFIG, { ...BLANK_LEAD, name: "Justin" }, "3 Percent East Coast", "St. John's", false, true, false);
       expect(prompt).toMatch(/Bare pickup \("Hello\?", "Hey", "Yeah\?"\) → skip any filler/i);
-      expect(prompt).toContain('say\n   "This is Iris with 3 Percent East Coast." THEN "Hi, am I speaking with Justin?"');
-      expect(prompt).toMatch(/Never just a bare "Hi" that waits for them to ask who you are/i);
-      expect(prompt).toMatch(/Nothing from them yet at all → say "This is Iris with 3 Percent East Coast\."/i);
+      expect(prompt).toContain('"Hi, this is Iris with 3 Percent East Coast. Am I speaking with Justin?" — this is the canonical default');
+      expect(prompt).toMatch(/Never just a bare "Hi" that waits for them to ask\s+who you are/i);
+      expect(prompt).toMatch(/Nothing from them yet at all → say\s+"Hi, this is Iris with 3 Percent East Coast\. Am I speaking with Justin\?"/i);
       // The old separate "introduce yourself" step is gone — she already
       // did it in her opening turn, and is told not to repeat it.
       expect(prompt).toMatch(/you already introduced yourself by\s+name in your opening turn above — never introduce yourself a second time/i);
@@ -1003,7 +1009,7 @@ describe("buildLeadQualificationPrompt", () => {
     const prompt = buildLeadQualificationPrompt(IRIS_CONFIG, BLANK_LEAD, "3 Percent East Coast", "St. John's", false, true, false);
     expect(prompt).toMatch(/If the lead asks "who is this\?" or "who am I speaking with\?"/i);
     expect(prompt).toMatch(/ANSWER IT DIRECTLY/);
-    expect(prompt).toContain('"This is Iris with 3 Percent East Coast."');
+    expect(prompt).toMatch(/"This is Iris\s+with 3 Percent East Coast\."/);
   });
 
   /**
