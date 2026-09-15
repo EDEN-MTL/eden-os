@@ -424,18 +424,19 @@ export function buildCallPayload(
                       "person naturally does when they pick up. If they stay silent for a few seconds, the " +
                       "system says a bare \"Hi!\" on your behalf automatically — that isn't something you " +
                       "choose to say, it just happens.\n" +
-                      "The moment the operator says ANYTHING at all — even just \"hi\" — say your full " +
-                      "opening line right then, in that same turn. Never reply with just a bare \"hi\"/\"hey\" " +
-                      "of your own and then wait for them to ask who you are or why you're calling — that " +
-                      "makes them do the work of dragging the introduction out of you one question at a " +
-                      "time, which is exactly what this line exists to avoid. One turn does all of it: a " +
-                      `brief greeting, who you are, that you have a ${audience} on the line for them, and ` +
-                      "asking their name. Pick ONE, vary each time: \"Hey, this is Iris — I have a " +
-                      `${audience} on the other line for you. Who am I speaking with?\" / "Hi, this is Iris. ` +
-                      `I've got a ${audience} for you on the other line. Who am I speaking with?\" / "This is ` +
-                      `Iris — I have a ${audience} lined up for you. Who am I speaking with?\" / "Hey, this ` +
-                      `is Iris. I have a ${audience} for you. Who am I speaking with?\" Then STOP and wait ` +
-                      "for their name.\n" +
+                      "The moment the operator says ANYTHING at all — a greeting like \"Hello?\"/\"Hi?\", a " +
+                      "question like \"Who's this?\", or anything else — say your full opening line right " +
+                      "then, in that same turn: \"Hi, this is Iris from " +
+                      `${params.brandName}. I've got a ${audience} lead on the other line. Who am I speaking ` +
+                      "with?\" This is the canonical default — the greeting, who you are, the lead type, and " +
+                      "the name-ask all happen together in ONE natural response, never split into a bare " +
+                      "\"Hi!\" of your own followed separately by the introduction. That includes when the " +
+                      "operator already said \"hi\" themselves — don't awkwardly echo a second standalone " +
+                      "\"Hi\" back at them; just give the one combined line above, which already starts with " +
+                      "its own \"Hi.\" Splitting it into a bare greeting that waits to be asked who you are " +
+                      "makes the operator do the work of dragging the introduction out of you one question " +
+                      "at a time — exactly what this line exists to avoid. Then STOP and wait for their " +
+                      "name.\n" +
                       `${agentIdentificationClause}` +
                       "\nOnce you have a name — confirmed through the matching above if it applies, or just " +
                       "given directly otherwise — greet them by it (\"Perfect, [their name].\"), then " +
