@@ -569,6 +569,19 @@ export function buildLeadQualificationPrompt(
 ): string {
   const firstName = extractFirstName(lead.name);
   const identifyLine = callIdentifyLine(firstName);
+  // Mark's spec, 2026-09-15: the canonical, DEFAULT opening on a bare
+  // pickup or silence — "Hi" belongs to the self-introduction, not
+  // repeated in front of the identity question too (identifyLine already
+  // opens with its own "Hi," when used standalone elsewhere — e.g. step 2
+  // below, or the FORBIDDEN/CORRECT/IDENTITY LOCK text — so strip it here
+  // to avoid a double "Hi"). This is meant to be THE default line, not one
+  // of several rotated variants — natural minor rephrasing is fine, but
+  // don't force artificial variety onto a line this short and functional.
+  const identifyLineNoGreeting = identifyLine.replace(/^Hi,\s*/i, "");
+  const openingLine =
+    `Hi, this is Iris with ${brandName}. ` +
+    identifyLineNoGreeting.charAt(0).toUpperCase() +
+    identifyLineNoGreeting.slice(1);
   // Moved out of the firstMessage (see callOpeningGreeting) into the
   // opening-sequence instructions below, so the reason for the call is its
   // own turn rather than crammed into the first thing Iris says.
@@ -1177,25 +1190,24 @@ this recurred on multiple real calls: treat identity verification as this
 exact mechanical sequence, no exceptions and no creative rewording:
 1. Bare pickup ("Hello?", "Hey", "Yeah?") → skip any filler like "great,
    thanks for picking up!" first (real people don't narrate that); say
-   "This is Iris with ${brandName}." THEN "${identifyLine}" word for
-   word as the very next sentence (same breath is fine), then STOP and
-   wait. Never just a bare "Hi" that waits for them to ask who you are
-   before you actually introduce yourself — both sentences happen in
-   this one turn, confirmed live, 2026-09-15, real operator/lead
-   feedback: a version that said only "Hi" and waited to be asked read
-   as dragging the introduction out one question at a time.
+   "${openingLine}" — this is the canonical default, said as ONE turn,
+   then STOP and wait. Never just a bare "Hi" that waits for them to ask
+   who you are before you actually introduce yourself — the greeting,
+   your name, and the identity question all happen together, confirmed
+   live, 2026-09-15, real operator/lead feedback: a version that said
+   only "Hi" and waited to be asked read as dragging the introduction
+   out one question at a time.
 2. They said more than that (asked who's calling, gave a comment) → react
    to what they actually said first (answer "who's calling" with "This is
    Iris with ${brandName}" if that's what they asked), THEN say
    "${identifyLine}" word for word as the very next sentence — same
    breath is fine, but the sentence itself never changes shape.
-3. Nothing from them yet at all → say "This is Iris with ${brandName}."
-   THEN "${identifyLine}" word for word as the very next sentence, then
-   STOP and wait.
-In EVERY case, "${identifyLine}" is copied character for character, the
-same way you copy an isoTime value rather than retyping it — never
-paraphrased, described, or reworded, regardless of what triggered it or
-whether you got interrupted partway through saying it.
+3. Nothing from them yet at all → say "${openingLine}", then STOP and wait.
+In EVERY case, the identity question itself — "${identifyLine}" — is
+copied character for character, the same way you copy an isoTime value
+rather than retyping it — never paraphrased, described, or reworded,
+regardless of which of the three cases above triggered it or whether you
+got interrupted partway through saying it.
 
 FORBIDDEN — never say any version of these, no matter how it seems to fit
 the conversation in the moment:
