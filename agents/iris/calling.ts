@@ -781,13 +781,10 @@ export function buildCallPayload(
       // Mark's live feedback, 2026-09-06: if the lead stays silent, Iris
       // shouldn't wait forever — but she also shouldn't speak the moment
       // the call connects, which is what firstMessage alone would do
-      // under the default "assistant-speaks-first" mode. This nudge fires
-      // once (triggerMaxCount: 1), never repeats mid-call
-      // (triggerResetMode: "onUserSpeech" — the clock only matters for
-      // this initial silence, not every later pause), and just says a
-      // bare "Hi!" rather than firstMessage's full greeting, matching the
-      // same "wait, don't lead with everything at once" rhythm as the
-      // opening sequence in buildLeadQualificationPrompt.
+      // under the default "assistant-speaks-first" mode. Just says a bare
+      // "Hi!" rather than firstMessage's full greeting, matching the same
+      // "wait, don't lead with everything at once" rhythm as the opening
+      // sequence in buildLeadQualificationPrompt.
       //
       // timeoutSeconds bumped 5 → 8, 2026-09-15: confirmed live (real
       // transcript) and via Vapi's own docs that this timer restarts the
@@ -796,15 +793,24 @@ export function buildCallPayload(
       // took a bit over 5s to generate the (now longer) combined opening
       // line, this hook fired its own bare "Hi!" into that gap, the lead
       // then repeated "Hello? Hello?", and ONLY THEN did the model's real
-      // line land. Looked exactly like the "bare hi that waits to be
-      // asked" bug that was just fixed in the prompt, but the prompt was
-      // never the problem here — this hook was racing the model's own
-      // response. 8s gives more headroom before the filler can fire.
+      // line land. 8s gives more headroom before the filler can fire.
+      //
+      // triggerResetMode fixed "onUserSpeech" → "never", 2026-09-15:
+      // confirmed live (real transcript, timestamps) and via Vapi's own
+      // docs that "onUserSpeech" actually RESETS the trigger count every
+      // time the lead speaks — meaning triggerMaxCount: 1 did NOT mean
+      // "once for the whole call" as this comment used to (wrongly)
+      // claim; it meant "once per silence gap," re-arming after every
+      // lead utterance. On a real call this fired a second, nonsensical
+      // bare "Hi." ~18s after the lead's last words, in the middle of a
+      // reschedule offer, with no lead speech to react to at all. "never"
+      // is Vapi's own documented default and makes this a genuine
+      // one-time-per-call nudge, matching what was always intended here.
       hooks: [
         {
           on: "customer.speech.timeout",
           do: [{ type: "say", exact: "Hi!" }],
-          options: { timeoutSeconds: 8, triggerMaxCount: 1, triggerResetMode: "onUserSpeech" },
+          options: { timeoutSeconds: 8, triggerMaxCount: 1, triggerResetMode: "never" },
         },
       ],
       model: {
