@@ -697,6 +697,24 @@ describe("buildLeadQualificationPrompt", () => {
       expect(prompt).toMatch(/you already introduced yourself by\s+name in your opening turn above — never introduce yourself a second time/i);
       expect(prompt).not.toMatch(/4\. Introduce yourself by name/i);
     });
+
+    /**
+     * Confirmed live, 2026-09-15: despite the "one combined turn" rule
+     * above, a real call still had Iris say a bare "Hi." on pickup, wait
+     * to be told off ("Do not say hi. Immediately say your name."), and
+     * only then give the full line — timestamps showed this landed
+     * ~1.25s after the lead's "Hello?", ruling out the idle-timeout hook
+     * (8s) as the cause; the model just didn't follow the rule. Added a
+     * stark ✗ WRONG / ✓ RIGHT contrast directly next to the rule as one
+     * more attempt at reinforcement before treating this as a known
+     * model-adherence ceiling, same as the identity name-drop issue.
+     */
+    it("gives Iris a stark wrong/right contrast for the bare-pickup opening, not just prose", () => {
+      const prompt = buildLeadQualificationPrompt(IRIS_CONFIG, { ...BLANK_LEAD, name: "Justin" }, "3 Percent East Coast", "St. John's", false, true, false);
+      expect(prompt).toMatch(/✗ WRONG \(confirmed live, 2026-09-15/i);
+      expect(prompt).toMatch(/Lead: "Hello\?" → You: "Hi\." → \[wait for them to ask who\s+you are\]/i);
+      expect(prompt).toMatch(/✓ RIGHT: Lead: "Hello\?" → You:\s+"Hi, this is Iris with 3 Percent East Coast\. Am I speaking with Justin\?"/i);
+    });
   });
 
   describe("transferAvailable", () => {

@@ -230,6 +230,24 @@ describe("buildCallPayload", () => {
     });
 
     /**
+     * Confirmed live, 2026-09-15, on the lead-facing side of the same bug
+     * (same underlying model behavior applies here): a bare "Hi." got said
+     * on pickup despite the "one combined turn" rule, well before the
+     * idle-timeout hook could have fired. Added a stark ✗ WRONG / ✓ RIGHT
+     * contrast next to the rule as reinforcement, mirroring the same fix
+     * applied to the lead-facing opening.
+     */
+    it("gives the transfer assistant a stark wrong/right contrast for the opening, not just prose", () => {
+      const payload = buildCallPayload({ ...BASE_PARAMS, transferNumber: "+17097058841" }, VAPI_CONFIG);
+      const tool = payload.assistant.model.tools?.find((t) => t.type === "transferCall");
+      if (tool?.type !== "transferCall") throw new Error("expected transferCall tool");
+      const prompt = tool.destinations[0].transferPlan.transferAssistant.model.messages[0].content;
+      expect(prompt).toMatch(/✗ WRONG \(confirmed live/i);
+      expect(prompt).toMatch(/Operator:\s+"Hello\?" → You: "Hi\." → \[wait for them to ask who you are\]/i);
+      expect(prompt).toMatch(/✓ RIGHT: Operator: "Hello\?" → You: "Hi, this is Iris from\s+3 Percent East Coast\. I've/i);
+    });
+
+    /**
      * Reversed, 2026-09-15: an earlier version had IRIS confirm the lead is
      * still there post-merge and then introduce the agent herself. Removed
      * after confirming (Vapi's own docs on SIP REFER, our own call data, and
