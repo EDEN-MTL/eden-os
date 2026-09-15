@@ -782,11 +782,23 @@ export function buildCallPayload(
       // bare "Hi!" rather than firstMessage's full greeting, matching the
       // same "wait, don't lead with everything at once" rhythm as the
       // opening sequence in buildLeadQualificationPrompt.
+      //
+      // timeoutSeconds bumped 5 → 8, 2026-09-15: confirmed live (real
+      // transcript) and via Vapi's own docs that this timer restarts the
+      // MOMENT the lead's own speech ends — not just "before they ever
+      // say anything". On a real call the lead said "Hello?", the model
+      // took a bit over 5s to generate the (now longer) combined opening
+      // line, this hook fired its own bare "Hi!" into that gap, the lead
+      // then repeated "Hello? Hello?", and ONLY THEN did the model's real
+      // line land. Looked exactly like the "bare hi that waits to be
+      // asked" bug that was just fixed in the prompt, but the prompt was
+      // never the problem here — this hook was racing the model's own
+      // response. 8s gives more headroom before the filler can fire.
       hooks: [
         {
           on: "customer.speech.timeout",
           do: [{ type: "say", exact: "Hi!" }],
-          options: { timeoutSeconds: 5, triggerMaxCount: 1, triggerResetMode: "onUserSpeech" },
+          options: { timeoutSeconds: 8, triggerMaxCount: 1, triggerResetMode: "onUserSpeech" },
         },
       ],
       model: {
