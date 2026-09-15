@@ -215,23 +215,25 @@ describe("buildCallPayload", () => {
     });
 
     /**
-     * Mark's spec, 2026-09-15: after the merge, IRIS must confirm the lead
-     * is actually still there (max 2 checks) BEFORE introducing the agent —
-     * only once confirmed does she introduce the agent and go fully silent.
+     * Reversed, 2026-09-15: an earlier version had IRIS confirm the lead is
+     * still there post-merge and then introduce the agent herself. Removed
+     * after confirming (Vapi's own docs on SIP REFER, our own call data, and
+     * the "assistant-forwarded-call" ended-reason semantics) that once
+     * transferSuccessful fires, the underlying SIP REFER hands the call
+     * directly to the operator's line — Vapi (and IRIS) has no audio channel into it
+     * anymore, so anything scripted for after that point can't actually be
+     * heard by anyone. IRIS now just goes silent the moment the merge
+     * succeeds, full stop.
      */
-    it("tells the transfer assistant to confirm the lead is still there after merge, capped at 2 checks, then introduce the agent and go silent", () => {
+    it("goes silent immediately once transferSuccessful succeeds, with no post-merge presence check or agent introduction", () => {
       const payload = buildCallPayload({ ...BASE_PARAMS, transferNumber: "+17097058841" }, VAPI_CONFIG);
       const tool = payload.assistant.model.tools?.find((t) => t.type === "transferCall");
       if (tool?.type !== "transferCall") throw new Error("expected transferCall tool");
       const prompt = tool.destinations[0].transferPlan.transferAssistant.model.messages[0].content;
-      expect(prompt).toMatch(/do NOT introduce the agent to the\s+lead yet/i);
-      expect(prompt).toMatch(/are you still there\?/i);
-      expect(prompt).toMatch(/TWO checks maximum, never more/i);
-      expect(prompt).toMatch(/the lead may have disconnected/i);
-      expect(prompt).toMatch(/do NOT claim the transfer succeeded/i);
-      expect(prompt).toMatch(/Once the lead HAS confirmed they're still there, introduce the agent/i);
-      expect(prompt).toMatch(/Then IMMEDIATELY go silent/i);
-      expect(prompt).toMatch(/never speak again for the rest of this call/i);
+      expect(prompt).toMatch(/The MOMENT transferSuccessful succeeds, your job is done — go silent\s+immediately/i);
+      expect(prompt).toMatch(/never speak\s+again for the rest of this call/i);
+      expect(prompt).not.toMatch(/are you still there\?/i);
+      expect(prompt).not.toMatch(/the lead may have disconnected/i);
     });
 
     /**
