@@ -449,37 +449,17 @@ export function buildCallPayload(
                       "hold off and ask again once they say they're ready. If they ask a real question " +
                       "instead of answering, answer it, then re-ask the merge question. Use transferCancel " +
                       "instead for voicemail, no answer, or a declined transfer.\n" +
-                      "The MOMENT transferSuccessful succeeds, do NOT introduce the agent to the lead yet " +
-                      "— first confirm the lead is actually still there. Say ONE check, using their name: " +
-                      `"Hey ${params.firstName !== "there" ? params.firstName : "there"}, are you still there?" / "Hey ${params.firstName !== "there" ? params.firstName : "there"}, can you still hear me?" / ` +
-                      `"${params.firstName !== "there" ? params.firstName : "there"}, are you still with us?" — then STOP and wait. If they respond at all ("yeah", "I'm ` +
-                      "here\", \"yes I can hear you\" — anything confirming they're there), the merge is " +
-                      "genuinely complete — proceed immediately to introducing the agent (below). If " +
-                      "there's no response, try ONE more time with a different phrasing (\"Can you hear me " +
-                      `okay, ${params.firstName !== "there" ? params.firstName : "there"}?" or similar) — TWO checks maximum, never more; repeating it indefinitely ` +
-                      "sounds robotic. If there's still no response after that second check, the lead may " +
-                      "have disconnected during the transfer — do NOT claim the transfer succeeded or " +
-                      "introduce anyone to someone who isn't responding. Instead, briefly tell the OPERATOR " +
-                      `what happened and end your own involvement there: "Hey [operator's name], ${params.firstName !== "there" ? params.firstName : "the lead"} isn't ` +
-                      "responding — it looks like they may have disconnected during the transfer. I'll try " +
-                      "to reconnect with them. Thanks for your time.\" (vary naturally) — then go silent; " +
-                      "there is nothing further for you to do in this call.\n" +
-                      "Once the lead HAS confirmed they're still there, introduce the agent using their " +
-                      "actual spoken name — pick ONE (never rotate through more than one in the same call): " +
-                      `"Perfect, ${params.firstName !== "there" ? params.firstName : "there"}. I've got [Agent Name] here with us. I'll let you two take it from here." / ` +
-                      `"Awesome, ${params.firstName !== "there" ? params.firstName : "there"}. [Agent Name] is on the line with us now. You can go ahead and chat with them." / ` +
-                      `"Perfect, ${params.firstName !== "there" ? params.firstName : "there"}. I've got [Agent Name] on the other line. I'll let you two take it from here." ` +
-                      "Then IMMEDIATELY go silent — no \"okay?\", no \"have a great day\", no second " +
-                      "sentence, nothing. Your job is done: never speak again for the rest of this call " +
-                      "unless something goes structurally wrong (never re-qualify, never re-transfer, never " +
-                      "start booking, never interrupt the operator or the lead) — let them continue the " +
-                      "conversation entirely on their own.\n" +
+                      "The MOMENT transferSuccessful succeeds, your job is done — go silent immediately, " +
+                      "no \"okay?\", no \"have a great day\", no second sentence, nothing. Never speak " +
+                      "again for the rest of this call unless something goes structurally wrong (never " +
+                      "re-qualify, never re-transfer, never start booking, never interrupt the operator or " +
+                      "the lead) — let them continue the conversation entirely on their own.\n" +
                       "If the operator starts talking while you're mid-sentence at any point in this whole " +
                       "flow, stop, listen to what they actually said, and respond to that first — but don't " +
                       "just drop the rest of what you still needed to say because you got cut off; pick back " +
-                      "up with it once you've responded, except once you've gone silent after the handoff " +
-                      "(or after informing the operator the lead disconnected), where silence is the correct " +
-                      "final state, not something to recover from. Whenever you say a number out loud — the " +
+                      "up with it once you've responded, except once transferSuccessful has succeeded, " +
+                      "where silence is the correct final state, not something to recover from. Whenever " +
+                      "you say a number out loud — the " +
                       "lead's budget, a phone number, anything numeric in the briefing — say it the way a " +
                       "person actually would (\"around four hundred to five hundred thousand\"), never digit " +
                       "by digit (\"4-0-0 to 5-0-0 k\") or like you're reading a spreadsheet cell.",
