@@ -310,31 +310,39 @@ export const AGENT_UNAVAILABLE_FOLLOW_UP = "What day and time works best for us 
  */
 
 /**
- * Opens with a bare, natural greeting — nothing else. Mark's live feedback,
- * 2026-09-05: even the shorter one-liner ("Hi, this is Iris with X — am I
- * speaking with Y?") still crammed identification and a question into the
- * very first thing Iris says, before the lead has had any chance to say
- * "hello" the way a real person answering (or being called) would. This is
- * now just the opener — genuinely wait for whatever the lead does with it
- * before saying anything else. Who she's speaking with is its own turn,
- * see callIdentifyLine below and the opening sequence in
- * buildLeadQualificationPrompt.
- */
-export function callOpeningGreeting(): string {
-  return "Hi!";
-}
-
-/**
- * The identify-the-lead question — asked as its own turn after "Hi!",
- * whichever way that greeting landed (the lead said something back, or
- * stayed quiet). "there" is the sentinel dial-pending.ts/test scripts use
- * for "no real name on file" (see NormalisedLead.name) — asked for rather
- * than parroting a placeholder back at the lead.
+ * The identify-the-lead question. "there" is the sentinel dial-pending.ts/
+ * test scripts use for "no real name on file" (see NormalisedLead.name) —
+ * asked for rather than parroting a placeholder back at the lead.
  */
 export function callIdentifyLine(firstName: string): string {
   return firstName && firstName !== "there"
     ? `Hi, am I speaking with ${firstName}?`
     : "Hi, who do I have the pleasure of speaking with?";
+}
+
+/**
+ * The canonical opening — self-intro plus the identify question, as ONE
+ * line. Root cause found live, 2026-09-16: the recurring "Iris says a bare
+ * 'Hi.' and waits to be asked who she is" bug was never a model or prompt
+ * problem at all — confirmed via Vapi's own docs that under
+ * firstMessageMode "assistant-waits-for-user", `firstMessage` is spoken
+ * VERBATIM the instant the other party speaks, before the model gets a
+ * turn at all. Our firstMessage was the bare string "Hi!" — that's the
+ * exact "Hi." every transcript showed, mechanically, on every single call,
+ * regardless of prompt wording. Fix: make firstMessage THIS full line
+ * instead, so the correct opening is guaranteed by Vapi's own platform
+ * rather than depending on the model to generate it correctly. Used both
+ * as the literal `firstMessage` (calling.ts) and quoted in the system
+ * prompt so the model knows what already got said and never repeats it.
+ */
+export function buildCallOpeningLine(firstName: string, brandName: string): string {
+  const identifyLine = callIdentifyLine(firstName);
+  const identifyLineNoGreeting = identifyLine.replace(/^Hi,\s*/i, "");
+  return (
+    `Hi, this is Iris with ${brandName}. ` +
+    identifyLineNoGreeting.charAt(0).toUpperCase() +
+    identifyLineNoGreeting.slice(1)
+  );
 }
 
 /**
@@ -569,19 +577,7 @@ export function buildLeadQualificationPrompt(
 ): string {
   const firstName = extractFirstName(lead.name);
   const identifyLine = callIdentifyLine(firstName);
-  // Mark's spec, 2026-09-15: the canonical, DEFAULT opening on a bare
-  // pickup or silence — "Hi" belongs to the self-introduction, not
-  // repeated in front of the identity question too (identifyLine already
-  // opens with its own "Hi," when used standalone elsewhere — e.g. step 2
-  // below, or the FORBIDDEN/CORRECT/IDENTITY LOCK text — so strip it here
-  // to avoid a double "Hi"). This is meant to be THE default line, not one
-  // of several rotated variants — natural minor rephrasing is fine, but
-  // don't force artificial variety onto a line this short and functional.
-  const identifyLineNoGreeting = identifyLine.replace(/^Hi,\s*/i, "");
-  const openingLine =
-    `Hi, this is Iris with ${brandName}. ` +
-    identifyLineNoGreeting.charAt(0).toUpperCase() +
-    identifyLineNoGreeting.slice(1);
+  const openingLine = buildCallOpeningLine(firstName, brandName);
   // Moved out of the firstMessage (see callOpeningGreeting) into the
   // opening-sequence instructions below, so the reason for the call is its
   // own turn rather than crammed into the first thing Iris says.
@@ -1174,45 +1170,39 @@ doesn't map back to this.
 ${verifyingBlock}${stillNeededBlock}${propertyTypeOrderingRule}
 
 ## How you open the call
-You do NOT speak first — you genuinely wait for them to say something
-(a real "hello?" or anything else), the way a person naturally does when
-they pick up. If they stay silent for a few seconds, the system says a
-bare "Hi!" on your behalf automatically — that isn't something you choose
-to say, it just happens, and either way you react to whatever's in the
-conversation once it's your turn.
+Your opening line is spoken FOR you, automatically, the instant they say
+anything at all when they pick up (even just "hello?") — this is a
+mechanical platform behavior, not something you generate or choose to
+say: "${openingLine}" Root cause found live, 2026-09-16, after the exact
+same "Iris says a bare 'Hi.' and waits to be asked who she is" bug kept
+recurring despite several rounds of prompt fixes: that bare "Hi." was
+NEVER something the model said — it came from the call platform's own
+literal first-message field, spoken instantly, before the model ever got
+a turn at all, which is why no wording change ever touched it. Fixed by
+making that field say this exact full line instead. If they never say
+anything at all, the same line gets said automatically after a short
+wait instead.
+Because of this: you did NOT actually generate that opening line
+yourself — it already happened by the time you get your first real
+turn. NEVER say it again, never repeat it, never paraphrase a second
+version of it, and never say a bare "Hi" of your own on top of it. Your
+first actual turn is reacting to whatever they say IN RESPONSE to
+already having heard it.
 
 ### Identity verification — the lead's name is ALREADY KNOWN before you dial
 This call NEVER discovers who the lead is — GHL/the form/Scout already
 told you: it's "${firstName}". Nothing in this call is about figuring
-that out. The ONLY thing left to do is VERIFY the real person on the line
-is them, using the name you already have. Mark's spec, 2026-09-13, after
-this recurred on multiple real calls: treat identity verification as this
-exact mechanical sequence, no exceptions and no creative rewording:
-1. Bare pickup ("Hello?", "Hey", "Yeah?") → skip any filler like "great,
-   thanks for picking up!" first (real people don't narrate that); say
-   "${openingLine}" — this is the canonical default, said as ONE turn,
-   then STOP and wait. Never just a bare "Hi" that waits for them to ask
-   who you are before you actually introduce yourself — the greeting,
-   your name, and the identity question all happen together, confirmed
-   live, 2026-09-15, real operator/lead feedback: a version that said
-   only "Hi" and waited to be asked read as dragging the introduction
-   out one question at a time.
-   ✗ WRONG (confirmed live, 2026-09-15 — this exact pattern happened on a
-   real call): Lead: "Hello?" → You: "Hi." → [wait for them to ask who
-   you are] → You: "This is Iris with ${brandName}..."
-   ✓ RIGHT: Lead: "Hello?" → You: "${openingLine}" — one single turn,
-   nothing shorter, nothing split off before it.
-2. They said more than that (asked who's calling, gave a comment) → react
-   to what they actually said first (answer "who's calling" with "This is
-   Iris with ${brandName}" if that's what they asked), THEN say
-   "${identifyLine}" word for word as the very next sentence — same
-   breath is fine, but the sentence itself never changes shape.
-3. Nothing from them yet at all → say "${openingLine}", then STOP and wait.
-In EVERY case, the identity question itself — "${identifyLine}" — is
-copied character for character, the same way you copy an isoTime value
-rather than retyping it — never paraphrased, described, or reworded,
-regardless of which of the three cases above triggered it or whether you
-got interrupted partway through saying it.
+that out. The opening line above already asked them to confirm it
+("${identifyLine}") — your job from here is just to read their response:
+- They confirm ("yeah," "yep," "speaking," or similar) → identity is
+  CONFIRMED for the rest of this call. Never ask again in any form.
+- They seem confused, ask you to repeat, or say something that doesn't
+  actually answer it → say "${identifyLine}" again, word for word, never
+  reworded — the same way you'd copy an isoTime value rather than
+  retyping it.
+- They explicitly deny being the lead → follow the wrong-number handling
+  in "Rules you must never break" below; do not assume they're the lead
+  anyway.
 
 FORBIDDEN — never say any version of these, no matter how it seems to fit
 the conversation in the moment:

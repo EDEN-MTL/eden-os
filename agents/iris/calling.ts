@@ -23,7 +23,7 @@ import { createCall, getVapiEnvConfig, CreateCallPayload, VapiCallResult, VapiTo
 import { query } from "../../shared/db";
 import { isCallingEnabled } from "./calling-settings";
 import { CallIntent } from "./qualification";
-import { AGENT_UNAVAILABLE_LINE, buildVoicemailMessage, callOpeningGreeting, expandBudgetShorthand } from "./scripts";
+import { AGENT_UNAVAILABLE_LINE, buildCallOpeningLine, buildVoicemailMessage, expandBudgetShorthand } from "./scripts";
 
 export class CallingDisabledError extends Error {}
 
@@ -170,11 +170,15 @@ export function buildCallPayload(
   params: PlaceCallParams,
   vapiConfig: ReturnType<typeof getVapiEnvConfig>
 ): CreateCallPayload {
-  // Just the opening turn — identify Iris and ask who she's speaking with,
-  // then stop and wait. Everything else (how are you, the reason for the
-  // call) happens as its own turn, driven by the system prompt below, not
-  // crammed into this one line. See scripts.ts's callOpeningGreeting.
-  const firstMessage = callOpeningGreeting();
+  // The full opening turn — greeting, self-intro, and the identify
+  // question, as ONE line. Root cause found live, 2026-09-16: under
+  // firstMessageMode "assistant-waits-for-user", Vapi speaks firstMessage
+  // VERBATIM the instant the other party speaks, before the model gets a
+  // turn — a bare "Hi!" here was the exact bare "Hi." every real call kept
+  // showing, mechanically, regardless of what the system prompt said.
+  // Everything else (how are you, the reason for the call) still happens
+  // as its own later turn, driven by the system prompt.
+  const firstMessage = buildCallOpeningLine(params.firstName, params.brandName);
 
   const tools: VapiTool[] = [];
 
@@ -248,6 +252,15 @@ export function buildCallPayload(
   if (params.transferNumber) {
     const audience = params.intent === "seller" || params.intent === "downsize" ? "seller" : "buyer";
     const briefing = buildAgentBriefing(params, audience);
+    // The full transfer-assistant opening turn, same root-cause fix as the
+    // main call's firstMessage (2026-09-16): under firstMessageMode
+    // "assistant-waits-for-user", Vapi speaks firstMessage verbatim the
+    // instant the operator speaks, before the model gets a turn — a bare
+    // "Hi!" here was the exact bare "Hi." every real transfer kept
+    // showing, mechanically, regardless of what the system prompt said.
+    const transferOpeningLine =
+      `Hi, this is Iris from ${params.brandName}. I've got a ${audience} lead on the other line. ` +
+      "Who am I speaking with?";
 
     // Mark's spec, 2026-09-12: once a live transfer connects, identify
     // which real team member picked up and assign the lead to them in the
@@ -390,58 +403,53 @@ export function buildCallPayload(
           transferPlan: {
             mode: "warm-transfer-experimental",
             transferAssistant: {
-              // Bare greeting only, and it does NOT speak first — same
-              // pattern as the main call's own opening (callOpeningGreeting
-              // / firstMessageMode "assistant-waits-for-user"). Waiting lets
-              // the operator say their own "Hello?" first, the way a real
-              // transferred call actually feels; if they stay silent, Vapi
-              // itself says a bare "Hi!" on Iris's behalf after a moment,
-              // same fallback the main call already relies on.
-              firstMessage: "Hi!",
+              // Does NOT speak first — same pattern as the main call's own
+              // opening (firstMessageMode "assistant-waits-for-user").
+              // Waiting lets the operator say their own "Hello?" first, the
+              // way a real transferred call actually feels. firstMessage is
+              // now the FULL canonical opening line (2026-09-16 — see
+              // transferOpeningLine's own comment above for why): Vapi
+              // speaks it verbatim the instant the operator speaks, so this
+              // guarantees the correct opening regardless of the model.
+              firstMessage: transferOpeningLine,
               firstMessageMode: "assistant-waits-for-user",
               maxDurationSeconds: 120,
               silenceTimeoutSeconds: 30,
               model: {
                 provider: vapiConfig.modelProvider,
                 model: vapiConfig.modelName,
-                // The live-transfer flow, 2026-09-15 (consolidated from
+                // The live-transfer flow, 2026-09-15/16 (consolidated from
                 // several rounds of live-call fixes — see git history on
-                // this file for the blow-by-blow): open with one combined
-                // line (no extra greeting word — the operator, or Vapi's
-                // own silence-fallback "Hi!", already supplied one), match
-                // the operator's name silently, brief them once, get an
-                // EXPLICIT yes before merging (a vague "okay" isn't enough
-                // — confirmed live that operators don't parse that as
-                // consent to merge), then re-confirm the LEAD is actually
-                // still there post-merge (capped at 2 checks) before
-                // introducing the agent and going permanently silent.
+                // this file for the blow-by-blow): the opening line is now
+                // said automatically via firstMessage (transferOpeningLine
+                // above), match the operator's name silently, brief them
+                // once, get an EXPLICIT yes before merging (a vague "okay"
+                // isn't enough — confirmed live that operators don't parse
+                // that as consent to merge), then the moment the merge
+                // succeeds, go silent — a post-merge lead-presence check
+                // was tried and removed after confirming (Vapi's own docs
+                // on SIP REFER) that Iris has no audio channel into the
+                // call anymore once the merge completes.
                 messages: [
                   {
                     role: "system",
                     content:
-                      "You do NOT speak first — wait for the operator to say something (a real " +
-                      "\"Hello?\", \"Hey\", \"Hi\", or anything else) once their line connects, the way a " +
-                      "person naturally does when they pick up. If they stay silent for a few seconds, the " +
-                      "system says a bare \"Hi!\" on your behalf automatically — that isn't something you " +
-                      "choose to say, it just happens.\n" +
-                      "The moment the operator says ANYTHING at all — a greeting like \"Hello?\"/\"Hi?\", a " +
-                      "question like \"Who's this?\", or anything else — say your full opening line right " +
-                      "then, in that same turn: \"Hi, this is Iris from " +
-                      `${params.brandName}. I've got a ${audience} lead on the other line. Who am I speaking ` +
-                      "with?\" This is the canonical default — the greeting, who you are, the lead type, and " +
-                      "the name-ask all happen together in ONE natural response, never split into a bare " +
-                      "\"Hi!\" of your own followed separately by the introduction. That includes when the " +
-                      "operator already said \"hi\" themselves — don't awkwardly echo a second standalone " +
-                      "\"Hi\" back at them; just give the one combined line above, which already starts with " +
-                      "its own \"Hi.\" Splitting it into a bare greeting that waits to be asked who you are " +
-                      "makes the operator do the work of dragging the introduction out of you one question " +
-                      "at a time — exactly what this line exists to avoid.\n" +
-                      "✗ WRONG (confirmed live — this exact pattern happened on a real call): Operator: " +
-                      "\"Hello?\" → You: \"Hi.\" → [wait for them to ask who you are] → You: \"This is Iris " +
-                      "from...\"\n" +
-                      `✓ RIGHT: Operator: "Hello?" → You: "Hi, this is Iris from ${params.brandName}. I've ` +
-                      `got a ${audience} lead on the other line. Who am I speaking with?" — one single turn, ` +
-                      "nothing shorter, nothing split off before it. Then STOP and wait for their name.\n" +
+                      "Your opening line is spoken FOR you, automatically, the instant the operator says " +
+                      `anything at all once their line connects (even just "hello?"): "${transferOpeningLine}" ` +
+                      "This is a mechanical platform behavior, not something you generate or choose to say. " +
+                      "Root cause found live, 2026-09-16, after this exact line kept getting split into a " +
+                      "bare \"Hi.\" that waited to be asked who you were, despite several rounds of prompt " +
+                      "fixes: that bare \"Hi.\" was never something the model said — it came from the call " +
+                      "platform's own literal first-message field, spoken instantly, before the model ever " +
+                      "got a turn. Fixed by making that field say this exact full line instead. If the " +
+                      "operator never says anything at all, the same line gets said automatically after a " +
+                      "short wait instead.\n" +
+                      "Because of this: you did NOT actually generate that opening line yourself — it " +
+                      "already happened by the time you get your first real turn. NEVER say it again, never " +
+                      "repeat it, never paraphrase a second version of it, and never say a bare \"Hi\" of " +
+                      "your own on top of it. Your first actual turn is reacting to whatever the operator " +
+                      "says in response to already having heard it — most often their name. Then STOP and " +
+                      "wait for their name if they haven't given it yet.\n" +
                       `${agentIdentificationClause}` +
                       "\nOnce you have a name — confirmed through the matching above if it applies, or just " +
                       "given directly otherwise — greet them by it (\"Perfect, [their name].\"), then " +
@@ -779,21 +787,18 @@ export function buildCallPayload(
       firstMessage,
       firstMessageMode: "assistant-waits-for-user",
       // Mark's live feedback, 2026-09-06: if the lead stays silent, Iris
-      // shouldn't wait forever — but she also shouldn't speak the moment
-      // the call connects, which is what firstMessage alone would do
-      // under the default "assistant-speaks-first" mode. Just says a bare
-      // "Hi!" rather than firstMessage's full greeting, matching the same
-      // "wait, don't lead with everything at once" rhythm as the opening
-      // sequence in buildLeadQualificationPrompt.
+      // shouldn't wait forever — firstMessage alone never fires under
+      // "assistant-waits-for-user" if the lead never speaks at all, so
+      // this hook is the actual fallback for that case. Says the SAME
+      // full opening line as firstMessage (not just a bare "Hi!",
+      // 2026-09-16 — once firstMessage became the full line, the filler
+      // needed to match it, otherwise a silent lead would get a bare
+      // "Hi!" instead of the real opening).
       //
       // timeoutSeconds bumped 5 → 8, 2026-09-15: confirmed live (real
       // transcript) and via Vapi's own docs that this timer restarts the
       // MOMENT the lead's own speech ends — not just "before they ever
-      // say anything". On a real call the lead said "Hello?", the model
-      // took a bit over 5s to generate the (now longer) combined opening
-      // line, this hook fired its own bare "Hi!" into that gap, the lead
-      // then repeated "Hello? Hello?", and ONLY THEN did the model's real
-      // line land. 8s gives more headroom before the filler can fire.
+      // say anything".
       //
       // triggerResetMode fixed "onUserSpeech" → "never", 2026-09-15:
       // confirmed live (real transcript, timestamps) and via Vapi's own
@@ -809,7 +814,7 @@ export function buildCallPayload(
       hooks: [
         {
           on: "customer.speech.timeout",
-          do: [{ type: "say", exact: "Hi!" }],
+          do: [{ type: "say", exact: firstMessage }],
           options: { timeoutSeconds: 8, triggerMaxCount: 1, triggerResetMode: "never" },
         },
       ],

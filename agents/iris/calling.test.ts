@@ -36,18 +36,23 @@ describe("buildCallPayload", () => {
   });
 
   /**
-   * Mark's live feedback, 2026-09-05: even the shorter "am I speaking with
-   * Sam?" opener still crammed identification into the very first thing
-   * Iris said, before the lead had any chance to say "hello" first. The
-   * opener is now a bare greeting only — name and brand are asked/mentioned
-   * in later turns, driven by buildLeadQualificationPrompt's system prompt.
+   * Root cause found live, 2026-09-16: a recurring "Iris says a bare 'Hi.'
+   * and waits to be asked who she is" bug survived several rounds of
+   * prompt-only fixes because it was never a prompt problem — confirmed
+   * via Vapi's own docs that under firstMessageMode
+   * "assistant-waits-for-user", firstMessage is spoken VERBATIM the
+   * instant the lead speaks, before the model gets a turn at all. A bare
+   * "Hi!" firstMessage was the exact bug. Fixed by making firstMessage the
+   * full canonical opening line (buildCallOpeningLine) instead.
    */
-  it("opens with a bare greeting, nothing else", () => {
+  it("uses the full canonical opening line as firstMessage, not a bare greeting", () => {
     const payload = buildCallPayload(BASE_PARAMS, VAPI_CONFIG);
-    expect(payload.assistant.firstMessage).not.toContain("Sam");
-    expect(payload.assistant.firstMessage).not.toContain("3 Percent East Coast");
-    expect(payload.assistant.firstMessage).not.toContain("{{");
-    expect(payload.assistant.firstMessage.length).toBeLessThan(10);
+    expect(payload.assistant.firstMessage).toBe("Hi, this is Iris with 3 Percent East Coast. Am I speaking with Sam?");
+  });
+
+  it("falls back to the generic identify question when no lead name is known", () => {
+    const payload = buildCallPayload({ ...BASE_PARAMS, firstName: "there" }, VAPI_CONFIG);
+    expect(payload.assistant.firstMessage).toBe("Hi, this is Iris with 3 Percent East Coast. Who do I have the pleasure of speaking with?");
   });
 
   /**
@@ -71,26 +76,29 @@ describe("buildCallPayload", () => {
    * fire a second, nonsensical bare "Hi." ~18s after the lead's last
    * words, mid-reschedule-offer. "never" (Vapi's own default) makes this
    * a genuine once-per-call nudge, as originally intended.
+   *
+   * Fallback message changed from a bare "Hi!" to the SAME full opening
+   * line as firstMessage, 2026-09-16 — once firstMessage became the full
+   * line, a silent lead deserved the real opening, not a bare filler.
    */
-  it("waits for the lead to speak first, with a one-shot nudge if they stay silent", () => {
+  it("waits for the lead to speak first, with a one-shot nudge (the same full opening line) if they stay silent", () => {
     const payload = buildCallPayload(BASE_PARAMS, VAPI_CONFIG);
     expect(payload.assistant.firstMessageMode).toBe("assistant-waits-for-user");
     expect(payload.assistant.hooks).toEqual([
       {
         on: "customer.speech.timeout",
-        do: [{ type: "say", exact: "Hi!" }],
+        do: [{ type: "say", exact: payload.assistant.firstMessage }],
         options: { timeoutSeconds: 8, triggerMaxCount: 1, triggerResetMode: "never" },
       },
     ]);
   });
 
-  it("is a single short greeting — no calling-about reason or 'how are you' crammed in, regardless of intent", () => {
+  it("never mentions the calling-about reason or 'how are you' in the opening line, regardless of intent", () => {
     const unknownIntent = buildCallPayload(BASE_PARAMS, VAPI_CONFIG);
     const knownIntent = buildCallPayload({ ...BASE_PARAMS, intent: "seller", leadSource: "facebook" }, VAPI_CONFIG);
     for (const payload of [unknownIntent, knownIntent]) {
       expect(payload.assistant.firstMessage).not.toMatch(/calling about/i);
       expect(payload.assistant.firstMessage).not.toMatch(/how are you/i);
-      expect(payload.assistant.firstMessage).not.toMatch(/\?/);
     }
   });
 
@@ -211,46 +219,37 @@ describe("buildCallPayload", () => {
     });
 
     /**
-     * Real operator feedback, 2026-09-15 (Jacob, on the actual "Vladimir"
-     * test call, listened back with Mark): the transfer assistant was still
-     * saying a bare "hi" and waiting for the operator to explicitly ask
-     * "who's this?" before actually introducing itself — a live regression
-     * against the "one combined line" design.
-     *
-     * Refined further, 2026-09-15 (Mark's own written spec): made "Hi, this
-     * is Iris from [company]. I've got a [buyer/seller] lead on the other
-     * line. Who am I speaking with?" the single CANONICAL opening line —
-     * "Hi" stays (never dropped), but only ever said once, as part of this
-     * one combined response, never as a separate standalone echo of the
-     * operator's own greeting.
+     * Root cause found live, 2026-09-16: the recurring "transfer assistant
+     * says a bare 'hi' and waits to be asked who she is" bug survived
+     * several rounds of prompt-only fixes (folding the self-intro into one
+     * turn, a stark wrong/right contrast) because it was never a model or
+     * prompt problem — confirmed via Vapi's own docs that firstMessage is
+     * spoken VERBATIM the instant the operator speaks, before the model
+     * gets a turn at all. Fixed by making firstMessage the full canonical
+     * transfer-opening line (transferOpeningLine) instead of a bare "Hi!".
      */
-    it("has the transfer assistant say its full canonical opening (hi, identity, brand, lead type, name-ask) in one turn, never a bare greeting that waits to be asked", () => {
+    it("uses the full canonical opening line as firstMessage on the transfer assistant, not a bare greeting", () => {
       const payload = buildCallPayload({ ...BASE_PARAMS, transferNumber: "+17097058841" }, VAPI_CONFIG);
       const tool = payload.assistant.model.tools?.find((t) => t.type === "transferCall");
       if (tool?.type !== "transferCall") throw new Error("expected transferCall tool");
-      const prompt = tool.destinations[0].transferPlan.transferAssistant.model.messages[0].content;
-      expect(prompt).toMatch(/say your full\s+opening line right then, in that same turn/i);
-      expect(prompt).toMatch(/Hi, this is Iris from\s+3 Percent East Coast\. I've got a buyer lead on the other line\. Who am I speaking\s+with\?/i);
-      expect(prompt).toMatch(/don't awkwardly echo a second standalone\s+"Hi"/i);
-      expect(prompt).toMatch(/Then STOP and wait\s+for their name/i);
+      expect(tool.destinations[0].transferPlan.transferAssistant.firstMessage).toBe(
+        "Hi, this is Iris from 3 Percent East Coast. I've got a buyer lead on the other line. Who am I speaking with?"
+      );
     });
 
-    /**
-     * Confirmed live, 2026-09-15, on the lead-facing side of the same bug
-     * (same underlying model behavior applies here): a bare "Hi." got said
-     * on pickup despite the "one combined turn" rule, well before the
-     * idle-timeout hook could have fired. Added a stark ✗ WRONG / ✓ RIGHT
-     * contrast next to the rule as reinforcement, mirroring the same fix
-     * applied to the lead-facing opening.
-     */
-    it("gives the transfer assistant a stark wrong/right contrast for the opening, not just prose", () => {
+    it("tells the transfer assistant its opening line is already spoken for it automatically, and never to repeat it", () => {
       const payload = buildCallPayload({ ...BASE_PARAMS, transferNumber: "+17097058841" }, VAPI_CONFIG);
       const tool = payload.assistant.model.tools?.find((t) => t.type === "transferCall");
       if (tool?.type !== "transferCall") throw new Error("expected transferCall tool");
       const prompt = tool.destinations[0].transferPlan.transferAssistant.model.messages[0].content;
-      expect(prompt).toMatch(/✗ WRONG \(confirmed live/i);
-      expect(prompt).toMatch(/Operator:\s+"Hello\?" → You: "Hi\." → \[wait for them to ask who you are\]/i);
-      expect(prompt).toMatch(/✓ RIGHT: Operator: "Hello\?" → You: "Hi, this is Iris from\s+3 Percent East Coast\. I've/i);
+      expect(prompt).toMatch(/Your opening line is spoken FOR you, automatically, the instant/i);
+      expect(prompt).toContain(
+        "\"Hi, this is Iris from 3 Percent East Coast. I've got a buyer lead on the other line. Who am I speaking with?\""
+      );
+      expect(prompt).toMatch(/mechanical platform behavior, not something you generate or choose to say/i);
+      expect(prompt).toMatch(/NEVER say it again, never/i);
+      expect(prompt).toMatch(/never say a bare "Hi" of/i);
+      expect(prompt).toMatch(/Then STOP and\s+wait for their name/i);
     });
 
     /**
