@@ -42,6 +42,14 @@ export interface ScoutConfig {
   newLeadTags?: string[];
   /** Any of these means the lead has already been engaged — see isFirstTouch. */
   touchedTags?: string[];
+  /**
+   * Pipeline stage ids that mean the lead is done, independent of tags —
+   * built from iris.liveTransferStageId + iris.appointmentSetStageIds (see
+   * loadScoutConfig in agents/scout/index.ts). A human can move a card
+   * without remembering to add the matching tag, or vice versa, so this is
+   * checked alongside touchedTags, not instead of it — see isFirstTouch.
+   */
+  touchedStageIds?: string[];
   calendars: { buyer: string; seller: string };
   fields: ScoutFieldMap;
 }
@@ -257,8 +265,27 @@ export function isFirstTouch(input: {
   /** Stage the lead sits in, if known. Anything past intake means worked. */
   stageId?: string | null;
   intakeStages?: Record<string, string>;
+  /**
+   * The lead's LIVE opportunity stage right now (see refreshLead in
+   * agents/scout/index.ts) — deliberately separate from `stageId` above,
+   * which only ever holds one of the four intake-stage ids at capture time
+   * and feeds intent resolution. Reusing that field here would misfire:
+   * this account's real pipeline has automated "DAY 1/2/3 FOLLOW UP" stages
+   * a lead passes through on its own, which are NOT evidence a human
+   * touched it (confirmed live 2026-09-17 — a lead sitting in "DAY 2 - PM
+   * FOLLOW UP" a week after creation had never actually been called).
+   */
+  currentStageId?: string | null;
+  /**
+   * Stage ids that DO mean done regardless of tags — e.g. "Live
+   * Transferred" or "Appointment Set" — built from
+   * ScoutConfig.touchedStageIds. Checked alongside touchedTags, not instead
+   * of it: a human can move a card without remembering to tag it, or tag
+   * without moving the card.
+   */
+  touchedStageIds?: string[];
 }): boolean {
-  const { tags, touchedTags, isaNotes, stageId, intakeStages } = input;
+  const { tags, touchedTags, isaNotes, stageId, intakeStages, currentStageId, touchedStageIds } = input;
   if (!Array.isArray(tags)) return false;
 
   const list = (touchedTags || []).map((t) => t.trim().toLowerCase());
@@ -267,6 +294,10 @@ export function isFirstTouch(input: {
 
   // Notes exist only because someone had a conversation worth writing down.
   if (isaNotes && String(isaNotes).trim() !== "") return false;
+
+  // A live-transferred or appointment-booked opportunity is done even if
+  // the matching tag never got applied — see currentStageId's doc comment.
+  if (currentStageId && touchedStageIds && touchedStageIds.includes(currentStageId)) return false;
 
   // Past the intake columns means the lead has been moved by someone.
   if (stageId && intakeStages) {
@@ -463,6 +494,10 @@ export function normaliseLead(
       isaNotes: f.isaNotes ? read(f.isaNotes) : null,
       stageId: payload.pipelineStageId,
       intakeStages: config.intakeStages,
+      // Only ever populated by refreshLead's live opportunity fetch — a
+      // capture-time webhook payload has no reason to carry this.
+      currentStageId: payload.currentOpportunityStageId ?? null,
+      touchedStageIds: config.touchedStageIds,
     }),
     // Stage id first (what the API actually returns, when the trigger is
     // opportunity/pipeline-related), then a stage name if a webhook
