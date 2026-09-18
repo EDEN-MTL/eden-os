@@ -22,12 +22,23 @@ export const CHECKBOX_FIELDS = [
 ] as const;
 export type CheckboxField = (typeof CHECKBOX_FIELDS)[number];
 
+// The one non-boolean editable field on the check-in page: an optional
+// dollar estimate a team lead can fill in, added 2026-09-18 per Jacob.
+// Kept separate from CHECKBOX_FIELDS (a numeric column needs different
+// type validation than a boolean one) but saved through the same
+// updateCheckinItem call.
+export const NUMERIC_FIELDS = ["potential_commission"] as const;
+export type NumericField = (typeof NUMERIC_FIELDS)[number];
+
 export interface CheckinAppointment {
   ghlEventId: string;
   prospectName: string;
   appointmentAt: string;
   status: string;
   checkboxes: Record<CheckboxField, boolean>;
+  // null means "not entered" — distinct from "worth $0" — so the page only
+  // shows a "Value: $X" line once a team lead has actually filled it in.
+  potentialCommission: number | null;
 }
 
 export interface CheckinTeam {
@@ -85,6 +96,10 @@ interface CheckinRow {
   deal_progressing: boolean;
   deal_closed: boolean;
   contract_signed: boolean;
+  // node-postgres returns NUMERIC as a string (avoids silent float
+  // precision loss on a dollar value) — parsed to a number when mapped
+  // onto CheckinAppointment.
+  potential_commission: string | null;
 }
 
 /**
@@ -189,7 +204,7 @@ export async function getCheckinData(token: string): Promise<CheckinData | null>
   const itemIds = items.map((i) => i.id);
   const checkinRows = itemIds.length
     ? await query<CheckinRow>(
-        `SELECT ghl_event_id, still_in_conversation, showed_up, deal_progressing, deal_closed, contract_signed
+        `SELECT ghl_event_id, still_in_conversation, showed_up, deal_progressing, deal_closed, contract_signed, potential_commission
          FROM scout_appointment_checkins WHERE client_id = $1 AND ghl_event_id = ANY($2)`,
         [clientId, itemIds]
       )
@@ -210,6 +225,10 @@ export async function getCheckinData(token: string): Promise<CheckinData | null>
         deal_closed: saved?.deal_closed ?? false,
         contract_signed: saved?.contract_signed ?? false,
       },
+      potentialCommission:
+        saved?.potential_commission != null && saved.potential_commission !== ""
+          ? Number(saved.potential_commission)
+          : null,
     };
   }
 
@@ -258,22 +277,28 @@ export async function getCheckinData(token: string): Promise<CheckinData | null>
 }
 
 /**
- * Upserts one appointment's whole checkbox set in a single write — the
+ * Upserts one appointment's whole editable-field set (the 5 checkboxes
+ * plus the optional potential-commission number) in a single write — the
  * page has one "Save all my updates" button rather than saving on every
- * click, so a save submits every checkbox for an appointment at once.
- * Every key in `checkboxes` is validated against the fixed CHECKBOX_FIELDS
- * allowlist before being interpolated into the SQL column list — this is
- * the one place a request body value reaches a column name, so that check
+ * click, so a save submits everything for an appointment at once. Every
+ * key in `fields` is validated against the fixed CHECKBOX_FIELDS/
+ * NUMERIC_FIELDS allowlists, AND type-checked against which kind of column
+ * it is, before being interpolated into the SQL column list — this is the
+ * one place a request body value reaches a column name, so that check
  * isn't optional.
  */
 export async function updateCheckinItem(
   token: string,
   ghlEventId: string,
-  checkboxes: Record<string, boolean>
+  fields: Record<string, boolean | number | null>
 ): Promise<"ok" | "invalid-token" | "invalid-field"> {
-  const entries = Object.entries(checkboxes);
-  for (const [field] of entries) {
-    if (!(CHECKBOX_FIELDS as readonly string[]).includes(field)) {
+  const entries = Object.entries(fields);
+  for (const [field, value] of entries) {
+    if ((CHECKBOX_FIELDS as readonly string[]).includes(field)) {
+      if (typeof value !== "boolean") return "invalid-field";
+    } else if ((NUMERIC_FIELDS as readonly string[]).includes(field)) {
+      if (value !== null && typeof value !== "number") return "invalid-field";
+    } else {
       return "invalid-field";
     }
   }
@@ -336,6 +361,13 @@ export function renderCheckinPage(): string {
   .checkboxes { margin-top: 10px; display: flex; flex-direction: column; gap: 6px; }
   label.cb { display: flex; align-items: center; gap: 8px; font-size: 13px; cursor: pointer; }
   label.cb input { width: 16px; height: 16px; }
+  .appt-value { font-size: 13px; font-weight: 600; color: #1a7a3a; margin-top: 4px; }
+  .commission-row { margin-top: 12px; display: flex; align-items: center; gap: 8px; }
+  .commission-row label { font-size: 13px; color: #444; }
+  .commission-row input {
+    width: 130px; padding: 5px 8px; border: 1px solid #ccc; border-radius: 6px;
+    font-size: 13px; font-family: inherit;
+  }
   .appt.failed { border-color: #b00020; }
   .appt-fail-note { font-size: 11px; color: #b00020; margin-top: 6px; }
   .empty { color: #888; font-size: 14px; padding: 20px 0; }
@@ -375,15 +407,45 @@ export function renderCheckinPage(): string {
     catch (e) { return iso; }
   }
 
+  function fmtCurrency(n) {
+    return "$" + n.toLocaleString("en-US", { minimumFractionDigits: 0, maximumFractionDigits: 2 });
+  }
+
   function renderAppointment(a) {
     var div = document.createElement("div");
     div.className = "appt";
     div.dataset.ghlEventId = a.ghlEventId;
     div.innerHTML =
       '<div class="appt-top"><span class="appt-prospect"></span><span class="appt-meta"></span></div>' +
-      '<div class="checkboxes"></div>';
+      '<div class="appt-value" hidden></div>' +
+      '<div class="checkboxes"></div>' +
+      '<div class="commission-row"><label>Potential commission ($, optional)</label>' +
+      '<input type="number" min="0" step="0.01" class="commission-input" placeholder="e.g. 8500" /></div>';
     div.querySelector(".appt-prospect").textContent = a.prospectName;
     div.querySelector(".appt-meta").textContent = fmtDate(a.appointmentAt) + " · " + a.status;
+
+    var valueEl = div.querySelector(".appt-value");
+    var commissionInput = div.querySelector(".commission-input");
+    commissionInput.dataset.field = "potential_commission";
+
+    function refreshValueDisplay() {
+      var num = commissionInput.value === "" ? null : parseFloat(commissionInput.value);
+      if (num === null || isNaN(num)) {
+        valueEl.hidden = true;
+        valueEl.textContent = "";
+      } else {
+        valueEl.hidden = false;
+        valueEl.textContent = "Value: " + fmtCurrency(num);
+      }
+    }
+
+    if (typeof a.potentialCommission === "number") {
+      commissionInput.value = a.potentialCommission;
+    }
+    refreshValueDisplay();
+    // Live feedback as they type — reflected under "Value" immediately,
+    // before the Save button ever sends anything to the server.
+    commissionInput.addEventListener("input", refreshValueDisplay);
 
     var box = div.querySelector(".checkboxes");
     CHECKBOX_LABELS.forEach(function (pair) {
@@ -417,14 +479,18 @@ export function renderCheckinPage(): string {
     status.textContent = "Saving…";
 
     var requests = Array.prototype.map.call(cards, function (card) {
-      var checkboxes = {};
+      var fields = {};
       card.querySelectorAll("input[type=checkbox]").forEach(function (input) {
-        checkboxes[input.dataset.field] = input.checked;
+        fields[input.dataset.field] = input.checked;
       });
+      var commissionInput = card.querySelector(".commission-input");
+      if (commissionInput) {
+        fields.potential_commission = commissionInput.value === "" ? null : parseFloat(commissionInput.value);
+      }
       return fetch("/api/checkin/" + encodeURIComponent(token) + "/items/" + encodeURIComponent(card.dataset.ghlEventId), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ checkboxes: checkboxes })
+        body: JSON.stringify({ fields: fields })
       })
         .then(function (res) { return { card: card, ok: res.ok }; })
         .catch(function () { return { card: card, ok: false }; });

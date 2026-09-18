@@ -52,7 +52,7 @@ describe("getCheckinDataHandler", () => {
 });
 
 describe("postCheckinItem", () => {
-  it("responds 400 when the body has no checkboxes object", async () => {
+  it("responds 400 when the body has no fields object", async () => {
     const res = fakeRes();
 
     await postCheckinItem({ params: { token: "t", ghlEventId: "e" }, body: { field: "showed_up" } } as any, res);
@@ -61,20 +61,20 @@ describe("postCheckinItem", () => {
     expect(checkin.updateCheckinItem).not.toHaveBeenCalled();
   });
 
-  it("responds 400 when checkboxes is an empty object", async () => {
+  it("responds 400 when fields is an empty object", async () => {
     const res = fakeRes();
 
-    await postCheckinItem({ params: { token: "t", ghlEventId: "e" }, body: { checkboxes: {} } } as any, res);
+    await postCheckinItem({ params: { token: "t", ghlEventId: "e" }, body: { fields: {} } } as any, res);
 
     expect(res.status).toHaveBeenCalledWith(400);
     expect(checkin.updateCheckinItem).not.toHaveBeenCalled();
   });
 
-  it("responds 400 when a checkboxes value isn't a boolean", async () => {
+  it("responds 400 when a fields value isn't a boolean, number, or null", async () => {
     const res = fakeRes();
 
     await postCheckinItem(
-      { params: { token: "t", ghlEventId: "e" }, body: { checkboxes: { showed_up: "yes" } } } as any,
+      { params: { token: "t", ghlEventId: "e" }, body: { fields: { showed_up: "yes" } } } as any,
       res
     );
 
@@ -87,19 +87,19 @@ describe("postCheckinItem", () => {
     const res = fakeRes();
 
     await postCheckinItem(
-      { params: { token: "bad", ghlEventId: "e" }, body: { checkboxes: { showed_up: true } } } as any,
+      { params: { token: "bad", ghlEventId: "e" }, body: { fields: { showed_up: true } } } as any,
       res
     );
 
     expect(res.status).toHaveBeenCalledWith(404);
   });
 
-  it("responds 400 when a field isn't one of the known checkboxes", async () => {
+  it("responds 400 when a field isn't one of the known checkbox/numeric columns", async () => {
     checkin.updateCheckinItem.mockResolvedValueOnce("invalid-field");
     const res = fakeRes();
 
     await postCheckinItem(
-      { params: { token: "t", ghlEventId: "e" }, body: { checkboxes: { not_real: true } } } as any,
+      { params: { token: "t", ghlEventId: "e" }, body: { fields: { not_real: true } } } as any,
       res
     );
 
@@ -107,14 +107,14 @@ describe("postCheckinItem", () => {
     expect(res.json).toHaveBeenCalledWith({ error: "Invalid field" });
   });
 
-  it("responds ok on a successful update, passing the whole checkboxes object through", async () => {
+  it("responds ok on a successful update, passing the whole fields object through", async () => {
     checkin.updateCheckinItem.mockResolvedValueOnce("ok");
     const res = fakeRes();
 
     await postCheckinItem(
       {
         params: { token: "t", ghlEventId: "e" },
-        body: { checkboxes: { showed_up: true, deal_closed: false } },
+        body: { fields: { showed_up: true, deal_closed: false } },
       } as any,
       res
     );
@@ -122,5 +122,31 @@ describe("postCheckinItem", () => {
     expect(res.status).not.toHaveBeenCalled();
     expect(res.json).toHaveBeenCalledWith({ ok: true });
     expect(checkin.updateCheckinItem).toHaveBeenCalledWith("t", "e", { showed_up: true, deal_closed: false });
+  });
+
+  it("accepts a numeric potential_commission value, and a null value for clearing it", async () => {
+    checkin.updateCheckinItem.mockResolvedValueOnce("ok");
+    const res = fakeRes();
+
+    await postCheckinItem(
+      {
+        params: { token: "t", ghlEventId: "e" },
+        body: { fields: { potential_commission: 8500 } },
+      } as any,
+      res
+    );
+
+    expect(res.status).not.toHaveBeenCalled();
+    expect(checkin.updateCheckinItem).toHaveBeenCalledWith("t", "e", { potential_commission: 8500 });
+
+    checkin.updateCheckinItem.mockResolvedValueOnce("ok");
+    await postCheckinItem(
+      {
+        params: { token: "t", ghlEventId: "e" },
+        body: { fields: { potential_commission: null } },
+      } as any,
+      res
+    );
+    expect(checkin.updateCheckinItem).toHaveBeenLastCalledWith("t", "e", { potential_commission: null });
   });
 });
