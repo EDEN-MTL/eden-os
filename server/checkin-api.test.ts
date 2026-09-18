@@ -107,7 +107,7 @@ describe("postCheckinItem", () => {
     expect(res.json).toHaveBeenCalledWith({ error: "Invalid field" });
   });
 
-  it("responds ok on a successful update, passing the whole fields object through", async () => {
+  it("responds ok on a successful update, passing the whole fields object through with no contactId", async () => {
     checkin.updateCheckinItem.mockResolvedValueOnce("ok");
     const res = fakeRes();
 
@@ -121,7 +121,7 @@ describe("postCheckinItem", () => {
 
     expect(res.status).not.toHaveBeenCalled();
     expect(res.json).toHaveBeenCalledWith({ ok: true });
-    expect(checkin.updateCheckinItem).toHaveBeenCalledWith("t", "e", { showed_up: true, deal_closed: false });
+    expect(checkin.updateCheckinItem).toHaveBeenCalledWith("t", "e", { showed_up: true, deal_closed: false }, null);
   });
 
   it("accepts a numeric potential_commission value, and a null value for clearing it", async () => {
@@ -137,7 +137,7 @@ describe("postCheckinItem", () => {
     );
 
     expect(res.status).not.toHaveBeenCalled();
-    expect(checkin.updateCheckinItem).toHaveBeenCalledWith("t", "e", { potential_commission: 8500 });
+    expect(checkin.updateCheckinItem).toHaveBeenCalledWith("t", "e", { potential_commission: 8500 }, null);
 
     checkin.updateCheckinItem.mockResolvedValueOnce("ok");
     await postCheckinItem(
@@ -147,6 +147,41 @@ describe("postCheckinItem", () => {
       } as any,
       res
     );
-    expect(checkin.updateCheckinItem).toHaveBeenLastCalledWith("t", "e", { potential_commission: null });
+    expect(checkin.updateCheckinItem).toHaveBeenLastCalledWith("t", "e", { potential_commission: null }, null);
+  });
+
+  it("passes a given contactId through to updateCheckinItem", async () => {
+    checkin.updateCheckinItem.mockResolvedValueOnce("ok");
+    const res = fakeRes();
+
+    await postCheckinItem(
+      {
+        params: { token: "t", ghlEventId: "e" },
+        body: { fields: { potential_commission: 8500 }, contactId: "contact-judy" },
+      } as any,
+      res
+    );
+
+    expect(checkin.updateCheckinItem).toHaveBeenCalledWith(
+      "t",
+      "e",
+      { potential_commission: 8500 },
+      "contact-judy"
+    );
+  });
+
+  it("responds 400 when contactId is present but not a string", async () => {
+    const res = fakeRes();
+
+    await postCheckinItem(
+      {
+        params: { token: "t", ghlEventId: "e" },
+        body: { fields: { potential_commission: 8500 }, contactId: 12345 },
+      } as any,
+      res
+    );
+
+    expect(res.status).toHaveBeenCalledWith(400);
+    expect(checkin.updateCheckinItem).not.toHaveBeenCalled();
   });
 });

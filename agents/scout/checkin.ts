@@ -9,7 +9,13 @@
 import { readFileSync } from "fs";
 import { join } from "path";
 import { query } from "../../shared/db";
-import { getGhlConfig, listCalendarEvents, listOpportunitiesPaginated } from "../../shared/ghl";
+import {
+  findOpenOpportunitiesForContact,
+  getGhlConfig,
+  listCalendarEvents,
+  listOpportunitiesPaginated,
+  updateOpportunityMonetaryValue,
+} from "../../shared/ghl";
 
 const CHECKIN_WINDOW_DAYS = 60;
 
@@ -32,6 +38,10 @@ export type NumericField = (typeof NUMERIC_FIELDS)[number];
 
 export interface CheckinAppointment {
   ghlEventId: string;
+  // Needed so a save can push potentialCommission into the matching GHL
+  // opportunity's monetaryValue (see updateCheckinItem) — the client sends
+  // this back on save since it already has it from this same response.
+  contactId: string | null;
   prospectName: string;
   appointmentAt: string;
   status: string;
@@ -215,6 +225,7 @@ export async function getCheckinData(token: string): Promise<CheckinData | null>
     const saved = checkinByEventId.get(item.id);
     return {
       ghlEventId: item.id,
+      contactId: item.contactId,
       prospectName: item.prospectName,
       appointmentAt: item.appointmentAt,
       status: item.status,
@@ -290,7 +301,8 @@ export async function getCheckinData(token: string): Promise<CheckinData | null>
 export async function updateCheckinItem(
   token: string,
   ghlEventId: string,
-  fields: Record<string, boolean | number | null>
+  fields: Record<string, boolean | number | null>,
+  contactId?: string | null
 ): Promise<"ok" | "invalid-token" | "invalid-field"> {
   const entries = Object.entries(fields);
   for (const [field, value] of entries) {
@@ -323,6 +335,38 @@ export async function updateCheckinItem(
      DO UPDATE SET ${updateSet}`,
     [clientId, ghlEventId, ...values]
   );
+
+  // Best-effort push into GHL's own opportunity value — the local save
+  // above is already committed and is this page's source of truth, so a
+  // GHL-side failure here is logged, never thrown back to the caller.
+  // Clearing the field (null) intentionally does NOT push anything: we
+  // never want a blank check-in field to zero out a real GHL value.
+  const commission = fields.potential_commission;
+  if (typeof commission === "number" && contactId) {
+    try {
+      const ghlConfig = await getGhlConfig(clientId);
+      if (ghlConfig) {
+        const openOpportunities = await findOpenOpportunitiesForContact(
+          contactId,
+          ghlConfig.locationId,
+          ghlConfig.apiKey
+        );
+        if (openOpportunities[0]) {
+          await updateOpportunityMonetaryValue(
+            openOpportunities[0].id,
+            commission,
+            ghlConfig.locationId,
+            ghlConfig.apiKey
+          );
+        } else {
+          console.warn(`[CHECKIN] No open GHL opportunity found for contact ${contactId} — commission not pushed.`);
+        }
+      }
+    } catch (error) {
+      console.error(`[CHECKIN] Failed to push potential_commission to GHL for contact ${contactId}:`, error);
+    }
+  }
+
   return "ok";
 }
 
@@ -415,6 +459,7 @@ export function renderCheckinPage(): string {
     var div = document.createElement("div");
     div.className = "appt";
     div.dataset.ghlEventId = a.ghlEventId;
+    div.dataset.contactId = a.contactId || "";
     div.innerHTML =
       '<div class="appt-top"><span class="appt-prospect"></span><span class="appt-meta"></span></div>' +
       '<div class="appt-value" hidden></div>' +
@@ -490,7 +535,7 @@ export function renderCheckinPage(): string {
       return fetch("/api/checkin/" + encodeURIComponent(token) + "/items/" + encodeURIComponent(card.dataset.ghlEventId), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ fields: fields })
+        body: JSON.stringify({ fields: fields, contactId: card.dataset.contactId || null })
       })
         .then(function (res) { return { card: card, ok: res.ok }; })
         .catch(function () { return { card: card, ok: false }; });

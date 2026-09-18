@@ -459,6 +459,26 @@ export async function updateOpportunityStage(
   });
 }
 
+/**
+ * Verified live, 2026-09-18: PUT /opportunities/{id} with a monetaryValue
+ * body updates the opportunity's real deal value — set to 12345 then back
+ * to 0 against a live opportunity, confirmed via the response each time.
+ * Same endpoint/shape as updateOpportunityStage, just a different field.
+ */
+export async function updateOpportunityMonetaryValue(
+  opportunityId: string,
+  monetaryValue: number,
+  locationId?: string,
+  apiKey?: string
+): Promise<any> {
+  return ghlRequest(`/opportunities/${opportunityId}`, {
+    method: "PUT",
+    body: { monetaryValue },
+    locationId,
+    apiKey,
+  });
+}
+
 // ─── Calendar ───
 
 /**
