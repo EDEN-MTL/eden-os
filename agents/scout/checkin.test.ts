@@ -97,7 +97,8 @@ describe("getCheckinData", () => {
     expect(data!.teams[0].members[0].appointments[0].prospectName).toBe("Kingsley Amos");
     expect(data!.unassigned).toHaveLength(1);
     expect(data!.unassigned[0].prospectName).toBe("Judy Dunne");
-    // No saved row for either event yet -> every checkbox defaults false.
+    // No saved row for either event yet -> every checkbox defaults false,
+    // and potentialCommission defaults to null (not 0 — "not entered").
     expect(data!.teams[0].members[0].appointments[0].checkboxes).toEqual({
       still_in_conversation: false,
       showed_up: false,
@@ -105,9 +106,10 @@ describe("getCheckinData", () => {
       deal_closed: false,
       contract_signed: false,
     });
+    expect(data!.teams[0].members[0].appointments[0].potentialCommission).toBeNull();
   });
 
-  it("applies a saved checkbox row onto its matching event", async () => {
+  it("applies a saved checkbox row and a saved potential_commission onto its matching event", async () => {
     db.query
       .mockResolvedValueOnce([{ client_id: "3-percent-east-coast" }])
       .mockResolvedValueOnce([
@@ -118,6 +120,8 @@ describe("getCheckinData", () => {
           deal_progressing: false,
           deal_closed: false,
           contract_signed: false,
+          // node-postgres returns NUMERIC columns as strings.
+          potential_commission: "8500.00",
         },
       ]);
     readFileSyncMock.mockReturnValueOnce(configJson());
@@ -137,6 +141,7 @@ describe("getCheckinData", () => {
     const data = await getCheckinData("good-token");
 
     expect(data!.teams[0].members[0].appointments[0].checkboxes.showed_up).toBe(true);
+    expect(data!.teams[0].members[0].appointments[0].potentialCommission).toBe(8500);
   });
 
   function configJsonWithLiveTransfer() {
@@ -358,9 +363,56 @@ describe("updateCheckinItem", () => {
     );
   });
 
-  it("no-ops without touching the database when given an empty checkboxes object", async () => {
+  it("no-ops without touching the database when given an empty fields object", async () => {
     const result = await updateCheckinItem("good-token", "evt-1", {});
     expect(result).toBe("ok");
+    expect(db.query).not.toHaveBeenCalled();
+  });
+
+  it("accepts a numeric potential_commission alongside checkboxes in one call", async () => {
+    db.query
+      .mockResolvedValueOnce([{ client_id: "3-percent-east-coast" }]) // resolveClientId
+      .mockResolvedValueOnce([]); // the upsert itself
+
+    const result = await updateCheckinItem("good-token", "evt-1", { showed_up: true, potential_commission: 8500 });
+
+    expect(result).toBe("ok");
+    expect(db.query).toHaveBeenLastCalledWith(expect.stringContaining("potential_commission"), [
+      "3-percent-east-coast",
+      "evt-1",
+      true,
+      8500,
+    ]);
+  });
+
+  it("accepts null for potential_commission (clearing a previously entered value)", async () => {
+    db.query.mockResolvedValueOnce([{ client_id: "3-percent-east-coast" }]).mockResolvedValueOnce([]);
+
+    const result = await updateCheckinItem("good-token", "evt-1", { potential_commission: null });
+
+    expect(result).toBe("ok");
+    expect(db.query).toHaveBeenLastCalledWith(expect.stringContaining("potential_commission"), [
+      "3-percent-east-coast",
+      "evt-1",
+      null,
+    ]);
+  });
+
+  it("rejects a non-number, non-null value for potential_commission, without writing anything", async () => {
+    const result = await updateCheckinItem("good-token", "evt-1", { potential_commission: "8500" as any });
+    expect(result).toBe("invalid-field");
+    expect(db.query).not.toHaveBeenCalled();
+  });
+
+  it("rejects a boolean value for potential_commission (wrong type for a numeric column)", async () => {
+    const result = await updateCheckinItem("good-token", "evt-1", { potential_commission: true as any });
+    expect(result).toBe("invalid-field");
+    expect(db.query).not.toHaveBeenCalled();
+  });
+
+  it("rejects a number value for a boolean checkbox column", async () => {
+    const result = await updateCheckinItem("good-token", "evt-1", { showed_up: 1 as any });
+    expect(result).toBe("invalid-field");
     expect(db.query).not.toHaveBeenCalled();
   });
 });

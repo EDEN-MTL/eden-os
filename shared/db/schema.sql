@@ -546,3 +546,8 @@ CREATE TABLE IF NOT EXISTS scout_appointment_checkins (
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     UNIQUE (client_id, ghl_event_id)
 );
+-- Optional: team lead's estimate of the deal's potential commission value,
+-- 2026-09-18 per Jacob. NULL (not just 0) means "not entered" so the page
+-- can tell "nothing filled in" apart from "worth $0" — shown on the card as
+-- "Value: $X" only once actually set.
+ALTER TABLE scout_appointment_checkins ADD COLUMN IF NOT EXISTS potential_commission NUMERIC(12, 2);
