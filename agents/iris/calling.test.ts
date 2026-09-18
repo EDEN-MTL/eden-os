@@ -120,7 +120,7 @@ describe("buildCallPayload", () => {
     const payload = buildCallPayload(BASE_PARAMS, VAPI_CONFIG);
     expect(payload.assistant.voicemailDetection).toEqual({
       provider: "vapi",
-      backoffPlan: { startAtSeconds: 4, frequencySeconds: 4, maxRetries: 5 },
+      backoffPlan: { startAtSeconds: 5, frequencySeconds: 5, maxRetries: 5 },
     });
     expect(payload.assistant.voicemailMessage).toContain("Iris");
     expect(payload.assistant.voicemailMessage).toContain(BASE_PARAMS.brandName);
