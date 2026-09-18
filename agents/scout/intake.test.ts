@@ -133,6 +133,29 @@ describe("normaliseLead", () => {
   });
 
   /**
+   * currentOpportunityStageId is only ever set by refreshLead's live
+   * opportunity fetch (agents/scout/index.ts), never a webhook payload —
+   * this just confirms normaliseLead actually threads it through to
+   * isFirstTouch via config.touchedStageIds, not the intake-stage payload
+   * field used for the payload.pipelineStageId/intakeStages check.
+   */
+  it("reads currentOpportunityStageId for the live touched-stage check, separate from pipelineStageId", () => {
+    const withTouchedStages: ScoutConfig = {
+      ...config,
+      touchedTags: ["appt booked", "live transferred"],
+      touchedStageIds: ["stage-live-transferred"],
+    };
+    const fresh = normaliseLead({ ...payload, tags: ["buyer lead"] }, withTouchedStages);
+    expect(fresh.firstTouch).toBe(true);
+
+    const alreadyTransferred = normaliseLead(
+      { ...payload, tags: ["buyer lead"], currentOpportunityStageId: "stage-live-transferred" },
+      withTouchedStages
+    );
+    expect(alreadyTransferred.firstTouch).toBe(false);
+  });
+
+  /**
    * Guards the exact bug found in Mark's config: the GHL field is spelled
    * "are_you_pre_approuved". Reading the correctly-spelled key returns null,
    * which silently scores every lead as if they were not pre-approved.
@@ -424,6 +447,42 @@ describe("isFirstTouch", () => {
 
   it("matches regardless of case or padding, since GHL keeps whatever was typed", () => {
     expect(isFirstTouch({ tags: ["Buyer Lead", "  Appt Booked "], touchedTags })).toBe(false);
+  });
+
+  /**
+   * Real gap found live 2026-09-17: a lead can sit in "Live Transferred" or
+   * "Appointment Set" with the matching tag never applied (drift between a
+   * card move and a tag), so the tag check alone let Iris keep dialing
+   * someone already handled. currentStageId/touchedStageIds is a second,
+   * independent gate for exactly that case.
+   */
+  it("is false once the live opportunity sits in a touched stage, even with no matching tag", () => {
+    const touchedStageIds = ["stage-live-transferred", "stage-appointment-set"];
+    expect(isFirstTouch({
+      tags: ["buyer lead"], touchedTags, currentStageId: "stage-live-transferred", touchedStageIds,
+    })).toBe(false);
+    expect(isFirstTouch({
+      tags: ["buyer lead"], touchedTags, currentStageId: "stage-appointment-set", touchedStageIds,
+    })).toBe(false);
+  });
+
+  /**
+   * The stage this account's leads actually drift through on their own
+   * (automated "DAY 1/2/3 FOLLOW UP" columns) must NOT read as touched —
+   * confirmed live 2026-09-17 that a lead sitting in "DAY 2 - PM FOLLOW UP"
+   * a week after creation had never actually been called. Only the specific
+   * configured touchedStageIds should count, not "any stage that isn't the
+   * first one."
+   */
+  it("stays true for a live stage that isn't one of the configured touched stages", () => {
+    const touchedStageIds = ["stage-live-transferred", "stage-appointment-set"];
+    expect(isFirstTouch({
+      tags: ["buyer lead"], touchedTags, currentStageId: "stage-day-2-pm-followup", touchedStageIds,
+    })).toBe(true);
+  });
+
+  it("ignores currentStageId when touchedStageIds isn't configured for this client", () => {
+    expect(isFirstTouch({ tags: ["buyer lead"], touchedTags, currentStageId: "stage-live-transferred" })).toBe(true);
   });
 
   /**

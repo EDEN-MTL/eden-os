@@ -3,7 +3,7 @@ import { join } from "path";
 import { BaseAgent } from "../base-agent";
 import { eventBus } from "../../shared/events";
 import { buildKeyToId, normaliseLead, NormalisedLead, ScoutConfig } from "./intake";
-import { getContact, getCustomFieldDefs, getGhlConfig } from "../../shared/ghl";
+import { findOpenOpportunitiesForContact, getContact, getCustomFieldDefs, getGhlConfig } from "../../shared/ghl";
 
 class ScoutAgent extends BaseAgent {
   constructor() {
@@ -49,7 +49,16 @@ function loadScoutConfig(clientId: string): ScoutConfig | null {
     const raw = JSON.parse(
       readFileSync(join(process.cwd(), "config", "clients", `${clientId}.json`), "utf-8")
     );
-    return raw?.scout?.fields ? (raw.scout as ScoutConfig) : null;
+    if (!raw?.scout?.fields) return null;
+    // Sourced from iris's own config rather than duplicated under scout —
+    // liveTransferStageId already exists there as Iris's write target after
+    // a transfer completes; touchedStageIds just also reads it as a call
+    // gate. See isFirstTouch's currentStageId/touchedStageIds doc comments.
+    const touchedStageIds: string[] = [
+      raw.iris?.liveTransferStageId,
+      ...(raw.iris?.appointmentSetStageIds || []),
+    ].filter(Boolean);
+    return { ...raw.scout, touchedStageIds } as ScoutConfig;
   } catch {
     return null;
   }
@@ -160,10 +169,13 @@ export function rescoreAfterContact(payload: any, clientId: string): NormalisedL
  * that failing closed is correct here ("the cost of wrongly calling one is
  * a real person phoned twice by a bot").
  *
- * contact.pipelineStageId is not populated by a plain contact GET (stage
- * lives on the Opportunity, not the Contact) — isFirstTouch degrades
- * correctly when stageId is absent, falling back to tags + ISA notes, which
- * its own comment already documents as sufficient on their own.
+ * contact.pipelineStageId (used for capture-time intent resolution and the
+ * intakeStages check) is still never populated here — stage lives on the
+ * Opportunity, not the Contact, and isFirstTouch degrades correctly when
+ * it's absent. Separately, when a client has touchedStageIds configured,
+ * this DOES fetch the live opportunity stage (see below) for the
+ * currentStageId check specifically — a distinct field, not a backfill of
+ * pipelineStageId, so it can't collide with intent resolution.
  */
 export async function refreshLead(contactId: string, clientId: string): Promise<NormalisedLead | null> {
   try {
@@ -176,7 +188,20 @@ export async function refreshLead(contactId: string, clientId: string): Promise<
     const defs = await getCustomFieldDefs(ghlConfig.locationId, ghlConfig.apiKey);
     const keyToId = buildKeyToId(defs);
 
-    return normaliseLead(contact, config, keyToId);
+    // Only fetched when a client actually has touched-stage ids configured —
+    // skips a needless API call for every other client. This is the ONE
+    // place a lead's live opportunity stage reaches isFirstTouch: confirmed
+    // live 2026-09-17 that a real lead can sit in "Live Transferred" or
+    // "Appointment Set" with the matching tag never applied (or drifted),
+    // so the tag-only check alone was letting Iris keep dialing someone
+    // already handled. See ScoutConfig.touchedStageIds.
+    let currentOpportunityStageId: string | null = null;
+    if (config.touchedStageIds && config.touchedStageIds.length > 0) {
+      const opps = await findOpenOpportunitiesForContact(contactId, ghlConfig.locationId, ghlConfig.apiKey);
+      currentOpportunityStageId = opps[0]?.pipelineStageId ?? null;
+    }
+
+    return normaliseLead({ ...contact, currentOpportunityStageId }, config, keyToId);
   } catch (error) {
     console.error(`[SCT] refreshLead failed for ${contactId}:`, error instanceof Error ? error.message : error);
     return null;
