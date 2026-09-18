@@ -10,6 +10,8 @@ const ghl = vi.hoisted(() => ({
   getGhlConfig: vi.fn(),
   listCalendarEvents: vi.fn(),
   listOpportunitiesPaginated: vi.fn(),
+  findOpenOpportunitiesForContact: vi.fn(),
+  updateOpportunityMonetaryValue: vi.fn(),
 }));
 vi.mock("../../shared/ghl", () => ghl);
 
@@ -414,5 +416,79 @@ describe("updateCheckinItem", () => {
     const result = await updateCheckinItem("good-token", "evt-1", { showed_up: 1 as any });
     expect(result).toBe("invalid-field");
     expect(db.query).not.toHaveBeenCalled();
+  });
+
+  it("pushes a numeric potential_commission to GHL's matching open opportunity when a contactId is given", async () => {
+    db.query.mockResolvedValueOnce([{ client_id: "3-percent-east-coast" }]).mockResolvedValueOnce([]);
+    ghl.getGhlConfig.mockResolvedValueOnce({ apiKey: "key", locationId: "loc" });
+    ghl.findOpenOpportunitiesForContact.mockResolvedValueOnce([{ id: "opp-1" }, { id: "opp-2" }]);
+
+    const result = await updateCheckinItem(
+      "good-token",
+      "evt-1",
+      { potential_commission: 8500 },
+      "contact-judy"
+    );
+
+    expect(result).toBe("ok");
+    expect(ghl.findOpenOpportunitiesForContact).toHaveBeenCalledWith("contact-judy", "loc", "key");
+    // Uses the first (most-recently-updated) open opportunity, not any other match.
+    expect(ghl.updateOpportunityMonetaryValue).toHaveBeenCalledWith("opp-1", 8500, "loc", "key");
+  });
+
+  it("does not push to GHL when potential_commission is cleared (null)", async () => {
+    db.query.mockResolvedValueOnce([{ client_id: "3-percent-east-coast" }]).mockResolvedValueOnce([]);
+
+    const result = await updateCheckinItem(
+      "good-token",
+      "evt-1",
+      { potential_commission: null },
+      "contact-judy"
+    );
+
+    expect(result).toBe("ok");
+    expect(ghl.getGhlConfig).not.toHaveBeenCalled();
+    expect(ghl.updateOpportunityMonetaryValue).not.toHaveBeenCalled();
+  });
+
+  it("does not push to GHL when no contactId is given, even with a numeric commission", async () => {
+    db.query.mockResolvedValueOnce([{ client_id: "3-percent-east-coast" }]).mockResolvedValueOnce([]);
+
+    const result = await updateCheckinItem("good-token", "evt-1", { potential_commission: 8500 });
+
+    expect(result).toBe("ok");
+    expect(ghl.getGhlConfig).not.toHaveBeenCalled();
+    expect(ghl.updateOpportunityMonetaryValue).not.toHaveBeenCalled();
+  });
+
+  it("still returns ok when no open GHL opportunity is found for the contact", async () => {
+    db.query.mockResolvedValueOnce([{ client_id: "3-percent-east-coast" }]).mockResolvedValueOnce([]);
+    ghl.getGhlConfig.mockResolvedValueOnce({ apiKey: "key", locationId: "loc" });
+    ghl.findOpenOpportunitiesForContact.mockResolvedValueOnce([]);
+
+    const result = await updateCheckinItem(
+      "good-token",
+      "evt-1",
+      { potential_commission: 8500 },
+      "contact-no-opp"
+    );
+
+    expect(result).toBe("ok");
+    expect(ghl.updateOpportunityMonetaryValue).not.toHaveBeenCalled();
+  });
+
+  it("still returns ok when the GHL push itself throws", async () => {
+    db.query.mockResolvedValueOnce([{ client_id: "3-percent-east-coast" }]).mockResolvedValueOnce([]);
+    ghl.getGhlConfig.mockResolvedValueOnce({ apiKey: "key", locationId: "loc" });
+    ghl.findOpenOpportunitiesForContact.mockRejectedValueOnce(new Error("GHL is down"));
+
+    const result = await updateCheckinItem(
+      "good-token",
+      "evt-1",
+      { potential_commission: 8500 },
+      "contact-judy"
+    );
+
+    expect(result).toBe("ok");
   });
 });

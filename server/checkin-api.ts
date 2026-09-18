@@ -29,20 +29,26 @@ export async function getCheckinDataHandler(req: Request, res: Response): Promis
 }
 
 export async function postCheckinItem(req: Request, res: Response): Promise<void> {
-  const { fields } = req.body || {};
+  const { fields, contactId } = req.body || {};
   const isPlainObject = typeof fields === "object" && fields !== null && !Array.isArray(fields);
   if (
     !isPlainObject ||
     Object.keys(fields).length === 0 ||
-    !Object.values(fields).every((v) => typeof v === "boolean" || typeof v === "number" || v === null)
+    !Object.values(fields).every((v) => typeof v === "boolean" || typeof v === "number" || v === null) ||
+    (contactId !== undefined && contactId !== null && typeof contactId !== "string")
   ) {
     res.status(400).json({
-      error: "Body must be { fields: Record<string, boolean | number | null> } with at least one entry",
+      error: "Body must be { fields: Record<string, boolean | number | null>, contactId?: string } with at least one field entry",
     });
     return;
   }
 
-  const result = await updateCheckinItem(String(req.params.token), String(req.params.ghlEventId), fields);
+  const result = await updateCheckinItem(
+    String(req.params.token),
+    String(req.params.ghlEventId),
+    fields,
+    contactId ?? null
+  );
   if (result === "invalid-token") {
     res.status(404).json({ error: "Not found" });
     return;
