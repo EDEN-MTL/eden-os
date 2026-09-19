@@ -827,11 +827,28 @@ export function buildCallPayload(
       // reschedule offer, with no lead speech to react to at all. "never"
       // is Vapi's own documented default and makes this a genuine
       // one-time-per-call nudge, matching what was always intended here.
+      //
+      // timeoutSeconds widened 8 -> 15, 2026-09-19: confirmed live (real
+      // transcript + Vapi's own docs) that this hook is NOT scoped to "the
+      // lead never said anything at the start of the call" — it fires on
+      // the FIRST qualifying gap of customer silence ANYWHERE in the call,
+      // measured from the end of the bot's last turn, whether or not that
+      // was the opening. A real dry-run call hit this: right after Iris
+      // said "We'll connect you with one of our buyer agents" (a
+      // statement, not a question — nothing for the lead to say back),
+      // ~8s of normal silence fired this hook and replayed the ENTIRE
+      // opening line ("Hi, this is Iris... Am I speaking with [name]?")
+      // moments before the live transfer, making the lead think Iris was
+      // starting the call over. 15s doesn't fix the structural mismatch
+      // (Vapi has no way to scope this hook to "only before the first
+      // customer utterance"), but a normal post-statement pause is far
+      // less likely to run that long, while a genuinely silent pickup
+      // still gets caught well within a reasonable wait.
       hooks: [
         {
           on: "customer.speech.timeout",
           do: [{ type: "say", exact: firstMessage }],
-          options: { timeoutSeconds: 8, triggerMaxCount: 1, triggerResetMode: "never" },
+          options: { timeoutSeconds: 15, triggerMaxCount: 1, triggerResetMode: "never" },
         },
       ],
       model: {
