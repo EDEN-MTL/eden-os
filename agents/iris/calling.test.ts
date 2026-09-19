@@ -80,6 +80,17 @@ describe("buildCallPayload", () => {
    * Fallback message changed from a bare "Hi!" to the SAME full opening
    * line as firstMessage, 2026-09-16 — once firstMessage became the full
    * line, a silent lead deserved the real opening, not a bare filler.
+   *
+   * timeoutSeconds widened 8 -> 15, 2026-09-19: confirmed live this hook
+   * isn't scoped to "before the lead ever speaks" — it fires on the first
+   * qualifying silence gap ANYWHERE in the call. A real dry-run call hit
+   * this right after Iris said "We'll connect you with one of our buyer
+   * agents" (a statement needing no reply) — ~8s of normal silence
+   * replayed the whole opening line moments before the live transfer,
+   * making the lead think the call was starting over. 15s doesn't fix the
+   * structural mismatch (Vapi has no "only before first utterance" scope
+   * for this hook), but a normal post-statement pause is far less likely
+   * to run that long.
    */
   it("waits for the lead to speak first, with a one-shot nudge (the same full opening line) if they stay silent", () => {
     const payload = buildCallPayload(BASE_PARAMS, VAPI_CONFIG);
@@ -88,7 +99,7 @@ describe("buildCallPayload", () => {
       {
         on: "customer.speech.timeout",
         do: [{ type: "say", exact: payload.assistant.firstMessage }],
-        options: { timeoutSeconds: 8, triggerMaxCount: 1, triggerResetMode: "never" },
+        options: { timeoutSeconds: 15, triggerMaxCount: 1, triggerResetMode: "never" },
       },
     ]);
   });
