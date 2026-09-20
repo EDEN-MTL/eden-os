@@ -1,9 +1,20 @@
 import crypto from "crypto";
 import { Request, Response, Router } from "express";
 import { query } from "../shared/db";
-import { getGhlConfig, addContactTags, findOpenOpportunitiesForContact, updateOpportunityStage } from "../shared/ghl";
+import { getGhlConfig, getContact, addContactTags, findOpenOpportunitiesForContact, updateOpportunityStage } from "../shared/ghl";
+import { sendMessage } from "../shared/slack";
 import { loadIrisConfig } from "../agents/iris";
 import { reopenForNextAttempt } from "../agents/iris/dial-pending";
+
+/**
+ * Every Iris call — real or test — gets posted here so the team can watch
+ * without checking our own DB. Mark, 2026-09-20: created #iriscalllogs and
+ * added the Iris Slack app to it. A literal default (not an env var like
+ * LENS_OPS_CHANNEL) because setting a new env var on Render isn't something
+ * this session can do remotely — still overridable via IRIS_CALL_LOG_CHANNEL
+ * if that ever needs to change without a code deploy.
+ */
+const CALL_LOG_CHANNEL = process.env.IRIS_CALL_LOG_CHANNEL || "iriscalllogs";
 
 /**
  * Vapi's endedReason for a warm transfer that actually connected — the
@@ -74,6 +85,59 @@ function verifyVapiSecret(expectedSecret: string, req: Request): boolean {
   return crypto.timingSafeEqual(a, b);
 }
 
+/** Human-readable one-liner for a call's real outcome, for the Slack post below. */
+export function describeOutcome(endedReason: string | null): string {
+  if (endedReason === TRANSFER_SUCCEEDED_REASON) return "✅ Live transfer completed";
+  if (endedReason === "voicemail") return "📵 Left voicemail";
+  if (wasAnswered(endedReason)) return "💬 Answered (no transfer)";
+  return `❌ No answer (\`${endedReason ?? "unknown"}\`)`;
+}
+
+export function formatDuration(seconds: number | null | undefined): string {
+  if (!seconds || seconds < 0) return "unknown";
+  const m = Math.floor(seconds / 60);
+  const s = Math.round(seconds % 60);
+  return m > 0 ? `${m}m ${s}s` : `${s}s`;
+}
+
+/**
+ * Posts every finished Iris call to #iriscalllogs — real or test, any
+ * outcome — so the team has an ongoing eye on Iris's calls without
+ * checking our own DB. Best-effort: a Slack failure here should never
+ * affect the rest of end-of-call handling (cadence, tags, stage moves).
+ * Looks the contact's current name up live via GHL rather than trusting
+ * anything stale — falls back to the raw phone number when there's no
+ * contactId at all (a manual test call) or the lookup fails.
+ */
+export async function postCallLogToSlack(clientId: string, contactId: string | null, message: Record<string, any>, endedReason: string | null): Promise<void> {
+  try {
+    const phone = message?.call?.customer?.number ?? "unknown number";
+    let who = phone;
+    if (contactId) {
+      try {
+        const ghlConfig = await getGhlConfig(clientId);
+        if (ghlConfig) {
+          const contactResp = await getContact(contactId, ghlConfig.locationId, ghlConfig.apiKey);
+          const contact = contactResp?.contact ?? contactResp;
+          const name = [contact?.firstName, contact?.lastName].filter(Boolean).join(" ").trim();
+          if (name) who = `${name} (${phone})`;
+        }
+      } catch {
+        // Name lookup is a nicety — fall back to the bare phone number.
+      }
+    }
+
+    const text =
+      `📞 *${who}* — ${clientId}\n` +
+      `${describeOutcome(endedReason)}\n` +
+      `Duration: ${formatDuration(message?.durationSeconds)}`;
+
+    await sendMessage("iris", { channel: CALL_LOG_CHANNEL, text });
+  } catch (error) {
+    console.error("[VAPI] Failed to post call log to Slack:", error instanceof Error ? error.message : error);
+  }
+}
+
 /**
  * Handles Vapi's end-of-call-report event: fills in the iris_call_log row
  * that placeCall() created with 'initiated' status. Does NOT parse the
@@ -104,6 +168,8 @@ async function handleEndOfCallReport(message: Record<string, any>): Promise<void
   console.log(`[VAPI] Call ${callId} ended (${endedReason ?? "unknown reason"}).`);
 
   const row = rows[0];
+  if (row) await postCallLogToSlack(row.client_id, row.contact_id, message, endedReason);
+
   if (endedReason === TRANSFER_SUCCEEDED_REASON && row?.contact_id) {
     await handleSuccessfulTransfer(row.client_id, row.contact_id);
   }
