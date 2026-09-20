@@ -124,7 +124,7 @@ describe("moveToFollowUpStage", () => {
 
 /**
  * Real gap found live 2026-09-20: nothing surfaced Iris's calls anywhere
- * outside our own DB. Mark created #iriscalllogs and asked for every call
+ * outside our own DB. Mark created #iris-call-logs and asked for every call
  * — real or test, any outcome — to post there.
  */
 describe("describeOutcome", () => {
@@ -165,7 +165,7 @@ describe("formatDuration", () => {
 describe("postCallLogToSlack", () => {
   const message = { call: { customer: { number: "+17097496049" } }, durationSeconds: 17 };
 
-  it("posts to #iriscalllogs with the contact's live name when one resolves", async () => {
+  it("posts to #iris-call-logs with the contact's live name when one resolves", async () => {
     ghl.getGhlConfig.mockResolvedValue({ locationId: "loc-1", apiKey: "key-1" });
     ghl.getContact.mockResolvedValue({ contact: { firstName: "Bijeesh", lastName: "Varghese" } });
 
@@ -174,7 +174,7 @@ describe("postCallLogToSlack", () => {
     expect(slack.sendMessage).toHaveBeenCalledWith(
       "iris",
       expect.objectContaining({
-        channel: "iriscalllogs",
+        channel: "iris-call-logs",
         text: expect.stringContaining("Bijeesh Varghese (+17097496049)"),
       })
     );

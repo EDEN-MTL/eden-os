@@ -8,13 +8,13 @@ import { reopenForNextAttempt } from "../agents/iris/dial-pending";
 
 /**
  * Every Iris call — real or test — gets posted here so the team can watch
- * without checking our own DB. Mark, 2026-09-20: created #iriscalllogs and
+ * without checking our own DB. Mark, 2026-09-20: created #iris-call-logs and
  * added the Iris Slack app to it. A literal default (not an env var like
  * LENS_OPS_CHANNEL) because setting a new env var on Render isn't something
  * this session can do remotely — still overridable via IRIS_CALL_LOG_CHANNEL
  * if that ever needs to change without a code deploy.
  */
-const CALL_LOG_CHANNEL = process.env.IRIS_CALL_LOG_CHANNEL || "iriscalllogs";
+const CALL_LOG_CHANNEL = process.env.IRIS_CALL_LOG_CHANNEL || "iris-call-logs";
 
 /**
  * Vapi's endedReason for a warm transfer that actually connected — the
@@ -101,7 +101,7 @@ export function formatDuration(seconds: number | null | undefined): string {
 }
 
 /**
- * Posts every finished Iris call to #iriscalllogs — real or test, any
+ * Posts every finished Iris call to #iris-call-logs — real or test, any
  * outcome — so the team has an ongoing eye on Iris's calls without
  * checking our own DB. Best-effort: a Slack failure here should never
  * affect the rest of end-of-call handling (cadence, tags, stage moves).
