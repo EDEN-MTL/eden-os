@@ -117,6 +117,51 @@ async function handleEndOfCallReport(message: Record<string, any>): Promise<void
 }
 
 /**
+ * Moves the lead's opportunity to the follow-up stage matching the attempt
+ * that just went unanswered (config.followUpStageIds[attemptsMade-1]), so
+ * the board visually shows how many times a lead has been tried without
+ * anyone needing to check our own DB. Best-effort and silent when a client
+ * has no followUpStageIds configured, or has fewer stages than attempts —
+ * this is a visibility nicety, never something that should block the
+ * actual cadence logic in reopenForNextAttempt.
+ */
+export async function moveToFollowUpStage(clientId: string, contactId: string, attemptsMade: number): Promise<void> {
+  const config = loadIrisConfig(clientId);
+  const stageId = config?.followUpStageIds?.[attemptsMade - 1];
+  if (!stageId) return;
+
+  try {
+    const ghlConfig = await getGhlConfig(clientId);
+    if (!ghlConfig) return;
+    const opportunities = await findOpenOpportunitiesForContact(contactId, ghlConfig.locationId, ghlConfig.apiKey);
+    const opportunity = opportunities[0];
+    if (!opportunity) {
+      console.warn(`[VAPI] No open opportunity found for contact ${contactId} — cannot move to follow-up stage.`);
+      return;
+    }
+    await updateOpportunityStage(opportunity.id, stageId, ghlConfig.locationId, ghlConfig.apiKey);
+  } catch (error) {
+    console.error(`[VAPI] Failed to move contact ${contactId}'s opportunity to its follow-up stage:`, error instanceof Error ? error.message : error);
+  }
+}
+
+/**
+ * Tags a lead once every scheduled attempt has gone unanswered, so a human
+ * actually finds out this lead needs manual follow-up — before this, the
+ * sequence just went silent internally with nothing visible in GHL at all.
+ * Confirmed live 2026-09-20 that nothing else surfaces this today.
+ */
+export async function tagSequenceExhausted(clientId: string, contactId: string): Promise<void> {
+  try {
+    const ghlConfig = await getGhlConfig(clientId);
+    if (!ghlConfig) return;
+    await addContactTags(contactId, ["iris no answer"], ghlConfig.locationId, ghlConfig.apiKey);
+  } catch (error) {
+    console.error(`[VAPI] Failed to tag contact ${contactId} as "iris no answer":`, error instanceof Error ? error.message : error);
+  }
+}
+
+/**
  * Looks up the one iris_pending_calls row for this (client, contact) pair
  * — UNIQUE(client_id, contact_id), so there's at most one — and reopens it
  * for the next cadence attempt if it's still sitting in the 'placed'
@@ -137,6 +182,9 @@ async function maybeReopenPendingCall(clientId: string, contactId: string): Prom
     console.log(
       `[VAPI] Contact ${contactId} didn't answer — ${reopened ? "requeued for the next attempt" : "cadence exhausted, not requeuing"}.`
     );
+
+    await moveToFollowUpStage(clientId, contactId, pending.attempts_made);
+    if (!reopened) await tagSequenceExhausted(clientId, contactId);
   } catch (error) {
     console.error(`[VAPI] Failed to check/reopen pending call for ${contactId}:`, error instanceof Error ? error.message : error);
   }
