@@ -102,7 +102,18 @@
     "liveTransferStageId": "d4cb572b-5fa5-48e5-bced-46c88715e2da",
     "liveTransferStageIdNote": "Mark, 2026-09-04: '1. Real Estate Pipeline' → 'Live Transferred' stage, id verified live via GET /opportunities/pipelines. Moved into once a transfer actually completes (endedReason assistant-forwarded-call), not just attempted — see webhooks/vapi-webhook.ts.",
     "appointmentSetStageIds": ["790a0988-f755-4242-84da-bf8aeb38d2d6", "81e7f650-a71f-4660-ac47-de8acb88a402"],
-    "appointmentSetStageIdsNote": "Mark, 2026-09-18: '1. Real Estate Pipeline' → 'Appointment Set' and 'Appointment Set (Not qualified)' stages, ids verified live via GET /pipelines. Read together with liveTransferStageId as agents/scout/index.ts's touchedStageIds — Iris stops calling a lead already sitting in either stage even if the matching tag (appt booked / live transferred) was never applied or drifted. Added after finding real 3% leads were never reaching Iris at all (a separate GHL-webhook intake gap) surfaced the adjacent risk of the reverse mistake: once intake is fixed, Iris must not re-call someone already handled."
+    "appointmentSetStageIdsNote": "Mark, 2026-09-18: '1. Real Estate Pipeline' → 'Appointment Set' and 'Appointment Set (Not qualified)' stages, ids verified live via GET /pipelines. Read together with liveTransferStageId as agents/scout/index.ts's touchedStageIds — Iris stops calling a lead already sitting in either stage even if the matching tag (appt booked / live transferred) was never applied or drifted. Added after finding real 3% leads were never reaching Iris at all (a separate GHL-webhook intake gap) surfaced the adjacent risk of the reverse mistake: once intake is fixed, Iris must not re-call someone already handled.",
+    "followUpStageIds": [
+      "915e02ff-ea09-4409-8e9d-681fa449d687",
+      "ab00da87-eb1a-4237-85dd-b4da491c6b4a",
+      "72c5961a-f0a4-40b2-b4ec-83e2bb3f5328",
+      "e84df335-f3d0-4709-90a9-1f2290c52dca",
+      "686c12d7-8b21-4894-bb38-77df45c11208",
+      "8735b773-f4c6-441f-a071-52298f7e4337",
+      "2714021e-4d05-4d86-be46-89f503584014",
+      "241b1132-d44b-4337-b2fe-0a703674b30e"
+    ],
+    "followUpStageIdsNote": "Mark, 2026-09-20: '1. Real Estate Pipeline' already has one stage per Iris outreach attempt slot — DAY 1/2/3 AM+PM FOLLOW UP, then WEEKEDN/WEEKEND AM+PM FOLLOW UP (8 stages, positions 5-12, ids verified live via GET /pipelines) — built to match outreachCadence's attemptsPerDay(2) x days(4) = 8 total attempts exactly, in order. Index 0 = attempt 1 (the immediate post-intake dial), index 7 = attempt 8 (the last scheduled one). Iris moves the opportunity to followUpStageIds[attemptsMade-1] every time an attempt goes unanswered, so the board visually shows how many times each lead has been tried. 'WEEKEDN' is GHL's own typo, not ours — kept verbatim so the id/name actually match."
   },
   "slack": {
     "clientChannel": "3-percent-eastcoast-eden"

@@ -109,6 +109,7 @@ export function loadIrisConfig(clientId: string): IrisConfig | null {
       calendars: raw.scout.calendars,
       transferNumbers: raw.iris.transferNumbers,
       liveTransferStageId: raw.iris.liveTransferStageId || undefined,
+      followUpStageIds: raw.iris.followUpStageIds || undefined,
       callbackNotesFieldKey: raw.iris.callbacks.notesFieldKey,
       callbackCalendarIds: raw.iris.callbacks.calendarIds || undefined,
       timezone: raw.iris.timezone || undefined,

@@ -62,6 +62,19 @@ export interface IrisConfig {
    */
   liveTransferStageId?: string;
   /**
+   * One pipeline stage per outreach attempt slot, in attempt order —
+   * index 0 is attempt 1 (the immediate post-intake dial), and so on
+   * through the last scheduled attempt (attemptsPerDay * days, from
+   * outreachCadence below). Optional, same soft-fail pattern as
+   * liveTransferStageId: a client whose pipeline has no matching stages
+   * yet just skips the move. When present, dial-pending's end-of-call
+   * handling moves the lead's opportunity here every time an attempt goes
+   * unanswered, so the board visually tracks how many times a lead has
+   * been tried without needing anyone to check our own DB. See
+   * webhooks/vapi-webhook.ts.
+   */
+  followUpStageIds?: string[];
+  /**
    * Single write target for the callback note (iris.callbacks.notesFieldKey
    * in client config) — same field scout.fields.isaNotes reads from, but
    * named separately here on purpose: that's a read-priority list (several

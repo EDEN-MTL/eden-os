@@ -1,5 +1,22 @@
-import { describe, expect, it } from "vitest";
-import { wasAnswered } from "./vapi-webhook";
+import { afterEach, describe, expect, it, vi } from "vitest";
+
+const ghl = vi.hoisted(() => ({
+  getGhlConfig: vi.fn(),
+  addContactTags: vi.fn(),
+  findOpenOpportunitiesForContact: vi.fn(),
+  updateOpportunityStage: vi.fn(),
+}));
+vi.mock("../shared/ghl", () => ghl);
+
+const iris = vi.hoisted(() => ({ loadIrisConfig: vi.fn() }));
+vi.mock("../agents/iris", () => iris);
+
+vi.mock("../agents/iris/dial-pending", () => ({ reopenForNextAttempt: vi.fn() }));
+vi.mock("../shared/db", () => ({ query: vi.fn() }));
+
+import { moveToFollowUpStage, tagSequenceExhausted, wasAnswered } from "./vapi-webhook";
+
+afterEach(() => vi.clearAllMocks());
 
 describe("wasAnswered", () => {
   /**
@@ -50,5 +67,70 @@ describe("wasAnswered", () => {
   it("fails toward RETRYING (treats as not answered) when the reason is missing or unrecognized", () => {
     expect(wasAnswered(null)).toBe(false);
     expect(wasAnswered("some-brand-new-failure-code-vapi-adds-later")).toBe(false);
+  });
+});
+
+/**
+ * Real gap found live 2026-09-20: nothing surfaced Iris's unanswered call
+ * attempts anywhere in GHL. Mark's fix request had two parts: move the
+ * lead's opportunity through the client's own DAY-N/WEEKEND follow-up
+ * columns as each attempt goes unanswered, and tag it once the whole
+ * sequence is exhausted with no answer at all.
+ */
+describe("moveToFollowUpStage", () => {
+  const followUpStageIds = ["stage-day1-am", "stage-day1-pm", "stage-day2-am"];
+
+  it("moves the opportunity to the stage matching the attempt that just went unanswered", async () => {
+    iris.loadIrisConfig.mockReturnValue({ followUpStageIds });
+    ghl.getGhlConfig.mockResolvedValue({ locationId: "loc-1", apiKey: "key-1" });
+    ghl.findOpenOpportunitiesForContact.mockResolvedValue([{ id: "opp-1" }]);
+
+    await moveToFollowUpStage("3-percent-east-coast", "contact-1", 2);
+
+    expect(ghl.updateOpportunityStage).toHaveBeenCalledWith("opp-1", "stage-day1-pm", "loc-1", "key-1");
+  });
+
+  it("does nothing when the client has no followUpStageIds configured", async () => {
+    iris.loadIrisConfig.mockReturnValue({});
+
+    await moveToFollowUpStage("eden-sub-account-one", "contact-1", 1);
+
+    expect(ghl.getGhlConfig).not.toHaveBeenCalled();
+    expect(ghl.updateOpportunityStage).not.toHaveBeenCalled();
+  });
+
+  it("does nothing when attemptsMade is beyond the configured stage list, rather than crashing", async () => {
+    iris.loadIrisConfig.mockReturnValue({ followUpStageIds });
+    ghl.getGhlConfig.mockResolvedValue({ locationId: "loc-1", apiKey: "key-1" });
+
+    await moveToFollowUpStage("3-percent-east-coast", "contact-1", 99);
+
+    expect(ghl.updateOpportunityStage).not.toHaveBeenCalled();
+  });
+
+  it("does not throw when the contact has no open opportunity to move", async () => {
+    iris.loadIrisConfig.mockReturnValue({ followUpStageIds });
+    ghl.getGhlConfig.mockResolvedValue({ locationId: "loc-1", apiKey: "key-1" });
+    ghl.findOpenOpportunitiesForContact.mockResolvedValue([]);
+
+    await expect(moveToFollowUpStage("3-percent-east-coast", "contact-1", 1)).resolves.toBeUndefined();
+    expect(ghl.updateOpportunityStage).not.toHaveBeenCalled();
+  });
+});
+
+describe("tagSequenceExhausted", () => {
+  it("tags the contact 'iris no answer'", async () => {
+    ghl.getGhlConfig.mockResolvedValue({ locationId: "loc-1", apiKey: "key-1" });
+
+    await tagSequenceExhausted("3-percent-east-coast", "contact-1");
+
+    expect(ghl.addContactTags).toHaveBeenCalledWith("contact-1", ["iris no answer"], "loc-1", "key-1");
+  });
+
+  it("does not throw when the client has no GHL config", async () => {
+    ghl.getGhlConfig.mockResolvedValue(null);
+
+    await expect(tagSequenceExhausted("3-percent-east-coast", "contact-1")).resolves.toBeUndefined();
+    expect(ghl.addContactTags).not.toHaveBeenCalled();
   });
 });
