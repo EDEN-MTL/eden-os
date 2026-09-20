@@ -137,6 +137,27 @@ describe("buildCallPayload", () => {
     expect(payload.assistant.voicemailMessage).toContain(BASE_PARAMS.brandName);
   });
 
+  /**
+   * Mark's spec, 2026-09-20: the voicemail must use the lead's real
+   * buyer/seller classification, never guess it — this checks the actual
+   * wiring from params.intent through to the message content, distinct
+   * from buildVoicemailMessage's own unit tests (scripts.test.ts) which
+   * only cover the string-selection logic in isolation.
+   */
+  it("mentions buying for a buyer/upgrading/unknown intent and selling for a seller/downsize one", () => {
+    const buyerLike = buildCallPayload({ ...BASE_PARAMS, intent: "unknown" }, VAPI_CONFIG);
+    expect(buyerLike.assistant.voicemailMessage).toMatch(/buy/i);
+
+    const upgrading = buildCallPayload({ ...BASE_PARAMS, intent: "upgrading" }, VAPI_CONFIG);
+    expect(upgrading.assistant.voicemailMessage).toMatch(/buy/i);
+
+    const seller = buildCallPayload({ ...BASE_PARAMS, intent: "seller" }, VAPI_CONFIG);
+    expect(seller.assistant.voicemailMessage).toMatch(/sell/i);
+
+    const downsize = buildCallPayload({ ...BASE_PARAMS, intent: "downsize" }, VAPI_CONFIG);
+    expect(downsize.assistant.voicemailMessage).toMatch(/sell/i);
+  });
+
   it("wires only the always-available endCall tool when nothing else (transferNumber, contactId) is given", () => {
     const payload = buildCallPayload(BASE_PARAMS, VAPI_CONFIG);
     expect(payload.assistant.model.tools).toHaveLength(1);

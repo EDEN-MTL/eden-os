@@ -1520,13 +1520,39 @@ client's config.`;
 }
 
 /**
- * Left on the lead's voicemail when Vapi's voicemail detection fires —
- * see agents/iris/calling.ts's voicemailDetection config. Short and
- * self-contained on purpose: unlike a live call, there's no back-and-forth
- * to react to, so this can't reference anything the lead hasn't said yet.
- * Points them to a text follow-up rather than promising a specific callback
- * time, since nothing has actually scheduled one at this point.
+ * Mark's spec, 2026-09-20: a real voicemail must sound like a human ISA
+ * quickly leaving a message, not a sales script — short, one reason for
+ * the call, one call-to-action, done. This is spoken by VAPI DIRECTLY
+ * (voicemailMessage in calling.ts's voicemailDetection config) the moment
+ * voicemail is detected, never by the model — so there is no live
+ * conversation/qualification turn to accidentally start here, structurally,
+ * the same way firstMessage bypasses the model on pickup. That also means
+ * "natural variation" has to happen HERE, at build time, by picking one
+ * fixed string per call — a model instructed to "vary the wording" has no
+ * turn to vary, since this field is spoken verbatim, mechanically.
+ *
+ * Audience must come from the caller's own already-resolved buyer/seller
+ * classification (calling.ts's `audience`, itself from qualification.ts's
+ * intent resolution) — never guessed here. "downsize" collapses to seller
+ * and "upgrading"/"unknown" collapse to buyer upstream, same fallback
+ * already used for calendar/transfer-number selection elsewhere in this
+ * same call, not a new guess introduced for this function.
  */
-export function buildVoicemailMessage(brandName: string): string {
-  return `Hi, this is Iris calling from ${brandName}. Sorry I missed you — I'll follow up by text shortly, or feel free to call this number back anytime. Thanks, and have a great day!`;
+const BUYER_VOICEMAIL_VARIATIONS = [
+  "Hi, this is Iris from {brand}. I just tried to give you a call about your plans to buy a new home. Give us a call back when you get a chance. Thanks!",
+  "Hi, this is Iris from {brand}. I just tried reaching you about your home-buying plans. Give us a call back when you get a chance. Thanks!",
+  "Hi, this is Iris from {brand}. I was just giving you a quick call about your plans to buy a home. Feel free to give us a call back when you have a chance. Thanks!",
+  "Hi, this is Iris from {brand}. I just tried reaching you regarding your plans to buy a new home. Give us a call back when you're free. Thanks!",
+];
+
+const SELLER_VOICEMAIL_VARIATIONS = [
+  "Hi, this is Iris from {brand}. I just tried to give you a call about your plans to sell your home. Give us a call back when you get a chance. Thanks!",
+  "Hi, this is Iris from {brand}. I just tried reaching you about your home-selling plans. Give us a call back when you have a chance. Thanks!",
+  "Hi, this is Iris from {brand}. I was just giving you a quick call about your plans to sell your home. Feel free to give us a call back when you're free. Thanks!",
+];
+
+export function buildVoicemailMessage(brandName: string, audience: "buyer" | "seller"): string {
+  const variations = audience === "seller" ? SELLER_VOICEMAIL_VARIATIONS : BUYER_VOICEMAIL_VARIATIONS;
+  const template = variations[Math.floor(Math.random() * variations.length)];
+  return template.replace("{brand}", brandName);
 }
