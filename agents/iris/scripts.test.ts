@@ -1209,16 +1209,43 @@ describe("callbackRecapLine", () => {
   });
 });
 
+/**
+ * Mark's spec, 2026-09-20: a real voicemail should sound like a human ISA
+ * quickly leaving a message — short, one reason, one call-to-action — not
+ * an automated sales script, and it must never guess buyer vs. seller.
+ */
 describe("buildVoicemailMessage", () => {
   it("identifies Iris by name and uses the brand it's given, not a hardcoded one", () => {
-    const message = buildVoicemailMessage("Matama Floors");
+    const message = buildVoicemailMessage("Matama Floors", "buyer");
     expect(message).toContain("Iris");
     expect(message).toContain("Matama Floors");
   });
 
-  it("points to a text follow-up rather than promising a specific callback time", () => {
-    const message = buildVoicemailMessage("3 Percent East Coast");
-    expect(message).toMatch(/text/i);
+  it("mentions buying, never selling, for a buyer lead — run repeatedly since the wording is randomized", () => {
+    for (let i = 0; i < 20; i++) {
+      const message = buildVoicemailMessage("3 Percent East Coast", "buyer");
+      expect(message).toMatch(/buy/i);
+      expect(message).not.toMatch(/sell/i);
+    }
+  });
+
+  it("mentions selling, never buying, for a seller lead — run repeatedly since the wording is randomized", () => {
+    for (let i = 0; i < 20; i++) {
+      const message = buildVoicemailMessage("3 Percent East Coast", "seller");
+      expect(message).toMatch(/sell/i);
+      expect(message).not.toMatch(/\bbuy\b/i);
+    }
+  });
+
+  it("stays short — a single sentence-length message, not a multi-question script", () => {
+    const message = buildVoicemailMessage("3 Percent East Coast", "buyer");
+    expect(message.split("?").length - 1).toBe(0); // no questions asked
+    expect(message.length).toBeLessThan(220); // roughly 10-20s spoken
+  });
+
+  it("never promises a specific callback time or reads back form details", () => {
+    const message = buildVoicemailMessage("3 Percent East Coast", "seller");
     expect(message).not.toMatch(/\d{1,2}(:\d{2})?\s*(am|pm)/i);
+    expect(message).not.toMatch(/budget|pre-approved|timeline/i);
   });
 });

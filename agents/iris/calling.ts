@@ -180,6 +180,12 @@ export function buildCallPayload(
   // as its own later turn, driven by the system prompt.
   const firstMessage = buildCallOpeningLine(params.firstName, params.brandName);
 
+  // Hoisted here (not just inside the transferNumber block below) so the
+  // voicemail message can use the SAME already-resolved classification
+  // rather than re-deriving or guessing it — see buildVoicemailMessage's
+  // own doc comment on why it must never guess.
+  const audience = params.intent === "seller" || params.intent === "downsize" ? "seller" : "buyer";
+
   const tools: VapiTool[] = [];
 
   // Mark's spec, 2026-09-12: a backup for the lead's own name being wrong
@@ -250,7 +256,6 @@ export function buildCallPayload(
   }
 
   if (params.transferNumber) {
-    const audience = params.intent === "seller" || params.intent === "downsize" ? "seller" : "buyer";
     const briefing = buildAgentBriefing(params, audience);
     // The full transfer-assistant opening turn, same root-cause fix as the
     // main call's firstMessage (2026-09-16): under firstMessageMode
@@ -902,7 +907,7 @@ export function buildCallPayload(
       // change has cost/latency tradeoffs worth a deliberate call, not a
       // silent swap.
       voicemailDetection: { provider: "vapi", backoffPlan: { startAtSeconds: 5, frequencySeconds: 5, maxRetries: 5 } },
-      voicemailMessage: buildVoicemailMessage(params.brandName),
+      voicemailMessage: buildVoicemailMessage(params.brandName, audience),
     },
   };
 }
