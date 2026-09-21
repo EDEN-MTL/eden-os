@@ -61,47 +61,45 @@ describe("buildCallPayload", () => {
    * speak first. "assistant-waits-for-user" makes that genuine; the hook
    * is what stops Iris waiting forever if the lead never says anything.
    *
-   * timeoutSeconds bumped 5 → 8, 2026-09-15: confirmed live (real
-   * transcript) this hook's timer restarts the moment the LEAD's own
-   * speech ends, not just "before they ever say anything" — on a real
-   * call the lead said "Hello?", the model took a bit over 5s to
-   * generate the (now longer) combined opening line, and this hook fired
-   * its own bare "Hi!" into that gap before the model's real line
-   * landed. 8s gives more headroom.
+   * History: timeoutSeconds went 5 -> 8 (2026-09-15) -> 15 (2026-09-19),
+   * and the fallback message went bare "Hi!" -> the full opening line
+   * (2026-09-16), chasing the same underlying issue each time — this hook
+   * fires on the first qualifying silence gap ANYWHERE in the call, not
+   * just before the lead's first word, and Vapi has no way to scope it to
+   * "only at call open." Widening the timer alone hit diminishing
+   * returns: confirmed live 2026-09-21 (second real occurrence, this time
+   * after Iris asked an open-ended question — "what type of property is
+   * it?" — and the lead paused >15s mid-thought) that replaying the FULL
+   * opening line ("Hi, this is Iris... Am I speaking with Bob?") sounded
+   * exactly like the call restarting, and the lead hung up right after.
    *
-   * triggerResetMode fixed "onUserSpeech" → "never", 2026-09-15: confirmed
-   * live (timestamps) and via Vapi's own docs that "onUserSpeech" resets
-   * the trigger COUNT on every lead utterance, letting this "one-shot"
-   * hook re-arm and fire again later in the call — a real call had it
-   * fire a second, nonsensical bare "Hi." ~18s after the lead's last
-   * words, mid-reschedule-offer. "never" (Vapi's own default) makes this
-   * a genuine once-per-call nudge, as originally intended.
-   *
-   * Fallback message changed from a bare "Hi!" to the SAME full opening
-   * line as firstMessage, 2026-09-16 — once firstMessage became the full
-   * line, a silent lead deserved the real opening, not a bare filler.
-   *
-   * timeoutSeconds widened 8 -> 15, 2026-09-19: confirmed live this hook
-   * isn't scoped to "before the lead ever speaks" — it fires on the first
-   * qualifying silence gap ANYWHERE in the call. A real dry-run call hit
-   * this right after Iris said "We'll connect you with one of our buyer
-   * agents" (a statement needing no reply) — ~8s of normal silence
-   * replayed the whole opening line moments before the live transfer,
-   * making the lead think the call was starting over. 15s doesn't fix the
-   * structural mismatch (Vapi has no "only before first utterance" scope
-   * for this hook), but a normal post-statement pause is far less likely
-   * to run that long.
+   * Fixed 2026-09-21 by changing WHAT gets said, not just when: a short,
+   * context-neutral "Sorry, this is Iris with {brand} — are you still
+   * there?" instead of the full self-intro + identify question. Still
+   * identifies Iris/the brand (works fine as a true silent-pickup opener)
+   * but reads naturally as a check-in rather than a restart if it fires
+   * mid-conversation, which is the failure mode both real occurrences hit.
    */
-  it("waits for the lead to speak first, with a one-shot nudge (the same full opening line) if they stay silent", () => {
+  it("waits for the lead to speak first, with a one-shot 'are you still there?' nudge if they stay silent", () => {
     const payload = buildCallPayload(BASE_PARAMS, VAPI_CONFIG);
     expect(payload.assistant.firstMessageMode).toBe("assistant-waits-for-user");
     expect(payload.assistant.hooks).toEqual([
       {
         on: "customer.speech.timeout",
-        do: [{ type: "say", exact: payload.assistant.firstMessage }],
+        do: [{ type: "say", exact: `Sorry, this is Iris with ${BASE_PARAMS.brandName} — are you still there?` }],
         options: { timeoutSeconds: 15, triggerMaxCount: 1, triggerResetMode: "never" },
       },
     ]);
+  });
+
+  it("keeps the idle nudge short and free of an identify question, unlike the full opening line", () => {
+    const payload = buildCallPayload(BASE_PARAMS, VAPI_CONFIG);
+    const nudge = payload.assistant.hooks?.[0]?.do?.[0]?.exact ?? "";
+    // A single short sentence, not the multi-clause self-intro + identify
+    // question — length alone isn't a reliable proxy (a short firstName
+    // can make firstMessage nearly as short), so check structure instead.
+    expect(nudge).not.toMatch(/am i speaking with/i);
+    expect(nudge.split(".").length).toBeLessThanOrEqual(2);
   });
 
   it("never mentions the calling-about reason or 'how are you' in the opening line, regardless of intent", () => {

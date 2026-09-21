@@ -801,6 +801,24 @@ export function buildCallPayload(
     },
   });
 
+  // Spoken by the customer.speech.timeout hook below — deliberately SHORT
+  // and generic, not a repeat of firstMessage. Root cause found live
+  // 2026-09-21 (second real occurrence, after widening timeoutSeconds
+  // 8 -> 15 on 2026-09-19 didn't fix it): a real lead paused mid-thought
+  // answering an open-ended question ("what type of property is it?"),
+  // the hook fired at 15s, and replaying the FULL opening line ("Hi, this
+  // is Iris... Am I speaking with Bob?") sounded exactly like the call
+  // restarting from scratch — the lead hung up right after. Raising the
+  // timeout further has diminishing returns (a real person can easily
+  // pause 15-20s+ mid-thought) and doesn't fix the actual problem: Vapi
+  // has no way to scope this hook to "only before the customer's first
+  // utterance," so whatever it says has to make sense BOTH as a true
+  // silent-pickup opener AND as a mid-conversation check-in. This line
+  // still identifies Iris/the brand (so it works as a real opener) but
+  // skips the identify question and the rest of the self-intro, so it
+  // reads as a natural "still there?" nudge rather than a restart.
+  const idleNudgeLine = `Sorry, this is Iris with ${params.brandName} — are you still there?`;
+
   return {
     phoneNumberId: vapiConfig.phoneNumberId,
     customer: { number: params.phone },
@@ -810,16 +828,17 @@ export function buildCallPayload(
       // Mark's live feedback, 2026-09-06: if the lead stays silent, Iris
       // shouldn't wait forever — firstMessage alone never fires under
       // "assistant-waits-for-user" if the lead never speaks at all, so
-      // this hook is the actual fallback for that case. Says the SAME
-      // full opening line as firstMessage (not just a bare "Hi!",
-      // 2026-09-16 — once firstMessage became the full line, the filler
-      // needed to match it, otherwise a silent lead would get a bare
-      // "Hi!" instead of the real opening).
+      // this hook is the actual fallback for that case.
       //
-      // timeoutSeconds bumped 5 → 8, 2026-09-15: confirmed live (real
-      // transcript) and via Vapi's own docs that this timer restarts the
-      // MOMENT the lead's own speech ends — not just "before they ever
-      // say anything".
+      // timeoutSeconds bumped 5 -> 8 -> 15 (2026-09-15, 2026-09-19):
+      // confirmed live, twice, via real transcripts and Vapi's own docs,
+      // that this timer is NOT scoped to "the lead never said anything at
+      // the start of the call" — it fires on the first qualifying gap of
+      // customer silence ANYWHERE in the call. Widening the number alone
+      // has diminishing returns (a real person can easily pause 15-20s+
+      // mid-thought answering an open-ended question), so as of
+      // 2026-09-21 the actual fix is WHAT gets said (idleNudgeLine above),
+      // not just when — see its own doc comment.
       //
       // triggerResetMode fixed "onUserSpeech" → "never", 2026-09-15:
       // confirmed live (real transcript, timestamps) and via Vapi's own
@@ -827,32 +846,12 @@ export function buildCallPayload(
       // time the lead speaks — meaning triggerMaxCount: 1 did NOT mean
       // "once for the whole call" as this comment used to (wrongly)
       // claim; it meant "once per silence gap," re-arming after every
-      // lead utterance. On a real call this fired a second, nonsensical
-      // bare "Hi." ~18s after the lead's last words, in the middle of a
-      // reschedule offer, with no lead speech to react to at all. "never"
-      // is Vapi's own documented default and makes this a genuine
-      // one-time-per-call nudge, matching what was always intended here.
-      //
-      // timeoutSeconds widened 8 -> 15, 2026-09-19: confirmed live (real
-      // transcript + Vapi's own docs) that this hook is NOT scoped to "the
-      // lead never said anything at the start of the call" — it fires on
-      // the FIRST qualifying gap of customer silence ANYWHERE in the call,
-      // measured from the end of the bot's last turn, whether or not that
-      // was the opening. A real dry-run call hit this: right after Iris
-      // said "We'll connect you with one of our buyer agents" (a
-      // statement, not a question — nothing for the lead to say back),
-      // ~8s of normal silence fired this hook and replayed the ENTIRE
-      // opening line ("Hi, this is Iris... Am I speaking with [name]?")
-      // moments before the live transfer, making the lead think Iris was
-      // starting the call over. 15s doesn't fix the structural mismatch
-      // (Vapi has no way to scope this hook to "only before the first
-      // customer utterance"), but a normal post-statement pause is far
-      // less likely to run that long, while a genuinely silent pickup
-      // still gets caught well within a reasonable wait.
+      // lead utterance. "never" is Vapi's own documented default and
+      // makes this a genuine one-time-per-call nudge, as intended.
       hooks: [
         {
           on: "customer.speech.timeout",
-          do: [{ type: "say", exact: firstMessage }],
+          do: [{ type: "say", exact: idleNudgeLine }],
           options: { timeoutSeconds: 15, triggerMaxCount: 1, triggerResetMode: "never" },
         },
       ],
