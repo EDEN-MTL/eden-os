@@ -86,13 +86,37 @@ describe("buildCallPayload", () => {
     const payload = buildCallPayload(BASE_PARAMS, VAPI_CONFIG);
     expect(payload.assistant.firstMessageMode).toBe("assistant-waits-for-user");
     const hooks = payload.assistant.hooks;
-    expect(hooks).toHaveLength(1);
     expect(hooks?.[0]).toMatchObject({
       on: "customer.speech.timeout",
       options: { timeoutSeconds: 15, triggerMaxCount: 1, triggerResetMode: "never" },
     });
     expect(hooks?.[0]?.do?.[0]?.type).toBe("say");
-    expect(hooks?.[0]?.do?.[0]?.exact).toMatch(/still (there|with me|on the line)|still hear/i);
+    expect((hooks?.[0]?.do?.[0] as { type: "say"; exact: string }).exact).toMatch(/still (there|with me|on the line)|still hear/i);
+  });
+
+  /**
+   * Mark's spec, 2026-09-22: if the lead still doesn't respond even after
+   * the nudge above, Iris must give up and end the call rather than sit
+   * in dead air. A SEPARATE hook entry, not a second action tacked onto
+   * the same trigger — Vapi's customer.speech.timeout only fires one `do`
+   * per event, so ending the call in the same event as the nudge would
+   * hang up immediately with zero chance to actually reply. Its
+   * timeoutSeconds (30) is deliberately higher than the nudge hook's own
+   * (15) so it can only ever fire AFTER the nudge, never simultaneously —
+   * see calling.ts's own doc comment for why that ordering is guaranteed
+   * regardless of Vapi's exact per-hook timer reset semantics.
+   */
+  it("gives up and ends the call via a second, longer-timeout hook if the lead still never responds", () => {
+    const payload = buildCallPayload(BASE_PARAMS, VAPI_CONFIG);
+    const hooks = payload.assistant.hooks;
+    expect(hooks).toHaveLength(2);
+    expect(hooks?.[1]).toEqual({
+      on: "customer.speech.timeout",
+      do: [{ type: "tool", tool: { type: "endCall" } }],
+      options: { timeoutSeconds: 30, triggerMaxCount: 1, triggerResetMode: "never" },
+    });
+    // The giveup hook must only ever be reachable AFTER the nudge hook.
+    expect(hooks![1].options!.timeoutSeconds).toBeGreaterThan(hooks![0].options!.timeoutSeconds);
   });
 
   it("keeps the idle nudge short, brand-free, and free of an identify question, unlike the full opening line", () => {

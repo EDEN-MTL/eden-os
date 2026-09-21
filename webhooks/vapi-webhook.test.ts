@@ -18,7 +18,16 @@ vi.mock("../agents/iris", () => iris);
 vi.mock("../agents/iris/dial-pending", () => ({ reopenForNextAttempt: vi.fn() }));
 vi.mock("../shared/db", () => ({ query: vi.fn() }));
 
-import { describeOutcome, formatDuration, moveToFollowUpStage, postCallLogToSlack, tagSequenceExhausted, wasAnswered } from "./vapi-webhook";
+import {
+  customerSpokeAtAll,
+  describeOutcome,
+  formatDuration,
+  genuinelyAnswered,
+  moveToFollowUpStage,
+  postCallLogToSlack,
+  tagSequenceExhausted,
+  wasAnswered,
+} from "./vapi-webhook";
 
 afterEach(() => vi.clearAllMocks());
 
@@ -75,6 +84,48 @@ describe("wasAnswered", () => {
 });
 
 /**
+ * Real gap found live 2026-09-22: calling.ts's new idle-timeout endCall
+ * hook (gives up on a lead who never responds even after the "are you
+ * still there?" nudge) reports endedReason "assistant-ended-call" —
+ * exactly the same as a genuine, real, completed conversation that Iris
+ * wrapped up normally. wasAnswered's allowlist alone can't tell these
+ * apart; only checking whether the customer actually said anything can.
+ */
+describe("customerSpokeAtAll", () => {
+  it("is true when the customer said real words at any point", () => {
+    expect(customerSpokeAtAll({ messages: [{ role: "user", message: "Hello?" }] })).toBe(true);
+    expect(customerSpokeAtAll({ messages: [{ role: "bot", message: "Hi" }, { role: "user", message: "Yeah" }] })).toBe(true);
+  });
+
+  it("is false when the customer never spoke at all", () => {
+    expect(customerSpokeAtAll({ messages: [{ role: "bot", message: "Sorry, are you still there?" }] })).toBe(false);
+    expect(customerSpokeAtAll({ messages: [] })).toBe(false);
+    expect(customerSpokeAtAll({})).toBe(false);
+  });
+
+  it("ignores a user turn with empty/whitespace-only content", () => {
+    expect(customerSpokeAtAll({ messages: [{ role: "user", message: "   " }] })).toBe(false);
+    expect(customerSpokeAtAll({ messages: [{ role: "user", message: "" }] })).toBe(false);
+  });
+});
+
+describe("genuinelyAnswered", () => {
+  const spoke = { messages: [{ role: "user", message: "Hello?" }] };
+  const silent = { messages: [{ role: "bot", message: "Sorry, are you still there?" }] };
+
+  it("matches wasAnswered for every reason except assistant-ended-call", () => {
+    expect(genuinelyAnswered("assistant-forwarded-call", silent)).toBe(true);
+    expect(genuinelyAnswered("voicemail", spoke)).toBe(false);
+    expect(genuinelyAnswered("no-answer", spoke)).toBe(false);
+  });
+
+  it("treats assistant-ended-call as genuinely answered only if the customer actually spoke", () => {
+    expect(genuinelyAnswered("assistant-ended-call", spoke)).toBe(true);
+    expect(genuinelyAnswered("assistant-ended-call", silent)).toBe(false);
+  });
+});
+
+/**
  * Real gap found live 2026-09-20: nothing surfaced Iris's unanswered call
  * attempts anywhere in GHL. Mark's fix request had two parts: move the
  * lead's opportunity through the client's own DAY-N/WEEKEND follow-up
@@ -127,22 +178,37 @@ describe("moveToFollowUpStage", () => {
  * outside our own DB. Mark created #iris-call-logs and asked for every call
  * — real or test, any outcome — to post there.
  */
+const messageWithUserSpeech = { messages: [{ role: "user", message: "Hello?" }] };
+const messageWithNoUserSpeech = { messages: [{ role: "bot", message: "Sorry, are you still there?" }] };
+
 describe("describeOutcome", () => {
   it("labels a completed live transfer distinctly", () => {
-    expect(describeOutcome("assistant-forwarded-call")).toContain("Live transfer completed");
+    expect(describeOutcome("assistant-forwarded-call", messageWithUserSpeech)).toContain("Live transfer completed");
   });
 
   it("labels a voicemail drop distinctly", () => {
-    expect(describeOutcome("voicemail")).toContain("voicemail");
+    expect(describeOutcome("voicemail", messageWithNoUserSpeech)).toContain("voicemail");
   });
 
   it("labels a real conversation that didn't transfer", () => {
-    expect(describeOutcome("customer-ended-call")).toContain("Answered");
+    expect(describeOutcome("customer-ended-call", messageWithUserSpeech)).toContain("Answered");
   });
 
   it("labels anything else as no answer, including the reason", () => {
-    expect(describeOutcome("no-answer")).toContain("no-answer");
-    expect(describeOutcome(null)).toContain("unknown");
+    expect(describeOutcome("no-answer", messageWithNoUserSpeech)).toContain("no-answer");
+    expect(describeOutcome(null, messageWithNoUserSpeech)).toContain("unknown");
+  });
+
+  /**
+   * Real gap found live 2026-09-21/22: calling.ts's new idle-timeout
+   * endCall hook (gives up on a lead who never responds even after the
+   * "are you still there?" nudge) reports the exact same endedReason as
+   * a genuine assistant-wrapped-up conversation — "assistant-ended-call".
+   * The Slack log must tell these apart, not just the retry logic.
+   */
+  it("labels the idle-timeout giveup distinctly from a real assistant-ended conversation", () => {
+    expect(describeOutcome("assistant-ended-call", messageWithNoUserSpeech)).toMatch(/no response/i);
+    expect(describeOutcome("assistant-ended-call", messageWithUserSpeech)).toContain("Answered");
   });
 });
 

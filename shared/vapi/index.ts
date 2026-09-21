@@ -32,7 +32,20 @@ export interface VapiAssistantConfig {
    */
   hooks?: {
     on: string;
-    do: { type: "say"; exact: string | string[] }[];
+    /**
+     * "tool" added 2026-09-22, confirmed against Vapi's own OpenAPI schema
+     * (ToolCallHookAction / CreateEndCallToolDTO) — lets a hook end the
+     * call itself (the endCall tool, transient here, not a saved toolId)
+     * rather than only being able to say something. Used to give up on a
+     * lead who never responds even after the customer.speech.timeout
+     * hook's own "are you still there?" nudge — see
+     * agents/iris/calling.ts's hooks array for the two-hook design (a
+     * shorter-timeoutSeconds "say" hook, then a longer-timeoutSeconds
+     * "tool"/endCall hook) and webhooks/vapi-webhook.ts's
+     * customerSpokeAtAll for why the resulting endedReason needs special
+     * handling in end-of-call classification.
+     */
+    do: ({ type: "say"; exact: string | string[] } | { type: "tool"; tool: { type: "endCall" } })[];
     options?: { timeoutSeconds: number; triggerMaxCount?: number; triggerResetMode?: "onUserSpeech" | "never" };
   }[];
   model: {

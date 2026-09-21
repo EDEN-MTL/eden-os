@@ -66,6 +66,37 @@ export function wasAnswered(endedReason: string | null): boolean {
 }
 
 /**
+ * True if the customer actually said real words at some point in the
+ * call. Added 2026-09-22 alongside calling.ts's new idle-timeout endCall
+ * hook (gives up on a lead who never responds even after the "are you
+ * still there?" nudge) — Vapi reports that exactly the same way as any
+ * other assistant-initiated wrap-up, endedReason "assistant-ended-call",
+ * which wasAnswered's own allowlist already (correctly, for the normal
+ * case) treats as a real conversation. Without this check, a lead who
+ * NEVER said a word would get silently starved of a retry, the exact
+ * "called twice" bug wasAnswered's own design already guards against,
+ * just via a new path. Only ever consulted for that one ambiguous reason
+ * (see genuinelyAnswered below) — every other reason's classification is
+ * untouched by this.
+ */
+export function customerSpokeAtAll(message: Record<string, any>): boolean {
+  const msgs: any[] = message?.messages ?? [];
+  return msgs.some((m) => m?.role === "user" && typeof m?.message === "string" && m.message.trim() !== "");
+}
+
+/**
+ * The real "should this lead be retried" question — wasAnswered alone
+ * isn't enough once "assistant-ended-call" can mean either a genuine
+ * conversation OR the new idle-timeout giveup with zero lead speech. Every
+ * other endedReason keeps wasAnswered's existing, already-correct verdict.
+ */
+export function genuinelyAnswered(endedReason: string | null, message: Record<string, any>): boolean {
+  if (!wasAnswered(endedReason)) return false;
+  if (endedReason === "assistant-ended-call") return customerSpokeAtAll(message);
+  return true;
+}
+
+/**
  * Verifies the X-Vapi-Secret header against VAPI_WEBHOOK_SECRET, same
  * timing-safe-compare discipline as verifySlackSignature in
  * webhooks/slack-events.ts. Vapi also supports HMAC-signature and
@@ -86,9 +117,10 @@ function verifyVapiSecret(expectedSecret: string, req: Request): boolean {
 }
 
 /** Human-readable one-liner for a call's real outcome, for the Slack post below. */
-export function describeOutcome(endedReason: string | null): string {
+export function describeOutcome(endedReason: string | null, message: Record<string, any>): string {
   if (endedReason === TRANSFER_SUCCEEDED_REASON) return "✅ Live transfer completed";
   if (endedReason === "voicemail") return "📵 Left voicemail";
+  if (endedReason === "assistant-ended-call" && !customerSpokeAtAll(message)) return "🔇 No response (gave up after the idle nudge)";
   if (wasAnswered(endedReason)) return "💬 Answered (no transfer)";
   return `❌ No answer (\`${endedReason ?? "unknown"}\`)`;
 }
@@ -129,7 +161,7 @@ export async function postCallLogToSlack(clientId: string, contactId: string | n
 
     const text =
       `📞 *${who}* — ${clientId}\n` +
-      `${describeOutcome(endedReason)}\n` +
+      `${describeOutcome(endedReason, message)}\n` +
       `Duration: ${formatDuration(message?.durationSeconds)}`;
 
     await sendMessage("iris", { channel: CALL_LOG_CHANNEL, text });
@@ -177,7 +209,7 @@ async function handleEndOfCallReport(message: Record<string, any>): Promise<void
   // Only the automatic dial-pending queue's own retry cadence gets
   // reopened here — a manual test call (scripts/test-iris-call.ts etc.)
   // has no cadence to continue even if it happens to share a contactId.
-  if (row?.contact_id && row.triggered_by === "automatic" && !wasAnswered(endedReason)) {
+  if (row?.contact_id && row.triggered_by === "automatic" && !genuinelyAnswered(endedReason, message)) {
     await maybeReopenPendingCall(row.client_id, row.contact_id);
   }
 }

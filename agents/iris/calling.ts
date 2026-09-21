@@ -857,6 +857,27 @@ export function buildCallPayload(
           do: [{ type: "say", exact: idleNudgeLine }],
           options: { timeoutSeconds: 15, triggerMaxCount: 1, triggerResetMode: "never" },
         },
+        // Mark's spec, 2026-09-22: if the lead still doesn't respond even
+        // after the nudge above, Iris should give up and end the call
+        // rather than sit in dead air (or worse, drift back into
+        // qualification as if someone answered). A SEPARATE hook entry,
+        // not a second action on the same one — Vapi's customer.speech.
+        // timeout only lets one `do` fire per trigger event, so ending the
+        // call in the SAME event as the nudge would hang up immediately
+        // with zero chance for the lead to actually reply. Confirmed
+        // against Vapi's own docs: this timer "starts when the assistant
+        // finishes speaking" — since hook 1's nudge is itself the
+        // assistant speaking, this hook's own 30s clock effectively counts
+        // from right after the nudge finishes, not from the original
+        // silence. A plain timeoutSeconds > the nudge hook's own (30 vs
+        // 15) guarantees this can only ever fire AFTER the nudge, never
+        // before or simultaneously, regardless of the exact reset timing.
+        // triggerMaxCount stays 1/never — same one-shot reasoning as hook 1.
+        {
+          on: "customer.speech.timeout",
+          do: [{ type: "tool", tool: { type: "endCall" } }],
+          options: { timeoutSeconds: 30, triggerMaxCount: 1, triggerResetMode: "never" },
+        },
       ],
       model: {
         provider: vapiConfig.modelProvider,
