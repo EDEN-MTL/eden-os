@@ -1563,14 +1563,19 @@ export function buildVoicemailMessage(brandName: string, audience: "buyer" | "se
  * full history. Deliberately no brand/self-intro, Mark's call 2026-09-21:
  * every real occurrence of this hook firing has been mid-conversation,
  * never a genuine silent pickup, so these are written to sound like a
- * natural check-in wherever they land, not a from-scratch opener. Mark
- * also asked for more variations here so it doesn't repeat the identical
- * line every time it fires — same random-pick-at-build-time pattern as
- * buildVoicemailMessage above, for the same reason (this field is spoken
- * verbatim by Vapi, never by the model, so there's no live turn to vary
- * the wording in).
+ * natural check-in wherever they land, not a from-scratch opener.
+ *
+ * Mark's follow-up, 2026-09-22: the hook now fires up to 3 times before
+ * Iris gives up (triggerMaxCount: 3 in calling.ts), so this is exported
+ * as the raw array and passed directly as `exact` — confirmed against
+ * Vapi's own SayHookAction schema, passing a string array makes Vapi
+ * itself randomly pick ONE independently EACH time the hook fires, which
+ * is what actually avoids repeating the identical line across a single
+ * call's 3 attempts. A single pre-picked string (the old
+ * buildIdleNudgeLine, since removed) would have repeated the same pick
+ * for all 3 firings within one call — only varying call to call.
  */
-const IDLE_NUDGE_VARIATIONS = [
+export const IDLE_NUDGE_VARIATIONS = [
   "Sorry, are you still there?",
   "Hi, are you still with me?",
   "Sorry, can you still hear me okay?",
@@ -1578,7 +1583,3 @@ const IDLE_NUDGE_VARIATIONS = [
   "Sorry about that — are you still there?",
   "Just checking, are you still there?",
 ];
-
-export function buildIdleNudgeLine(): string {
-  return IDLE_NUDGE_VARIATIONS[Math.floor(Math.random() * IDLE_NUDGE_VARIATIONS.length)];
-}

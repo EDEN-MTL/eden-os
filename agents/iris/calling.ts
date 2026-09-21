@@ -23,7 +23,7 @@ import { createCall, getVapiEnvConfig, CreateCallPayload, VapiCallResult, VapiTo
 import { query } from "../../shared/db";
 import { isCallingEnabled } from "./calling-settings";
 import { CallIntent } from "./qualification";
-import { AGENT_UNAVAILABLE_LINE, buildCallOpeningLine, buildIdleNudgeLine, buildVoicemailMessage, expandBudgetShorthand } from "./scripts";
+import { AGENT_UNAVAILABLE_LINE, buildCallOpeningLine, buildVoicemailMessage, expandBudgetShorthand, IDLE_NUDGE_VARIATIONS } from "./scripts";
 
 export class CallingDisabledError extends Error {}
 
@@ -801,27 +801,6 @@ export function buildCallPayload(
     },
   });
 
-  // Spoken by the customer.speech.timeout hook below — deliberately SHORT
-  // and generic, not a repeat of firstMessage. Root cause found live
-  // 2026-09-21 (second real occurrence, after widening timeoutSeconds
-  // 8 -> 15 on 2026-09-19 didn't fix it): a real lead paused mid-thought
-  // answering an open-ended question ("what type of property is it?"),
-  // the hook fired at 15s, and replaying the FULL opening line ("Hi, this
-  // is Iris... Am I speaking with Bob?") sounded exactly like the call
-  // restarting from scratch — the lead hung up right after. Raising the
-  // timeout further has diminishing returns (a real person can easily
-  // pause 15-20s+ mid-thought) and doesn't fix the actual problem: Vapi
-  // has no way to scope this hook to "only before the customer's first
-  // utterance," so whatever it says has to make sense BOTH as a true
-  // silent-pickup opener AND as a mid-conversation check-in. Mark's call,
-  // 2026-09-21: keep it short with no brand/self-intro at all — every
-  // real occurrence of this hook firing has been mid-conversation, never
-  // a genuine silent pickup, so optimizing for "doesn't sound like a
-  // restart" wins over "also works as a from-scratch opener." Randomized
-  // across several short variations (buildIdleNudgeLine in scripts.ts) so
-  // it doesn't say the identical line every time it fires.
-  const idleNudgeLine = buildIdleNudgeLine();
-
   return {
     phoneNumberId: vapiConfig.phoneNumberId,
     customer: { number: params.phone },
@@ -840,39 +819,52 @@ export function buildCallPayload(
       // customer silence ANYWHERE in the call. Widening the number alone
       // has diminishing returns (a real person can easily pause 15-20s+
       // mid-thought answering an open-ended question), so as of
-      // 2026-09-21 the actual fix is WHAT gets said (idleNudgeLine above),
-      // not just when — see its own doc comment.
+      // 2026-09-21 the actual fix is WHAT gets said (IDLE_NUDGE_VARIATIONS,
+      // scripts.ts), not just when — see that constant's own doc comment.
       //
       // triggerResetMode fixed "onUserSpeech" → "never", 2026-09-15:
       // confirmed live (real transcript, timestamps) and via Vapi's own
       // docs that "onUserSpeech" actually RESETS the trigger count every
-      // time the lead speaks — meaning triggerMaxCount: 1 did NOT mean
-      // "once for the whole call" as this comment used to (wrongly)
-      // claim; it meant "once per silence gap," re-arming after every
-      // lead utterance. "never" is Vapi's own documented default and
-      // makes this a genuine one-time-per-call nudge, as intended.
+      // time the lead speaks — "never" is Vapi's own documented default
+      // and is what makes triggerMaxCount an honest total-per-call cap.
+      //
+      // triggerMaxCount raised 1 -> 3, 2026-09-22, Mark's explicit spec:
+      // try checking in at least 3 times before giving up, not just once.
+      // Since timeoutSeconds' clock "starts when the assistant finishes
+      // speaking" (Vapi's own docs), each firing re-arms the SAME 15s wait
+      // after itself, so this naturally produces 3 check-ins roughly 15s
+      // apart if the lead stays silent throughout, no extra hook needed
+      // for the repetition itself. `exact` is the raw variations array,
+      // not a single pre-picked string — Vapi randomly picks one PER
+      // firing on its own side, so a lead who gets all 3 nudges doesn't
+      // hear the identical line 3 times in a row.
       hooks: [
         {
           on: "customer.speech.timeout",
-          do: [{ type: "say", exact: idleNudgeLine }],
-          options: { timeoutSeconds: 15, triggerMaxCount: 1, triggerResetMode: "never" },
+          do: [{ type: "say", exact: IDLE_NUDGE_VARIATIONS }],
+          options: { timeoutSeconds: 15, triggerMaxCount: 3, triggerResetMode: "never" },
         },
-        // Mark's spec, 2026-09-22: if the lead still doesn't respond even
-        // after the nudge above, Iris should give up and end the call
-        // rather than sit in dead air (or worse, drift back into
+        // Mark's spec, 2026-09-22: if the lead still hasn't responded even
+        // after all 3 check-ins above, Iris should give up and end the
+        // call rather than sit in dead air (or worse, drift back into
         // qualification as if someone answered). A SEPARATE hook entry,
-        // not a second action on the same one — Vapi's customer.speech.
-        // timeout only lets one `do` fire per trigger event, so ending the
-        // call in the SAME event as the nudge would hang up immediately
-        // with zero chance for the lead to actually reply. Confirmed
-        // against Vapi's own docs: this timer "starts when the assistant
-        // finishes speaking" — since hook 1's nudge is itself the
-        // assistant speaking, this hook's own 30s clock effectively counts
-        // from right after the nudge finishes, not from the original
-        // silence. A plain timeoutSeconds > the nudge hook's own (30 vs
-        // 15) guarantees this can only ever fire AFTER the nudge, never
-        // before or simultaneously, regardless of the exact reset timing.
-        // triggerMaxCount stays 1/never — same one-shot reasoning as hook 1.
+        // not a 4th action tacked onto the nudge hook — Vapi's
+        // customer.speech.timeout only fires the `do` actions of the ONE
+        // hook whose own condition is met, so this needs its own trigger
+        // to end the call specifically once the nudges are exhausted,
+        // not as a side effect of any one of them.
+        //
+        // Every time the nudge hook fires, it resets THIS hook's clock too
+        // (both are keyed off the same "time since the assistant last
+        // spoke"), so as long as this hook's timeoutSeconds (30) is always
+        // greater than the nudge hook's per-trigger timeoutSeconds (15),
+        // the nudge hook will always win the race and re-arm this one —
+        // right up until its own triggerMaxCount (3) is used up, at which
+        // point it stops re-arming and this hook's own 30s window (after
+        // whichever nudge was last spoken) is what finally ends the call.
+        // That ordering guarantee holds regardless of the exact per-hook
+        // reset semantics, which is why 30 only needs to stay > 15, not
+        // some precisely-tuned number.
         {
           on: "customer.speech.timeout",
           do: [{ type: "tool", tool: { type: "endCall" } }],

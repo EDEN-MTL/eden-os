@@ -5,7 +5,6 @@ import {
   CHECK_AVAILABILITY_ACK_LINES,
   TRANSFER_ATTEMPT_LINES,
   TRANSFER_REINFORM_LINES,
-  buildIdleNudgeLine,
   buildLeadQualificationPrompt,
   buildVoicemailMessage,
   BUYER_QUESTIONS,
@@ -17,6 +16,7 @@ import {
   EDGE_CASE_RESPONSES,
   expandBudgetShorthand,
   extractFirstName,
+  IDLE_NUDGE_VARIATIONS,
   LIVE_TRANSFER_LINES,
   liveTransferLineForIntent,
   NATURAL_TRANSITIONS,
@@ -1255,28 +1255,30 @@ describe("buildVoicemailMessage", () => {
  * Mark's spec, 2026-09-21: after two real calls where this hook firing
  * mid-conversation (see calling.ts's own doc comment for the full
  * history) sounded like the call restarting, the fallback line was cut
- * down to a short, brand-free check-in — then Mark asked for more
- * variations so it doesn't say the exact same thing every time it fires.
+ * down to a short, brand-free check-in. Then, 2026-09-22: the hook now
+ * fires up to 3 times before Iris gives up, so this is exported as the
+ * raw array and passed directly to Vapi as `exact` — Vapi itself picks
+ * one independently EACH firing, which is what actually avoids repeating
+ * the identical line across a single call's 3 attempts (a single
+ * pre-picked string would only have varied call to call, not attempt to
+ * attempt within the same call).
  */
-describe("buildIdleNudgeLine", () => {
+describe("IDLE_NUDGE_VARIATIONS", () => {
+  it("has more than one variation, so a single call's 3 check-ins don't have to repeat", () => {
+    expect(IDLE_NUDGE_VARIATIONS.length).toBeGreaterThan(1);
+  });
+
   it("never mentions Iris or a brand name — every real occurrence of this hook has been mid-conversation, not a genuine silent pickup", () => {
-    for (let i = 0; i < 30; i++) {
-      const line = buildIdleNudgeLine();
+    for (const line of IDLE_NUDGE_VARIATIONS) {
       expect(line).not.toMatch(/iris/i);
       expect(line).not.toMatch(/percent|realty|floors/i);
     }
   });
 
   it("stays a single short sentence, never an identify question", () => {
-    for (let i = 0; i < 30; i++) {
-      const line = buildIdleNudgeLine();
+    for (const line of IDLE_NUDGE_VARIATIONS) {
       expect(line).not.toMatch(/am i speaking with/i);
       expect(line.length).toBeLessThan(60);
     }
-  });
-
-  it("produces more than one distinct variation across repeated calls", () => {
-    const seen = new Set(Array.from({ length: 40 }, () => buildIdleNudgeLine()));
-    expect(seen.size).toBeGreaterThan(1);
   });
 });
