@@ -74,31 +74,36 @@ describe("buildCallPayload", () => {
    * exactly like the call restarting, and the lead hung up right after.
    *
    * Fixed 2026-09-21 by changing WHAT gets said, not just when: a short,
-   * context-neutral "Sorry, this is Iris with {brand} — are you still
-   * there?" instead of the full self-intro + identify question. Still
-   * identifies Iris/the brand (works fine as a true silent-pickup opener)
-   * but reads naturally as a check-in rather than a restart if it fires
-   * mid-conversation, which is the failure mode both real occurrences hit.
+   * context-neutral check-in ("Sorry, are you still there?" and similar —
+   * see buildIdleNudgeLine in scripts.ts, randomized per call, Mark's own
+   * request so it doesn't repeat the identical line every time) instead of
+   * the full self-intro + identify question. Deliberately drops the
+   * brand/self-intro entirely, Mark's call: every real occurrence of this
+   * hook firing has been mid-conversation, never a genuine silent pickup,
+   * so it's written to read as a natural check-in wherever it lands.
    */
-  it("waits for the lead to speak first, with a one-shot 'are you still there?' nudge if they stay silent", () => {
+  it("waits for the lead to speak first, with a one-shot 'are you still there?'-style nudge if they stay silent", () => {
     const payload = buildCallPayload(BASE_PARAMS, VAPI_CONFIG);
     expect(payload.assistant.firstMessageMode).toBe("assistant-waits-for-user");
-    expect(payload.assistant.hooks).toEqual([
-      {
-        on: "customer.speech.timeout",
-        do: [{ type: "say", exact: `Sorry, this is Iris with ${BASE_PARAMS.brandName} — are you still there?` }],
-        options: { timeoutSeconds: 15, triggerMaxCount: 1, triggerResetMode: "never" },
-      },
-    ]);
+    const hooks = payload.assistant.hooks;
+    expect(hooks).toHaveLength(1);
+    expect(hooks?.[0]).toMatchObject({
+      on: "customer.speech.timeout",
+      options: { timeoutSeconds: 15, triggerMaxCount: 1, triggerResetMode: "never" },
+    });
+    expect(hooks?.[0]?.do?.[0]?.type).toBe("say");
+    expect(hooks?.[0]?.do?.[0]?.exact).toMatch(/still (there|with me|on the line)|still hear/i);
   });
 
-  it("keeps the idle nudge short and free of an identify question, unlike the full opening line", () => {
+  it("keeps the idle nudge short, brand-free, and free of an identify question, unlike the full opening line", () => {
     const payload = buildCallPayload(BASE_PARAMS, VAPI_CONFIG);
     const nudge = payload.assistant.hooks?.[0]?.do?.[0]?.exact ?? "";
     // A single short sentence, not the multi-clause self-intro + identify
     // question — length alone isn't a reliable proxy (a short firstName
     // can make firstMessage nearly as short), so check structure instead.
     expect(nudge).not.toMatch(/am i speaking with/i);
+    expect(nudge).not.toContain("Iris");
+    expect(nudge).not.toContain(BASE_PARAMS.brandName);
     expect(nudge.split(".").length).toBeLessThanOrEqual(2);
   });
 

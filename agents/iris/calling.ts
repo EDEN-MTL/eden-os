@@ -23,7 +23,7 @@ import { createCall, getVapiEnvConfig, CreateCallPayload, VapiCallResult, VapiTo
 import { query } from "../../shared/db";
 import { isCallingEnabled } from "./calling-settings";
 import { CallIntent } from "./qualification";
-import { AGENT_UNAVAILABLE_LINE, buildCallOpeningLine, buildVoicemailMessage, expandBudgetShorthand } from "./scripts";
+import { AGENT_UNAVAILABLE_LINE, buildCallOpeningLine, buildIdleNudgeLine, buildVoicemailMessage, expandBudgetShorthand } from "./scripts";
 
 export class CallingDisabledError extends Error {}
 
@@ -813,11 +813,14 @@ export function buildCallPayload(
   // pause 15-20s+ mid-thought) and doesn't fix the actual problem: Vapi
   // has no way to scope this hook to "only before the customer's first
   // utterance," so whatever it says has to make sense BOTH as a true
-  // silent-pickup opener AND as a mid-conversation check-in. This line
-  // still identifies Iris/the brand (so it works as a real opener) but
-  // skips the identify question and the rest of the self-intro, so it
-  // reads as a natural "still there?" nudge rather than a restart.
-  const idleNudgeLine = `Sorry, this is Iris with ${params.brandName} — are you still there?`;
+  // silent-pickup opener AND as a mid-conversation check-in. Mark's call,
+  // 2026-09-21: keep it short with no brand/self-intro at all — every
+  // real occurrence of this hook firing has been mid-conversation, never
+  // a genuine silent pickup, so optimizing for "doesn't sound like a
+  // restart" wins over "also works as a from-scratch opener." Randomized
+  // across several short variations (buildIdleNudgeLine in scripts.ts) so
+  // it doesn't say the identical line every time it fires.
+  const idleNudgeLine = buildIdleNudgeLine();
 
   return {
     phoneNumberId: vapiConfig.phoneNumberId,
