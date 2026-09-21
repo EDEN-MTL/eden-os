@@ -5,6 +5,7 @@ import {
   CHECK_AVAILABILITY_ACK_LINES,
   TRANSFER_ATTEMPT_LINES,
   TRANSFER_REINFORM_LINES,
+  buildIdleNudgeLine,
   buildLeadQualificationPrompt,
   buildVoicemailMessage,
   BUYER_QUESTIONS,
@@ -1247,5 +1248,35 @@ describe("buildVoicemailMessage", () => {
     const message = buildVoicemailMessage("3 Percent East Coast", "seller");
     expect(message).not.toMatch(/\d{1,2}(:\d{2})?\s*(am|pm)/i);
     expect(message).not.toMatch(/budget|pre-approved|timeline/i);
+  });
+});
+
+/**
+ * Mark's spec, 2026-09-21: after two real calls where this hook firing
+ * mid-conversation (see calling.ts's own doc comment for the full
+ * history) sounded like the call restarting, the fallback line was cut
+ * down to a short, brand-free check-in — then Mark asked for more
+ * variations so it doesn't say the exact same thing every time it fires.
+ */
+describe("buildIdleNudgeLine", () => {
+  it("never mentions Iris or a brand name — every real occurrence of this hook has been mid-conversation, not a genuine silent pickup", () => {
+    for (let i = 0; i < 30; i++) {
+      const line = buildIdleNudgeLine();
+      expect(line).not.toMatch(/iris/i);
+      expect(line).not.toMatch(/percent|realty|floors/i);
+    }
+  });
+
+  it("stays a single short sentence, never an identify question", () => {
+    for (let i = 0; i < 30; i++) {
+      const line = buildIdleNudgeLine();
+      expect(line).not.toMatch(/am i speaking with/i);
+      expect(line.length).toBeLessThan(60);
+    }
+  });
+
+  it("produces more than one distinct variation across repeated calls", () => {
+    const seen = new Set(Array.from({ length: 40 }, () => buildIdleNudgeLine()));
+    expect(seen.size).toBeGreaterThan(1);
   });
 });

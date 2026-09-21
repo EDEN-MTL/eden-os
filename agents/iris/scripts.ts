@@ -1556,3 +1556,29 @@ export function buildVoicemailMessage(brandName: string, audience: "buyer" | "se
   const template = variations[Math.floor(Math.random() * variations.length)];
   return template.replace("{brand}", brandName);
 }
+
+/**
+ * Spoken by the customer.speech.timeout hook (calling.ts) when the lead
+ * goes quiet for too long — see that call site's own doc comment for the
+ * full history. Deliberately no brand/self-intro, Mark's call 2026-09-21:
+ * every real occurrence of this hook firing has been mid-conversation,
+ * never a genuine silent pickup, so these are written to sound like a
+ * natural check-in wherever they land, not a from-scratch opener. Mark
+ * also asked for more variations here so it doesn't repeat the identical
+ * line every time it fires — same random-pick-at-build-time pattern as
+ * buildVoicemailMessage above, for the same reason (this field is spoken
+ * verbatim by Vapi, never by the model, so there's no live turn to vary
+ * the wording in).
+ */
+const IDLE_NUDGE_VARIATIONS = [
+  "Sorry, are you still there?",
+  "Hi, are you still with me?",
+  "Sorry, can you still hear me okay?",
+  "Hello, are you still on the line?",
+  "Sorry about that — are you still there?",
+  "Just checking, are you still there?",
+];
+
+export function buildIdleNudgeLine(): string {
+  return IDLE_NUDGE_VARIATIONS[Math.floor(Math.random() * IDLE_NUDGE_VARIATIONS.length)];
+}
