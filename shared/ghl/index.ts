@@ -688,11 +688,21 @@ export async function sendEmail(
   });
 }
 
+/**
+ * Real bug found live 2026-09-22: this never accepted an apiKey, unlike
+ * every other function in this file — ghlRequest's apiKey defaults to
+ * process.env.GHL_API_KEY, which this multi-tenant setup never sets (real
+ * client credentials live in the ghl_credentials DB table instead, per
+ * getGhlConfig). Calling this for any real client threw "GHL_API_KEY not
+ * set" outright; it had never actually been exercised before.
+ */
 export async function getConversations(
   contactId: string,
-  locationId?: string
+  locationId?: string,
+  apiKey?: string
 ): Promise<any> {
   return ghlRequest(`/conversations/search?contactId=${contactId}`, {
     locationId,
+    apiKey,
   });
 }
