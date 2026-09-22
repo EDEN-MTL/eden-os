@@ -124,6 +124,30 @@ describe("IrisAgent.getSystemPrompt reflects that calling is actually live", () 
 });
 
 /**
+ * Real gap found live 2026-09-22: after a real, correct, tool-backed
+ * answer about a lead, Mark said "ok great" and Iris repeated the whole
+ * breakdown again plus an invented apology about "guessing instead of
+ * using the tool" that wasn't true. He said "thanks" next and she did it
+ * a SECOND time, nearly verbatim — confirmed via the raw conversation
+ * history (agent_conversations) that each of his messages appears exactly
+ * once, so this was never a duplicate-delivery bug, purely a model
+ * behavior gap.
+ */
+describe("IrisAgent.getSystemPrompt recognizes conversation-closing messages", () => {
+  it("tells Iris a short acknowledgment means the conversation is over, not a new question", () => {
+    const prompt = irisAgent.getSystemPrompt();
+    expect(prompt).toMatch(/ok great/i);
+    expect(prompt).toMatch(/thanks/i);
+    expect(prompt).toMatch(/conversation is over|means the conversation/i);
+  });
+
+  it("tells Iris not to invent a self-critical narrative about an earlier turn that was actually correct", () => {
+    const prompt = irisAgent.getSystemPrompt();
+    expect(prompt).toMatch(/never invent a self-critical/i);
+  });
+});
+
+/**
  * Real gap found live 2026-09-23: Mark asked Iris (the Slack bot) what
  * time a real call attempt happened, and she had no tool to answer with —
  * only the universal save_note every agent gets for free. These cover the
