@@ -12,6 +12,9 @@ vi.mock("../shared/ghl", () => ghl);
 const slack = vi.hoisted(() => ({ sendMessage: vi.fn() }));
 vi.mock("../shared/slack", () => slack);
 
+const conversationMemory = vi.hoisted(() => ({ appendHistory: vi.fn() }));
+vi.mock("../shared/conversation-memory", () => conversationMemory);
+
 const iris = vi.hoisted(() => ({ loadIrisConfig: vi.fn() }));
 vi.mock("../agents/iris", () => iris);
 
@@ -264,6 +267,33 @@ describe("postCallLogToSlack", () => {
   it("never throws even if Slack itself fails", async () => {
     slack.sendMessage.mockRejectedValue(new Error("Slack API down"));
     await expect(postCallLogToSlack("3-percent-east-coast", null, message, "voicemail")).resolves.toBeUndefined();
+  });
+
+  /**
+   * Real gap found live 2026-09-23: Mark replied in the Slack THREAD under
+   * one of these exact posts asking a follow-up question, and Iris had no
+   * idea what she'd just posted — the historyKey a thread reply looks up
+   * (channel:<realChannelId>:<rootTs>) had never been seeded, since this
+   * call site posts via sendMessage() directly, bypassing generateReply
+   * entirely.
+   */
+  it("seeds the post into Iris's own conversation history, keyed by Slack's real resolved channel id + this message's ts", async () => {
+    slack.sendMessage.mockResolvedValue({ ts: "5555.6666", channel: "C0REALCALLLOGS" });
+
+    await postCallLogToSlack("3-percent-east-coast", null, message, "voicemail");
+
+    expect(conversationMemory.appendHistory).toHaveBeenCalledWith(
+      "iris",
+      "channel:C0REALCALLLOGS:5555.6666",
+      "assistant",
+      expect.stringContaining("+17097496049")
+    );
+  });
+
+  it("does not throw, and the post still succeeds, if sendMessage's response is missing ts/channel", async () => {
+    slack.sendMessage.mockResolvedValue({});
+    await expect(postCallLogToSlack("3-percent-east-coast", null, message, "voicemail")).resolves.toBeUndefined();
+    expect(conversationMemory.appendHistory).not.toHaveBeenCalled();
   });
 });
 
