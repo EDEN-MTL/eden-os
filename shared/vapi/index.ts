@@ -106,16 +106,24 @@ export interface VapiAssistantConfig {
    * Vapi's own detection ("vapi" provider) — per their docs, combines audio
    * analysis and transcription to catch voicemail within the first few
    * seconds, and hands off cleanly if a real person picks up mid-greeting.
-   * Paired with voicemailMessage below: without it, Iris just talks into
-   * the machine as if a person answered live (exactly what's happened
-   * twice already testing against a brand-new number).
+   * Kept ON even after Mark's 2026-09-23 call to stop leaving voicemails —
+   * without it, Iris just talks into the machine as if a person answered
+   * live (exactly what's happened twice already testing against a
+   * brand-new number). Detection and "what to say" are separate concerns.
    */
   voicemailDetection?: {
     provider: "vapi";
     backoffPlan?: { startAtSeconds?: number; frequencySeconds?: number; maxRetries?: number };
     beepMaxAwaitSeconds?: number;
   };
-  /** What Iris actually leaves on voicemail once detected — see scripts.ts's buildVoicemailMessage. */
+  /**
+   * What Iris says once voicemail is detected, if anything. Mark's call,
+   * 2026-09-23: stop leaving a voicemail message at all — per Vapi's own
+   * docs, this field "if unspecified, it will hang up," so omitting it
+   * entirely (not a separate off-switch) is the actual "no voicemail"
+   * behavior. buildVoicemailMessage (scripts.ts) was removed along with
+   * this field's last caller.
+   */
   voicemailMessage?: string;
 }
 

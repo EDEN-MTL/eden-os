@@ -146,35 +146,22 @@ describe("buildCallPayload", () => {
     expect(payload.assistant.server).toEqual({ url: "https://example.com/webhooks/vapi", secret: "test-webhook-secret" });
   });
 
-  it("enables voicemail detection and sets a real message, not just talking into the machine", () => {
+  /**
+   * Mark's call, 2026-09-23: stop leaving a voicemail message at all.
+   * Detection itself must stay ON (Vapi has no other way to tell a real
+   * pickup apart from a machine — Iris would otherwise talk into the
+   * machine as if a person answered, the original bug this config exists
+   * to prevent), but per Vapi's own docs voicemailMessage "if unspecified,
+   * it will hang up" — omitting the field entirely IS the "no voicemail"
+   * behavior, not a separate flag to set.
+   */
+  it("keeps voicemail detection on but leaves no message, so it just hangs up", () => {
     const payload = buildCallPayload(BASE_PARAMS, VAPI_CONFIG);
     expect(payload.assistant.voicemailDetection).toEqual({
       provider: "vapi",
       backoffPlan: { startAtSeconds: 5, frequencySeconds: 5, maxRetries: 5 },
     });
-    expect(payload.assistant.voicemailMessage).toContain("Iris");
-    expect(payload.assistant.voicemailMessage).toContain(BASE_PARAMS.brandName);
-  });
-
-  /**
-   * Mark's spec, 2026-09-20: the voicemail must use the lead's real
-   * buyer/seller classification, never guess it — this checks the actual
-   * wiring from params.intent through to the message content, distinct
-   * from buildVoicemailMessage's own unit tests (scripts.test.ts) which
-   * only cover the string-selection logic in isolation.
-   */
-  it("mentions buying for a buyer/upgrading/unknown intent and selling for a seller/downsize one", () => {
-    const buyerLike = buildCallPayload({ ...BASE_PARAMS, intent: "unknown" }, VAPI_CONFIG);
-    expect(buyerLike.assistant.voicemailMessage).toMatch(/buy/i);
-
-    const upgrading = buildCallPayload({ ...BASE_PARAMS, intent: "upgrading" }, VAPI_CONFIG);
-    expect(upgrading.assistant.voicemailMessage).toMatch(/buy/i);
-
-    const seller = buildCallPayload({ ...BASE_PARAMS, intent: "seller" }, VAPI_CONFIG);
-    expect(seller.assistant.voicemailMessage).toMatch(/sell/i);
-
-    const downsize = buildCallPayload({ ...BASE_PARAMS, intent: "downsize" }, VAPI_CONFIG);
-    expect(downsize.assistant.voicemailMessage).toMatch(/sell/i);
+    expect(payload.assistant.voicemailMessage).toBeUndefined();
   });
 
   it("wires only the always-available endCall tool when nothing else (transferNumber, contactId) is given", () => {

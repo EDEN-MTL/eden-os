@@ -23,7 +23,7 @@ import { createCall, getVapiEnvConfig, CreateCallPayload, VapiCallResult, VapiTo
 import { query } from "../../shared/db";
 import { isCallingEnabled } from "./calling-settings";
 import { CallIntent } from "./qualification";
-import { AGENT_UNAVAILABLE_LINE, buildCallOpeningLine, buildVoicemailMessage, expandBudgetShorthand, IDLE_NUDGE_VARIATIONS } from "./scripts";
+import { AGENT_UNAVAILABLE_LINE, buildCallOpeningLine, expandBudgetShorthand, IDLE_NUDGE_VARIATIONS } from "./scripts";
 
 export class CallingDisabledError extends Error {}
 
@@ -180,12 +180,6 @@ export function buildCallPayload(
   // as its own later turn, driven by the system prompt.
   const firstMessage = buildCallOpeningLine(params.firstName, params.brandName);
 
-  // Hoisted here (not just inside the transferNumber block below) so the
-  // voicemail message can use the SAME already-resolved classification
-  // rather than re-deriving or guessing it — see buildVoicemailMessage's
-  // own doc comment on why it must never guess.
-  const audience = params.intent === "seller" || params.intent === "downsize" ? "seller" : "buyer";
-
   const tools: VapiTool[] = [];
 
   // Mark's spec, 2026-09-12: a backup for the lead's own name being wrong
@@ -256,6 +250,7 @@ export function buildCallPayload(
   }
 
   if (params.transferNumber) {
+    const audience = params.intent === "seller" || params.intent === "downsize" ? "seller" : "buyer";
     const briefing = buildAgentBriefing(params, audience);
     // The full transfer-assistant opening turn, same root-cause fix as the
     // main call's firstMessage (2026-09-16): under firstMessageMode
@@ -921,8 +916,15 @@ export function buildCallPayload(
       // are real options if this recurs again at 5s/5s, but a provider
       // change has cost/latency tradeoffs worth a deliberate call, not a
       // silent swap.
+      // Mark's call, 2026-09-23: stop leaving a voicemail message at all —
+      // detection itself stays ON (still needed to correctly tell a real
+      // pickup apart from a machine, per the comment above), but per
+      // Vapi's own docs, voicemailMessage "if unspecified, it will hang
+      // up." Omitting it entirely is the actual "no voicemail" behavior,
+      // not disabling voicemailDetection (which would regress to Iris
+      // talking into the machine as if a person answered — the original
+      // bug this whole config exists to prevent).
       voicemailDetection: { provider: "vapi", backoffPlan: { startAtSeconds: 5, frequencySeconds: 5, maxRetries: 5 } },
-      voicemailMessage: buildVoicemailMessage(params.brandName, audience),
     },
   };
 }
