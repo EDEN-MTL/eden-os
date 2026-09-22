@@ -29,7 +29,8 @@ import { buildLeadQualificationPrompt, extractFirstName } from "./scripts";
 import { placeCall, CallingDisabledError } from "./calling";
 import { decideNextAttempt, nextAttemptTime, clampToLegalCallingWindow } from "./cadence";
 import { transferNumberForIntent, callbackCalendarForIntent } from "./qualification";
-import { getGhlConfig, getLocationTimezone } from "../../shared/ghl";
+import { classifyInboundText, lastInboundText } from "./text-signals";
+import { getGhlConfig, getLocationTimezone, addContactTags } from "../../shared/ghl";
 
 /**
  * Client timezone for cadence slot times (10am/2pm local — see
@@ -194,19 +195,55 @@ async function resolveOne(row: PendingCallRow): Promise<void> {
     return;
   }
 
-  const attemptNumber = row.attempts_made + 1;
-  const transferNumber = transferNumberForIntent(config, lead.intent) ?? undefined;
-  const calendarId = callbackCalendarForIntent(config, lead.intent) ?? undefined;
-
   // Mark's call, 2026-09-06: follow GHL's own configured location timezone
   // live, rather than trusting a static config value that can drift out of
   // sync with whatever's actually set there — same "verify against live
   // data" discipline as everything else this codebase reads from GHL.
   // Falls back to config.timezone (then the hardcoded default) if the
-  // live fetch fails, same fail-safe pattern used everywhere else.
+  // live fetch fails, same fail-safe pattern used everywhere else. Moved
+  // ahead of the placeCall try-block, 2026-09-22, so the text-signal check
+  // right below can reuse the same ghlConfig/timezone instead of a second
+  // live fetch.
   const ghlConfig = await getGhlConfig(row.client_id).catch(() => null);
   const liveTimezone = ghlConfig ? await getLocationTimezone(ghlConfig.locationId, ghlConfig.apiKey).catch(() => null) : null;
-  const promptConfig = { ...config, timezone: liveTimezone || config.timezone };
+  const timezone = liveTimezone || config.timezone || CLIENT_TIMEZONE;
+  const promptConfig = { ...config, timezone };
+
+  // Mark's spec, 2026-09-22: a real example — Catherine texting to ask for
+  // a 6pm callback — before Iris ever calls a lead, check whether they've
+  // already told us (by text) not to call, or to call at a specific time
+  // instead. Rides this SAME pre-dial recheck (already runs before every
+  // attempt) rather than a new GHL webhook — see text-signals.ts's own doc
+  // comment for why. Best-effort: any failure here (no GHL config, the
+  // fetch itself failing) just falls through to the normal dial, same
+  // fail-toward-"proceed as before" philosophy as the rest of this file.
+  if (ghlConfig) {
+    const text = await lastInboundText(row.contact_id, ghlConfig.locationId, ghlConfig.apiKey);
+    const signal = await classifyInboundText(text ?? "", new Date(), timezone);
+
+    if (signal.type === "opt_out") {
+      await finish(row.id, "skipped", "lead opted out via text — cadence stopped");
+      await addContactTags(row.contact_id, ["do not call"], ghlConfig.locationId, ghlConfig.apiKey).catch((error) => {
+        console.error(`[IRS] Failed to tag contact ${row.contact_id} as "do not call":`, error instanceof Error ? error.message : error);
+      });
+      return;
+    }
+
+    if (signal.type === "schedule_for") {
+      await query(
+        `UPDATE iris_pending_calls
+         SET call_after = $2, status = 'pending', is_explicit_callback = true,
+             resolution_reason = 'lead requested this time via text', resolved_at = NULL
+         WHERE id = $1`,
+        [row.id, signal.when]
+      );
+      return;
+    }
+  }
+
+  const attemptNumber = row.attempts_made + 1;
+  const transferNumber = transferNumberForIntent(config, lead.intent) ?? undefined;
+  const calendarId = callbackCalendarForIntent(config, lead.intent) ?? undefined;
 
   try {
     const result = await placeCall({

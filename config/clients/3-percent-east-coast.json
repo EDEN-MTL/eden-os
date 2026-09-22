@@ -247,8 +247,9 @@
       "live transfered",
       "no show",
       "showed up",
-      "connection made"
+      "connection made",
+      "do not call"
     ],
-    "touchedTagsNote": "Evidence that a lead has actually been SPOKEN TO, so Iris should not open a new outreach sequence. 'replied' was originally in this list and has been removed: it is applied when a lead answers the text automation, which is engagement, not a conversation. 10 of 150 contacts carry 'replied' with no other contact evidence — they answered a text and nobody ever called them. Those are among the hottest leads on the board and blocking them was exactly backwards. Note this gates whether Iris STARTS a sequence, not each call within it: Iris dials morning and afternoon for 3-4 days and owns that cadence itself."
+    "touchedTagsNote": "Evidence that a lead has actually been SPOKEN TO, so Iris should not open a new outreach sequence. 'replied' was originally in this list and has been removed: it is applied when a lead answers the text automation, which is engagement, not a conversation. 10 of 150 contacts carry 'replied' with no other contact evidence — they answered a text and nobody ever called them. Those are among the hottest leads on the board and blocking them was exactly backwards. Note this gates whether Iris STARTS a sequence, not each call within it: Iris dials morning and afternoon for 3-4 days and owns that cadence itself. 'do not call' added 2026-09-22 — the tag agents/iris/dial-pending.ts applies when a lead opts out via text (see text-signals.ts); listed here too as defense-in-depth so any FUTURE re-intake of this same contact (a new form submission down the road) is also blocked, not just the in-flight sequence at opt-out time."
   }
 }
