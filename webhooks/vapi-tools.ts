@@ -4,7 +4,7 @@ import { getGhlConfig, addContactTags, updateContact, getCustomFieldDefs, getCal
 import { buildKeyToId } from "../agents/scout/intake";
 import { loadIrisConfig } from "../agents/iris";
 import { scheduleExplicitCallback } from "../agents/iris/dial-pending";
-import { isWithinLegalCallingWindow } from "../agents/iris/cadence";
+import { isWithinLegalCallingWindow, formatLocal } from "../agents/iris/cadence";
 
 /**
  * Server-side handler for the schedule_callback function tool Vapi calls
@@ -90,25 +90,6 @@ export function parseToolArguments(call: ToolCall): Record<string, unknown> {
   } catch {
     return {};
   }
-}
-
-/**
- * Full precision, for the GHL contact-note write only (recordCallbackNote)
- * — a database record a human might read later, not something Iris speaks
- * aloud. Defaults to St. John's for back-compat with existing callers that
- * never pass one — real per-client callers below resolve config.timezone
- * first (see IrisConfig.timezone's own doc comment for why this was wrong
- * for any client other than 3% East Coast).
- */
-function formatLocal(iso: string, timeZone: string = "America/St_Johns"): string {
-  return new Date(iso).toLocaleString("en-US", {
-    timeZone,
-    weekday: "long",
-    month: "long",
-    day: "numeric",
-    hour: "numeric",
-    minute: "2-digit",
-  });
 }
 
 /**

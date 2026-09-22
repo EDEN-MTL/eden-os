@@ -1,24 +1,183 @@
 import { readFileSync } from "fs";
 import { join } from "path";
 import { BaseAgent } from "../base-agent";
+import { Attachment, ToolDef } from "../../shared/claude";
 import { eventBus } from "../../shared/events";
 import { NormalisedLead } from "../scout/intake";
 import { IrisConfig } from "./qualification";
 import { query } from "../../shared/db";
-import { clampToLegalCallingWindow } from "./cadence";
+import { clampToLegalCallingWindow, formatLocal } from "./cadence";
+import { getGhlConfig, getLocationTimezone, listContactsPaginated } from "../../shared/ghl";
+
+/**
+ * The one client Iris actually runs against in production today — same
+ * single-client gap already flagged for VAPI_PHONE_NUMBER_ID and
+ * dial-pending.ts's CLIENT_TIMEZONE. Used as the default clientId for
+ * these Slack tools so "look up [lead]" doesn't require Mark/Jacob to
+ * specify a client every time; move to a real per-conversation resolution
+ * once a second client goes live.
+ */
+const DEFAULT_CLIENT_ID = "3-percent-east-coast";
+
+const IRIS_TOOLS: ToolDef[] = [
+  {
+    name: "iris_lookup_lead",
+    description:
+      "Looks up a specific lead's real call history — last attempt time (in the client's own local timezone), outcome, how many attempts so far, and current status (still pending, exhausted, opted out, etc.). Use this whenever asked about a NAMED lead, e.g. \"what time was the last call to Catherine\" or \"did we reach Bob yet\" — never guess or estimate from memory, the data changes constantly.",
+    input_schema: {
+      type: "object",
+      properties: {
+        nameOrPhone: { type: "string", description: "The lead's name or phone number, exactly as given." },
+        clientId: { type: "string", description: `Which client's leads to search. Defaults to "${DEFAULT_CLIENT_ID}" (the only one live today) if not given.` },
+      },
+      required: ["nameOrPhone"],
+    },
+  },
+  {
+    name: "iris_pipeline_stats",
+    description:
+      "Real counts of where Iris's outreach queue stands right now: how many leads are still pending a call, how many are mid-cadence, how many have exhausted every attempt with no answer, how many opted out via text, how many live-transferred. Use this for any \"how's Iris doing\" / overall-numbers question — never estimate.",
+    input_schema: {
+      type: "object",
+      properties: {
+        clientId: { type: "string", description: `Which client to report on. Defaults to "${DEFAULT_CLIENT_ID}" if not given.` },
+      },
+    },
+  },
+];
+
+interface PendingRow {
+  status: string;
+  resolution_reason: string | null;
+  is_explicit_callback: boolean;
+  call_after: Date;
+  attempts_made: number;
+}
+interface CallLogRow {
+  status: string;
+  ended_reason: string | null;
+  created_at: Date;
+  ended_at: Date | null;
+}
+
+/** Live per-client timezone, same fallback chain dial-pending.ts's resolveOne already uses. */
+async function resolveTimezone(clientId: string): Promise<string> {
+  const config = loadIrisConfig(clientId);
+  const ghlConfig = await getGhlConfig(clientId).catch(() => null);
+  const live = ghlConfig ? await getLocationTimezone(ghlConfig.locationId, ghlConfig.apiKey).catch(() => null) : null;
+  return live || config?.timezone || "America/St_Johns";
+}
 
 class IrisAgent extends BaseAgent {
   constructor() {
     super("iris", "Iris", "IRS");
   }
 
-  // This prompt drives Iris's Slack persona. Slack is the only channel wired
-  // up right now (Vapi voice and GHL SMS aren't connected to Iris yet), and
-  // Slack is inherently internal — everyone reaching Iris here is a
-  // teammate, never a lead. She should talk about her qualification work,
-  // not perform it on whoever's chatting with her. If a lead-facing channel
-  // (Vapi/SMS) gets wired up later, that call needs its own prompt — don't
-  // reuse this one for it.
+  protected getTools(): ToolDef[] {
+    return IRIS_TOOLS;
+  }
+
+  protected async executeTool(name: string, input: any, _attachment?: Attachment): Promise<string> {
+    switch (name) {
+      case "iris_lookup_lead": {
+        const nameOrPhone = String(input?.nameOrPhone ?? "").trim();
+        if (!nameOrPhone) return JSON.stringify({ error: "nameOrPhone is required" });
+        const clientId = String(input?.clientId ?? DEFAULT_CLIENT_ID);
+
+        const ghlConfig = await getGhlConfig(clientId);
+        if (!ghlConfig) return JSON.stringify({ error: `No GHL config for client "${clientId}"` });
+
+        let contact: { id: string; name: string } | null = null;
+        for await (const c of listContactsPaginated(ghlConfig.locationId, { limit: 5, query: nameOrPhone, apiKey: ghlConfig.apiKey })) {
+          const name = [c.firstName, c.lastName].filter(Boolean).join(" ") || c.contactName || nameOrPhone;
+          contact = { id: c.id, name };
+          break;
+        }
+        if (!contact) return JSON.stringify({ found: false, searchedFor: nameOrPhone });
+
+        const timezone = await resolveTimezone(clientId);
+        const [pending, callLog] = await Promise.all([
+          query<PendingRow>(
+            `SELECT status, resolution_reason, is_explicit_callback, call_after, attempts_made
+             FROM iris_pending_calls WHERE client_id = $1 AND contact_id = $2`,
+            [clientId, contact.id]
+          ),
+          query<CallLogRow>(
+            `SELECT status, ended_reason, created_at, ended_at FROM iris_call_log
+             WHERE client_id = $1 AND contact_id = $2 ORDER BY created_at DESC LIMIT 5`,
+            [clientId, contact.id]
+          ),
+        ]);
+
+        const lastCall = callLog[0];
+        const row = pending[0];
+        return JSON.stringify({
+          found: true,
+          name: contact.name,
+          lastCallAttempt: lastCall ? formatLocal(lastCall.created_at.toISOString(), timezone) : null,
+          lastCallOutcome: lastCall?.ended_reason ?? null,
+          attemptsMade: row?.attempts_made ?? callLog.length,
+          currentStatus: row?.status ?? "no active sequence",
+          currentStatusReason: row?.resolution_reason ?? null,
+          nextAttempt: row && row.status === "pending" ? formatLocal(row.call_after.toISOString(), timezone) : null,
+          isExplicitCallback: row?.is_explicit_callback ?? false,
+          recentCallHistory: callLog.map((c) => ({
+            when: formatLocal(c.created_at.toISOString(), timezone),
+            outcome: c.ended_reason,
+          })),
+        });
+      }
+
+      case "iris_pipeline_stats": {
+        const clientId = String(input?.clientId ?? DEFAULT_CLIENT_ID);
+        const [statusRows, optedOutRows, exhaustedRows] = await Promise.all([
+          query<{ status: string; count: string }>(
+            `SELECT status, COUNT(*) as count FROM iris_pending_calls WHERE client_id = $1 GROUP BY status`,
+            [clientId]
+          ),
+          query<{ count: string }>(
+            `SELECT COUNT(*) as count FROM iris_pending_calls
+             WHERE client_id = $1 AND resolution_reason = 'lead opted out via text — cadence stopped'`,
+            [clientId]
+          ),
+          // "placed" alone doesn't distinguish a lead who was just recently
+          // reached from one whose whole 8-attempt sequence quietly ran out
+          // with no answer (reopenForNextAttempt leaves the row's status
+          // exactly as markPlaced last set it — see that function's own
+          // doc comment — there's no distinct terminal status for this).
+          // attempts_made >= 8 is a real proxy tied to the CURRENT cadence
+          // (attemptsPerDay 2 x days 4), not a universal constant — these
+          // are also the leads tagged "iris no answer" in GHL (see
+          // webhooks/vapi-webhook.ts's tagSequenceExhausted).
+          query<{ count: string }>(
+            `SELECT COUNT(*) as count FROM iris_pending_calls WHERE client_id = $1 AND status = 'placed' AND attempts_made >= 8`,
+            [clientId]
+          ),
+        ]);
+
+        const byStatus = Object.fromEntries(statusRows.map((r) => [r.status, Number(r.count)]));
+        return JSON.stringify({
+          clientId,
+          byStatus,
+          optedOutViaText: Number(optedOutRows[0]?.count ?? 0),
+          likelyExhaustedNoAnswer: Number(exhaustedRows[0]?.count ?? 0),
+          note: "likelyExhaustedNoAnswer is a heuristic (attempts_made >= 8, the current 2/day x 4-day cadence total) — there's no separate terminal status for a fully-exhausted sequence versus one that succeeded on its last try.",
+        });
+      }
+
+      default:
+        throw new Error(`Iris has no tool named "${name}"`);
+    }
+  }
+
+  // This prompt drives Iris's Slack persona — a colleague reporting on her
+  // own real, live calling work, not a script performed on whoever's
+  // chatting with her. Rewritten 2026-09-23: the previous version was
+  // written 2026-09-01, the very first day of the Vapi integration, and
+  // still said "voice calling isn't wired up yet" — false for over a week
+  // by the time this was caught (Mark asked a real question about a real
+  // lead's call history and Iris had no way to answer it, surfacing both
+  // this staleness AND that she had zero tools — see getTools() above).
   //
   // context.senderName comes from BaseAgent.handleMessage resolving the
   // Slack userId via shared/slack's getUserRealName — it's null when that
@@ -36,51 +195,72 @@ EDEN operating system for real estate client acquisition.
 
 You are talking to a member of the Eden team in Slack, not to a lead — most
 often Jacob or Mark, your actual workmates, not prospects. ${senderLine}
-Speak as a colleague reporting on your own work and expertise, the way you'd
-talk to someone you work with every day — never run a qualification script
-on the person you're chatting with, never ask them for their name,
-timeline, budget, or financing status, and never treat them as a
-prospective buyer, seller, or downsizer. If someone asks who you work with,
-Jacob and Mark are on the Eden team you support.
+Speak as a colleague reporting on your own work, the way you'd talk to
+someone you work with every day — never run a qualification script on the
+person you're chatting with, never ask them for their name, timeline,
+budget, or financing status, and never treat them as a prospective buyer,
+seller, or downsizer. If someone asks who you work with, Jacob and Mark are
+on the Eden team you support.
 
 The client you support is 3 Percent East Coast — a 3% Realty brokerage
 serving St. John's, Newfoundland & Labrador, Canada (CAD). That's background
 you know, not who you are in THIS conversation: the "I'm IRIS, the virtual
 assistant for 3% Realty East Coast" introduction and brand voice belong to
-an actual lead conversation — a live call once Vapi is wired up, or a GHL
-text thread — never to Slack. Don't reintroduce yourself that way here, and
-don't lead with the brand name when just answering a coworker's question.
+an actual lead conversation (a live call, or a GHL text thread) — never to Slack.
+Don't reintroduce yourself that way here.
 
-## Your job, once you're actually on a call or texting a lead through GHL
-Gather the missing qualifying info — buy/sell/downsize intent, area,
-timeline, financing — decide fit, and get qualified leads connected to the
-right agent. Live transfer is always the first priority; booking a phone
-appointment is the fallback only when a transfer genuinely can't happen
+## You are LIVE — this is not a demo
+Voice calling runs on Vapi and has been fully live for 3-percent-east-coast
+since 2026-09-16: real leads get real automatic calls, real live transfers
+to the buyer/seller ring groups, the works. If asked whether you're live,
+say yes plainly — don't hedge or undersell it.
+
+## What you actually do on a real call
+Gather whatever qualifying info a lead's own form/CRM record didn't already
+answer — buy/sell/downsize intent, area, timeline, financing — then live-
+transfer if they qualify, or offer a callback if a transfer can't happen
 right now. Qualification is NOT a pipeline stage — a lead counts as
-qualified when it carries the "appt booked" or "live transferred" tag,
-never by stage.
+qualified when it carries the "appt booked" or "live transferred" tag, never
+by stage. You write results back as structured GHL fields, never prose into
+isa_notes; financing is cash / pre-approved / in-progress / not-approved,
+not a yes/no (a cash buyer is the strongest lead on the board, not a failed
+approval).
 
-Voice calling runs on Vapi, which isn't wired up yet, so you aren't actually
-placing or receiving qualification calls right now — say so plainly if asked
-whether you're live.
+## The full automatic cadence you own
+Scout fires lead.enriched once, at intake — you own everything after that.
+2 attempts/day for 4 days (8 total), re-checking the lead fresh before EVERY
+single attempt, not just at the start — both because the human ISA might
+reach them first, and because you now also read the lead's own text replies
+before calling: a clear "don't call me" permanently stops the sequence and
+tags the contact "do not call"; a specific time request ("call me at 6")
+reschedules the next attempt to exactly that time instead of guessing. If a
+lead never answers any of the 8 attempts, the sequence ends, the contact
+gets tagged "iris no answer" so a human knows to follow up manually, and the
+opportunity moves through the client's own DAY-N/WEEKEND follow-up pipeline
+stages the whole way so the board shows exactly how many times each lead's
+been tried.
 
-## What you can report on here in Slack
-- Cadence: morning + afternoon outreach attempts for the first 3-4 days (see
-  iris.outreachCadence in client config), which you own — Scout only fires
-  once, at intake. A contact must be re-checked before every attempt, not
-  just at the start of the sequence, since the human ISA works leads too.
-- How you write results to GHL: structured fields (timeline, budget,
-  financing, intent), never prose into isa_notes. Financing is not yes/no —
-  cash, pre-approved, in-progress, and not-approved are all different, and a
-  cash buyer is the strongest lead on the board, not a failed approval.
-- Your guardrails once actually qualifying a lead: no legal, investment,
-  mortgage, or financial advice; never claim to be human or a licensed
-  agent; never pressure a lead or undermine an existing agent relationship;
-  follow up at most twice if a lead goes quiet, then stop.
+If a call goes to voicemail, you say NOTHING at all and just hang up — no
+message is left anymore (changed 2026-09-23). Every finished call — real or
+test, any outcome — posts to #iris-call-logs automatically.
 
-Never invent a location, calendar id, or field key that isn't in this
-client's config — say you don't know rather than guessing. Be concise and
-specific, the way a sharp ISA reports to their broker.`;
+## Guardrails, always
+No legal, investment, mortgage, or financial advice. Never claim to be
+human or a licensed agent. Never pressure a lead or undermine an existing
+agent relationship. Never invent a location, calendar id, or field key that
+isn't in this client's config — say you don't know rather than guessing.
+
+## Answering questions about specific leads or overall numbers, here in Slack
+You have real tools now — iris_lookup_lead (a specific lead's real call
+history, last-attempt time in their own local timezone, outcome, current
+status) and iris_pipeline_stats (overall counts: pending, exhausted,
+opted-out, etc.). ALWAYS call the relevant tool for a factual question like
+this rather than guessing or estimating from memory — the data changes
+constantly, and a wrong guess is worse than admitting you'd need to look it
+up. If a tool comes back with nothing found, say so plainly rather than
+inventing a plausible-sounding answer.
+
+Be concise and specific, the way a sharp ISA reports to their broker.`;
   }
 }
 
