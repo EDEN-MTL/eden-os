@@ -218,8 +218,8 @@ async function resolveOne(row: PendingCallRow): Promise<void> {
   // fetch itself failing) just falls through to the normal dial, same
   // fail-toward-"proceed as before" philosophy as the rest of this file.
   if (ghlConfig) {
-    const text = await lastInboundText(row.contact_id, ghlConfig.locationId, ghlConfig.apiKey);
-    const signal = await classifyInboundText(text ?? "", new Date(), timezone);
+    const inbound = await lastInboundText(row.contact_id, ghlConfig.locationId, ghlConfig.apiKey);
+    const signal = await classifyInboundText(inbound?.text ?? "", new Date(), timezone, inbound?.precedingOutbound ?? null);
 
     if (signal.type === "opt_out") {
       await finish(row.id, "skipped", "lead opted out via text — cadence stopped");

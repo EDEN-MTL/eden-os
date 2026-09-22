@@ -16,7 +16,7 @@
  * (defaults to "none" whenever intent isn't clearly one of the other two).
  */
 import { ask } from "../../shared/claude";
-import { getConversations } from "../../shared/ghl";
+import { getConversationMessages, getConversations } from "../../shared/ghl";
 import { clampToLegalCallingWindow } from "./cadence";
 
 export type TextSignal = { type: "opt_out" } | { type: "schedule_for"; when: Date } | { type: "none" };
@@ -30,11 +30,15 @@ export type TextSignal = { type: "opt_out" } | { type: "schedule_for"; when: Dat
 const MIN_MINUTES_OUT = 10;
 const MAX_DAYS_OUT = 14;
 
-function buildSystemPrompt(nowIso: string, timezone: string): string {
+function buildSystemPrompt(nowIso: string, timezone: string, precedingOutbound: string | null): string {
+  const contextLine = precedingOutbound
+    ? `\nFor context, this is the lead's reply to our own immediately preceding text: "${precedingOutbound}" — read the lead's message as an answer to that, not in isolation. A bare answer like "6 pm" replying to "what's a good time to speak?" is a clear schedule_for, not a "none".\n`
+    : "";
+
   return `You are classifying a single inbound SMS reply from a real estate lead, to decide whether an automated calling assistant should change its behavior toward them. Respond with ONLY a single JSON object — no other text, no markdown code fence.
 
 Current date/time: ${nowIso} (timezone: ${timezone}). Use this as the reference point for resolving any relative time the lead mentions.
-
+${contextLine}
 Classify the message into exactly ONE of these three shapes:
 
 {"type": "opt_out"} — the lead is clearly asking not to be called, to stop contacting them, or is declining any further contact. Examples: "stop calling me", "please don't call", "not interested, remove me", "quit texting/calling this number".
@@ -66,12 +70,17 @@ function extractJsonObject(raw: string): unknown {
  * a misread one (wrongly opting out a real lead, or scheduling a call for
  * a nonsense time).
  */
-export async function classifyInboundText(text: string, now: Date, timezone: string): Promise<TextSignal> {
+export async function classifyInboundText(
+  text: string,
+  now: Date,
+  timezone: string,
+  precedingOutbound: string | null = null
+): Promise<TextSignal> {
   if (!text || !text.trim()) return { type: "none" };
 
   let raw: string;
   try {
-    raw = await ask(buildSystemPrompt(now.toISOString(), timezone), text, { maxTokens: 200, temperature: 0 });
+    raw = await ask(buildSystemPrompt(now.toISOString(), timezone, precedingOutbound), text, { maxTokens: 200, temperature: 0 });
   } catch (error) {
     console.error("[IRS] classifyInboundText: Claude call failed:", error instanceof Error ? error.message : error);
     return { type: "none" };
@@ -93,18 +102,45 @@ export async function classifyInboundText(text: string, now: Date, timezone: str
   return { type: "none" };
 }
 
+export interface InboundTextResult {
+  text: string;
+  /** The nearest outbound SMS before it, for classifyInboundText's context — see that function's own doc comment for why a bare "6 pm" needs this. */
+  precedingOutbound: string | null;
+}
+
 /**
- * The lead's own last inbound SMS text, or null if there isn't one /
- * the fetch fails. Thin wrapper over getConversations (shared/ghl) —
- * kept here rather than called inline so dial-pending.ts's resolveOne
- * doesn't need to know GHL's conversation-summary response shape.
+ * The lead's own most recent inbound SMS, or null if there isn't one /
+ * the fetch fails. Real bug fixed 2026-09-22: getConversations' SUMMARY
+ * only exposes the single most recent message overall, whichever
+ * direction — NOT the lead's most recent message. Confirmed live: Catherine
+ * Nonsense (contact woXhOaQpB5i96Kpy6lyT) replied "6 pm" to our own "what's
+ * a good time to speak?" text, but an automated follow-up went out 2
+ * seconds later, making the conversation summary's lastMessageDirection
+ * "outbound" again — the earlier version of this function (checking only
+ * that summary field) found nothing and her real reply was never even
+ * classified. Now fetches the full thread (getConversationMessages) and
+ * walks it (GHL returns newest-first) to find the lead's actual most
+ * recent inbound SMS, skipping non-SMS activity log entries (stage moves,
+ * "Opportunity updated," etc.) on both sides.
  */
-export async function lastInboundText(contactId: string, locationId: string, apiKey: string): Promise<string | null> {
+export async function lastInboundText(contactId: string, locationId: string, apiKey: string): Promise<InboundTextResult | null> {
   try {
-    const result = await getConversations(contactId, locationId, apiKey);
-    const conversations: any[] = result?.conversations ?? [];
-    const convo = conversations.find((c) => c?.lastMessageDirection === "inbound" && typeof c?.lastMessageBody === "string");
-    return convo?.lastMessageBody?.trim() || null;
+    const convoResult = await getConversations(contactId, locationId, apiKey);
+    const conversationId: string | undefined = convoResult?.conversations?.[0]?.id;
+    if (!conversationId) return null;
+
+    const msgResult = await getConversationMessages(conversationId, locationId, apiKey);
+    const messages: any[] = msgResult?.messages?.messages ?? [];
+    const sms = messages.filter((m) => m?.messageType === "TYPE_SMS" && typeof m?.body === "string" && m.body.trim() !== "");
+
+    const inboundIndex = sms.findIndex((m) => m.direction === "inbound");
+    if (inboundIndex === -1) return null;
+
+    // sms is newest-first, so the preceding (chronologically earlier)
+    // outbound message is the NEXT outbound one AFTER this index.
+    const precedingOutbound = sms.slice(inboundIndex + 1).find((m) => m.direction === "outbound")?.body?.trim() ?? null;
+
+    return { text: sms[inboundIndex].body.trim(), precedingOutbound };
   } catch (error) {
     console.error(`[IRS] lastInboundText failed for contact ${contactId}:`, error instanceof Error ? error.message : error);
     return null;

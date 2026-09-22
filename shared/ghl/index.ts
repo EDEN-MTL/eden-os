@@ -706,3 +706,28 @@ export async function getConversations(
     apiKey,
   });
 }
+
+/**
+ * The full message list for one conversation, newest first per GHL's own
+ * ordering — added 2026-09-22 alongside the fix above, for the SAME class
+ * of bug one level up: getConversations' summary only ever exposes the
+ * single most recent message (whichever direction), which is NOT the same
+ * as the lead's most recent message. Confirmed live against a real case
+ * (Catherine Nonsense, contact woXhOaQpB5i96Kpy6lyT): she replied "6 pm"
+ * to our automated "what's a good time to speak?" text, but an automated
+ * follow-up ("why are you looking to sell?") went out 2 seconds later,
+ * making the conversation SUMMARY's lastMessageDirection "outbound" again
+ * — her real reply was invisible to anything that only checked the
+ * summary. See agents/iris/text-signals.ts's lastInboundText for the
+ * actual fix built on this.
+ */
+export async function getConversationMessages(
+  conversationId: string,
+  locationId?: string,
+  apiKey?: string
+): Promise<any> {
+  return ghlRequest(`/conversations/${conversationId}/messages`, {
+    locationId,
+    apiKey,
+  });
+}
