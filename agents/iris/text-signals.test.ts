@@ -3,7 +3,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 const claude = vi.hoisted(() => ({ ask: vi.fn() }));
 vi.mock("../../shared/claude", () => claude);
 
-const ghl = vi.hoisted(() => ({ getConversations: vi.fn() }));
+const ghl = vi.hoisted(() => ({ getConversations: vi.fn(), getConversationMessages: vi.fn() }));
 vi.mock("../../shared/ghl", () => ghl);
 
 import { classifyInboundText, lastInboundText } from "./text-signals";
@@ -44,6 +44,24 @@ describe("classifyInboundText", () => {
     expect(result).toEqual({ type: "none" });
   });
 
+  /**
+   * Real bug found live 2026-09-22: Catherine's actual reply was just
+   * "6 pm" — no verb, no "call me", answering our own preceding text
+   * ("what would be a good time to speak?"). Passes the preceding
+   * outbound message as context so this is readable as a clear
+   * schedule_for rather than something ambiguous enough to fall back to
+   * "none". This test only checks that the context string reaches
+   * Claude's system prompt — the actual interpretation is Claude's job,
+   * mocked here.
+   */
+  it("passes the preceding outbound message as context, for a bare reply like Catherine's real '6 pm'", async () => {
+    claude.ask.mockResolvedValue('{"type": "schedule_for", "when": "2026-09-22T20:30:00.000Z"}');
+    await classifyInboundText("6 pm", NOW, TIMEZONE, "What would be a good time to speak?");
+    const [systemPrompt] = claude.ask.mock.calls[0];
+    expect(systemPrompt).toContain("What would be a good time to speak?");
+    expect(systemPrompt.toLowerCase()).toContain("reply to our own");
+  });
+
   it("treats an empty or whitespace-only message as 'none' without calling Claude", async () => {
     expect(await classifyInboundText("", NOW, TIMEZONE)).toEqual({ type: "none" });
     expect(await classifyInboundText("   ", NOW, TIMEZONE)).toEqual({ type: "none" });
@@ -82,25 +100,56 @@ describe("classifyInboundText", () => {
   });
 });
 
+/**
+ * Real bug found live 2026-09-22: getConversations' SUMMARY only exposes
+ * the single most recent message overall, whichever direction — NOT the
+ * lead's most recent message. Confirmed on a real contact (Catherine
+ * Nonsense): she replied "6 pm", but an automated follow-up text went out
+ * 2 seconds later, making the conversation summary's lastMessageDirection
+ * "outbound" again. lastInboundText now fetches the full thread instead.
+ */
 describe("lastInboundText", () => {
-  it("returns the last message body when the most recent conversation was inbound", async () => {
-    ghl.getConversations.mockResolvedValue({
-      conversations: [{ lastMessageDirection: "inbound", lastMessageBody: "Call me at 6pm please" }],
+  const activityEntry = { messageType: "TYPE_ACTIVITY_OPPORTUNITY", direction: "outbound", body: "Opportunity updated" };
+
+  it("finds the lead's real last inbound SMS even when a later outbound message makes the conversation summary look outbound-last (the real Catherine case)", async () => {
+    ghl.getConversations.mockResolvedValue({ conversations: [{ id: "convo-1" }] });
+    ghl.getConversationMessages.mockResolvedValue({
+      messages: {
+        messages: [
+          activityEntry,
+          { messageType: "TYPE_SMS", direction: "outbound", body: "Quick question, why are you looking to sell?" },
+          { messageType: "TYPE_SMS", direction: "inbound", body: "6 pm" },
+          { messageType: "TYPE_SMS", direction: "outbound", body: "What would be a good time to speak?" },
+          { messageType: "TYPE_SMS", direction: "outbound", body: "Hey Catherine, saw you submitted the form..." },
+          activityEntry,
+        ],
+      },
     });
-    expect(await lastInboundText("contact-1", "loc-1", "key-1")).toBe("Call me at 6pm please");
-    expect(ghl.getConversations).toHaveBeenCalledWith("contact-1", "loc-1", "key-1");
+
+    const result = await lastInboundText("contact-1", "loc-1", "key-1");
+    expect(result).toEqual({ text: "6 pm", precedingOutbound: "What would be a good time to speak?" });
   });
 
-  it("returns null when the most recent message was outbound (nothing new from the lead)", async () => {
-    ghl.getConversations.mockResolvedValue({
-      conversations: [{ lastMessageDirection: "outbound", lastMessageBody: "Hi, just following up!" }],
+  it("returns null when the lead has never sent an inbound SMS", async () => {
+    ghl.getConversations.mockResolvedValue({ conversations: [{ id: "convo-1" }] });
+    ghl.getConversationMessages.mockResolvedValue({
+      messages: { messages: [{ messageType: "TYPE_SMS", direction: "outbound", body: "Hi, just following up!" }, activityEntry] },
     });
     expect(await lastInboundText("contact-1", "loc-1", "key-1")).toBeNull();
   });
 
-  it("returns null when there are no conversations at all", async () => {
+  it("returns null when there's no conversation at all", async () => {
     ghl.getConversations.mockResolvedValue({ conversations: [] });
     expect(await lastInboundText("contact-1", "loc-1", "key-1")).toBeNull();
+    expect(ghl.getConversationMessages).not.toHaveBeenCalled();
+  });
+
+  it("returns precedingOutbound: null when the inbound message is the very first one in the thread", async () => {
+    ghl.getConversations.mockResolvedValue({ conversations: [{ id: "convo-1" }] });
+    ghl.getConversationMessages.mockResolvedValue({
+      messages: { messages: [{ messageType: "TYPE_SMS", direction: "inbound", body: "Hello?" }] },
+    });
+    expect(await lastInboundText("contact-1", "loc-1", "key-1")).toEqual({ text: "Hello?", precedingOutbound: null });
   });
 
   it("returns null rather than throwing when the GHL fetch fails", async () => {
