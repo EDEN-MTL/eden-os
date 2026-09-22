@@ -337,8 +337,31 @@ export abstract class BaseAgent {
   /**
    * Proactively post a message to a channel (not in response to a message).
    * Used for alerts, reports, status updates.
+   *
+   * Real gap found live 2026-09-23: Mark replied in a Slack THREAD under
+   * one of Iris's own proactive posts (a #iris-call-logs entry naming a
+   * specific lead) asking a follow-up question, and Iris had zero
+   * awareness of what she'd just posted — "no name, contact ID... has
+   * been mentioned in our conversation yet." Root cause: handleMessage's
+   * historyKey for a thread reply is `channel:<channelId>:<rootTs>` —
+   * but a proactive post made via sendMessage() directly (bypassing
+   * generateReply entirely) never gets appendHistory'd anywhere, so that
+   * key starts empty the moment someone actually replies in the thread.
+   * Seeding it here, right after posting, means any FUTURE reply in this
+   * exact thread (matched by Slack's own real resolved channel id + this
+   * message's own ts, both from sendMessage's response — never the
+   * possibly-human-readable `channel` string that was passed in, which a
+   * reply event will never carry) finds this message already in history,
+   * as though it were a normal assistant turn. Best-effort: a failure
+   * here must never surface as a failure to post the message itself.
    */
   async post(channel: string, text: string): Promise<void> {
-    await sendMessage(this.id, { channel, text });
+    const result = await sendMessage(this.id, { channel, text });
+    if (result?.channel && result?.ts) {
+      const historyKey = `channel:${result.channel}:${result.ts}`;
+      await appendHistory(this.id, historyKey, "assistant", text).catch((error) => {
+        console.error(`[${this.code}] Failed to seed thread history after a proactive post:`, error instanceof Error ? error.message : error);
+      });
+    }
   }
 }

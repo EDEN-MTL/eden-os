@@ -434,3 +434,65 @@ describe("BaseAgent.handleMessage — error handling", () => {
     await expect(agent.handleMessage(slackMessage())).resolves.toBeUndefined();
   });
 });
+
+/**
+ * Real gap found live 2026-09-23: Mark replied in a Slack THREAD under one
+ * of Iris's own proactive posts, asking a follow-up question about the
+ * lead it named — and Iris had zero awareness of what she'd just posted.
+ * Root cause: a proactive post() bypasses generateReply/appendHistory
+ * entirely, so the historyKey a future thread reply constructs
+ * (channel:<channelId>:<rootTs>, from handleMessage) started empty. post()
+ * now seeds that exact key right after posting.
+ */
+describe("BaseAgent.post — seeds thread history for a future reply", () => {
+  it("appends its own text to history, keyed by Slack's REAL resolved channel id and this message's own ts", async () => {
+    vi.mocked(sendMessage).mockResolvedValueOnce({ ts: "1234.5678", channel: "C0REALCHANNEL" });
+    const agent = new PlainAgent();
+
+    await agent.post("iris-call-logs", "📞 Catherine Nonsense — voicemail");
+
+    expect(appendHistory).toHaveBeenCalledWith("eden", "channel:C0REALCHANNEL:1234.5678", "assistant", "📞 Catherine Nonsense — voicemail");
+  });
+
+  it("uses the REAL resolved channel id, not the possibly human-readable string that was passed in", async () => {
+    // A reply event from Slack always carries the real channel id — seeding
+    // history under the human-readable name instead would never match.
+    vi.mocked(sendMessage).mockResolvedValueOnce({ ts: "1111.2222", channel: "C0ACTUALID" });
+    const agent = new PlainAgent();
+
+    await agent.post("iris-call-logs", "some post");
+
+    const [, historyKey] = vi.mocked(appendHistory).mock.calls[0];
+    expect(historyKey).not.toContain("iris-call-logs");
+    expect(historyKey).toContain("C0ACTUALID");
+  });
+
+  it("does not throw, and still posted successfully, if seeding history fails", async () => {
+    vi.mocked(sendMessage).mockResolvedValueOnce({ ts: "1111.2222", channel: "C0ACTUALID" });
+    vi.mocked(appendHistory).mockRejectedValueOnce(new Error("DB down"));
+    const agent = new PlainAgent();
+
+    await expect(agent.post("iris-call-logs", "some post")).resolves.toBeUndefined();
+  });
+
+  it("skips seeding entirely (no crash) if Slack's response is missing ts/channel for any reason", async () => {
+    vi.mocked(sendMessage).mockResolvedValueOnce({});
+    const agent = new PlainAgent();
+
+    await agent.post("iris-call-logs", "some post");
+
+    expect(appendHistory).not.toHaveBeenCalled();
+  });
+
+  it("means a later thread reply's loadHistory actually finds the seeded post", async () => {
+    // End-to-end proof of the fix: post(), then simulate handleMessage
+    // resolving the SAME historyKey a real Slack thread-reply event would
+    // construct (channel:<channelId>:<rootTs>) and confirm it's there.
+    vi.mocked(sendMessage).mockResolvedValueOnce({ ts: "9999.0001", channel: "C0THREADROOT" });
+    const agent = new PlainAgent();
+    await agent.post("iris-call-logs", "📞 Catherine Nonsense — voicemail");
+
+    const history = await loadHistory("eden", "channel:C0THREADROOT:9999.0001");
+    expect(history).toEqual([{ role: "assistant", content: "📞 Catherine Nonsense — voicemail" }]);
+  });
+});

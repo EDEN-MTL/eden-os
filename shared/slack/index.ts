@@ -94,7 +94,7 @@ export async function downloadFile(agentId: AgentId, url: string): Promise<Buffe
 export async function sendMessage(
   agentId: AgentId,
   message: SlackOutgoingMessage
-): Promise<{ ts?: string }> {
+): Promise<{ ts?: string; channel?: string }> {
   const client = getClient(agentId);
 
   try {
@@ -107,7 +107,13 @@ export async function sendMessage(
     console.log(
       `[SLACK] ${agentId.toUpperCase()} → #${message.channel}: ${message.text.slice(0, 80)}...`
     );
-    return { ts: response.ts };
+    // channel here is Slack's own RESOLVED channel id — message.channel
+    // above might have been a human-readable name ("iris-call-logs"), but
+    // an incoming reply event always carries the real id. Callers that
+    // seed conversation history for a future thread reply (see
+    // BaseAgent.post()) need this exact id, not whatever string was passed
+    // in, or the history key a later reply constructs will never match.
+    return { ts: response.ts, channel: response.channel };
   } catch (error) {
     console.error(`[SLACK] Error sending as ${agentId}:`, error);
     throw error;
