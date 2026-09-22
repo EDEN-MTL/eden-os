@@ -190,3 +190,26 @@ export function nextAttemptTime(
 
   return zonedHourToUtc(target.getFullYear(), target.getMonth(), target.getDate(), hour, timeZone);
 }
+
+/**
+ * Full-precision local time, e.g. "Tuesday, September 22 at 6:30 PM" — for
+ * a human reading a record later (a GHL contact note, or a Slack answer to
+ * "what time was the last attempt"), not something Iris speaks aloud on a
+ * call. Moved here 2026-09-23 from webhooks/vapi-tools.ts (its original,
+ * private home) so agents/iris/index.ts's Slack tools can share it — this
+ * file already owns every other timezone-formatting concern in Iris.
+ * Defaults to St. John's for back-compat with existing callers that never
+ * pass one — real per-client callers resolve config.timezone first (see
+ * IrisConfig.timezone's own doc comment for why that default was wrong for
+ * any client other than 3% East Coast).
+ */
+export function formatLocal(iso: string, timeZone: string = "America/St_Johns"): string {
+  return new Date(iso).toLocaleString("en-US", {
+    timeZone,
+    weekday: "long",
+    month: "long",
+    day: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+  });
+}
