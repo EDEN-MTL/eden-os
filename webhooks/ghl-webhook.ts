@@ -6,6 +6,7 @@ import { handleEmailReply, handleReply } from "../agents/quarry/outreach";
 import { getLeadByGhlContactId, updateLead } from "../agents/quarry/store";
 import { loadQuarryConfig } from "../agents/quarry/config";
 import { irisHandleInboundSms } from "../agents/iris/sms";
+import { emberHandleInboundMessage, emberHandleStageUpdate, emberHandleTagUpdate } from "../agents/ember/webhooks";
 
 /**
  * GHL webhook handler.
@@ -59,8 +60,10 @@ export function createGHLRouter(): Router {
           break;
 
         case "ContactTagUpdate":
-          // Tags changed — could trigger nurture path changes
+          // Ember reactivates a tracked nurture lead on a configured
+          // renewed-interest tag; anything else is a no-op there.
           console.log(`[GHL] Contact tags updated: ${data.id}`);
+          if (data.id) await emberHandleTagUpdate(data.id, Array.isArray(data.tags) ? data.tags : []);
           break;
 
         default:
@@ -83,6 +86,9 @@ export function createGHLRouter(): Router {
           console.log(
             `[GHL] Pipeline stage changed: ${body.id} → ${body.pipelineStageId}`
           );
+          if (body.id && body.pipelineStageId) {
+            await emberHandleStageUpdate(body.id, body.pipelineStageId, body.status);
+          }
           break;
 
         default:
@@ -130,7 +136,11 @@ export function createGHLRouter(): Router {
         // Self-scoped: does nothing if this contact has no
         // iris_pending_calls row at all, or one already resolved, so a
         // genuinely unrelated contact still falls through here untouched.
-        if (parsed.channel === "sms") await irisHandleInboundSms(parsed.contactId, parsed.text);
+        // Iris first (she owns a lead with an open iris_pending_calls
+        // row); anything she doesn't claim falls through to Ember, which
+        // self-scopes to contacts it's nurturing.
+        const irisHandled = parsed.channel === "sms" && (await irisHandleInboundSms(parsed.contactId, parsed.text));
+        if (!irisHandled) await emberHandleInboundMessage(parsed.contactId, parsed.text);
         return;
       }
 
