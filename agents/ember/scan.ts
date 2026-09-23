@@ -12,9 +12,9 @@
  * which only ever fire if a human built a workflow for them in the GHL UI
  * (gotcha 4 in CLAUDE.md). The scan works whether or not that exists.
  *
- * The scan never sends anything, and runs even with ember.enabled off —
- * it only reads GHL and writes our own table, which is how a dry run is
- * validated before the kill switch is flipped.
+ * The scan never sends anything itself. The scheduler only runs it for
+ * clients with ember.enabled on; with it off, the only way in is a manual
+ * dryRun, which reads GHL and writes nothing.
  */
 import { deriveWon, derivePipelineActive, OutcomeStageMap } from "../forge/ads/attribution";
 import { getGhlConfig, listOpportunitiesPaginated, listPipelines } from "../../shared/ghl";
@@ -218,7 +218,17 @@ export async function runEmberScanForClient(
     throw new Error(`ember.pipelineId "${config.pipelineId}" resolved to no stages for ${clientId}`);
   }
 
-  const tracked = await trackedByOpportunity(clientId);
+  let tracked: Map<string, NurtureLead>;
+  try {
+    tracked = await trackedByOpportunity(clientId);
+  } catch (error: any) {
+    // 42P01 = relation does not exist: schema.sql hasn't been applied to
+    // this database yet (it runs on server boot). A dry run is read-only
+    // and useful before that first deploy, so it treats that as "nothing
+    // tracked yet". A real run must not — it would enroll into nowhere.
+    if (!(dryRun && error?.code === "42P01")) throw error;
+    tracked = new Map();
+  }
   const name = clientName(clientId);
   const report: ScanReport = {
     clientId,

@@ -14,8 +14,8 @@ import { join } from "path";
 export class EmberDisabledError extends Error {
   constructor(clientId: string) {
     super(
-      `ember.enabled is false for "${clientId}" — nothing is sent until it's flipped on ` +
-        `(scripts/enable-ember-nurture.ts, after the cost is confirmed with Jacob).`
+      `ember.enabled is false for "${clientId}" — nothing is sent until it's set true in ` +
+        `config/clients/${clientId}.json, which needs the per-message cost confirmed with Jacob first.`
     );
     this.name = "EmberDisabledError";
   }

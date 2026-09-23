@@ -15,9 +15,12 @@ export interface EmberEmailTemplate {
 export interface EmberConfig {
   /**
    * The kill switch. Off by default, same pattern as Iris's
-   * iris_calling_enabled: scanning still runs (it only reads GHL and writes
-   * our own table, so it's how a dry run is validated), but nothing is ever
-   * SENT while this is false.
+   * iris_calling_enabled. While false, NOTHING runs on its own — no
+   * scheduled scan, no sends, no webhook handling, no Slack alerts. Mark,
+   * 2026-09-23: "do not send replies yet, we need to check everything
+   * first." The only thing that works while off is a manual dry-run
+   * preview (ember_scan_preview / scripts/ember-dry-run.ts), which reads
+   * GHL and writes nothing.
    */
   enabled: boolean;
   /** Pipeline to scan. Usually the same as scout.pipelineId. */

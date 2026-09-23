@@ -21,6 +21,9 @@ import * as ruleQueue from "../../agents/forge/ads/queue";
 import { computeWeeklyTotals, formatAllClientsReport, WeeklyTotals } from "../../agents/lens/report";
 import { runDialPendingCalls } from "../../agents/iris/dial-pending";
 import { sendMessage } from "../slack";
+import { listEmberClientIds, loadEmberConfig } from "../../agents/ember/config";
+import { runEmberScanForClient } from "../../agents/ember/scan";
+import { sendPendingForClient } from "../../agents/ember/send";
 
 const TIMEZONE = "America/Toronto";
 
@@ -148,6 +151,40 @@ export async function runRuleEvaluation(): Promise<void> {
   }
 }
 
+/**
+ * Ember only runs for clients with ember.enabled on — the scan as well as
+ * sends, since the scan can post reactivation alerts. A client with the
+ * block present but disabled is skipped silently every hour.
+ */
+function emberEnabledClientIds(): string[] {
+  return listEmberClientIds().filter((id) => loadEmberConfig(id)?.enabled === true);
+}
+
+export async function runEmberScan(): Promise<void> {
+  for (const clientId of emberEnabledClientIds()) {
+    try {
+      const r = await runEmberScanForClient(clientId);
+      console.log(
+        `[SCHEDULER] Ember scan ${clientId}: ${r.scanned} scanned, ${r.enrolled.length} enrolled, ` +
+          `${r.reactivated.length} reactivated, ${r.exited.length} exited`
+      );
+    } catch (e) {
+      console.error(`[SCHEDULER] Ember scan failed for ${clientId}:`, e instanceof Error ? e.message : e);
+    }
+  }
+}
+
+export async function runEmberSendPending(): Promise<void> {
+  for (const clientId of emberEnabledClientIds()) {
+    try {
+      const r = await sendPendingForClient(clientId);
+      if (r.ran) console.log(`[SCHEDULER] Ember sends ${clientId}: ${r.sent}/${r.due} sent, ${r.failed.length} failed`);
+    } catch (e) {
+      console.error(`[SCHEDULER] Ember send run failed for ${clientId}:`, e instanceof Error ? e.message : e);
+    }
+  }
+}
+
 /** Call once at server startup, after initDb() and initSlackClients(). */
 export function startScheduler(): void {
   // Hourly rather than daily so Lens and the dashboard aren't reading
@@ -164,7 +201,16 @@ export function startScheduler(): void {
   // (agents/iris/index.ts's CALL_DELAY_MINUTES), so it needs to actually
   // catch rows close to when they become due, not up to an hour late.
   cron.schedule("* * * * *", runDialPendingCalls, { timezone: TIMEZONE });
+  // 20 past, clear of the Meta sync (:00) and rule evaluation (:05) — the
+  // scan paginates a whole pipeline through GHL and shouldn't compete.
+  cron.schedule("20 * * * *", runEmberScan, { timezone: TIMEZONE });
+  // Every 30 min; the send window itself is per-client local time (see
+  // inSendWindow), so this can run around the clock and simply no-op at
+  // night. sendPendingForClient's in-flight lock covers a batch that runs
+  // longer than 30 minutes.
+  cron.schedule("10,40 * * * *", runEmberSendPending, { timezone: TIMEZONE });
   console.log(
-    "[SCHEDULER] hourly Meta sync, rule evaluation (5 past), weekly Lens report (Mon 08:00), and per-minute Iris dial queue scheduled"
+    "[SCHEDULER] hourly Meta sync, rule evaluation (5 past), weekly Lens report (Mon 08:00), per-minute Iris dial queue, " +
+      "and Ember scan (20 past) / sends (10 & 40 past, enabled clients only) scheduled"
   );
 }

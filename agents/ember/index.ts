@@ -120,9 +120,10 @@ Clients with Ember configured: ${clients}.
 How it runs on its own: an hourly scan enrolls newly dormant leads and
 catches reactivations; a send run every 30 minutes sends due touches inside
 the client's local send window, under a daily cap. Sending is gated by
-ember.enabled in the client config, which stays off until a teammate flips
-it with scripts/enable-ember-nurture.ts after confirming cost with Jacob —
-if someone asks why nothing is sending, that switch is usually the answer.
+ember.enabled in the client config, which stays off until a teammate turns
+it on after confirming the messaging cost with Jacob. While it's off
+NOTHING runs automatically — no scan, no sends, no alerts — so if someone
+asks why nothing is happening, that switch is usually the answer.
 
 Compliance you should be able to explain: leads are only nurtured within
 180 days of their original inquiry (CASL implied consent), every text
