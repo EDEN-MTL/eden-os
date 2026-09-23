@@ -740,9 +740,12 @@ export async function getConversations(
 export async function getConversationMessages(
   conversationId: string,
   locationId?: string,
-  apiKey?: string
+  apiKey?: string,
+  /** Page size. GHL's default is 20; Ember reads more to see a lead's whole story. */
+  limit?: number
 ): Promise<any> {
-  return ghlRequest(`/conversations/${conversationId}/messages`, {
+  const query = limit ? `?limit=${limit}` : "";
+  return ghlRequest(`/conversations/${conversationId}/messages${query}`, {
     locationId,
     apiKey,
   });

@@ -20,6 +20,10 @@ import { AlertFn, formatReactivationAlert, markExited, markReactivated } from ".
 import { detectChange } from "./scan";
 import { logSend, sendsToday, updateLead } from "./store";
 import { GhlOpportunityLite, NurtureChannel, NurtureLead } from "./types";
+import { findOptOut, HistoryDecision, HistoryMessage, ReviewContext } from "./history";
+
+/** Appended to an AI-written personal opener; the scripts carry their own. */
+export const STOP_LINE = "Reply STOP to opt out.";
 
 const DAY_MS = 86_400_000;
 
@@ -51,6 +55,10 @@ export interface OutreachDeps {
   sendEmail(contactId: string, subject: string, html: string, fromEmail: string): Promise<any>;
   alert: AlertFn;
   wait(ms: number): Promise<void>;
+  /** The lead's real texts/emails in GHL, oldest first (history.ts). */
+  readHistory(lead: NurtureLead): Promise<HistoryMessage[]>;
+  /** Decides skip / script / personal opener from that history (history.ts). */
+  reviewHistory(messages: HistoryMessage[], ctx: ReviewContext): Promise<HistoryDecision>;
 }
 
 export interface TouchContext {
@@ -194,7 +202,44 @@ export async function sendTouch(lead: NurtureLead, deps: OutreachDeps, ctx: Touc
   }
 
   const touchIndex = lead.touchCount;
-  const message = buildMessage(lead, live.contact, channel, touchIndex, config);
+
+  // Mark, 2026-09-24: read what they've actually said before texting. An
+  // opt-out anywhere in the thread ends it on every touch; the first touch
+  // also gets the full review (skip / standard script / personal opener).
+  let history: HistoryMessage[];
+  try {
+    history = await deps.readHistory(lead);
+  } catch (error) {
+    // Unknown history is not "no history" — wait for the next run.
+    return skip(`could not read conversation history: ${error instanceof Error ? error.message : String(error)}`);
+  }
+  const optOutText = findOptOut(history);
+  if (optOutText) {
+    await updateLead(lead.id, { status: "opted_out", statusReason: `history: said "${optOutText.slice(0, 80)}"`, nextTouchAt: null });
+    return skip("opted out in conversation history");
+  }
+
+  let message = buildMessage(lead, live.contact, channel, touchIndex, config);
+  if (touchIndex === 0) {
+    const decision = await deps.reviewHistory(history, {
+      firstName: firstNameOf(lead, live.contact),
+      brandName: config.outreach.senderName,
+      intent: lead.intent,
+      stopLine: STOP_LINE,
+      now,
+    });
+    if (decision.action === "retry") return skip(decision.reason);
+    if (decision.action === "skip") {
+      await updateLead(lead.id, {
+        status: decision.optOut ? "opted_out" : "exited",
+        statusReason: `history: ${decision.reason}`,
+        nextTouchAt: null,
+      });
+      return skip(`history review: ${decision.reason}`);
+    }
+    // Personal openers are SMS-only; email keeps its CASL-checked template.
+    if (decision.action === "personalized" && channel === "sms") message = { body: decision.message };
+  }
   const logged = message.subject ? `${message.subject}\n\n${message.body}` : message.body;
 
   try {

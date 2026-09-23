@@ -37,6 +37,8 @@ function deps(over: Partial<OutreachDeps> = {}): OutreachDeps {
     sendEmail: vi.fn(async () => ({ messageId: "e1" })),
     alert: vi.fn(async () => {}),
     wait: vi.fn(async () => {}),
+    readHistory: vi.fn(async () => []),
+    reviewHistory: vi.fn(async () => ({ action: "script", reason: "no replies in their history" }) as any),
     ...over,
   };
 }
@@ -168,6 +170,55 @@ describe("sendTouch", () => {
     expect(outcome.error).toContain("boom");
     expect(store.logSend).toHaveBeenCalledWith(expect.objectContaining({ error: "GHL API Error 500: boom" }));
     expect(store.updateLead).not.toHaveBeenCalled();
+  });
+});
+
+describe("sendTouch — conversation history (Mark, 2026-09-24)", () => {
+  const inbound = (body: string) => ({ direction: "inbound" as const, channel: "sms" as const, body, at: daysAgo(90) });
+
+  it("sends a personal opener on the first touch when the review writes one", async () => {
+    const d = deps({
+      readHistory: vi.fn(async () => [inbound("we want a 3 bed in the east end, probably fall")]),
+      reviewHistory: vi.fn(async () => ({ action: "personalized", reason: "real convo", message: "Hi Jordan, still thinking about that 3 bed in the east end this fall? Reply STOP to opt out." }) as any),
+    });
+    await sendTouch(lead(), d, ctx());
+    expect(d.sendSMS).toHaveBeenCalledWith("c1", "Hi Jordan, still thinking about that 3 bed in the east end this fall? Reply STOP to opt out.");
+  });
+
+  it("skips (and ends the cadence) when the review says a check-in would be unwelcome", async () => {
+    const d = deps({ reviewHistory: vi.fn(async () => ({ action: "skip", reason: "already bought", optOut: false }) as any) });
+    const out = await sendTouch(lead(), d, ctx());
+    expect(d.sendSMS).not.toHaveBeenCalled();
+    expect(out.skippedReason).toContain("already bought");
+    expect(store.updateLead).toHaveBeenCalledWith(1, expect.objectContaining({ status: "exited", statusReason: "history: already bought" }));
+  });
+
+  it("never sends blind when the review can't run — the touch stays due", async () => {
+    const d = deps({ reviewHistory: vi.fn(async () => ({ action: "retry", reason: "history review failed" }) as any) });
+    await sendTouch(lead(), d, ctx());
+    expect(d.sendSMS).not.toHaveBeenCalled();
+    expect(store.updateLead).not.toHaveBeenCalled();
+  });
+
+  it("never sends when history can't be read", async () => {
+    const d = deps({ readHistory: vi.fn(async () => { throw new Error("GHL API Error 502"); }) });
+    await sendTouch(lead(), d, ctx());
+    expect(d.sendSMS).not.toHaveBeenCalled();
+  });
+
+  it("an opt-out anywhere in the history ends it on ANY touch, without asking the model", async () => {
+    const d = deps({ readHistory: vi.fn(async () => [inbound("please stop texting me")]) });
+    await sendTouch(lead({ touchCount: 1 }), d, ctx());
+    expect(d.sendSMS).not.toHaveBeenCalled();
+    expect(d.reviewHistory).not.toHaveBeenCalled();
+    expect(store.updateLead).toHaveBeenCalledWith(1, expect.objectContaining({ status: "opted_out" }));
+  });
+
+  it("later touches keep the approved scripts — only the first is reviewed", async () => {
+    const d = deps();
+    await sendTouch(lead({ touchCount: 1 }), d, ctx());
+    expect(d.reviewHistory).not.toHaveBeenCalled();
+    expect(d.sendSMS).toHaveBeenCalledWith("c1", "Touch two Jordan. Reply STOP to opt out.");
   });
 });
 

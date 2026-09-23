@@ -6,6 +6,7 @@ import { getContact, getGhlConfig, getOpportunity, listPipelines, sendEmail, sen
 import { EmberConfig } from "./config";
 import { slackAlert } from "./alerts";
 import { OutreachDeps } from "./outreach";
+import { readConversationHistory, reviewHistory } from "./history";
 
 export class GhlNotConfiguredError extends Error {
   constructor(clientId: string) {
@@ -62,6 +63,8 @@ export async function buildOutreachDeps(clientId: string, config: EmberConfig): 
       sendEmail(contactId, { subject, html, fromEmail }, locationId, apiKey),
     alert: slackAlert(config.alertChannel),
     wait: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
+    readHistory: (lead) => readConversationHistory(lead.ghlContactId, locationId, apiKey),
+    reviewHistory: (messages, ctx) => reviewHistory(messages, ctx),
   };
 }
 

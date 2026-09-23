@@ -165,8 +165,8 @@ export interface ScanReport {
   dryRun: boolean;
   scanned: number;
   enrolled: { opportunityId: string; name: string | null; stage: string }[];
-  /** Would-be enrollments in a dry run. Same shape as `enrolled`. */
-  eligible: { opportunityId: string; name: string | null; stage: string }[];
+  /** Would-be enrollments in a dry run, with what a preview needs. */
+  eligible: { opportunityId: string; name: string | null; stage: string; contactId: string; intent: LeadIntent; inquiryAt: string | null }[];
   reactivated: { leadId: number; name: string | null; reason: string }[];
   exited: { leadId: number; name: string | null; reason: string }[];
   skipped: Record<string, number>;
@@ -303,7 +303,7 @@ export async function runEmberScanForClient(
     const stage = ctx.stageNames[opp.pipelineStageId];
     const entry = { opportunityId: opp.id, name: opp.contact?.name ?? null, stage };
     if (dryRun) {
-      report.eligible.push(entry);
+      report.eligible.push({ ...entry, contactId: opp.contactId, intent: detectIntent(opp, stage, config), inquiryAt: opp.createdAt });
       continue;
     }
     const lead = await enrollLead({
