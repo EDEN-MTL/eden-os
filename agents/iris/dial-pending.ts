@@ -30,7 +30,21 @@ import { placeCall, CallingDisabledError } from "./calling";
 import { decideNextAttempt, nextAttemptTime, clampToLegalCallingWindow } from "./cadence";
 import { transferNumberForIntent, callbackCalendarForIntent } from "./qualification";
 import { classifyInboundText, lastInboundText } from "./text-signals";
+import { hasActiveSmsConversation } from "./sms";
 import { getGhlConfig, getLocationTimezone, addContactTags } from "../../shared/ghl";
+
+/**
+ * Mark's confirmed design, 2026-09-23 (two-way SMS qualification): while a
+ * lead is actively texting with Iris, pause outbound calling rather than
+ * dialing on top of an active text thread. 24h is a deliberately simple,
+ * generous default — a real recheck runs before every attempt anyway (this
+ * same file), so the worst case of picking too long a window is calling up
+ * to 24h later than strictly necessary once texting truly goes cold, not a
+ * lead who never gets called at all.
+ */
+const SMS_ACTIVE_COLD_OFF_HOURS = 24;
+/** How soon to look again once a call is paused for active texting — not a real cadence attempt, so attempts_made is never bumped for this. */
+const SMS_PAUSE_RECHECK_MINUTES = 60;
 
 /**
  * Client timezone for cadence slot times (10am/2pm local — see
@@ -238,6 +252,25 @@ async function resolveOne(row: PendingCallRow): Promise<void> {
         [row.id, signal.when]
       );
       return;
+    }
+
+    // Pause-while-texting gate — only reached once opt_out/schedule_for
+    // above are ruled out. hasActiveSmsConversation confirms this is a real
+    // ongoing qualification exchange (agents/iris/sms.ts), not just any
+    // single inbound text lastInboundText happened to find — the
+    // opt_out/schedule_for cases above never create that history, so they
+    // can't accidentally trip this.
+    if (inbound?.dateAdded) {
+      const hoursSinceLastText = (Date.now() - new Date(inbound.dateAdded).getTime()) / (60 * 60 * 1000);
+      if (hoursSinceLastText <= SMS_ACTIVE_COLD_OFF_HOURS && (await hasActiveSmsConversation(row.client_id, row.contact_id))) {
+        await query(
+          `UPDATE iris_pending_calls
+           SET call_after = $2, status = 'pending', resolution_reason = 'texting with lead — call paused', resolved_at = NULL
+           WHERE id = $1`,
+          [row.id, new Date(Date.now() + SMS_PAUSE_RECHECK_MINUTES * 60 * 1000)]
+        );
+        return;
+      }
     }
   }
 

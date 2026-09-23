@@ -6,6 +6,7 @@ import {
   TRANSFER_ATTEMPT_LINES,
   TRANSFER_REINFORM_LINES,
   buildLeadQualificationPrompt,
+  buildSmsQualificationPrompt,
   BUYER_QUESTIONS,
   buildCallOpeningLine,
   callIdentifyLine,
@@ -1238,5 +1239,58 @@ describe("IDLE_NUDGE_VARIATIONS", () => {
       expect(line).not.toMatch(/am i speaking with/i);
       expect(line.length).toBeLessThan(60);
     }
+  });
+});
+
+/**
+ * Mark's confirmed scope, 2026-09-23: "Full qualification via text" — same
+ * depth as a live call, same config.questions (not the unused per-intent
+ * BUYER_QUESTIONS/SELLER_QUESTIONS/DOWNSIZER_QUESTIONS arrays above, which
+ * would fork question content by channel with no shared source of truth),
+ * written for texting rather than talking.
+ */
+describe("buildSmsQualificationPrompt", () => {
+  it("asks every config question when intent is unknown", () => {
+    const prompt = buildSmsQualificationPrompt(IRIS_CONFIG, BLANK_LEAD, "3 Percent East Coast", "St. John's");
+    for (const q of IRIS_CONFIG.questions) expect(prompt).toContain(q);
+  });
+
+  it("skips the buy-or-sell question once intent is already known — never asks the same thing the context already settled", () => {
+    const lead: NormalisedLead = { ...BLANK_LEAD, intent: "buyer" };
+    const prompt = buildSmsQualificationPrompt(IRIS_CONFIG, lead, "3 Percent East Coast", "St. John's");
+    expect(prompt).not.toContain(IRIS_CONFIG.questions[0]);
+    expect(prompt).toContain(IRIS_CONFIG.questions[1]);
+  });
+
+  it("states already-known facts so they're confirmed rather than re-asked cold", () => {
+    const lead: NormalisedLead = { ...BLANK_LEAD, intent: "buyer", budget: "$450k", timeline: "3-6 months" };
+    const prompt = buildSmsQualificationPrompt(IRIS_CONFIG, lead, "3 Percent East Coast", "St. John's");
+    expect(prompt).toMatch(/budget.*450 thousand/i);
+    expect(prompt).toMatch(/timeline.*3-6 months/i);
+  });
+
+  it("has no Vapi-specific mechanics — no endCall, transferCall, or hook/tool-schema language a texting model would never actually have", () => {
+    const prompt = buildSmsQualificationPrompt(IRIS_CONFIG, BLANK_LEAD, "3 Percent East Coast", "St. John's");
+    expect(prompt).not.toMatch(/endCall|transferCall|rejectionPlan|voicemail/i);
+  });
+
+  it("tells the model to keep messages short, one question at a time — a texting register, not a spoken one", () => {
+    const prompt = buildSmsQualificationPrompt(IRIS_CONFIG, BLANK_LEAD, "3 Percent East Coast", "St. John's");
+    expect(prompt).toMatch(/short/i);
+    expect(prompt).toMatch(/one question/i);
+  });
+
+  it("names both new tools and ends with a human-followup handoff, never a self-service booking or live transfer over text", () => {
+    const prompt = buildSmsQualificationPrompt(IRIS_CONFIG, BLANK_LEAD, "3 Percent East Coast", "St. John's");
+    expect(prompt).toMatch(/save_qualification_notes/);
+    expect(prompt).toMatch(/request_human_followup/);
+    expect(prompt).toMatch(/can't book|can't do either|never promise a specific time/i);
+  });
+
+  it("pulls in real SOP edge-case wording (NATURAL_TRANSITIONS.sms / EDGE_CASE_RESPONSES), not invented phrasing", () => {
+    const prompt = buildSmsQualificationPrompt(IRIS_CONFIG, BLANK_LEAD, "3 Percent East Coast", "St. John's");
+    expect(prompt).toContain(NATURAL_TRANSITIONS.sms[0]);
+    expect(prompt).toContain(EDGE_CASE_RESPONSES.notPreApproved[0]);
+    expect(prompt).toContain(EDGE_CASE_RESPONSES.offTopic[0]);
   });
 });
