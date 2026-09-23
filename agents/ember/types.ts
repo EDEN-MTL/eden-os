@@ -18,6 +18,8 @@ export type NurtureStatus =
   | "reactivated"
   | "exited"
   | "opted_out"
+  /** Past the CASL consent window — parked, reopenable if express consent is confirmed. */
+  | "no_consent"
   | "completed";
 
 export type NurtureChannel = "sms" | "email";

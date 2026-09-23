@@ -3,36 +3,93 @@ vi.mock("../../shared/claude", () => ({ ask: vi.fn() }));
 vi.mock("../../shared/ghl", () => ({ getConversations: vi.fn(), getConversationMessages: vi.fn() }));
 
 import { getConversationMessages, getConversations } from "../../shared/ghl";
-import { findOptOut, HistoryMessage, readConversationHistory, reviewHistory } from "./history";
+import {
+  consentStart,
+  EMPTY_CONTEXT,
+  findHardOptOut,
+  findSoftDecline,
+  HistoryMessage,
+  isHardOptOut,
+  readConversationHistory,
+  reviewHistory,
+  ReviewContext,
+} from "./history";
 
-const inb = (body: string): HistoryMessage => ({ direction: "inbound", channel: "sms", body, at: "2026-06-01T00:00:00Z" });
-const outb = (body: string): HistoryMessage => ({ direction: "outbound", channel: "sms", body, at: "2026-05-31T00:00:00Z" });
-const CTX = { firstName: "Sarah", brandName: "Mark's Realty", intent: "buyer", stopLine: "Reply STOP to opt out.", now: new Date("2026-09-24") };
+const inb = (body: string, at = "2026-06-01T00:00:00Z"): HistoryMessage => ({ direction: "inbound", channel: "sms", body, at });
+const outb = (body: string, at = "2026-05-31T00:00:00Z"): HistoryMessage => ({ direction: "outbound", channel: "sms", body, at });
+const CTX: ReviewContext = {
+  firstName: "Sarah", brandName: "Mark's Realty", intent: "buyer", stopLine: "Reply STOP to opt out.",
+  now: new Date("2026-09-24"), lead: EMPTY_CONTEXT, priorDecline: null,
+};
 
-describe("findOptOut", () => {
-  it.each(["STOP", "stop.", "Please stop texting me", "don't contact me again", "remove me from your list", "wrong number", "Not interested, thanks", "leave me alone"])(
+describe("hard opt-outs — permanent", () => {
+  it.each(["STOP", "stop.", "Please stop texting me", "don't contact me again", "remove me from your list", "wrong number", "leave me alone", "unsubscribe"])(
     "catches %j",
-    (body) => expect(findOptOut([inb(body)])).toBe(body)
+    (body) => {
+      expect(findHardOptOut([inb(body)])).toBe(body);
+      expect(isHardOptOut(body)).toBe(true);
+    }
   );
-  it.each(["yes still looking", "can you stop by the house saturday?", "we're not in a rush"])("lets %j through", (body) => {
-    expect(findOptOut([inb(body)])).toBeNull();
+  it.each(["Not interested, thanks", "we already bought", "yes still looking", "can you stop by the house saturday?"])("does not treat %j as permanent", (body) => {
+    expect(findHardOptOut([inb(body)])).toBeNull();
   });
   it("ignores our own outbound texts", () => {
-    expect(findOptOut([outb("Reply STOP to opt out.")])).toBeNull();
+    expect(findHardOptOut([outb("Reply STOP to opt out.")])).toBeNull();
+  });
+});
+
+describe("soft declines — retried after the cool-off", () => {
+  it.each(["Not interested, thanks", "We already bought a place", "we bought a house in june", "I'm working with another agent", "we have a realtor", "not right now", "no longer looking"])(
+    "catches %j",
+    (body) => expect(findSoftDecline([inb(body)])?.body).toBe(body)
+  );
+  it.each(["yes still looking", "we're not in a rush", "maybe in the spring"])("lets %j through", (body) => {
+    expect(findSoftDecline([inb(body)])).toBeNull();
+  });
+  it("returns the most recent decline", () => {
+    const d = findSoftDecline([inb("not interested", "2026-01-01T00:00:00Z"), inb("yes!", "2026-02-01T00:00:00Z"), inb("not right now", "2026-03-01T00:00:00Z")]);
+    expect(d?.at).toBe("2026-03-01T00:00:00Z");
+  });
+});
+
+describe("consentStart — CASL clock from the latest real inquiry", () => {
+  it("is the original inquiry when they never wrote back", () => {
+    expect(consentStart("2026-01-01T00:00:00Z", [outb("hi")])).toBe("2026-01-01T00:00:00Z");
+  });
+  it("moves forward when they wrote to us about a move", () => {
+    expect(consentStart("2026-01-01T00:00:00Z", [inb("looking at 3 beds now", "2026-07-01T00:00:00Z")])).toBe("2026-07-01T00:00:00Z");
+  });
+  it("does NOT move forward for a decline or opt-out", () => {
+    expect(consentStart("2026-01-01T00:00:00Z", [inb("not interested", "2026-07-01T00:00:00Z"), inb("stop", "2026-08-01T00:00:00Z")])).toBe("2026-01-01T00:00:00Z");
   });
 });
 
 describe("reviewHistory", () => {
-  it("skips an opt-out without calling the model", async () => {
+  it("uses the standard script when there's nothing on record, without calling the model", async () => {
     const ask = vi.fn();
-    expect(await reviewHistory([inb("stop")], CTX, ask)).toEqual(expect.objectContaining({ action: "skip", optOut: true }));
+    expect(await reviewHistory([outb("Hi, thanks for reaching out!")], CTX, ask)).toEqual({ action: "script", reason: "no replies, calls or notes on record" });
     expect(ask).not.toHaveBeenCalled();
   });
 
-  it("uses the standard script when they never replied, without calling the model", async () => {
-    const ask = vi.fn();
-    expect(await reviewHistory([outb("Hi, thanks for reaching out!")], CTX, ask)).toEqual({ action: "script", reason: "no replies in their history" });
-    expect(ask).not.toHaveBeenCalled();
+  it("reads the record when there are team notes or calls, even with no text replies", async () => {
+    const ask = vi.fn(async () => '{"action":"script","reason":"nothing specific"}');
+    await reviewHistory([], { ...CTX, lead: { ...EMPTY_CONTEXT, notes: [{ at: "2026-05-01", text: "Spoke with Sarah — wants a 3 bed, east end" }] } }, ask);
+    expect(ask).toHaveBeenCalledTimes(1);
+    const system = ask.mock.calls[0][0] as string;
+    expect(system).toContain("Spoke with Sarah");
+  });
+
+  it("gives the model the pipeline stage, calls and the old decline to start from", async () => {
+    const ask = vi.fn(async () => '{"action":"script","reason":"r"}');
+    await reviewHistory([inb("not interested", "2026-01-10T00:00:00Z")], {
+      ...CTX,
+      lead: { ...EMPTY_CONTEXT, stageName: "Live Transferred", daysInStage: 200, irisCalls: [{ at: "2026-01-05", outcome: "customer-ended-call", excerpt: "looking in the spring" }] },
+      priorDecline: inb("not interested", "2026-01-10T00:00:00Z"),
+    }, ask);
+    const system = ask.mock.calls[0][0] as string;
+    expect(system).toContain("Pipeline stage: Live Transferred (untouched for 200 days)");
+    expect(system).toContain("looking in the spring");
+    expect(system).toContain('They last declined about 9 months ago, saying: "not interested"');
   });
 
   it("returns a personal opener and adds the STOP line", async () => {
@@ -55,9 +112,9 @@ describe("reviewHistory", () => {
     }
   });
 
-  it("honours the model's skip", async () => {
-    const ask = vi.fn(async () => '{"action":"skip","reason":"bought through a friend"}');
-    expect(await reviewHistory([inb("we bought through a friend last month")], CTX, ask)).toEqual({ action: "skip", reason: "bought through a friend", optOut: false });
+  it("maps the model's defer (and an old-style skip) to a pause, never a permanent stop", async () => {
+    expect((await reviewHistory([inb("hi")], CTX, vi.fn(async () => '{"action":"defer","reason":"mid-sale with another agent"}'))).action).toBe("defer");
+    expect((await reviewHistory([inb("hi")], CTX, vi.fn(async () => '{"action":"skip","reason":"x"}'))).action).toBe("defer");
   });
 
   it("retries — never sends — on a model failure or unreadable answer", async () => {
@@ -67,22 +124,22 @@ describe("reviewHistory", () => {
 });
 
 describe("readConversationHistory", () => {
-  it("keeps only texts/emails, strips HTML, and returns oldest first", async () => {
+  it("keeps texts, emails and team calls, strips HTML, oldest first", async () => {
     vi.mocked(getConversations).mockResolvedValue({ conversations: [{ id: "cv1" }] });
     vi.mocked(getConversationMessages).mockResolvedValue({
       messages: {
         messages: [
-          { messageType: "TYPE_ACTIVITY_OPPORTUNITY", direction: "outbound", body: "Opportunity updated", dateAdded: "2026-09-03" },
+          { messageType: "TYPE_ACTIVITY_OPPORTUNITY", direction: "outbound", body: "Opportunity updated", dateAdded: "2026-09-04" },
+          { messageType: "TYPE_CALL", direction: "outbound", body: "", dateAdded: "2026-09-03", meta: { call: { status: "completed", duration: 312 } } },
           { messageType: "TYPE_EMAIL", direction: "inbound", body: "<p>Still&nbsp;looking</p>", dateAdded: "2026-09-02" },
           { messageType: "TYPE_SMS", direction: "outbound", body: "Hi!", dateAdded: "2026-09-01" },
         ],
       },
     });
-    const h = await readConversationHistory("c1", "loc", "key");
-    expect(h).toEqual([
+    expect(await readConversationHistory("c1", "loc", "key")).toEqual([
       { direction: "outbound", channel: "sms", body: "Hi!", at: "2026-09-01" },
       { direction: "inbound", channel: "email", body: "Still looking", at: "2026-09-02" },
+      { direction: "outbound", channel: "call", body: "(phone call: completed, 312s)", at: "2026-09-03" },
     ]);
-    expect(getConversationMessages).toHaveBeenCalledWith("cv1", "loc", "key", 50);
   });
 });

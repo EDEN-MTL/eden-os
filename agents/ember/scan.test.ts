@@ -46,11 +46,8 @@ describe("classifyForEnrollment", () => {
     expect(classifyForEnrollment(opp(over as any), ctx())).toEqual({ eligible: false, reason });
   });
 
-  it("skips a card whose inquiry is older than the CASL consent window", () => {
-    expect(classifyForEnrollment(opp({ createdAt: daysAgo(200) }), ctx())).toEqual({
-      eligible: false,
-      reason: "outside consent window",
-    });
+  it("still enrolls a lead whose original inquiry is 6+ months old — consent is judged at the first touch, with history", () => {
+    expect(classifyForEnrollment(opp({ createdAt: daysAgo(400), lastStageChangeAt: daysAgo(300) }), ctx())).toEqual({ eligible: true });
   });
 
   it("skips a contact with no phone and no email", () => {

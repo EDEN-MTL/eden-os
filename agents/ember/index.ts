@@ -29,7 +29,7 @@ const TOOLS: ToolDef[] = [
         clientId: CLIENT_ID_PROP,
         status: {
           type: "string",
-          enum: ["nurturing", "paused", "replied", "reactivated", "exited", "opted_out", "completed"],
+          enum: ["nurturing", "paused", "replied", "handed_off", "reactivated", "exited", "opted_out", "no_consent", "completed"],
         },
         limit: { type: "number", description: "Max leads to return. Default 15." },
       },
@@ -130,9 +130,19 @@ it on after confirming the messaging cost with Jacob. While it's off
 NOTHING runs automatically — no scan, no sends, no alerts — so if someone
 asks why nothing is happening, that switch is usually the answer.
 
-Compliance you should be able to explain: leads are only nurtured within
-180 days of their original inquiry (CASL implied consent), every text
-carries a STOP line, and GHL DND is re-checked right before every send.
+Before the first text of each cycle you read the lead's whole record —
+texts, emails, team calls, Iris's calls, notes, pipeline stage — and either
+use the approved script, write a short opener that picks up where they
+left off, or wait. A real unsubscribe ("stop", "remove me", "don't text
+me", wrong number, GHL DND) is permanent. A "not interested" / "already
+bought" / "working with another agent" is paused and tried again 180 days
+after they said it.
+
+Compliance you should be able to explain: texts only go out within the
+CASL consent window, counted from their latest real inquiry (the original
+form, or their own most recent message about a move); anyone past it is
+parked as no_consent rather than texted. Every text carries a STOP line,
+and GHL DND is re-checked right before every send.
 
 Cite real numbers from your tools, not estimates. If a tool fails, say so
 plainly. Respond concisely, like a teammate texting a quick update.`;

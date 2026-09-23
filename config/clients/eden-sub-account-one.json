@@ -114,6 +114,8 @@
       "International Numbers"
     ],
     "consentWindowDays": 180,
+    "reApproachAfterDays": 180,
+    "reApproachNote": "Mark, 2026-09-24: 'not interested' / 'already bought' / 'working with another agent' is tried again 180 days after they said it. Real unsubscribes (STOP, remove me, don't text me, wrong number, GHL DND) are never retried. consentWindowDays still applies, measured from their latest real inquiry — so most re-approaches need Jacob to confirm express consent before it's raised.",
     "intentTags": { "buyer": ["buyer lead"], "seller": ["seller lead"] },
     "intentStages": {
       "Buyer Leads": "buyer",

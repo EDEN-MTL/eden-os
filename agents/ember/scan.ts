@@ -4,7 +4,8 @@
  *
  *   1. Enroll opportunities that have gone quiet — open, not won/lost/active,
  *      not in an excluded column, no stage change for dormancyThresholdDays,
- *      still inside the CASL consent window, reachable by phone or email.
+ *      reachable by phone or email. (Consent is checked at the first touch,
+ *      with history in hand.)
  *   2. Notice tracked leads that have come back to life — the card moved
  *      columns, or a renewed-interest tag appeared — and alert on them.
  *
@@ -83,9 +84,10 @@ export function classifyForEnrollment(opp: GhlOpportunityLite, ctx: EnrollContex
   if (quietDays === null) return { eligible: false, reason: "no activity timestamp" };
   if (quietDays < ctx.thresholdDays) return { eligible: false, reason: "not dormant yet" };
 
-  const inquiryDays = daysBetween(opp.createdAt, now);
-  if (inquiryDays === null) return { eligible: false, reason: "no inquiry date" };
-  if (inquiryDays >= config.consentWindowDays) return { eligible: false, reason: "outside consent window" };
+  // No consent check here on purpose (Mark, 2026-09-24: leads 6+ months
+  // old must still be considered). Consent is measured at the first touch
+  // from the LATEST real inquiry — which needs the conversation history
+  // this scan doesn't read — see planTouch in outreach.ts.
 
   if (!opp.contact?.phone && !opp.contact?.email) return { eligible: false, reason: "no phone or email" };
   return { eligible: true };

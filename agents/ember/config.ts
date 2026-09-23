@@ -43,12 +43,19 @@ export interface EmberConfig {
   excludeStages: string[];
   /**
    * CASL: an inquiry gives implied consent for commercial messages for 6
-   * months from the inquiry — not indefinitely. Leads whose opportunity was
-   * created longer ago than this are never enrolled, and a lead that ages
-   * past it mid-cadence is completed rather than sent to. Only raise this
-   * for a client that genuinely collects express consent at capture.
+   * months from the inquiry — not indefinitely. Measured from the LATEST
+   * real inquiry: the original form, or the lead's own most recent message
+   * that isn't a decline (history.ts consentStart). A lead past it is
+   * parked as no_consent before any text goes out. Only raise this for a
+   * client that genuinely collects express consent at capture.
    */
   consentWindowDays: number;
+  /**
+   * Mark, 2026-09-24: a lead who said "not interested", "we bought" or
+   * "working with another agent" is tried again this many days after they
+   * said it (180 = 6 months). Real unsubscribes are never retried.
+   */
+  reApproachAfterDays: number;
   /**
    * How a lead's buy/sell intent is read at enrollment, to pick a script:
    * contact tags first (they survive stage moves), then the NAME of the

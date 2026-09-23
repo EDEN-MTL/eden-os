@@ -28,6 +28,7 @@ export function config(over: Partial<EmberConfig> = {}): EmberConfig {
     dormancyThresholdDays: 45,
     excludeStages: ["Appointment Set"],
     consentWindowDays: 180,
+    reApproachAfterDays: 180,
     renewedInterestTags: ["renewed interest"],
     intentTags: { buyer: ["buyer lead"], seller: ["seller lead"] },
     intentStages: { "Buyer Leads": "buyer", "Seller Leads": "seller" },

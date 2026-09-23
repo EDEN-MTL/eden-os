@@ -7,6 +7,7 @@ import { EmberConfig } from "./config";
 import { slackAlert } from "./alerts";
 import { OutreachDeps } from "./outreach";
 import { readConversationHistory, reviewHistory } from "./history";
+import { readLeadContext } from "./context";
 
 export class GhlNotConfiguredError extends Error {
   constructor(clientId: string) {
@@ -65,6 +66,8 @@ export async function buildOutreachDeps(clientId: string, config: EmberConfig): 
     wait: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
     readHistory: (lead) => readConversationHistory(lead.ghlContactId, locationId, apiKey),
     reviewHistory: (messages, ctx) => reviewHistory(messages, ctx),
+    readContext: async (lead, opportunity) =>
+      readLeadContext(lead, opportunity, await resolveStageNames(lead.clientId, config.pipelineId), { locationId, apiKey }),
   };
 }
 

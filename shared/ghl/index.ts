@@ -446,6 +446,16 @@ export async function createOpportunity(
 }
 
 /**
+ * A contact's CRM notes (what the team wrote after calls, etc). Verified
+ * live 2026-09-24 against eden-sub-account-one: { notes: [{ id, body,
+ * bodyText, userId, dateAdded, contactId, pinned, relations }] }.
+ */
+export async function getContactNotes(contactId: string, locationId?: string, apiKey?: string): Promise<any[]> {
+  const payload = await ghlRequest(`/contacts/${contactId}/notes`, { locationId, apiKey });
+  return payload?.notes ?? [];
+}
+
+/**
  * One opportunity by id. Ember re-reads the card right before each nurture
  * touch so a deal a human moved since the last scan never gets a "still
  * thinking about it?" text. Verified live 2026-09-23 against

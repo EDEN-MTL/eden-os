@@ -16,6 +16,7 @@ import "dotenv/config";
 import { runEmberScanForClient } from "../agents/ember/scan";
 import { loadEmberConfig } from "../agents/ember/config";
 import { previewFirstTouches } from "../agents/ember/preview";
+import { resolveStageNames } from "../agents/ember/deps";
 
 async function main() {
   const args = process.argv.slice(2);
@@ -26,7 +27,8 @@ async function main() {
   const report = await runEmberScanForClient(clientId, { dryRun: true, thresholdDaysOverride: override });
   console.log(JSON.stringify(report, null, 2));
   if (withMessages) {
-    const previews = await previewFirstTouches(clientId, loadEmberConfig(clientId)!, report.eligible);
+    const config = loadEmberConfig(clientId)!;
+    const previews = await previewFirstTouches(clientId, config, report.eligible, await resolveStageNames(clientId, config.pipelineId));
     console.log("\n--- first texts Ember would send (nothing was sent) ---");
     console.log(JSON.stringify(previews, null, 2));
   }

@@ -39,6 +39,7 @@ function deps(over: Partial<OutreachDeps> = {}): OutreachDeps {
     wait: vi.fn(async () => {}),
     readHistory: vi.fn(async () => []),
     reviewHistory: vi.fn(async () => ({ action: "script", reason: "no replies in their history" }) as any),
+    readContext: vi.fn(async () => ({ stageName: null, daysInStage: null, tags: [], knownAnswers: [], notes: [], irisCalls: [] })),
     ...over,
   };
 }
@@ -121,12 +122,18 @@ describe("sendTouch", () => {
     expect(store.updateLead).toHaveBeenCalledWith(1, expect.objectContaining({ touchCount: 3, nextTouchAt: null, status: "completed" }));
   });
 
-  it("does not send once the CASL consent window has passed", async () => {
+  it("parks the lead as no_consent once the CASL window from their latest inquiry has passed", async () => {
     const d = deps();
     const outcome = await sendTouch(lead({ inquiryAt: daysAgo(181) }), d, ctx());
-    expect(outcome.skippedReason).toBe("consent window ended");
-    expect(d.loadLive).not.toHaveBeenCalled();
+    expect(outcome.skippedReason).toContain("consent window");
     expect(d.sendSMS).not.toHaveBeenCalled();
+    expect(store.updateLead).toHaveBeenCalledWith(1, expect.objectContaining({ status: "no_consent" }));
+  });
+
+  it("counts a recent message from the lead as a fresh inquiry for consent", async () => {
+    const d = deps({ readHistory: vi.fn(async () => [{ direction: "inbound" as const, channel: "sms" as const, body: "we might move in the spring", at: daysAgo(30) }]) });
+    await sendTouch(lead({ inquiryAt: daysAgo(400) }), d, ctx());
+    expect(d.sendSMS).toHaveBeenCalledTimes(1);
   });
 
   it("does not send when the card moved since the scan — reactivates and alerts instead", async () => {
@@ -185,12 +192,34 @@ describe("sendTouch — conversation history (Mark, 2026-09-24)", () => {
     expect(d.sendSMS).toHaveBeenCalledWith("c1", "Hi Jordan, still thinking about that 3 bed in the east end this fall? Reply STOP to opt out.");
   });
 
-  it("skips (and ends the cadence) when the review says a check-in would be unwelcome", async () => {
-    const d = deps({ reviewHistory: vi.fn(async () => ({ action: "skip", reason: "already bought", optOut: false }) as any) });
+  it("pauses (never ends) the lead when the review says now's a bad time", async () => {
+    const d = deps({ reviewHistory: vi.fn(async () => ({ action: "defer", reason: "mid-sale with another agent" }) as any) });
     const out = await sendTouch(lead(), d, ctx());
     expect(d.sendSMS).not.toHaveBeenCalled();
-    expect(out.skippedReason).toContain("already bought");
-    expect(store.updateLead).toHaveBeenCalledWith(1, expect.objectContaining({ status: "exited", statusReason: "history: already bought" }));
+    expect(out.skippedReason).toContain("mid-sale");
+    expect(store.updateLead).toHaveBeenCalledWith(1, expect.objectContaining({
+      status: "nurturing", touchCount: 0, nextTouchAt: new Date(NOW.getTime() + 180 * DAY).toISOString(),
+    }));
+  });
+
+  it("holds a soft decline for 6 months from when they said it, then tries again with it as context", async () => {
+    const said = (days: number, body: string) => ({ direction: "inbound" as const, channel: "sms" as const, body, at: daysAgo(days) });
+    const recent = deps({ readHistory: vi.fn(async () => [said(60, "not interested right now")]) });
+    await sendTouch(lead(), recent, ctx());
+    expect(recent.sendSMS).not.toHaveBeenCalled();
+    expect(store.updateLead).toHaveBeenCalledWith(1, expect.objectContaining({ nextTouchAt: new Date(NOW.getTime() + 120 * DAY).toISOString() }));
+
+    const old = deps({ readHistory: vi.fn(async () => [said(200, "not interested"), said(20, "hmm maybe later this year")]) });
+    await sendTouch(lead(), old, ctx());
+    expect(old.sendSMS).toHaveBeenCalledTimes(1);
+    expect((old.reviewHistory as any).mock.calls[0][1].priorDecline.body).toBe("not interested");
+  });
+
+  it("reads the CRM context only for a cycle's first touch", async () => {
+    const d = deps();
+    await sendTouch(lead(), d, ctx());
+    await sendTouch(lead({ touchCount: 1 }), d, ctx());
+    expect(d.readContext).toHaveBeenCalledTimes(1);
   });
 
   it("never sends blind when the review can't run — the touch stays due", async () => {
@@ -251,10 +280,19 @@ describe("sendBatch", () => {
 describe("handleReply", () => {
   const replyCtx = (alert = vi.fn(async () => {})) => ({ config: config(), clientName: "Mark's Realty", alert, now: NOW });
 
-  it("a clear no opts out quietly", async () => {
+  it("an unsubscribe is permanent", async () => {
+    const r = replyCtx();
+    expect(await handleReply(lead(), "STOP", r)).toBe("negative");
+    expect(store.updateLead).toHaveBeenCalledWith(1, expect.objectContaining({ status: "opted_out" }));
+    expect(r.alert).not.toHaveBeenCalled();
+  });
+
+  it("a plain 'not interested' pauses them for 6 months instead of opting them out", async () => {
     const r = replyCtx();
     expect(await handleReply(lead(), "No thanks, not interested", r)).toBe("negative");
-    expect(store.updateLead).toHaveBeenCalledWith(1, expect.objectContaining({ status: "opted_out" }));
+    expect(store.updateLead).toHaveBeenCalledWith(1, expect.objectContaining({
+      status: "nurturing", touchCount: 0, nextTouchAt: new Date(NOW.getTime() + 180 * DAY).toISOString(),
+    }));
     expect(r.alert).not.toHaveBeenCalled();
   });
 
@@ -280,9 +318,9 @@ describe("handleReply", () => {
     expect(r.alert).toHaveBeenCalledTimes(1);
   });
 
-  it("never hands a clear 'no' to Iris", async () => {
+  it("never hands a 'no' to Iris", async () => {
     const r = { ...replyCtx(), handoff: vi.fn(async () => "handed_off" as const) };
-    await handleReply(lead(), "no thanks, not interested", r);
+    await handleReply(lead(), "we already bought, thanks", r);
     expect(r.handoff).not.toHaveBeenCalled();
   });
 
