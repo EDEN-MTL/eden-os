@@ -106,6 +106,14 @@ export interface InboundTextResult {
   text: string;
   /** The nearest outbound SMS before it, for classifyInboundText's context — see that function's own doc comment for why a bare "6 pm" needs this. */
   precedingOutbound: string | null;
+  /**
+   * GHL's own `dateAdded` on the inbound message, or null if it was missing
+   * from a real payload (never trusted blindly — see the rest of this
+   * codebase's "verify against live data" rule). Added for the two-way SMS
+   * qualification pause-calling gate (dial-pending.ts): needs to know how
+   * RECENT the lead's last text was, not just what it said.
+   */
+  dateAdded: string | null;
 }
 
 /**
@@ -140,7 +148,8 @@ export async function lastInboundText(contactId: string, locationId: string, api
     // outbound message is the NEXT outbound one AFTER this index.
     const precedingOutbound = sms.slice(inboundIndex + 1).find((m) => m.direction === "outbound")?.body?.trim() ?? null;
 
-    return { text: sms[inboundIndex].body.trim(), precedingOutbound };
+    const dateAdded = typeof sms[inboundIndex].dateAdded === "string" ? sms[inboundIndex].dateAdded : null;
+    return { text: sms[inboundIndex].body.trim(), precedingOutbound, dateAdded };
   } catch (error) {
     console.error(`[IRS] lastInboundText failed for contact ${contactId}:`, error instanceof Error ? error.message : error);
     return null;

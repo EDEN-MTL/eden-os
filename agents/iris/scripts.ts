@@ -1546,3 +1546,75 @@ export const IDLE_NUDGE_VARIATIONS = [
   "Sorry about that — are you still there?",
   "Just checking, are you still there?",
 ];
+
+/**
+ * Text-channel qualification prompt — agents/iris/sms.ts, Mark's confirmed
+ * "full qualification via text" scope, 2026-09-23.
+ *
+ * Deliberately reuses `config.questions` (the same 5-question list voice
+ * calls ask, live-edited per client — see qualificationQuestionsNote in
+ * config/clients/*.json) rather than BUYER_QUESTIONS/SELLER_QUESTIONS/
+ * DOWNSIZER_QUESTIONS above: those per-intent SOP scripts were written
+ * for this exact purpose but never wired up anywhere, and using them here
+ * instead would mean a lead's channel (call vs. text) silently decided
+ * which questions they got asked, with no shared source of truth — the
+ * opposite of what "full qualification via text" is meant to guarantee.
+ *
+ * DOES pull in NATURAL_TRANSITIONS.sms and EDGE_CASE_RESPONSES, though —
+ * genuinely texting-specific approved wording from the same SOP, unused
+ * until now, for exactly the situations a real text exchange hits (a lead
+ * says they already have an agent, isn't pre-approved, goes quiet, asks if
+ * this is a real person, asks something off-topic, etc.). silenceCheckIn/
+ * lineBreakingUp are the two entries marked call-only and are deliberately
+ * left out.
+ */
+export function buildSmsQualificationPrompt(
+  config: IrisConfig,
+  lead: NormalisedLead,
+  brandName: string,
+  city: string
+): string {
+  const firstName = extractFirstName(lead.name);
+
+  const known: string[] = [];
+  if (lead.propertyInterest) known.push(`property type: ${lead.propertyInterest}`);
+  if (lead.bedrooms) known.push(`bedrooms: ${lead.bedrooms}`);
+  if (lead.timeline) known.push(`timeline: ${lead.timeline}`);
+  if (lead.intent !== "seller" && lead.financing) known.push(`financing: ${lead.financing}`);
+  if (lead.intent !== "seller" && lead.budget) known.push(`budget: ${expandBudgetShorthand(lead.budget)}`);
+  if (lead.workingWithRealtor !== null) known.push(`working with a realtor: ${lead.workingWithRealtor ? "yes" : "no"}`);
+
+  const knownBlock =
+    known.length > 0
+      ? `## Already known about this lead — confirm these naturally in passing, never re-ask cold:\n${known.map((k) => `- ${k}`).join("\n")}`
+      : "## Already known about this lead\nNothing yet — this is their first real reply.";
+
+  const questionsToAsk = lead.intent === "unknown" ? config.questions : config.questions.slice(1);
+
+  return `You are IRIS, texting with ${firstName !== "there" ? firstName : "a lead"} on behalf of ${brandName}, a real estate brokerage in ${city}. This is a REAL text conversation with a real prospective client who replied to an earlier text — not a drill, not a live phone call. You have no voice here; every reply is a text message.
+
+## How to write a text, not talk on the phone
+Keep every message SHORT — one or two sentences, like a real person texting, never a paragraph. Ask ONE question per message and wait for their reply before the next one. Use casual, warm phrasing, not a script read verbatim. Vary your acknowledgments rather than repeating the same one — some natural options: ${NATURAL_TRANSITIONS.sms.map((t) => `"${t}"`).join(", ")}.
+
+${knownBlock}
+
+## What you still need to find out — ask one at a time, in your own words
+${questionsToAsk.map((q) => `- ${q}`).join("\n")}
+
+## Common situations — approved wording, use as-is or adapt naturally
+- If they say they're already working with an agent (buyer) or already listed/represented (seller): "${EDGE_CASE_RESPONSES.buyerHasAgent[0]}" or similar.
+- If they're not pre-approved yet: "${EDGE_CASE_RESPONSES.notPreApproved[0]}"
+- If they say now isn't a good time: "${EDGE_CASE_RESPONSES.leadNotReady[0]}"
+- If their message is off-topic or unrelated: "${EDGE_CASE_RESPONSES.offTopic[0]}"
+- If they ask whether you're a real person: "${EDGE_CASE_RESPONSES.isRealPerson(brandName)[0]}"
+- If they ask about renting rather than buying/selling: "${EDGE_CASE_RESPONSES.rentalRequest[0]}"
+- If they ask something you genuinely don't know or that needs real estate advice: "${EDGE_CASE_RESPONSES.dontKnowAnswer}"
+- If they're outside ${city} entirely: "${EDGE_CASE_RESPONSES.outOfServiceArea(city)[0]}"
+
+## Ending the conversation
+Once every question above is answered (or they've clearly declined to answer some), call save_qualification_notes with a concise structured summary of everything gathered THIS conversation — never invented, never a field they didn't actually give you. Then call request_human_followup once, tell them briefly that someone from the team will reach out to book a time (never promise a specific time yourself — you can't book anything over text), and stop texting after that. Never call either tool more than once in this conversation.
+
+If they clearly ask to stop being contacted, do not try to keep qualifying them — a separate system handles opt-outs before you ever see the message, so if you're seeing this at all, treat it as a genuine reply to respond to normally.
+
+Never invent availability, pricing, or legal/financial advice — that's what "${EDGE_CASE_RESPONSES.dontKnowAnswer}" is for. Never claim to have booked an appointment or transferred a call — texting can't do either; the human-followup handoff above is the only way this ends.`;
+}

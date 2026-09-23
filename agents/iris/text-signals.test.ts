@@ -118,7 +118,7 @@ describe("lastInboundText", () => {
         messages: [
           activityEntry,
           { messageType: "TYPE_SMS", direction: "outbound", body: "Quick question, why are you looking to sell?" },
-          { messageType: "TYPE_SMS", direction: "inbound", body: "6 pm" },
+          { messageType: "TYPE_SMS", direction: "inbound", body: "6 pm", dateAdded: "2026-09-22T18:00:00.000Z" },
           { messageType: "TYPE_SMS", direction: "outbound", body: "What would be a good time to speak?" },
           { messageType: "TYPE_SMS", direction: "outbound", body: "Hey Catherine, saw you submitted the form..." },
           activityEntry,
@@ -127,7 +127,11 @@ describe("lastInboundText", () => {
     });
 
     const result = await lastInboundText("contact-1", "loc-1", "key-1");
-    expect(result).toEqual({ text: "6 pm", precedingOutbound: "What would be a good time to speak?" });
+    expect(result).toEqual({
+      text: "6 pm",
+      precedingOutbound: "What would be a good time to speak?",
+      dateAdded: "2026-09-22T18:00:00.000Z",
+    });
   });
 
   it("returns null when the lead has never sent an inbound SMS", async () => {
@@ -149,7 +153,7 @@ describe("lastInboundText", () => {
     ghl.getConversationMessages.mockResolvedValue({
       messages: { messages: [{ messageType: "TYPE_SMS", direction: "inbound", body: "Hello?" }] },
     });
-    expect(await lastInboundText("contact-1", "loc-1", "key-1")).toEqual({ text: "Hello?", precedingOutbound: null });
+    expect(await lastInboundText("contact-1", "loc-1", "key-1")).toEqual({ text: "Hello?", precedingOutbound: null, dateAdded: null });
   });
 
   it("returns null rather than throwing when the GHL fetch fails", async () => {
