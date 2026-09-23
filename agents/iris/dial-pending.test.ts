@@ -134,3 +134,55 @@ describe("resolveOne — pause-while-texting gate (Mark's confirmed design, 2026
     expect(calling.placeCall).toHaveBeenCalledTimes(1);
   });
 });
+
+describe("resolveOne — Ember handoffs and text-agreed calls (Mark, 2026-09-24)", () => {
+  const scripts = () => import("./scripts");
+  const withRow = (over: any) =>
+    db.query.mockImplementation(async (sql: string) =>
+      sql.includes("WHERE status = 'pending' AND call_after <= now()") ? [{ ...DUE_ROW, ...over }] : []
+    );
+
+  it("calls an Ember-handed old lead even though they're tagged live-transferred from months ago", async () => {
+    withRow({ is_explicit_callback: true, source: "ember", sms_scheduled: false });
+    scout.refreshLead.mockResolvedValue({ ...LEAD, qualified: true });
+    textSignals.lastInboundText.mockResolvedValue(null);
+
+    await runDialPendingCalls();
+
+    expect(calling.placeCall).toHaveBeenCalledTimes(1);
+  });
+
+  it("still skips an already-qualified NORMAL callback — the bypass is Ember-only", async () => {
+    withRow({ is_explicit_callback: true, source: null, sms_scheduled: false });
+    scout.refreshLead.mockResolvedValue({ ...LEAD, qualified: true });
+
+    await runDialPendingCalls();
+
+    expect(calling.placeCall).not.toHaveBeenCalled();
+  });
+
+  it("does not pause a call the lead just agreed to by text", async () => {
+    withRow({ is_explicit_callback: true, source: "ember", sms_scheduled: true });
+    scout.refreshLead.mockResolvedValue({ ...LEAD, qualified: false });
+    textSignals.lastInboundText.mockResolvedValue({ text: "yes call me now", precedingOutbound: null, dateAdded: new Date().toISOString() });
+    smsModule.hasActiveSmsConversation.mockResolvedValue(true);
+
+    await runDialPendingCalls();
+
+    expect(calling.placeCall).toHaveBeenCalledTimes(1);
+  });
+
+  it("opens with the text-conversation line for Ember and text-agreed calls, the form line otherwise", async () => {
+    const { buildLeadQualificationPrompt } = await scripts();
+    withRow({ is_explicit_callback: true, source: "ember", sms_scheduled: false });
+    scout.refreshLead.mockResolvedValue({ ...LEAD, qualified: false });
+    textSignals.lastInboundText.mockResolvedValue(null);
+    await runDialPendingCalls();
+    expect(vi.mocked(buildLeadQualificationPrompt).mock.calls.at(-1)?.[7]).toBe("text");
+
+    vi.clearAllMocks();
+    withRow({ source: null, sms_scheduled: false });
+    await runDialPendingCalls();
+    expect(vi.mocked(buildLeadQualificationPrompt).mock.calls.at(-1)?.[7]).toBe("form");
+  });
+});

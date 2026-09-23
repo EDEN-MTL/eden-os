@@ -1294,3 +1294,13 @@ describe("buildSmsQualificationPrompt", () => {
     expect(prompt).toContain(EDGE_CASE_RESPONSES.offTopic[0]);
   });
 });
+
+describe("callOpeningContextLine — call origin (Mark, 2026-09-24)", () => {
+  it("follows up on the text conversation instead of 'the form you submitted' for text-origin calls", async () => {
+    const { callOpeningContextLine } = await import("./scripts");
+    expect(callOpeningContextLine("buyer", "Toronto", null, "text")?.[0]).toBe(
+      "I'm following up on our text conversation about buying a home — thanks for getting back to us!"
+    );
+    expect(callOpeningContextLine("buyer", "Toronto", null)?.[0]).toContain("the form you submitted online");
+  });
+});

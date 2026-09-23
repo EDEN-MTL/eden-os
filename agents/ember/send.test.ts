@@ -29,7 +29,7 @@ describe("sendPendingForClient", () => {
 
   it("refuses an SMS template with no STOP opt-out", async () => {
     const c = config();
-    c.outreach.sms.templates = ["Hi {{firstName}}, still looking?"];
+    c.outreach.sms.scripts.seller = ["Hi {{firstName}}, still looking?"];
     configMod.loadEmberConfig.mockReturnValue(c);
     await expect(sendPendingForClient("c", { now: NOW })).rejects.toBeInstanceOf(EmberConfigError);
   });

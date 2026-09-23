@@ -12,6 +12,12 @@ export interface EmberEmailTemplate {
   html: string;
 }
 
+export interface SmsScripts {
+  buyer: string[];
+  seller: string[];
+  neutral: string[];
+}
+
 export interface EmberConfig {
   /**
    * The kill switch. Off by default, same pattern as Iris's
@@ -43,6 +49,13 @@ export interface EmberConfig {
    * for a client that genuinely collects express consent at capture.
    */
   consentWindowDays: number;
+  /**
+   * How a lead's buy/sell intent is read at enrollment, to pick a script:
+   * contact tags first (they survive stage moves), then the NAME of the
+   * stage the card was enrolled from. Case-insensitive.
+   */
+  intentTags: { buyer: string[]; seller: string[] };
+  intentStages: Record<string, "buyer" | "seller" | "downsize" | "upgrading">;
   /** A tag added to the contact that counts as renewed interest. */
   renewedInterestTags: string[];
   /** Slack channel (name or id) for reactivation alerts. */
@@ -76,10 +89,13 @@ export interface EmberConfig {
     positiveKeywords: string[];
     negativeKeywords: string[];
     /**
-     * One template per touch index; a cadence longer than the list reuses
-     * the last one. SMS is preferred whenever the contact has a phone.
+     * One script per touch index, per intent (Mark approved the buyer and
+     * seller wording, 2026-09-24). Seller + downsize leads get the seller
+     * script, buyer + upgrading the buyer one, anything unknown the neutral
+     * one. A cadence longer than a list reuses its last entry. SMS is
+     * preferred whenever the contact has a phone.
      */
-    sms: { enabled: boolean; templates: string[] };
+    sms: { enabled: boolean; scripts: SmsScripts };
     email: {
       enabled: boolean;
       fromAddress: string;
@@ -125,13 +141,16 @@ export function validateForSending(config: EmberConfig): string[] {
   if (!touchScheduleDays?.length) problems.push("outreach.touchScheduleDays is empty");
   if (!sms.enabled && !email.enabled) problems.push("neither sms nor email is enabled");
   if (sms.enabled) {
-    if (!sms.templates.length) problems.push("sms.templates is empty");
-    // CASL requires an unsubscribe mechanism in every commercial message.
-    // GHL honours STOP replies natively (it sets the contact's DND), but
-    // only if the text tells people they can.
-    sms.templates.forEach((t, i) => {
-      if (!/\bstop\b/i.test(t)) problems.push(`sms.templates[${i}] has no STOP opt-out line`);
-    });
+    for (const kind of ["buyer", "seller", "neutral"] as const) {
+      const list = sms.scripts?.[kind] ?? [];
+      if (!list.length) problems.push(`sms.scripts.${kind} is empty`);
+      // CASL requires an unsubscribe mechanism in every commercial message.
+      // GHL honours STOP replies natively (it sets the contact's DND), but
+      // only if the text tells people they can.
+      list.forEach((t, i) => {
+        if (!/\bstop\b/i.test(t)) problems.push(`sms.scripts.${kind}[${i}] has no STOP opt-out line`);
+      });
+    }
   }
   if (email.enabled) {
     if (!email.fromAddress) problems.push("email.fromAddress unset");
@@ -164,4 +183,11 @@ export function listEmberClientIds(): string[] {
   } catch {
     return [];
   }
+}
+
+/** Which script list a lead's intent uses. */
+export function scriptKindFor(intent: string): keyof SmsScripts {
+  if (intent === "seller" || intent === "downsize") return "seller";
+  if (intent === "buyer" || intent === "upgrading") return "buyer";
+  return "neutral";
 }

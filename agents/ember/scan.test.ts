@@ -14,7 +14,7 @@ const configMod = vi.hoisted(() => ({
 }));
 vi.mock("./config", async (orig) => ({ ...(await orig<any>()), ...configMod }));
 
-import { classifyForEnrollment, detectChange, EnrollContext, firstTouchAt, runEmberScanForClient, ScanDeps } from "./scan";
+import { classifyForEnrollment, detectChange, detectIntent, EnrollContext, firstTouchAt, runEmberScanForClient, ScanDeps } from "./scan";
 import { config, daysAgo, lead, NOW, opp, OUTCOME_STAGES, STAGES } from "./test-fixtures";
 
 afterEach(() => vi.clearAllMocks());
@@ -200,5 +200,20 @@ describe("runEmberScanForClient", () => {
     await expect(
       runEmberScanForClient("c", { now: NOW, deps: deps([], { stageNames: async () => ({}) }) })
     ).rejects.toThrow(/resolved to no stages/);
+  });
+});
+
+describe("detectIntent", () => {
+  const c = config();
+  it("reads buyer/seller from tags first", () => {
+    expect(detectIntent(opp({ contact: { tags: ["Buyer Lead"] } }), "Long Term Nurturing", c)).toBe("buyer");
+    expect(detectIntent(opp({ contact: { tags: ["seller lead"] } }), "Buyer Leads", c)).toBe("seller");
+  });
+  it("falls back to the enrolled stage name", () => {
+    expect(detectIntent(opp({ contact: { tags: [] } }), "Buyer Leads", c)).toBe("buyer");
+  });
+  it("is unknown when tags conflict or nothing matches — never a guess", () => {
+    expect(detectIntent(opp({ contact: { tags: ["buyer lead", "seller lead"] } }), "Long Term Nurturing", c)).toBe("unknown");
+    expect(detectIntent(opp({ contact: { tags: [] } }), "Long Term Nurturing", c)).toBe("unknown");
   });
 });

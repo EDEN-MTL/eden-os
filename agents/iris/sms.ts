@@ -17,7 +17,9 @@ import { NormalisedLead, buildKeyToId } from "../scout/intake";
 import { loadIrisConfig, loadClientBranding } from "./index";
 import { buildSmsQualificationPrompt } from "./scripts";
 import { classifyInboundText } from "./text-signals";
-import { IrisConfig } from "./qualification";
+import { IrisConfig, qualify, QualificationAnswers } from "./qualification";
+import { clampToLegalCallingWindow } from "./cadence";
+import { lastEmberTouchText } from "../ember/store";
 import { chatWithTools, ChatMessage, ToolDef } from "../../shared/claude";
 import { loadHistory, appendHistory } from "../../shared/conversation-memory";
 import { sendMessage } from "../../shared/slack";
@@ -47,11 +49,13 @@ interface IrisLeadRow {
   contact_id: string;
   lead: NormalisedLead;
   status: string;
+  /** 'ember' for an old lead Ember handed over; null for normal intake. */
+  source: string | null;
 }
 
 async function loadIrisLeadRow(contactId: string): Promise<IrisLeadRow | null> {
   const rows = await query<IrisLeadRow>(
-    `SELECT client_id, contact_id, lead, status FROM iris_pending_calls WHERE contact_id = $1 LIMIT 1`,
+    `SELECT client_id, contact_id, lead, status, source FROM iris_pending_calls WHERE contact_id = $1 LIMIT 1`,
     [contactId]
   );
   return rows[0] ?? null;
@@ -137,14 +141,118 @@ const SMS_TOOLS: ToolDef[] = [
   },
 ];
 
+/**
+ * Offered only when config.smsCallHandoff is on (Mark, 2026-09-24: the goal
+ * for a lead who qualifies by text is a live transfer, not a human booking
+ * later). The model supplies the answers it collected; the QUALIFIED-OR-NOT
+ * decision is made here by the same qualify() voice calls use, never by the
+ * model — so a lead is scored identically whether they answered on the
+ * phone or by text.
+ */
+const SCHEDULE_TRANSFER_CALL_TOOL: ToolDef = {
+  name: "schedule_transfer_call",
+  description:
+    "Queues a phone call from Iris to this lead so they can be live-transferred to an agent. Call ONCE, after save_qualification_notes and after the lead has said when they can talk. Returns whether the call was scheduled and exactly what to text back.",
+  input_schema: {
+    type: "object",
+    properties: {
+      intent: { type: "string", enum: ["buyer", "seller", "downsize", "upgrading", "unknown"] },
+      area: { type: ["string", "null"], description: "Area/neighbourhood they named, or null if not given." },
+      propertyDetails: { type: ["string", "null"], description: "Property type + beds/baths, or null." },
+      timeline: { type: ["string", "null"], description: "Their timeline in their own words, or null." },
+      budget: { type: ["string", "null"], description: "Budget/price range, or null." },
+      financing: {
+        type: ["string", "null"],
+        enum: ["cash", "pre-approved", "in-progress", "not-approved", null],
+        description: "Buyers only. null if not given or seller.",
+      },
+      when: {
+        type: "string",
+        description: 'Either "now", or an ISO 8601 timestamp WITH timezone offset for the time they asked for.',
+      },
+    },
+    required: ["intent", "when"],
+  },
+};
+
+/** Earliest a "now" call goes out — long enough for the confirmation text to land first. */
+const TRANSFER_CALL_MIN_DELAY_MINUTES = 2;
+const TRANSFER_CALL_MAX_DAYS_OUT = 7;
+
+async function scheduleTransferCall(
+  clientId: string,
+  contactId: string,
+  config: IrisConfig,
+  timezone: string,
+  input: any
+): Promise<string> {
+  const answers: QualificationAnswers = {
+    intent: ["buyer", "seller", "downsize", "upgrading"].includes(input?.intent) ? input.intent : "unknown",
+    area: typeof input?.area === "string" && input.area.trim() ? input.area.trim() : null,
+    propertyDetails: typeof input?.propertyDetails === "string" && input.propertyDetails.trim() ? input.propertyDetails.trim() : null,
+    timeline: typeof input?.timeline === "string" && input.timeline.trim() ? input.timeline.trim() : null,
+    budget: typeof input?.budget === "string" && input.budget.trim() ? input.budget.trim() : null,
+    financing: ["cash", "pre-approved", "in-progress", "not-approved"].includes(input?.financing) ? input.financing : null,
+  };
+  const result = qualify(config, answers);
+  if (result.outcome !== "transfer") {
+    return (
+      `NOT scheduled — they aren't ready for an agent call yet (score ${result.score}, needs ${config.warmScoreThreshold}: ` +
+      `${result.scoreReasons.join(", ") || "not enough information"}). Do not promise a call. ` +
+      `Call request_human_followup instead and tell them someone from the team will follow up.`
+    );
+  }
+
+  const now = Date.now();
+  let when = new Date(now + TRANSFER_CALL_MIN_DELAY_MINUTES * 60_000);
+  if (typeof input?.when === "string" && input.when.trim().toLowerCase() !== "now") {
+    const asked = new Date(input.when);
+    if (Number.isNaN(asked.getTime())) {
+      return 'NOT scheduled — that time could not be read. Ask them again for a time, then call this tool with "now" or a full ISO 8601 timestamp.';
+    }
+    if (asked.getTime() - now > TRANSFER_CALL_MAX_DAYS_OUT * 86_400_000) {
+      return `NOT scheduled — that's more than ${TRANSFER_CALL_MAX_DAYS_OUT} days out. Ask for a time within the next few days.`;
+    }
+    if (asked.getTime() > when.getTime()) when = asked;
+  }
+  // Never outside 8am–9pm local, same rule as every other Iris dial.
+  when = clampToLegalCallingWindow(when, timezone);
+
+  await query(
+    `UPDATE iris_pending_calls
+        SET call_after = $3, status = 'pending', is_explicit_callback = true, sms_scheduled = true,
+            resolution_reason = 'qualified by text — live-transfer call scheduled', resolved_at = NULL
+      WHERE client_id = $1 AND contact_id = $2`,
+    [clientId, contactId, when]
+  );
+
+  const localTime = when.toLocaleString("en-US", { timeZone: timezone, weekday: "short", hour: "numeric", minute: "2-digit" });
+  await sendMessage(AGENT_ID, {
+    channel: CALL_LOG_CHANNEL,
+    text: `📞 Iris qualified a lead over text (score ${result.score}) and will call them ${localTime} for a live transfer — contact ${contactId}.`,
+  }).catch((error) => {
+    console.error(`[IRS-SMS] Failed to post transfer-call notice to Slack:`, error instanceof Error ? error.message : error);
+  });
+
+  const minutesOut = Math.round((when.getTime() - now) / 60_000);
+  return minutesOut <= 10
+    ? "Scheduled — Iris will call them in the next few minutes. Tell them to expect a call shortly from our team, then stop."
+    : `Scheduled for ${localTime} (their local time). Confirm that time with them in one short text, then stop.`;
+}
+
 async function executeSmsTool(
   clientId: string,
   contactId: string,
   config: IrisConfig,
   ghlConfig: { locationId: string; apiKey: string },
   name: string,
-  input: any
+  input: any,
+  timezone: string
 ): Promise<string> {
+  if (name === "schedule_transfer_call") {
+    if (!config.smsCallHandoff) throw new Error("schedule_transfer_call is not enabled for this client");
+    return scheduleTransferCall(clientId, contactId, config, timezone, input);
+  }
   if (name === "save_qualification_notes") {
     const notes = typeof input?.notes === "string" ? input.notes.trim() : "";
     if (!notes) return "No notes were given — this is an error in how you called the tool. Compose the structured summary and call this tool again.";
@@ -238,13 +346,20 @@ export async function irisHandleInboundSms(contactId: string, text: string, opti
     return [] as ChatMessage[];
   });
 
-  const systemPrompt = buildSmsQualificationPrompt(config, row.lead, branding.brandName, branding.city);
+  const fromEmber = row.source === "ember";
+  const openerText = fromEmber ? await lastEmberTouchText(clientId, contactId).catch(() => null) : null;
+  const systemPrompt = buildSmsQualificationPrompt(config, row.lead, branding.brandName, branding.city, {
+    origin: fromEmber ? "ember" : "form",
+    openerText,
+    callHandoff: config.smsCallHandoff,
+  });
+  const tools = config.smsCallHandoff ? [...SMS_TOOLS, SCHEDULE_TRANSFER_CALL_TOOL] : SMS_TOOLS;
 
   let working: ChatMessage[] = [...history, { role: "user", content: text }];
   let finalText = "";
 
   for (let turn = 0; turn < MAX_SMS_TOOL_TURNS; turn++) {
-    const response = await chatWithTools(systemPrompt, working, SMS_TOOLS, { maxTokens: 512, temperature: 0.6 });
+    const response = await chatWithTools(systemPrompt, working, tools, { maxTokens: 512, temperature: 0.6 });
     working = [...working, { role: "assistant", content: response.content }];
 
     const toolUses = response.content.filter((b) => b.type === "tool_use");
@@ -261,7 +376,7 @@ export async function irisHandleInboundSms(contactId: string, text: string, opti
         const call = tu as { id: string; name: string; input: any };
         let content: string;
         try {
-          content = await executeSmsTool(clientId, contactId, config, ghlConfig, call.name, call.input);
+          content = await executeSmsTool(clientId, contactId, config, ghlConfig, call.name, call.input, timezone);
         } catch (error) {
           content = `Error: ${error instanceof Error ? error.message : String(error)}`;
         }

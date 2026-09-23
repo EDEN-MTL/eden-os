@@ -6,7 +6,7 @@ import { handleEmailReply, handleReply } from "../agents/quarry/outreach";
 import { getLeadByGhlContactId, updateLead } from "../agents/quarry/store";
 import { loadQuarryConfig } from "../agents/quarry/config";
 import { irisHandleInboundSms } from "../agents/iris/sms";
-import { emberHandleInboundMessage, emberHandleStageUpdate, emberHandleTagUpdate } from "../agents/ember/webhooks";
+import { emberHandleInboundMessage, emberHandleStageUpdate, emberHandleTagUpdate, emberMarkInboundSeen } from "../agents/ember/webhooks";
 
 /**
  * GHL webhook handler.
@@ -140,7 +140,8 @@ export function createGHLRouter(): Router {
         // row); anything she doesn't claim falls through to Ember, which
         // self-scopes to contacts it's nurturing.
         const irisHandled = parsed.channel === "sms" && (await irisHandleInboundSms(parsed.contactId, parsed.text));
-        if (!irisHandled) await emberHandleInboundMessage(parsed.contactId, parsed.text);
+        if (irisHandled) await emberMarkInboundSeen(parsed.contactId);
+        else await emberHandleInboundMessage(parsed.contactId, parsed.text);
         return;
       }
 

@@ -21,7 +21,7 @@ import { getGhlConfig, listOpportunitiesPaginated, listPipelines } from "../../s
 import { EmberConfig, loadEmberConfig, loadEmberOutcomeStages } from "./config";
 import { AlertFn, markExited, markReactivated, REACTIVATABLE, slackAlert } from "./alerts";
 import { enrollLead, hasPendingIrisCall, trackedByOpportunity } from "./store";
-import { GhlOpportunityLite, NurtureLead } from "./types";
+import { GhlOpportunityLite, LeadIntent, NurtureLead } from "./types";
 import { readFileSync } from "fs";
 import { join } from "path";
 
@@ -89,6 +89,26 @@ export function classifyForEnrollment(opp: GhlOpportunityLite, ctx: EnrollContex
 
   if (!opp.contact?.phone && !opp.contact?.email) return { eligible: false, reason: "no phone or email" };
   return { eligible: true };
+}
+
+/**
+ * Buy/sell intent at enrollment: tags first, then the enrolled stage's
+ * name. Unknown gets the neutral script — never a guess, since a seller
+ * getting "a few new listings came up" reads as not listening.
+ */
+export function detectIntent(opp: GhlOpportunityLite, stageName: string | undefined, config: EmberConfig): LeadIntent {
+  const tags = (opp.contact?.tags ?? []).map((t) => t.trim().toLowerCase());
+  const has = (list: string[]) => list.some((t) => tags.includes(t.trim().toLowerCase()));
+  const buyer = has(config.intentTags?.buyer ?? []);
+  const seller = has(config.intentTags?.seller ?? []);
+  if (buyer && !seller) return "buyer";
+  if (seller && !buyer) return "seller";
+  if (stageName) {
+    for (const [name, intent] of Object.entries(config.intentStages ?? {})) {
+      if (sameName(name, stageName)) return intent;
+    }
+  }
+  return "unknown";
 }
 
 export type TrackedChange =
@@ -293,6 +313,7 @@ export async function runEmberScanForClient(
       contactName: opp.contact?.name ?? null,
       phone: opp.contact?.phone ?? null,
       email: opp.contact?.email ?? null,
+      intent: detectIntent(opp, stage, config),
       enrolledStageId: opp.pipelineStageId,
       enrolledStageName: stage,
       lastGhlActivityAt: opp.lastStageChangeAt ?? opp.createdAt,

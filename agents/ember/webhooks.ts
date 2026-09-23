@@ -17,7 +17,8 @@ import { markExited, markReactivated, REACTIVATABLE, slackAlert } from "./alerts
 import { resolveStageNames } from "./deps";
 import { handleReply } from "./outreach";
 import { detectChange } from "./scan";
-import { getLeadByOpportunityId, listOpenLeadsByContactId } from "./store";
+import { getLeadByOpportunityId, listOpenLeadsByContactId, updateLead } from "./store";
+import { handOffToIris } from "./handoff";
 import { NurtureLead } from "./types";
 import { readFileSync } from "fs";
 import { join } from "path";
@@ -35,6 +36,18 @@ function enabledConfig(lead: NurtureLead) {
   return config?.enabled ? config : null;
 }
 
+/**
+ * Records that a contact's latest inbound text has been routed, so the
+ * reply poll doesn't answer it a second time. Called on every path that
+ * handles a reply — including Iris answering a handed-off lead via the
+ * webhook, which never reaches emberHandleInboundMessage.
+ */
+export async function emberMarkInboundSeen(contactId: string, at: Date = new Date()): Promise<void> {
+  for (const lead of await listOpenLeadsByContactId(contactId)) {
+    await updateLead(lead.id, { lastInboundSeenAt: at.toISOString() });
+  }
+}
+
 /** An inbound SMS/email from a contact. Returns true if Ember handled it. */
 export async function emberHandleInboundMessage(contactId: string, text: string): Promise<boolean> {
   const leads = await listOpenLeadsByContactId(contactId);
@@ -42,10 +55,17 @@ export async function emberHandleInboundMessage(contactId: string, text: string)
   for (const lead of leads) {
     const config = enabledConfig(lead);
     if (!config) continue;
+    await updateLead(lead.id, { lastInboundSeenAt: new Date().toISOString() });
+    // Already Iris's conversation — the /message route tries Iris first,
+    // so reaching here means her row is closed; nothing for Ember to do.
+    if (lead.status === "handed_off") continue;
+    const name = clientName(lead.clientId);
+    const alert = slackAlert(config.alertChannel);
     const sentiment = await handleReply(lead, text, {
       config,
-      clientName: clientName(lead.clientId),
-      alert: slackAlert(config.alertChannel),
+      clientName: name,
+      alert,
+      handoff: (l, t) => handOffToIris(l, t, { config, clientName: name, alert }),
     });
     console.log(`[EMB] reply from ${lead.contactName ?? lead.ghlContactId}: ${sentiment}`);
     handled = true;

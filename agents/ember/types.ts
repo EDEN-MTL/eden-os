@@ -14,12 +14,15 @@ export type NurtureStatus =
   | "nurturing"
   | "paused"
   | "replied"
+  | "handed_off"
   | "reactivated"
   | "exited"
   | "opted_out"
   | "completed";
 
 export type NurtureChannel = "sms" | "email";
+
+export type LeadIntent = "buyer" | "seller" | "downsize" | "upgrading" | "unknown";
 
 export interface NurtureLead {
   id: number;
@@ -31,6 +34,7 @@ export interface NurtureLead {
   email: string | null;
   status: NurtureStatus;
   statusReason: string | null;
+  intent: LeadIntent;
   enrolledStageId: string | null;
   enrolledStageName: string | null;
   lastGhlActivityAt: string | null;
@@ -41,6 +45,7 @@ export interface NurtureLead {
   nextTouchAt: string | null;
   repliedAt: string | null;
   reactivatedAt: string | null;
+  lastInboundSeenAt: string | null;
   unsubscribeToken: string | null;
   createdAt: string;
   updatedAt: string;

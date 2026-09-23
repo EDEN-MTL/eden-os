@@ -24,6 +24,7 @@ import { sendMessage } from "../slack";
 import { listEmberClientIds, loadEmberConfig } from "../../agents/ember/config";
 import { runEmberScanForClient } from "../../agents/ember/scan";
 import { sendPendingForClient } from "../../agents/ember/send";
+import { pollRepliesForClient } from "../../agents/ember/replies";
 
 const TIMEZONE = "America/Toronto";
 
@@ -185,6 +186,19 @@ export async function runEmberSendPending(): Promise<void> {
   }
 }
 
+export async function runEmberReplyPoll(): Promise<void> {
+  for (const clientId of emberEnabledClientIds()) {
+    try {
+      const r = await pollRepliesForClient(clientId);
+      if (r.routedToEmber || r.routedToIris) {
+        console.log(`[SCHEDULER] Ember replies ${clientId}: ${r.routedToEmber} to Ember, ${r.routedToIris} to Iris (${r.checked} checked)`);
+      }
+    } catch (e) {
+      console.error(`[SCHEDULER] Ember reply poll failed for ${clientId}:`, e instanceof Error ? e.message : e);
+    }
+  }
+}
+
 /** Call once at server startup, after initDb() and initSlackClients(). */
 export function startScheduler(): void {
   // Hourly rather than daily so Lens and the dashboard aren't reading
@@ -209,8 +223,11 @@ export function startScheduler(): void {
   // night. sendPendingForClient's in-flight lock covers a batch that runs
   // longer than 30 minutes.
   cron.schedule("10,40 * * * *", runEmberSendPending, { timezone: TIMEZONE });
+  // Every 2 minutes: a lead texting back expects an answer in minutes, not
+  // half an hour. Cheap — two GHL reads per lead Ember has texted.
+  cron.schedule("*/2 * * * *", runEmberReplyPoll, { timezone: TIMEZONE });
   console.log(
     "[SCHEDULER] hourly Meta sync, rule evaluation (5 past), weekly Lens report (Mon 08:00), per-minute Iris dial queue, " +
-      "and Ember scan (20 past) / sends (10 & 40 past, enabled clients only) scheduled"
+      "and Ember scan (20 past) / sends (10 & 40 past) / reply poll (every 2 min), enabled clients only, scheduled"
   );
 }

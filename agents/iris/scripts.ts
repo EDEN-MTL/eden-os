@@ -367,10 +367,21 @@ export function buildCallOpeningLine(firstName: string, brandName: string): stri
  * has Iris react to that whenever it comes up, so nothing is lost by
  * dropping the explicit gate here.
  */
+/**
+ * Where a call's lead came from. "form" is the normal new-lead intake.
+ * "text" means the call was set up over SMS — the lead texted with Iris
+ * (a reactivated old lead from Ember, or a lead who qualified by text and
+ * agreed to a call). Opening with "the form you submitted online" to
+ * someone who inquired months ago and has been texting with us all
+ * afternoon would sound like a machine that isn't listening.
+ */
+export type CallOrigin = "form" | "text";
+
 export function callOpeningContextLine(
   intent: CallIntent,
   city: string,
-  _leadSource: string | null
+  _leadSource: string | null,
+  origin: CallOrigin = "form"
 ): string[] | null {
   const subject =
     intent === "seller"
@@ -387,8 +398,12 @@ export function callOpeningContextLine(
   // generic (no "form"/subject mention) so they work as a short, energetic
   // transition once identity is already confirmed, same "library, not a
   // replacement" treatment as LIVE_TRANSFER_LINES.
+  const first =
+    origin === "text"
+      ? `I'm following up on our text conversation about ${subject} — thanks for getting back to us!`
+      : `I was calling about the form you submitted online about ${subject} — we'd love to help you find some good options.`;
   return [
-    `I was calling about the form you submitted online about ${subject} — we'd love to help you find some good options.`,
+    first,
     "Awesome! We'd love to send some options your way.",
     "Perfect! We'd love to get some options over to you.",
     "Great! We'd love to send you some options that could be a good fit.",
@@ -573,7 +588,8 @@ export function buildLeadQualificationPrompt(
   city: string,
   bookingToolsAvailable: boolean,
   transferAvailable: boolean,
-  calendarAvailable: boolean
+  calendarAvailable: boolean,
+  origin: CallOrigin = "form"
 ): string {
   const firstName = extractFirstName(lead.name);
   const identifyLine = callIdentifyLine(firstName);
@@ -581,7 +597,7 @@ export function buildLeadQualificationPrompt(
   // Moved out of the firstMessage (see callOpeningGreeting) into the
   // opening-sequence instructions below, so the reason for the call is its
   // own turn rather than crammed into the first thing Iris says.
-  const contextLine = callOpeningContextLine(lead.intent, city, lead.leadSource);
+  const contextLine = callOpeningContextLine(lead.intent, city, lead.leadSource, origin);
 
   // Verifying lines are actual sentences to speak, confirming what Scout/the
   // form already established — never a generic "confirm it" instruction.
@@ -1568,13 +1584,29 @@ export const IDLE_NUDGE_VARIATIONS = [
  * lineBreakingUp are the two entries marked call-only and are deliberately
  * left out.
  */
+export interface SmsPromptOptions {
+  /**
+   * "ember" = an old lead replying to one of Ember's reactivation texts,
+   * months after they first inquired. Their plans may have changed, so
+   * Iris re-confirms buy/sell before anything else, and answers "are you a
+   * real person?" plainly as a virtual assistant (Mark's call, 2026-09-24).
+   */
+  origin?: "form" | "ember";
+  /** The reactivation text they're replying to, for context. */
+  openerText?: string | null;
+  /** config.smsCallHandoff — end qualified conversations by queuing a live-transfer call. */
+  callHandoff?: boolean;
+}
+
 export function buildSmsQualificationPrompt(
   config: IrisConfig,
   lead: NormalisedLead,
   brandName: string,
-  city: string
+  city: string,
+  options: SmsPromptOptions = {}
 ): string {
   const firstName = extractFirstName(lead.name);
+  const fromEmber = options.origin === "ember";
 
   const known: string[] = [];
   if (lead.propertyInterest) known.push(`property type: ${lead.propertyInterest}`);
@@ -1589,13 +1621,35 @@ export function buildSmsQualificationPrompt(
       ? `## Already known about this lead — confirm these naturally in passing, never re-ask cold:\n${known.map((k) => `- ${k}`).join("\n")}`
       : "## Already known about this lead\nNothing yet — this is their first real reply.";
 
-  const questionsToAsk = lead.intent === "unknown" ? config.questions : config.questions.slice(1);
+  // An Ember lead's original buy/sell intent is months old — re-ask it
+  // rather than assume it still holds.
+  const questionsToAsk = lead.intent === "unknown" || fromEmber ? config.questions : config.questions.slice(1);
+
+  const emberBlock = fromEmber
+    ? `\n## Who this is
+This is an OLDER lead — they first inquired a while ago, went quiet, and are now replying to a check-in text we sent${options.openerText ? `: "${options.openerText}"` : ""}. Their plans may have changed since, so treat everything "already known" below as possibly out of date: start by confirming whether they're still thinking about buying or selling, and don't assume anything they told us months ago is still true.
+`
+    : "";
+  const realPersonLine = fromEmber
+    ? `I'm the ${brandName} team's virtual assistant — happy to get one of our agents on the phone with you.`
+    : EDGE_CASE_RESPONSES.isRealPerson(brandName)[0];
+
+  const endingBlock = options.callHandoff
+    ? `## Ending the conversation
+The goal is a live phone call with one of our agents. Once every question above is answered (or they've clearly declined some):
+1. Call save_qualification_notes with a concise structured summary of everything gathered THIS conversation.
+2. Ask if now is a good time for a quick call with one of our agents — or when works better today or tomorrow.
+3. When they give an answer, call schedule_transfer_call with their answers and the time ("now", or the specific time they gave). It checks whether they're ready for an agent call and tells you what to say next — follow it exactly.
+4. If schedule_transfer_call says they aren't ready for a call yet, or they don't want a call at all, call request_human_followup instead, tell them briefly someone from the team will follow up, and stop.
+Never call any of these tools more than once, and never promise a call before schedule_transfer_call has confirmed one.`
+    : `## Ending the conversation
+Once every question above is answered (or they've clearly declined to answer some), call save_qualification_notes with a concise structured summary of everything gathered THIS conversation — never invented, never a field they didn't actually give you. Then call request_human_followup once, tell them briefly that someone from the team will reach out to book a time (never promise a specific time yourself — you can't book anything over text), and stop texting after that. Never call either tool more than once in this conversation.`;
 
   return `You are IRIS, texting with ${firstName !== "there" ? firstName : "a lead"} on behalf of ${brandName}, a real estate brokerage in ${city}. This is a REAL text conversation with a real prospective client who replied to an earlier text — not a drill, not a live phone call. You have no voice here; every reply is a text message.
 
 ## How to write a text, not talk on the phone
 Keep every message SHORT — one or two sentences, like a real person texting, never a paragraph. Ask ONE question per message and wait for their reply before the next one. Use casual, warm phrasing, not a script read verbatim. Vary your acknowledgments rather than repeating the same one — some natural options: ${NATURAL_TRANSITIONS.sms.map((t) => `"${t}"`).join(", ")}.
-
+${emberBlock}
 ${knownBlock}
 
 ## What you still need to find out — ask one at a time, in your own words
@@ -1606,15 +1660,14 @@ ${questionsToAsk.map((q) => `- ${q}`).join("\n")}
 - If they're not pre-approved yet: "${EDGE_CASE_RESPONSES.notPreApproved[0]}"
 - If they say now isn't a good time: "${EDGE_CASE_RESPONSES.leadNotReady[0]}"
 - If their message is off-topic or unrelated: "${EDGE_CASE_RESPONSES.offTopic[0]}"
-- If they ask whether you're a real person: "${EDGE_CASE_RESPONSES.isRealPerson(brandName)[0]}"
+- If they ask whether you're a real person: "${realPersonLine}"
 - If they ask about renting rather than buying/selling: "${EDGE_CASE_RESPONSES.rentalRequest[0]}"
 - If they ask something you genuinely don't know or that needs real estate advice: "${EDGE_CASE_RESPONSES.dontKnowAnswer}"
 - If they're outside ${city} entirely: "${EDGE_CASE_RESPONSES.outOfServiceArea(city)[0]}"
 
-## Ending the conversation
-Once every question above is answered (or they've clearly declined to answer some), call save_qualification_notes with a concise structured summary of everything gathered THIS conversation — never invented, never a field they didn't actually give you. Then call request_human_followup once, tell them briefly that someone from the team will reach out to book a time (never promise a specific time yourself — you can't book anything over text), and stop texting after that. Never call either tool more than once in this conversation.
+${endingBlock}
 
 If they clearly ask to stop being contacted, do not try to keep qualifying them — a separate system handles opt-outs before you ever see the message, so if you're seeing this at all, treat it as a genuine reply to respond to normally.
 
-Never invent availability, pricing, or legal/financial advice — that's what "${EDGE_CASE_RESPONSES.dontKnowAnswer}" is for. Never claim to have booked an appointment or transferred a call — texting can't do either; the human-followup handoff above is the only way this ends.`;
+Never invent availability, pricing, or legal/financial advice — that's what "${EDGE_CASE_RESPONSES.dontKnowAnswer}" is for. Never claim to have booked an appointment or transferred a call — texting can't do either; ${options.callHandoff ? "the only ways this ends are a call schedule_transfer_call confirmed, or the human-followup handoff" : "the human-followup handoff above is the only way this ends"}.`;
 }

@@ -6,7 +6,7 @@
  */
 import { randomUUID } from "crypto";
 import { query } from "../../shared/db";
-import { NurtureChannel, NurtureLead, NurtureStatus } from "./types";
+import { LeadIntent, NurtureChannel, NurtureLead, NurtureStatus } from "./types";
 
 interface LeadRow {
   id: string | number;
@@ -18,6 +18,7 @@ interface LeadRow {
   email: string | null;
   status: string;
   status_reason: string | null;
+  intent: string | null;
   enrolled_stage_id: string | null;
   enrolled_stage_name: string | null;
   last_ghl_activity_at: Date | string | null;
@@ -28,6 +29,7 @@ interface LeadRow {
   next_touch_at: Date | string | null;
   replied_at: Date | string | null;
   reactivated_at: Date | string | null;
+  last_inbound_seen_at: Date | string | null;
   unsubscribe_token: string | null;
   created_at: Date | string;
   updated_at: Date | string;
@@ -51,6 +53,7 @@ export function rowToLead(r: LeadRow): NurtureLead {
     email: r.email,
     status: r.status as NurtureStatus,
     statusReason: r.status_reason,
+    intent: (r.intent as LeadIntent) ?? "unknown",
     enrolledStageId: r.enrolled_stage_id,
     enrolledStageName: r.enrolled_stage_name,
     lastGhlActivityAt: iso(r.last_ghl_activity_at),
@@ -61,6 +64,7 @@ export function rowToLead(r: LeadRow): NurtureLead {
     nextTouchAt: iso(r.next_touch_at),
     repliedAt: iso(r.replied_at),
     reactivatedAt: iso(r.reactivated_at),
+    lastInboundSeenAt: iso(r.last_inbound_seen_at),
     unsubscribeToken: r.unsubscribe_token,
     createdAt: iso(r.created_at)!,
     updatedAt: iso(r.updated_at)!,
@@ -74,6 +78,7 @@ export interface EnrollInput {
   contactName: string | null;
   phone: string | null;
   email: string | null;
+  intent: LeadIntent;
   enrolledStageId: string;
   enrolledStageName: string | null;
   lastGhlActivityAt: string | null;
@@ -92,8 +97,8 @@ export async function enrollLead(input: EnrollInput): Promise<NurtureLead | null
     `INSERT INTO ember_nurture_leads (
        client_id, ghl_contact_id, ghl_opportunity_id, contact_name, phone, email,
        enrolled_stage_id, enrolled_stage_name, last_ghl_activity_at, inquiry_at,
-       next_touch_at, unsubscribe_token
-     ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
+       next_touch_at, unsubscribe_token, intent
+     ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
      ON CONFLICT (client_id, ghl_opportunity_id) DO NOTHING
      RETURNING *`,
     [
@@ -109,6 +114,7 @@ export async function enrollLead(input: EnrollInput): Promise<NurtureLead | null
       input.inquiryAt,
       input.nextTouchAt,
       randomUUID(),
+      input.intent,
     ]
   );
   return rows[0] ? rowToLead(rows[0]) : null;
@@ -125,6 +131,7 @@ const UPDATABLE: Record<string, string> = {
   nextTouchAt: "next_touch_at",
   repliedAt: "replied_at",
   reactivatedAt: "reactivated_at",
+  lastInboundSeenAt: "last_inbound_seen_at",
 };
 
 export type LeadPatch = Partial<Record<keyof typeof UPDATABLE, unknown>>;
@@ -198,12 +205,13 @@ export async function getLeadByOpportunityId(opportunityId: string): Promise<Nur
  * Leads still in play for a contact. GHL contact ids are unique across
  * locations, so this needs no client id — the webhook handlers only have
  * the contact id to go on. `completed` is included so a reply to the LAST
- * touch (sent moments before the row flips to completed) is still caught.
+ * touch (sent moments before the row flips to completed) is still caught;
+ * `handed_off` so a reply mid-Iris-conversation is still marked seen.
  */
 export async function listOpenLeadsByContactId(contactId: string): Promise<NurtureLead[]> {
   const rows = await query<LeadRow>(
     `SELECT * FROM ember_nurture_leads
-      WHERE ghl_contact_id = $1 AND status IN ('nurturing', 'paused', 'completed')
+      WHERE ghl_contact_id = $1 AND status IN ('nurturing', 'paused', 'completed', 'handed_off')
       ORDER BY id`,
     [contactId]
   );
@@ -358,4 +366,61 @@ export async function unsubscribeByToken(token: string): Promise<NurtureLead | n
     [token]
   );
   return rows[0] ? rowToLead(rows[0]) : null;
+}
+
+/**
+ * The text of the last nurture touch Ember successfully sent this contact —
+ * handed to Iris as context for the reply she's about to answer.
+ */
+export async function lastEmberTouchText(clientId: string, contactId: string): Promise<string | null> {
+  const rows = await query<{ message_content: string }>(
+    `SELECT l.message_content FROM ember_send_log l
+       JOIN ember_nurture_leads n ON n.id = l.lead_id
+      WHERE n.client_id = $1 AND n.ghl_contact_id = $2 AND l.error IS NULL
+      ORDER BY l.sent_at DESC LIMIT 1`,
+    [clientId, contactId]
+  );
+  return rows[0]?.message_content ?? null;
+}
+
+/**
+ * Leads whose replies the poll should look for: anyone Ember has actually
+ * texted who is still nurturing/completed, plus handed-off leads whose
+ * Iris text conversation is still open (Iris's own SMS handler only runs
+ * off the GHL webhook, which neither account is confirmed to have).
+ */
+export async function listReplyWatch(clientId: string): Promise<NurtureLead[]> {
+  const rows = await query<LeadRow>(
+    `SELECT n.* FROM ember_nurture_leads n
+      WHERE n.client_id = $1 AND n.last_touch_at IS NOT NULL
+        AND (
+          n.status IN ('nurturing', 'completed')
+          OR (n.status = 'handed_off' AND EXISTS (
+                SELECT 1 FROM iris_pending_calls p
+                 WHERE p.client_id = n.client_id AND p.contact_id = n.ghl_contact_id AND p.status = 'pending'))
+        )
+      ORDER BY n.id`,
+    [clientId]
+  );
+  return rows.map(rowToLead);
+}
+
+/**
+ * Hands an old lead to Iris: creates (or reopens) its iris_pending_calls
+ * row as source='ember' so irisHandleInboundSms will answer it. One-shot
+ * (is_explicit_callback) so Iris's 8-attempt new-lead cadence never runs
+ * against someone who texted back once months after inquiring. callAfter
+ * is the fallback single call if the text conversation goes cold.
+ */
+export async function upsertIrisHandoff(clientId: string, contactId: string, lead: unknown, callAfter: Date): Promise<void> {
+  await query(
+    `INSERT INTO iris_pending_calls
+       (client_id, contact_id, lead, call_after, status, is_explicit_callback, source, sms_scheduled, resolution_reason)
+     VALUES ($1, $2, $3, $4, 'pending', true, 'ember', false, 'reactivated by Ember')
+     ON CONFLICT (client_id, contact_id) DO UPDATE
+       SET lead = EXCLUDED.lead, call_after = EXCLUDED.call_after, status = 'pending',
+           is_explicit_callback = true, source = 'ember', sms_scheduled = false,
+           resolution_reason = 'reactivated by Ember', resolved_at = NULL`,
+    [clientId, contactId, JSON.stringify(lead), callAfter]
+  );
 }

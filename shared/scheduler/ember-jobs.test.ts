@@ -13,6 +13,7 @@ const scan = vi.hoisted(() => ({ runEmberScanForClient: vi.fn(async () => ({ sca
 vi.mock("../../agents/ember/scan", () => scan);
 const send = vi.hoisted(() => ({ sendPendingForClient: vi.fn(async () => ({ ran: false, reason: "x" })) }));
 vi.mock("../../agents/ember/send", () => send);
+vi.mock("../../agents/ember/replies", () => ({ pollRepliesForClient: vi.fn(async () => ({ checked: 0, routedToEmber: 0, routedToIris: 0 })) }));
 
 import { runEmberScan, runEmberSendPending } from "./index";
 

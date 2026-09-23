@@ -10,6 +10,14 @@ vi.mock("../agents/quarry/store", () => quarryStore);
 const iris = vi.hoisted(() => ({ irisHandleInboundSms: vi.fn(async () => true) }));
 vi.mock("../agents/iris/sms", () => iris);
 
+const ember = vi.hoisted(() => ({
+  emberHandleInboundMessage: vi.fn(async () => false),
+  emberHandleStageUpdate: vi.fn(async () => {}),
+  emberHandleTagUpdate: vi.fn(async () => {}),
+  emberMarkInboundSeen: vi.fn(async () => {}),
+}));
+vi.mock("../agents/ember/webhooks", () => ember);
+
 import { createGHLRouter } from "./ghl-webhook";
 
 /**
@@ -60,5 +68,22 @@ describe("POST /message — routes a non-Quarry contact to Iris before Ember", (
     await handler({ body: { contactId: "contact-1", body: "yes", type: "SMS", direction: "inbound" } }, fakeRes());
 
     expect(iris.irisHandleInboundSms).not.toHaveBeenCalled();
+  });
+});
+
+describe("POST /message — Ember fallback", () => {
+  it("falls through to Ember when Iris doesn't own the contact", async () => {
+    quarryStore.getLeadByGhlContactId.mockResolvedValue(null);
+    iris.irisHandleInboundSms.mockResolvedValueOnce(false);
+    await getRouteHandler("/message", "post")({ body: { contactId: "contact-1", body: "yes still looking", type: "SMS", direction: "inbound" } }, fakeRes());
+    expect(ember.emberHandleInboundMessage).toHaveBeenCalledWith("contact-1", "yes still looking");
+    expect(ember.emberMarkInboundSeen).not.toHaveBeenCalled();
+  });
+
+  it("marks the reply seen for Ember (so the poll won't re-answer it) when Iris handled it", async () => {
+    quarryStore.getLeadByGhlContactId.mockResolvedValue(null);
+    await getRouteHandler("/message", "post")({ body: { contactId: "contact-1", body: "5pm", type: "SMS", direction: "inbound" } }, fakeRes());
+    expect(ember.emberMarkInboundSeen).toHaveBeenCalledWith("contact-1");
+    expect(ember.emberHandleInboundMessage).not.toHaveBeenCalled();
   });
 });

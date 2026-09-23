@@ -8,13 +8,14 @@
  *     human moved since the last scan, or a contact who set DND, never gets
  *     the text;
  *   - the CASL consent window is checked per send, not just at enrollment;
- *   - there is no auto-reply. Any reply that isn't a "no" stops the cadence
- *     and alerts #backend-ops, because the right next step for someone who
- *     just resurfaced is a human, not another template.
+ *   - Ember never writes a reply itself. A clear "no" opts out; any other
+ *     reply stops the cadence and goes to Iris, who qualifies them by text
+ *     and calls for a live transfer (handoff.ts), with an alert to
+ *     #backend-ops either way.
  */
 import { classifyReply, ReplySentiment } from "../quarry/outreach";
 import type { OutcomeStageMap } from "../forge/ads/attribution";
-import { EmberConfig, renderTemplate } from "./config";
+import { EmberConfig, renderTemplate, scriptKindFor } from "./config";
 import { AlertFn, formatReactivationAlert, markExited, markReactivated } from "./alerts";
 import { detectChange } from "./scan";
 import { logSend, sendsToday, updateLead } from "./store";
@@ -112,7 +113,8 @@ export function buildMessage(
     physicalAddress: config.outreach.email.physicalAddress,
   };
   if (channel === "sms") {
-    return { body: renderTemplate(templateAt(config.outreach.sms.templates, touchIndex), vars) };
+    const scripts = config.outreach.sms.scripts[scriptKindFor(lead.intent)];
+    return { body: renderTemplate(templateAt(scripts, touchIndex), vars) };
   }
   const t = templateAt(config.outreach.email.templates, touchIndex);
   return { subject: renderTemplate(t.subject, vars), body: renderTemplate(t.html, vars) };
@@ -324,7 +326,18 @@ function stripPhrases(text: string, phrases: string[]): string {
 export async function handleReply(
   lead: NurtureLead,
   body: string,
-  ctx: { config: EmberConfig; clientName: string; alert: AlertFn; now?: Date }
+  ctx: {
+    config: EmberConfig;
+    clientName: string;
+    alert: AlertFn;
+    now?: Date;
+    /**
+     * Passes a non-"no" reply to Iris to qualify by text and call for a
+     * live transfer (handoff.ts). "not_available" (no Iris config for this
+     * client, contact unreadable) falls back to the human alert below.
+     */
+    handoff?: (lead: NurtureLead, text: string) => Promise<"handed_off" | "not_available">;
+  }
 ): Promise<ReplySentiment> {
   const now = ctx.now ?? new Date();
   const sentiment = classifyReply(body, ctx.config.outreach);
@@ -353,6 +366,8 @@ export async function handleReply(
     });
     return sentiment;
   }
+
+  if (ctx.handoff && (await ctx.handoff(lead, body)) === "handed_off") return sentiment;
 
   await updateLead(lead.id, {
     status: "replied",

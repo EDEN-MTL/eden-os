@@ -18,7 +18,10 @@ vi.mock("./deps", async () => {
   return { resolveStageNames: vi.fn(async () => STAGES) };
 });
 
-import { emberHandleInboundMessage, emberHandleStageUpdate, emberHandleTagUpdate } from "./webhooks";
+const handoff = vi.hoisted(() => ({ handOffToIris: vi.fn(async () => "not_available" as const) }));
+vi.mock("./handoff", () => handoff);
+
+import { emberHandleInboundMessage, emberHandleStageUpdate, emberHandleTagUpdate, emberMarkInboundSeen } from "./webhooks";
 import { config, lead, OUTCOME_STAGES } from "./test-fixtures";
 
 afterEach(() => vi.clearAllMocks());
@@ -49,6 +52,29 @@ describe("with ember.enabled on", () => {
     expect(await emberHandleInboundMessage("c1", "yes still looking")).toBe(true);
     expect(store.updateLead).toHaveBeenCalledWith(1, expect.objectContaining({ status: "replied" }));
     expect(alert).toHaveBeenCalledTimes(1);
+  });
+
+  it("a reply goes to Iris when she can take it — no separate human alert", async () => {
+    enabled();
+    handoff.handOffToIris.mockResolvedValueOnce("handed_off" as any);
+    store.listOpenLeadsByContactId.mockResolvedValueOnce([lead()]);
+    await emberHandleInboundMessage("c1", "yes still looking");
+    expect(handoff.handOffToIris).toHaveBeenCalledWith(expect.objectContaining({ id: 1 }), "yes still looking", expect.anything());
+    expect(alert).not.toHaveBeenCalled();
+    expect(store.updateLead).toHaveBeenCalledWith(1, { lastInboundSeenAt: expect.any(String) });
+  });
+
+  it("a reply from an already handed-off lead is left to Iris", async () => {
+    enabled();
+    store.listOpenLeadsByContactId.mockResolvedValueOnce([lead({ status: "handed_off" })]);
+    await emberHandleInboundMessage("c1", "5pm works");
+    expect(handoff.handOffToIris).not.toHaveBeenCalled();
+  });
+
+  it("marks a reply seen when Iris answered it via the webhook", async () => {
+    store.listOpenLeadsByContactId.mockResolvedValueOnce([lead({ status: "handed_off" })]);
+    await emberMarkInboundSeen("c1");
+    expect(store.updateLead).toHaveBeenCalledWith(1, { lastInboundSeenAt: expect.any(String) });
   });
 
   it("a reply from an untracked contact is not Ember's", async () => {

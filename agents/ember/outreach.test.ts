@@ -100,6 +100,14 @@ describe("sendTouch", () => {
     });
   });
 
+  it("picks the buyer or seller script from the lead's intent", async () => {
+    const d = deps();
+    await sendTouch(lead({ intent: "buyer" }), d, ctx());
+    await sendTouch(lead({ intent: "downsize" }), d, ctx());
+    expect(d.sendSMS).toHaveBeenNthCalledWith(1, "c1", "Buyer one Jordan, it's Mark's Realty. Reply STOP to opt out.");
+    expect(d.sendSMS).toHaveBeenNthCalledWith(2, "c1", "Seller one Jordan. Reply STOP to opt out.");
+  });
+
   it("reuses the last template once the cadence outruns the list", async () => {
     const d = deps();
     await sendTouch(lead({ touchCount: 2 }), d, ctx());
@@ -204,6 +212,27 @@ describe("handleReply", () => {
     expect(await handleReply(lead(), "Yes! still looking actually", r)).toBe("positive");
     expect(store.updateLead).toHaveBeenCalledWith(1, expect.objectContaining({ status: "replied", nextTouchAt: null }));
     expect(r.alert).toHaveBeenCalledWith(expect.stringContaining('replied "Yes! still looking actually"'));
+  });
+
+  it("hands a non-'no' reply to Iris instead of alerting a human directly", async () => {
+    const r = { ...replyCtx(), handoff: vi.fn(async () => "handed_off" as const) };
+    await handleReply(lead(), "yes still looking", r);
+    expect(r.handoff).toHaveBeenCalledWith(expect.objectContaining({ id: 1 }), "yes still looking");
+    expect(store.updateLead).not.toHaveBeenCalled();
+    expect(r.alert).not.toHaveBeenCalled();
+  });
+
+  it("falls back to the human alert when Iris isn't available for this client", async () => {
+    const r = { ...replyCtx(), handoff: vi.fn(async () => "not_available" as const) };
+    await handleReply(lead(), "yes still looking", r);
+    expect(store.updateLead).toHaveBeenCalledWith(1, expect.objectContaining({ status: "replied" }));
+    expect(r.alert).toHaveBeenCalledTimes(1);
+  });
+
+  it("never hands a clear 'no' to Iris", async () => {
+    const r = { ...replyCtx(), handoff: vi.fn(async () => "handed_off" as const) };
+    await handleReply(lead(), "no thanks, not interested", r);
+    expect(r.handoff).not.toHaveBeenCalled();
   });
 
   it("an unclear reply also goes to a human", async () => {
