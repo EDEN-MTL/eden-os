@@ -96,5 +96,46 @@
     },
     "newLeadTags": ["buyer lead", "seller lead"],
     "touchedTags": ["appt booked", "live transferred", "no show", "showed up", "connection made"]
+  },
+  "ember": {
+    "_comment": "Mark, 2026-09-23: first Ember config, on the TEST account only. enabled stays false until a live dry run here is checked. excludeStages is a first guess from this pipeline's live stage list (GET /opportunities/pipelines, 2026-09-23) — columns where a human is already working the deal; confirm with Jacob before copying to a real client. consentWindowDays 180 is CASL's implied-consent window for an inquiry, not a tuning knob.",
+    "enabled": false,
+    "pipelineId": "Ghy9io9Va4wJPmwVrMC6",
+    "dormancyThresholdDays": 45,
+    "excludeStages": [
+      "Appointment Set",
+      "Appointment Set (Not qualified)",
+      "Showed Up",
+      "Listing Active",
+      "International Numbers"
+    ],
+    "consentWindowDays": 180,
+    "renewedInterestTags": ["renewed interest", "ember reactivated"],
+    "alertChannel": "backend-ops",
+    "timezone": "America/Toronto",
+    "sendWindow": { "startHour": 10, "endHour": 19 },
+    "outreach": {
+      "senderName": "Mark's Realty",
+      "dailySendCap": 20,
+      "minSendSpacingSeconds": 90,
+      "jitterSeconds": 120,
+      "touchScheduleDays": [0, 14, 35, 70],
+      "positiveKeywords": ["yes", "yeah", "yep", "interested", "still looking", "call me", "sure", "ready"],
+      "negativeKeywords": ["no", "stop", "not interested", "unsubscribe", "remove me", "bought already", "already bought", "no thanks"],
+      "sms": {
+        "enabled": true,
+        "templates": [
+          "Hi {{firstName}}, it's {{senderName}} — you reached out a while back about real estate. Still thinking about a move this year? Happy to help whenever the timing's right. Reply STOP to opt out.",
+          "Hi {{firstName}}, {{senderName}} here. The market's shifted a bit since we last spoke — want a quick update on what homes like yours are going for? Reply STOP to opt out.",
+          "Hi {{firstName}}, just checking in from {{senderName}}. If your plans have changed, no worries at all — if you're still looking, reply and we'll set up a quick call. Reply STOP to opt out."
+        ]
+      },
+      "email": {
+        "enabled": false,
+        "fromAddress": "",
+        "physicalAddress": "",
+        "templates": []
+      }
+    }
   }
 }
