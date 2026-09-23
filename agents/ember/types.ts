@@ -34,6 +34,7 @@ export interface NurtureLead {
   enrolledStageId: string | null;
   enrolledStageName: string | null;
   lastGhlActivityAt: string | null;
+  inquiryAt: string | null;
   enteredAt: string;
   touchCount: number;
   lastTouchAt: string | null;

@@ -590,6 +590,10 @@ CREATE TABLE IF NOT EXISTS ember_nurture_leads (
     enrolled_stage_name TEXT,
     -- GHL's own lastStageChangeAt at enrollment — the dormancy clock.
     last_ghl_activity_at TIMESTAMPTZ,
+    -- The opportunity's createdAt, i.e. when they inquired. CASL's implied
+    -- consent runs 6 months from the inquiry, so every send checks this —
+    -- a lead enrolled at month 4 must stop at month 6 mid-cadence.
+    inquiry_at TIMESTAMPTZ,
     entered_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     touch_count INTEGER NOT NULL DEFAULT 0,
     last_touch_at TIMESTAMPTZ,

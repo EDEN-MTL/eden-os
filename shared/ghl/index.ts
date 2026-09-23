@@ -445,6 +445,22 @@ export async function createOpportunity(
   });
 }
 
+/**
+ * One opportunity by id. Ember re-reads the card right before each nurture
+ * touch so a deal a human moved since the last scan never gets a "still
+ * thinking about it?" text. Verified live 2026-09-23 against
+ * eden-sub-account-one: the response wraps the record as { opportunity },
+ * with the same pipelineStageId/lastStageChangeAt fields as a search result.
+ */
+export async function getOpportunity(
+  opportunityId: string,
+  locationId?: string,
+  apiKey?: string
+): Promise<any> {
+  const payload = await ghlRequest(`/opportunities/${opportunityId}`, { locationId, apiKey });
+  return payload?.opportunity ?? payload;
+}
+
 export async function updateOpportunityStage(
   opportunityId: string,
   stageId: string,

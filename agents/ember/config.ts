@@ -58,11 +58,16 @@ export interface EmberConfig {
     minSendSpacingSeconds: number;
     jitterSeconds: number;
     /**
-     * Days after ENROLLMENT for each touch — [0, 14, 35, 70] means one the
-     * first send window after enrollment, then 2, 5 and 10 weeks in. Its
+     * Days after enrollment for each touch — [0, 14, 35, 70] means one in
+     * the first send window after enrollment, then 2, 5 and 10 weeks in. Its
      * length is the number of touches; after the last one the lead is
-     * `completed`. Counted from enrollment, not from the previous touch, so
-     * a send delayed by the daily cap doesn't push every later touch back.
+     * `completed`.
+     *
+     * The GAPS are enforced from the previous touch's actual send time, not
+     * from enrollment: if sends are held back (kill switch off for a week,
+     * daily cap hit), anchoring to enrollment would make every overdue touch
+     * fire on consecutive days once sending resumes — four texts in four
+     * days to someone who went quiet, which is the opposite of nurture.
      */
     touchScheduleDays: number[];
     positiveKeywords: string[];
