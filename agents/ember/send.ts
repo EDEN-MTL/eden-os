@@ -46,8 +46,6 @@ export async function sendPendingForClient(
   clientId: string,
   options: {
     now?: Date;
-    /** Skips the send-window check — only for an explicit human "send now". */
-    ignoreSendWindow?: boolean;
     deps?: OutreachDeps;
     stageNames?: Record<string, string>;
     log?: (line: string) => void;
@@ -61,7 +59,7 @@ export async function sendPendingForClient(
   if (problems.length) throw new EmberConfigError(problems);
 
   const now = options.now ?? new Date();
-  if (!options.ignoreSendWindow && !inSendWindow(now, config)) {
+  if (!inSendWindow(now, config)) {
     return { ran: false, reason: `outside the ${config.sendWindow.startHour}:00–${config.sendWindow.endHour}:00 ${config.timezone} send window` };
   }
 
@@ -77,7 +75,7 @@ export async function sendPendingForClient(
       due,
       deps,
       { config, clientName: clientName(clientId), outcomeStages: loadEmberOutcomeStages(clientId), stageNames, now },
-      { log: options.log, clock: options.now ? () => now : () => new Date(), ignoreSendWindow: options.ignoreSendWindow }
+      { log: options.log, clock: options.now ? () => now : () => new Date() }
     );
     return { ran: true, due: due.length, ...result };
   } finally {

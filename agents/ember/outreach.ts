@@ -252,8 +252,6 @@ export async function sendBatch(
     /** Real time for each send. A batch can run over an hour, so neither the
      *  send window nor lastTouchAt can use the time the batch started. */
     clock?: () => Date;
-    /** Only for an explicit human "send now" from Slack. */
-    ignoreSendWindow?: boolean;
   } = {}
 ): Promise<BatchResult> {
   const { config } = ctx;
@@ -278,7 +276,7 @@ export async function sendBatch(
       break;
     }
     const now = options.clock ? options.clock() : ctx.now ?? new Date();
-    if (!options.ignoreSendWindow && !inSendWindow(now, config)) {
+    if (!inSendWindow(now, config)) {
       log(`send window closed — ${leads.length - index} touches held for the next window`);
       break;
     }
