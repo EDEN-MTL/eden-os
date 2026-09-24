@@ -18,6 +18,14 @@ import {
 } from "../../shared/ghl";
 
 const CHECKIN_WINDOW_DAYS = 60;
+// Outer discovery bound for calendar events, added 2026-09-24: a deal can
+// stay open well past 60 days (a slow buyer, a listing that hasn't sold),
+// and calendar events need an explicit GHL fetch window — unlike
+// opportunities, which we already iterate without a date bound. Anything
+// found between 60 and 180 days old only survives if its contact still
+// has an open opportunity (checked below); this is just how far back we
+// bother looking in the first place.
+const EXTENDED_LOOKBACK_DAYS = 180;
 
 export const CHECKBOX_FIELDS = [
   "still_in_conversation",
@@ -130,27 +138,32 @@ export async function getCheckinData(token: string): Promise<CheckinData | null>
 
   const now = Date.now();
   const start = now - CHECKIN_WINDOW_DAYS * 24 * 60 * 60 * 1000;
+  const extendedStart = now - EXTENDED_LOOKBACK_DAYS * 24 * 60 * 60 * 1000;
 
   // Deliberately only buyer/seller — the third configured calendar
   // (scout.calendars.callback) is confirmed deleted in GHL live, 2026-09-09
   // (see config's _teamsNote); querying it would just 400.
   const calendarIds: string[] = [config.scout?.calendars?.buyer, config.scout?.calendars?.seller].filter(Boolean);
 
+  // Fetched over the wider EXTENDED_LOOKBACK_DAYS window (not just the
+  // "recent" 60 days) so a still-open deal isn't dropped just because its
+  // original appointment was a while ago — anything older than 60 days
+  // gets filtered back down below, unless its contact still has an open
+  // opportunity.
   const rawEvents: any[] = [];
   for (const calendarId of calendarIds) {
-    const events = await listCalendarEvents(ghlConfig.locationId, calendarId, start, now, ghlConfig.apiKey);
+    const events = await listCalendarEvents(ghlConfig.locationId, calendarId, extendedStart, now, ghlConfig.apiKey);
     rawEvents.push(...events);
   }
 
-  // Live-transferred calls: opportunities sitting in (or that recently
-  // passed through) the "Live Transferred" pipeline stage — a different
-  // GHL object entirely from a booked calendar appointment, but Jacob
-  // wants both on the same check-in page. `assignedTo` is verified live to
-  // sometimes be a DEAD user id (confirmed via a direct GET /users/{id} ->
-  // 404 — a former team member's account, presumably), so `followers[0]`
-  // is tried first: on every recent row that had a non-empty followers
-  // array, it was a real, current roster member; assignedTo is only the
-  // fallback for the rows where followers was empty.
+  // Live-transferred calls: opportunities sitting in the "Live Transferred"
+  // pipeline stage — a different GHL object entirely from a booked
+  // calendar appointment, but Jacob wants both on the same check-in page.
+  // Kept purely by status (`open`), not by age: unlike calendar events,
+  // this list was never date-bounded at the API level (listOpportunities
+  // Paginated iterates the whole stage), so there's no separate "old but
+  // still open" case to handle here the way there is for calendar events
+  // below — an open one just stays, however long it's been in this stage.
   const pipelineId = config.scout?.pipelineId;
   const liveTransferStageId = config.iris?.liveTransferStageId;
   const rawLiveTransfers: any[] = [];
@@ -160,8 +173,7 @@ export async function getCheckinData(token: string): Promise<CheckinData | null>
       apiKey: ghlConfig.apiKey,
     })) {
       if (opp.pipelineStageId !== liveTransferStageId) continue;
-      const changedAt = new Date(opp.lastStageChangeAt || opp.updatedAt).getTime();
-      if (changedAt < start) continue;
+      if (opp.status !== "open") continue;
       rawLiveTransfers.push(opp);
     }
   }
@@ -173,6 +185,12 @@ export async function getCheckinData(token: string): Promise<CheckinData | null>
     appointmentAt: string;
     status: string;
     assignedId: string | null;
+    // Live-transfer items are already filtered to status==="open" at the
+    // fetch stage above, however old — the stale/open-opportunity re-check
+    // below is only meaningful for calendar events, so this flag lets that
+    // step skip them rather than misreading a live-transfer's (often
+    // absent) contactId as "nothing to keep it alive."
+    isLiveTransfer: boolean;
   }
 
   let items: RawItem[] = [
@@ -183,6 +201,7 @@ export async function getCheckinData(token: string): Promise<CheckinData | null>
       appointmentAt: e.startTime,
       status: e.appointmentStatus || "unknown",
       assignedId: e.assignedUserId || null,
+      isLiveTransfer: false,
     })),
     ...rawLiveTransfers.map((o) => ({
       id: o.id,
@@ -190,7 +209,13 @@ export async function getCheckinData(token: string): Promise<CheckinData | null>
       prospectName: o.name || "Unknown",
       appointmentAt: o.lastStageChangeAt || o.updatedAt,
       status: "live transferred",
+      // followers[0] tried first, assignedTo as fallback: assignedTo is
+      // verified live to sometimes be a DEAD user id (a direct
+      // GET /users/{id} -> 404, a former team member's account,
+      // presumably) — every recent row with a non-empty followers array
+      // had a real, current roster member there instead.
       assignedId: (o.followers && o.followers.length ? o.followers[0] : null) || o.assignedTo || null,
+      isLiveTransfer: true,
     })),
   ];
 
@@ -209,6 +234,39 @@ export async function getCheckinData(token: string): Promise<CheckinData | null>
   items = items.map((item) => {
     const override = item.contactId ? manualAssignments[item.contactId] : undefined;
     return override ? { ...item, assignedId: override } : item;
+  });
+
+  // Anything within the "recent" 60-day window always shows, same as
+  // before. Anything older (only discoverable at all because calendar
+  // events were fetched over EXTENDED_LOOKBACK_DAYS) only survives if its
+  // contact still has a real open opportunity — otherwise the appointment
+  // is genuinely done and dropping it is correct, not a bug. A failure in
+  // this check itself keeps the item rather than dropping it: this whole
+  // mechanism exists to stop losing real leads, so a transient GHL error
+  // must never be the thing that makes one disappear.
+  const staleContactIds = Array.from(
+    new Set(
+      items
+        .filter((item) => !item.isLiveTransfer && new Date(item.appointmentAt).getTime() < start)
+        .map((item) => item.contactId)
+        .filter((id): id is string => !!id)
+    )
+  );
+  const openStaleContactIds = new Set<string>();
+  for (const contactId of staleContactIds) {
+    try {
+      const openOpportunities = await findOpenOpportunitiesForContact(contactId, ghlConfig.locationId, ghlConfig.apiKey);
+      if (openOpportunities.length > 0) openStaleContactIds.add(contactId);
+    } catch (error) {
+      console.error(`[CHECKIN] Failed to check open-opportunity status for stale contact ${contactId} — keeping it:`, error);
+      openStaleContactIds.add(contactId);
+    }
+  }
+  items = items.filter((item) => {
+    if (item.isLiveTransfer) return true; // already guaranteed open at the fetch stage
+    const isRecent = new Date(item.appointmentAt).getTime() >= start;
+    if (isRecent) return true;
+    return item.contactId ? openStaleContactIds.has(item.contactId) : false;
   });
 
   const itemIds = items.map((i) => i.id);
