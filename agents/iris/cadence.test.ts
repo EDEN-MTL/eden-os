@@ -4,6 +4,7 @@ import {
   describeAttempt,
   nextAttempt,
   nextAttemptTime,
+  nextFirstSlotTime,
   totalAttempts,
   clampToLegalCallingWindow,
   isWithinLegalCallingWindow,
@@ -202,5 +203,46 @@ describe("clampToLegalCallingWindow / isWithinLegalCallingWindow", () => {
     const candidate = new Date("2026-09-02T10:30:00Z");
     expect(isWithinLegalCallingWindow(candidate, TZ)).toBe(true);
     expect(clampToLegalCallingWindow(candidate, TZ)).toEqual(candidate);
+  });
+});
+
+/**
+ * Real bug found live, 2026-09-24: a lead who submitted overnight (form
+ * came in ~10:40pm local) had its first call clamped to the literal
+ * earliest legal instant — 8am sharp — which read as an aggressive edge
+ * case rather than a normal call. This lands an overnight lead's first
+ * call on the SAME slot the regular cadence already uses instead.
+ */
+describe("nextFirstSlotTime", () => {
+  const TZ = "America/St_Johns";
+
+  function localHourAndDate(date: Date): { hour: number; date: string } {
+    const parts = Object.fromEntries(
+      new Intl.DateTimeFormat("en-US", { timeZone: TZ, hour: "numeric", hour12: false, year: "numeric", month: "2-digit", day: "2-digit" })
+        .formatToParts(date)
+        .map((p) => [p.type, p.value])
+    );
+    return { hour: Number(parts.hour), date: `${parts.year}-${parts.month}-${parts.day}` };
+  }
+
+  it("lands on 10am local the SAME day when it's still before 10am (the Jalpesh Patel case: overnight submission, checked the next morning)", () => {
+    // 2026-09-24T10:00:00Z is 07:30 local (NDT, UTC-02:30) — before the 10am slot.
+    const now = new Date("2026-09-24T10:00:00Z");
+    const result = nextFirstSlotTime(cadence, TZ, now);
+    expect(localHourAndDate(result)).toEqual({ hour: 10, date: "2026-09-24" });
+  });
+
+  it("lands on 10am local the NEXT day when checked later — never in the past", () => {
+    // 2026-09-24T18:00:00Z is 15:30 local — after both today's slots.
+    const now = new Date("2026-09-24T18:00:00Z");
+    const result = nextFirstSlotTime(cadence, TZ, now);
+    expect(localHourAndDate(result)).toEqual({ hour: 10, date: "2026-09-25" });
+    expect(result.getTime()).toBeGreaterThan(now.getTime());
+  });
+
+  it("uses the cadence's own first slot hour, not a hardcoded 10 — a 1/day cadence still lands on its own single slot", () => {
+    const oneADay = { attemptsPerDay: 1, days: 4, recheckBeforeEachAttempt: true };
+    const now = new Date("2026-09-24T10:00:00Z"); // 07:30 local
+    expect(localHourAndDate(nextFirstSlotTime(oneADay, TZ, now)).hour).toBe(10);
   });
 });
