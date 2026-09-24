@@ -192,6 +192,29 @@ export function nextAttemptTime(
 }
 
 /**
+ * Next occurrence of the cadence's own first daily slot hour (10am for the
+ * current 2/day config) — today's if it hasn't passed yet, tomorrow's
+ * otherwise. Mark's call, 2026-09-24: a lead whose form comes in overnight
+ * previously had its first call clamped to the literal earliest legal
+ * instant (clampToLegalCallingWindow → 8am sharp — see that function's own
+ * doc comment), which landed as an aggressive "the moment the clock allows
+ * it" call rather than a normal business-hours one. This lands it on the
+ * SAME slot every other cadence attempt already uses instead, so an
+ * overnight lead's first call feels like a normal 10am call, not an edge
+ * case. Only meant for agents/iris/index.ts's lead.enriched handler, when
+ * its own "5 minutes from now" candidate already falls outside legal hours
+ * — a lead who submits mid-day still gets called within minutes, unchanged.
+ */
+export function nextFirstSlotTime(cadence: OutreachCadenceConfig, timeZone: string, now: Date = new Date()): Date {
+  const inZone = new Date(now.toLocaleString("en-US", { timeZone }));
+  const targetHour = slotHours(cadence.attemptsPerDay)[0];
+  const dayOffset = inZone.getHours() < targetHour ? 0 : 1;
+  const target = new Date(inZone);
+  target.setDate(target.getDate() + dayOffset);
+  return zonedHourToUtc(target.getFullYear(), target.getMonth(), target.getDate(), targetHour, timeZone);
+}
+
+/**
  * Full-precision local time, e.g. "Tuesday, September 22 at 6:30 PM" — for
  * a human reading a record later (a GHL contact note, or a Slack answer to
  * "what time was the last attempt"), not something Iris speaks aloud on a
