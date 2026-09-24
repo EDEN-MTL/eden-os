@@ -416,6 +416,12 @@ export function renderCheckinPage(): string {
   .appt-fail-note { font-size: 11px; color: #b00020; margin-top: 6px; }
   .empty { color: #888; font-size: 14px; padding: 20px 0; }
   .error { color: #b00020; padding: 20px 0; }
+  .tab-bar { display: flex; gap: 8px; margin: 20px 0 4px; }
+  .tab-btn {
+    background: #eee; border: none; border-radius: 8px; padding: 8px 14px;
+    font-size: 13px; font-weight: 600; cursor: pointer; color: #444;
+  }
+  .tab-btn.active { background: #1a1a1a; color: #fff; }
   .save-bar {
     position: sticky; bottom: 0; left: 0; right: 0; margin-top: 24px;
     background: #fff; border-top: 1px solid #e3e3e6; padding: 12px 16px;
@@ -453,6 +459,47 @@ export function renderCheckinPage(): string {
 
   function fmtCurrency(n) {
     return "$" + n.toLocaleString("en-US", { minimumFractionDigits: 0, maximumFractionDigits: 2 });
+  }
+
+  // "New" vs "Continuing" tabs, per Jacob 2026-09-23: team leads should
+  // land on the fresh batch first, without losing the ability to keep
+  // updating older leads still moving through the pipeline. 14 days
+  // matches the bi-weekly cadence itself — deliberately a fixed window,
+  // not tied to exactly when a link was last sent (sends are manual and
+  // can drift), so the split stays predictable either way.
+  var NEW_WINDOW_DAYS = 14;
+
+  function isNew(appointmentAt) {
+    var ageMs = Date.now() - new Date(appointmentAt).getTime();
+    return ageMs <= NEW_WINDOW_DAYS * 24 * 60 * 60 * 1000;
+  }
+
+  function filterAppointments(list, wantNew) {
+    return list.filter(function (a) { return isNew(a.appointmentAt) === wantNew; });
+  }
+
+  // Splits the full team/member tree into a "new" or "old" copy, applying
+  // the same "hide a member/team with nothing to show" rule as before —
+  // now per bucket, since one member can have appointments in both.
+  function bucketData(data, wantNew) {
+    var teams = data.teams
+      .map(function (team) {
+        return {
+          teamName: team.teamName,
+          teamLead: team.teamLead,
+          members: team.members
+            .map(function (m) { return { name: m.name, appointments: filterAppointments(m.appointments, wantNew) }; })
+            .filter(function (m) { return m.appointments.length > 0; })
+        };
+      })
+      .filter(function (t) { return t.members.length > 0; });
+    return { teams: teams, unassigned: filterAppointments(data.unassigned, wantNew) };
+  }
+
+  function countAppointments(bucket) {
+    var n = bucket.unassigned.length;
+    bucket.teams.forEach(function (t) { t.members.forEach(function (m) { n += m.appointments.length; }); });
+    return n;
   }
 
   function renderAppointment(a) {
@@ -581,6 +628,33 @@ export function renderCheckinPage(): string {
     return section;
   }
 
+  function renderPanel(bucket, emptyMessage) {
+    var panel = document.createElement("div");
+    panel.className = "tab-panel";
+    if (bucket.teams.length === 0 && bucket.unassigned.length === 0) {
+      var empty = document.createElement("p");
+      empty.className = "empty";
+      empty.textContent = emptyMessage;
+      panel.appendChild(empty);
+      return panel;
+    }
+    bucket.teams.forEach(function (team) { panel.appendChild(renderTeam(team)); });
+    if (bucket.unassigned.length > 0) {
+      var section = document.createElement("section");
+      section.className = "team";
+      var h2 = document.createElement("h2");
+      h2.textContent = "Needs routing";
+      var note = document.createElement("p");
+      note.className = "lead";
+      note.textContent = "Not yet assigned to a team member in GHL";
+      section.appendChild(h2);
+      section.appendChild(note);
+      bucket.unassigned.forEach(function (appt) { section.appendChild(renderAppointment(appt)); });
+      panel.appendChild(section);
+    }
+    return panel;
+  }
+
   fetch("/api/checkin/" + encodeURIComponent(token))
     .then(function (res) {
       if (!res.ok) throw new Error("not-found");
@@ -593,27 +667,43 @@ export function renderCheckinPage(): string {
       var main = document.getElementById("main");
       main.innerHTML = "";
 
-      var teamsWithAppointments = data.teams.filter(function (t) { return t.members.length > 0; });
-      if (teamsWithAppointments.length === 0 && data.unassigned.length === 0) {
+      var newBucket = bucketData(data, true);
+      var oldBucket = bucketData(data, false);
+      var newCount = countAppointments(newBucket);
+      var oldCount = countAppointments(oldBucket);
+
+      if (newCount === 0 && oldCount === 0) {
         main.innerHTML = '<p class="empty">No recent appointments in this period.</p>';
         return;
       }
-      teamsWithAppointments.forEach(function (team) { main.appendChild(renderTeam(team)); });
 
-      if (data.unassigned.length > 0) {
-        var section = document.createElement("section");
-        section.className = "team";
-        var h2 = document.createElement("h2");
-        h2.textContent = "Needs routing";
-        var note = document.createElement("p");
-        note.className = "lead";
-        note.textContent = "Not yet assigned to a team member in GHL";
-        section.appendChild(h2);
-        section.appendChild(note);
-        data.unassigned.forEach(function (appt) { section.appendChild(renderAppointment(appt)); });
-        main.appendChild(section);
-      }
+      var tabBar = document.createElement("div");
+      tabBar.className = "tab-bar";
+      tabBar.innerHTML =
+        '<button class="tab-btn active" data-tab="new" type="button">New (' + newCount + ')</button>' +
+        '<button class="tab-btn" data-tab="old" type="button">Continuing (' + oldCount + ')</button>';
+      main.appendChild(tabBar);
 
+      var panelNew = renderPanel(newBucket, "No new appointments or transfers in the last " + NEW_WINDOW_DAYS + " days.");
+      var panelOld = renderPanel(oldBucket, "Nothing older still in progress.");
+      panelOld.hidden = true;
+      main.appendChild(panelNew);
+      main.appendChild(panelOld);
+
+      Array.prototype.forEach.call(tabBar.querySelectorAll(".tab-btn"), function (btn) {
+        btn.addEventListener("click", function () {
+          Array.prototype.forEach.call(tabBar.querySelectorAll(".tab-btn"), function (b) {
+            b.classList.remove("active");
+          });
+          btn.classList.add("active");
+          panelNew.hidden = btn.dataset.tab !== "new";
+          panelOld.hidden = btn.dataset.tab !== "old";
+        });
+      });
+
+      // Shared across both tabs — saving always submits every appointment
+      // on the page (both panels stay in the DOM, just one hidden), not
+      // only whichever tab happens to be showing.
       var saveBar = document.createElement("div");
       saveBar.className = "save-bar";
       saveBar.innerHTML =

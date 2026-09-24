@@ -5,6 +5,7 @@ import { parseAppointmentContactId, parseInboundMessage } from "../agents/quarry
 import { handleEmailReply, handleReply } from "../agents/quarry/outreach";
 import { getLeadByGhlContactId, updateLead } from "../agents/quarry/store";
 import { loadQuarryConfig } from "../agents/quarry/config";
+import { irisHandleInboundSms } from "../agents/iris/sms";
 
 /**
  * GHL webhook handler.
@@ -123,7 +124,15 @@ export function createGHLRouter(): Router {
 
     try {
       const lead = await getLeadByGhlContactId(parsed.contactId);
-      if (!lead) return; // not a Quarry lead — not ours to handle
+      if (!lead) {
+        // Not a Quarry prospect — may be a lead Iris is qualifying over
+        // text (agents/iris/sms.ts). SMS only — Iris doesn't do email.
+        // Self-scoped: does nothing if this contact has no
+        // iris_pending_calls row at all, or one already resolved, so a
+        // genuinely unrelated contact still falls through here untouched.
+        if (parsed.channel === "sms") await irisHandleInboundSms(parsed.contactId, parsed.text);
+        return;
+      }
 
       const quarryConfig = loadQuarryConfig(lead.clientId);
       if (!quarryConfig) return;
