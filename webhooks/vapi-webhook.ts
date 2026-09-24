@@ -1,11 +1,13 @@
 import crypto from "crypto";
 import { Request, Response, Router } from "express";
 import { query } from "../shared/db";
-import { getGhlConfig, getContact, addContactTags, findOpenOpportunitiesForContact, updateOpportunityStage } from "../shared/ghl";
+import { getGhlConfig, getContact, addContactTags, findOpenOpportunitiesForContact, updateOpportunityStage, getCustomFieldDefs, updateContact } from "../shared/ghl";
 import { sendMessage } from "../shared/slack";
 import { appendHistory } from "../shared/conversation-memory";
 import { loadIrisConfig } from "../agents/iris";
 import { reopenForNextAttempt } from "../agents/iris/dial-pending";
+import { buildKeyToId, readField } from "../agents/scout/intake";
+import { formatLocal } from "../agents/iris/cadence";
 
 /**
  * Every Iris call — real or test — gets posted here so the team can watch
@@ -201,13 +203,74 @@ export async function postCallLogToSlack(clientId: string, contactId: string | n
 }
 
 /**
+ * Guarantees every call leaves a trace on the lead's own GHL record, not
+ * just Slack/our own DB — Mark's explicit instruction, 2026-09-24: the note
+ * must update even when the call did NOT end in a transfer or booking.
+ * Before this, the ONLY write to isa_notes was save_isa_notes, a tool the
+ * MODEL chooses to call, timed to fire "right before presenting the live
+ * transfer or scheduling fallback" (webhooks/vapi-tools.ts) — so a call
+ * that ended earlier (no answer, voicemail, hung up mid-qualification, or
+ * disconnected right before the transfer completed, like Jalpesh Patel)
+ * left literally nothing on the contact record. A human opening that lead
+ * in GHL had no way to know Iris had even tried.
+ *
+ * Deliberately APPENDS rather than overwrites: save_isa_notes may already
+ * have written a real structured qualification summary moments earlier in
+ * the SAME call (exactly Jalpesh Patel's case — qualified, then
+ * disconnected before transfer) — clobbering that would destroy real,
+ * gathered information right when it matters most. Reads the field's
+ * current value first (getContact — CLAUDE.md gotcha 2: only a single
+ * contact fetch returns populated customFields, never the list endpoint),
+ * then writes existing + a new status line, or just the status line if the
+ * field was empty. Runs unconditionally, every call, every outcome —
+ * best-effort like every other post-call side effect in this handler, and
+ * must never block or throw into the caller.
+ */
+export async function appendCallStatusNote(
+  clientId: string,
+  contactId: string,
+  endedReason: string | null,
+  message: Record<string, any>
+): Promise<void> {
+  try {
+    const ghlConfig = await getGhlConfig(clientId);
+    const config = loadIrisConfig(clientId);
+    if (!ghlConfig || !config) return;
+
+    const defs = await getCustomFieldDefs(ghlConfig.locationId, ghlConfig.apiKey);
+    const keyToId = buildKeyToId(defs);
+    const fieldId = keyToId.get(config.callbackNotesFieldKey);
+    if (!fieldId) {
+      console.warn(`[VAPI] callbackNotesFieldKey "${config.callbackNotesFieldKey}" did not resolve to a field id for ${clientId} — skipping call-status note.`);
+      return;
+    }
+
+    const contactResp = await getContact(contactId, ghlConfig.locationId, ghlConfig.apiKey);
+    const contact = contactResp?.contact ?? contactResp;
+    const existing = readField(contact?.customFields, config.callbackNotesFieldKey, keyToId);
+
+    const timezone = config.timezone || "America/St_Johns";
+    const statusLine =
+      `Iris call ${formatLocal(new Date().toISOString(), timezone)} — ${describeOutcome(endedReason, message)}. ` +
+      `Duration: ${formatDuration(message?.durationSeconds)}.`;
+    const notes = existing ? `${existing}\n\n${statusLine}` : statusLine;
+
+    await updateContact(contactId, { customFields: [{ id: fieldId, value: notes }] }, ghlConfig.locationId, ghlConfig.apiKey);
+  } catch (error) {
+    console.error(`[VAPI] Failed to append call-status note for contact ${contactId}:`, error instanceof Error ? error.message : error);
+  }
+}
+
+/**
  * Handles Vapi's end-of-call-report event: fills in the iris_call_log row
  * that placeCall() created with 'initiated' status. Does NOT parse the
  * transcript into GHL qualification fields yet — that needs a transcript ->
  * QualificationAnswers mapping (see agents/iris/qualification.ts's
  * fieldWritesFor, which currently expects already-structured answers, not
  * raw text) that hasn't been built. The full transcript is kept in the DB
- * so nothing is lost while that's pending.
+ * so nothing is lost while that's pending. appendCallStatusNote below does
+ * guarantee a one-line status trace on the GHL contact itself for every
+ * call regardless of outcome, even without that mapping.
  */
 async function handleEndOfCallReport(message: Record<string, any>): Promise<void> {
   const callId = message?.call?.id;
@@ -231,6 +294,7 @@ async function handleEndOfCallReport(message: Record<string, any>): Promise<void
 
   const row = rows[0];
   if (row) await postCallLogToSlack(row.client_id, row.contact_id, message, endedReason);
+  if (row?.contact_id) await appendCallStatusNote(row.client_id, row.contact_id, endedReason, message);
 
   if (endedReason === TRANSFER_SUCCEEDED_REASON && row?.contact_id) {
     await handleSuccessfulTransfer(row.client_id, row.contact_id);
