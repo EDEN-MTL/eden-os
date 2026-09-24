@@ -412,7 +412,7 @@ export async function listReplyWatch(clientId: string): Promise<NurtureLead[]> {
  * against someone who texted back once months after inquiring. callAfter
  * is the fallback single call if the text conversation goes cold.
  */
-export async function upsertIrisHandoff(clientId: string, contactId: string, lead: unknown, callAfter: Date): Promise<void> {
+export async function upsertIrisHandoff(clientId: string, contactId: string, lead: unknown, callAfter: Date | "never"): Promise<void> {
   await query(
     `INSERT INTO iris_pending_calls
        (client_id, contact_id, lead, call_after, status, is_explicit_callback, source, sms_scheduled, resolution_reason)
@@ -421,6 +421,9 @@ export async function upsertIrisHandoff(clientId: string, contactId: string, lea
        SET lead = EXCLUDED.lead, call_after = EXCLUDED.call_after, status = 'pending',
            is_explicit_callback = true, source = 'ember', sms_scheduled = false,
            resolution_reason = 'reactivated by Ember', resolved_at = NULL`,
-    [clientId, contactId, JSON.stringify(lead), callAfter]
+    // "never" → Postgres 'infinity': the row stays open for Iris to text
+    // with, but dial-pending's call_after <= now() never matches it. Only
+    // schedule_transfer_call — the lead saying yes to a call — replaces it.
+    [clientId, contactId, JSON.stringify(lead), callAfter === "never" ? "infinity" : callAfter]
   );
 }

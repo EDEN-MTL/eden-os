@@ -17,6 +17,7 @@ function deps(over: Partial<HandoffDeps> = {}): HandoffDeps {
   return {
     refreshLead: vi.fn(async () => ({ contactId: "c1", phone: "+17095550100", intent: "unknown", name: "Jordan Smith" }) as any),
     irisHandleInboundSms: vi.fn(async () => true),
+    readHistory: vi.fn(async () => []),
     ...over,
   };
 }
@@ -37,6 +38,19 @@ describe("handOffToIris", () => {
     expect(callAfter.getTime()).toBe(NOW.getTime() + 24 * 3_600_000);
     expect(c.alert).toHaveBeenCalledWith(expect.stringContaining("Iris is qualifying them by text"));
     expect(d.irisHandleInboundSms).toHaveBeenCalledWith("c1", "yes still thinking about it");
+  });
+
+  it("never schedules the fallback call for a lead who asked to be texted, not called", async () => {
+    const d = deps({ readHistory: vi.fn(async () => [{ direction: "inbound" as const, channel: "sms" as const, body: "I would appreciate to not be called so many times", at: "2026-06-16" }]) });
+    const alert = vi.fn(async () => {});
+    await handOffToIris(lead(), "sure, what do you have?", ctx(d, alert));
+    expect((store.upsertIrisHandoff.mock.calls[0] as any[])[3]).toBe("never");
+    expect(alert).toHaveBeenCalledWith(expect.stringContaining("asked to be texted rather than called"));
+  });
+
+  it("treats 'please text me' in the reply itself the same way", async () => {
+    await handOffToIris(lead(), "Please text me.", ctx(deps()));
+    expect((store.upsertIrisHandoff.mock.calls[0] as any[])[3]).toBe("never");
   });
 
   it("is not available when the client has no Iris config", async () => {

@@ -10,6 +10,7 @@ import {
   findSoftDecline,
   HistoryMessage,
   isHardOptOut,
+  prefersText,
   readConversationHistory,
   reviewHistory,
   ReviewContext,
@@ -49,6 +50,16 @@ describe("soft declines — retried after the cool-off", () => {
   it("returns the most recent decline", () => {
     const d = findSoftDecline([inb("not interested", "2026-01-01T00:00:00Z"), inb("yes!", "2026-02-01T00:00:00Z"), inb("not right now", "2026-03-01T00:00:00Z")]);
     expect(d?.at).toBe("2026-03-01T00:00:00Z");
+  });
+});
+
+describe("prefersText — no unasked calls", () => {
+  it.each(["Please text me.", "I would appreciate to not be called so many times", "don't call me, text is better", "no more calls please", "I'm not available for a phone call"])(
+    "catches %j",
+    (body) => expect(prefersText([inb(body)])).toBe(body)
+  );
+  it.each(["call me at 5", "yes still looking", "can you call tomorrow?"])("lets %j through", (body) => {
+    expect(prefersText([inb(body)])).toBeNull();
   });
 });
 

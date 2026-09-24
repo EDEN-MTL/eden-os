@@ -18,7 +18,7 @@
  * dryRun, which reads GHL and writes nothing.
  */
 import { deriveWon, derivePipelineActive, OutcomeStageMap } from "../forge/ads/attribution";
-import { getGhlConfig, listOpportunitiesPaginated, listPipelines } from "../../shared/ghl";
+import { getGhlConfig, listOpportunitiesInStage, listPipelines } from "../../shared/ghl";
 import { EmberConfig, loadEmberConfig, loadEmberOutcomeStages } from "./config";
 import { AlertFn, markExited, markReactivated, REACTIVATABLE, slackAlert } from "./alerts";
 import { enrollLead, hasPendingIrisCall, trackedByOpportunity } from "./store";
@@ -201,8 +201,16 @@ export async function buildScanDeps(clientId: string, config: EmberConfig): Prom
   const ghl = await getGhlConfig(clientId);
   if (!ghl) throw new Error(`No GHL credentials configured for client "${clientId}"`);
   return {
-    listOpportunities: () =>
-      listOpportunitiesPaginated(ghl.locationId, { pipelineId: config.pipelineId, apiKey: ghl.apiKey }),
+    // Stage by stage, not listOpportunitiesPaginated — that one silently
+    // returned 106 of 280 on 3%'s real pipeline (see listOpportunitiesInStage).
+    listOpportunities: async function* () {
+      for (const p of await listPipelines(ghl.locationId, ghl.apiKey)) {
+        if (p.id !== config.pipelineId) continue;
+        for (const stage of p.stages || []) {
+          for (const o of await listOpportunitiesInStage(ghl.locationId, config.pipelineId, stage.id, ghl.apiKey)) yield o;
+        }
+      }
+    },
     stageNames: async () => {
       const names: Record<string, string> = {};
       for (const p of await listPipelines(ghl.locationId, ghl.apiKey)) {

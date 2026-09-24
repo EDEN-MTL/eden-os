@@ -16,6 +16,8 @@ import { AlertFn, formatReactivationAlert, REACTIVATABLE } from "./alerts";
 import { EmberConfig } from "./config";
 import { transitionStatus, upsertIrisHandoff } from "./store";
 import { NurtureLead } from "./types";
+import { getGhlConfig } from "../../shared/ghl";
+import { HistoryMessage, prefersText, readConversationHistory } from "./history";
 
 /**
  * If the text conversation goes quiet after they reply, Iris makes ONE
@@ -30,9 +32,17 @@ export type HandoffResult = "handed_off" | "not_available";
 export interface HandoffDeps {
   refreshLead: typeof refreshLead;
   irisHandleInboundSms: typeof irisHandleInboundSms;
+  readHistory(clientId: string, contactId: string): Promise<HistoryMessage[]>;
 }
 
-const LIVE_DEPS: HandoffDeps = { refreshLead, irisHandleInboundSms };
+const LIVE_DEPS: HandoffDeps = {
+  refreshLead,
+  irisHandleInboundSms,
+  readHistory: async (clientId, contactId) => {
+    const ghl = await getGhlConfig(clientId);
+    return ghl ? readConversationHistory(contactId, ghl.locationId, ghl.apiKey) : [];
+  },
+};
 
 export async function handOffToIris(
   lead: NurtureLead,
@@ -51,8 +61,16 @@ export async function handOffToIris(
   const leadForIris = { ...fresh, intent: fresh.intent !== "unknown" ? fresh.intent : lead.intent };
 
   const timezone = irisConfig.timezone || ctx.config.timezone;
-  const callAfter = clampToLegalCallingWindow(new Date(now.getTime() + COLD_FALLBACK_CALL_HOURS * 3_600_000), timezone);
   const snippet = text.trim().replace(/\s+/g, " ").slice(0, 140);
+  // A lead who has asked to be texted, not called, never gets the unasked
+  // fallback call — only a call they agree to by text (Iris's
+  // schedule_transfer_call). Unreadable history → no fallback call either;
+  // skipping a call is the cheap mistake here.
+  const history = await deps.readHistory(lead.clientId, lead.ghlContactId).catch(() => null);
+  const textOnly = history === null ? "history unreadable" : prefersText([...history, { direction: "inbound", channel: "sms", body: text, at: now.toISOString() }]);
+  const callAfter: Date | "never" = textOnly
+    ? "never"
+    : clampToLegalCallingWindow(new Date(now.getTime() + COLD_FALLBACK_CALL_HOURS * 3_600_000), timezone);
 
   // Row state first: if the Iris row or the transition fails, nothing has
   // been sent yet and the reply falls back to a plain human alert.
@@ -69,7 +87,8 @@ export async function handOffToIris(
     await ctx.alert(
       formatReactivationAlert(
         lead,
-        `replied "${snippet}" — Iris is qualifying them by text and will call for a live transfer if they qualify`,
+        `replied "${snippet}" — Iris is qualifying them by text and will call for a live transfer if they qualify` +
+          (textOnly ? ` (they've asked to be texted rather than called, so Iris will only call if they say yes to one)` : ""),
         ctx.clientName,
         now
       )

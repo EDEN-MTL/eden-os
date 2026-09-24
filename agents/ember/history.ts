@@ -114,6 +114,25 @@ export function isHardOptOut(text: string): boolean {
   return HARD_OPT_OUT.some((p) => p.test(text));
 }
 
+/**
+ * Asked for text instead of calls, in any wording seen live on 3%'s leads
+ * (2026-09-25): Grace Penney — "I would appreciate to not be called so
+ * many times"; Osose Oyakhire — "Please text me." Not an opt-out from
+ * texting; it means no unrequested phone calls.
+ */
+const PREFERS_TEXT = [
+  /\b(please\s+)?text me\b/i,
+  /\bprefer (to )?(text|texting|messages?)\b/i,
+  /\b(not|don'?t|dont|stop|quit|never)\s+(be\s+)?call(ed|ing)?\b/i,
+  /\bno (more )?(phone )?calls\b/i,
+  /\bnot available for (a )?(phone )?call\b/i,
+  /\bcalled (me )?so many times\b/i,
+];
+
+export function prefersText(messages: HistoryMessage[]): string | null {
+  return lastMatch(messages, PREFERS_TEXT)?.body ?? null;
+}
+
 /** The most recent soft decline, if any. */
 export function findSoftDecline(messages: HistoryMessage[]): HistoryMessage | null {
   return lastMatch(messages, SOFT_DECLINE);
