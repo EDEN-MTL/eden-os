@@ -6,6 +6,8 @@ const ghl = vi.hoisted(() => ({
   addContactTags: vi.fn(),
   findOpenOpportunitiesForContact: vi.fn(),
   updateOpportunityStage: vi.fn(),
+  getCustomFieldDefs: vi.fn(),
+  updateContact: vi.fn(),
 }));
 vi.mock("../shared/ghl", () => ghl);
 
@@ -22,6 +24,7 @@ vi.mock("../agents/iris/dial-pending", () => ({ reopenForNextAttempt: vi.fn() })
 vi.mock("../shared/db", () => ({ query: vi.fn() }));
 
 import {
+  appendCallStatusNote,
   customerSpokeAtAll,
   describeOutcome,
   formatDuration,
@@ -306,6 +309,107 @@ describe("postCallLogToSlack", () => {
     slack.sendMessage.mockResolvedValue({});
     await expect(postCallLogToSlack("3-percent-east-coast", null, message, "voicemail")).resolves.toBeUndefined();
     expect(conversationMemory.appendHistory).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * Mark's explicit instruction, 2026-09-24: the lead's GHL note must update
+ * even when the call didn't end in a transfer or booking — before this,
+ * the ONLY write to isa_notes was the model-driven save_isa_notes tool,
+ * timed to fire right before presenting a transfer, so a call that ended
+ * earlier (or was disconnected right before the transfer completed, like a
+ * real case found live the same day — Jalpesh Patel) left nothing on the
+ * contact record at all.
+ */
+describe("appendCallStatusNote", () => {
+  const message = { call: { customer: { number: "+17097496049" } }, durationSeconds: 42 };
+  const CONFIG = {
+    questions: [],
+    hotScoreThreshold: 75,
+    warmScoreThreshold: 40,
+    calendars: { buyer: "b", seller: "s" },
+    transferNumbers: { buyer: "+1", seller: "+1" },
+    callbackNotesFieldKey: "contact.isa_notes",
+    timezone: "America/St_Johns",
+    writeFields: { timeline: "x", budget: "x", propertyInterest: "x", preApproved: "x" },
+    outreachCadence: { attemptsPerDay: 2, days: 4, recheckBeforeEachAttempt: true },
+  };
+
+  it("writes a fresh status line when the field was empty", async () => {
+    ghl.getGhlConfig.mockResolvedValue({ locationId: "loc-1", apiKey: "key-1" });
+    iris.loadIrisConfig.mockReturnValue(CONFIG);
+    ghl.getCustomFieldDefs.mockResolvedValue([{ fieldKey: "contact.isa_notes", id: "field-notes-1" }]);
+    ghl.getContact.mockResolvedValue({ contact: { customFields: [] } });
+
+    await appendCallStatusNote("3-percent-east-coast", "contact-1", "voicemail", message);
+
+    expect(ghl.updateContact).toHaveBeenCalledWith(
+      "contact-1",
+      { customFields: [{ id: "field-notes-1", value: expect.stringContaining("Left voicemail") }] },
+      "loc-1",
+      "key-1"
+    );
+  });
+
+  /**
+   * Real case this exists for: save_isa_notes may already have written a
+   * genuine qualification summary moments earlier in the SAME call — the
+   * status line must be appended, never overwrite and destroy it.
+   */
+  it("appends to an existing note rather than overwriting it — never destroys a real qualification summary", async () => {
+    ghl.getGhlConfig.mockResolvedValue({ locationId: "loc-1", apiKey: "key-1" });
+    iris.loadIrisConfig.mockReturnValue(CONFIG);
+    ghl.getCustomFieldDefs.mockResolvedValue([{ fieldKey: "contact.isa_notes", id: "field-notes-1" }]);
+    ghl.getContact.mockResolvedValue({
+      contact: { customFields: [{ id: "field-notes-1", value: "Lead: Jalpesh Patel\nBudget: $350k-400k" }] },
+    });
+
+    await appendCallStatusNote("3-percent-east-coast", "contact-1", "customer-ended-call-before-warm-transfer", message);
+
+    const call = ghl.updateContact.mock.calls[0];
+    const writtenValue = call[1].customFields[0].value;
+    expect(writtenValue).toContain("Lead: Jalpesh Patel\nBudget: $350k-400k");
+    expect(writtenValue).toContain("manual callback");
+    expect(writtenValue.indexOf("Jalpesh")).toBeLessThan(writtenValue.indexOf("manual callback"));
+  });
+
+  it("includes the real outcome and duration in the status line", async () => {
+    ghl.getGhlConfig.mockResolvedValue({ locationId: "loc-1", apiKey: "key-1" });
+    iris.loadIrisConfig.mockReturnValue(CONFIG);
+    ghl.getCustomFieldDefs.mockResolvedValue([{ fieldKey: "contact.isa_notes", id: "field-notes-1" }]);
+    ghl.getContact.mockResolvedValue({ contact: { customFields: [] } });
+
+    await appendCallStatusNote("3-percent-east-coast", "contact-1", "customer-ended-call", message);
+
+    const writtenValue = ghl.updateContact.mock.calls[0][1].customFields[0].value;
+    expect(writtenValue).toMatch(/Answered/);
+    expect(writtenValue).toContain("42s");
+  });
+
+  it("never throws — a failure here must never break the end-of-call handler", async () => {
+    ghl.getGhlConfig.mockRejectedValue(new Error("GHL API down"));
+    await expect(appendCallStatusNote("3-percent-east-coast", "contact-1", "voicemail", message)).resolves.toBeUndefined();
+    expect(ghl.updateContact).not.toHaveBeenCalled();
+  });
+
+  it("skips writing (does not throw) when the notes field key doesn't resolve to a real field id", async () => {
+    ghl.getGhlConfig.mockResolvedValue({ locationId: "loc-1", apiKey: "key-1" });
+    iris.loadIrisConfig.mockReturnValue(CONFIG);
+    ghl.getCustomFieldDefs.mockResolvedValue([]);
+
+    await appendCallStatusNote("3-percent-east-coast", "contact-1", "voicemail", message);
+
+    expect(ghl.updateContact).not.toHaveBeenCalled();
+  });
+
+  it("does nothing when there's no iris config for this client", async () => {
+    ghl.getGhlConfig.mockResolvedValue({ locationId: "loc-1", apiKey: "key-1" });
+    iris.loadIrisConfig.mockReturnValue(null);
+
+    await appendCallStatusNote("3-percent-east-coast", "contact-1", "voicemail", message);
+
+    expect(ghl.getCustomFieldDefs).not.toHaveBeenCalled();
+    expect(ghl.updateContact).not.toHaveBeenCalled();
   });
 });
 
