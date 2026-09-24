@@ -6,7 +6,7 @@ import { eventBus } from "../../shared/events";
 import { NormalisedLead } from "../scout/intake";
 import { IrisConfig } from "./qualification";
 import { query } from "../../shared/db";
-import { clampToLegalCallingWindow, formatLocal } from "./cadence";
+import { isWithinLegalCallingWindow, nextFirstSlotTime, formatLocal } from "./cadence";
 import { getGhlConfig, getLocationTimezone, listContactsPaginated } from "../../shared/ghl";
 
 /**
@@ -392,12 +392,20 @@ eventBus.subscribe("lead.enriched", async (event) => {
     // Mark's instruction, 2026-09-11: real calling-hours compliance — the
     // 5-minute SMS-head-start delay alone has no time-of-day check at all,
     // so a lead who fills out a form at 2am would otherwise get called at
-    // 2:05am. Computed in JS (not a plain SQL interval) so
-    // clampToLegalCallingWindow can push it to the next 8am-9pm window, in
-    // the CLIENT's own configured business timezone, when it lands outside
-    // one.
+    // 2:05am. Computed in JS, in the CLIENT's own configured business
+    // timezone, so a candidate outside legal hours can be rescheduled.
+    //
+    // Mark's follow-up, 2026-09-24: rescheduling used to land on the
+    // literal earliest legal instant (8am sharp) — confirmed live on a
+    // real overnight lead (Jalpesh Patel, form submitted ~10:40pm, called
+    // at exactly 8:00am) — which felt like an aggressive edge case rather
+    // than a normal business call. Now lands on the SAME slot the regular
+    // cadence already uses (10am) instead, so an overnight lead's first
+    // call feels like any other scheduled attempt. A lead who submits
+    // during legal hours is unaffected — still called within minutes.
     const timeZone = config.timezone || "America/St_Johns";
-    const callAfter = clampToLegalCallingWindow(new Date(Date.now() + CALL_DELAY_MINUTES * 60 * 1000), timeZone);
+    const candidate = new Date(Date.now() + CALL_DELAY_MINUTES * 60 * 1000);
+    const callAfter = isWithinLegalCallingWindow(candidate, timeZone) ? candidate : nextFirstSlotTime(config.outreachCadence, timeZone);
     await query(
       `INSERT INTO iris_pending_calls (client_id, contact_id, lead, call_after)
        VALUES ($1, $2, $3, $4)
