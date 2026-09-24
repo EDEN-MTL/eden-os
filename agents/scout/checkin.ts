@@ -160,24 +160,42 @@ export async function getCheckinData(token: string): Promise<CheckinData | null>
     rawEvents.push(...events);
   }
 
-  // Live-transferred calls: opportunities sitting in the "Live Transferred"
-  // pipeline stage — a different GHL object entirely from a booked
-  // calendar appointment, but Jacob wants both on the same check-in page.
-  // Kept purely by status (`open`), not by age: unlike calendar events,
-  // this list was never date-bounded at the API level (listOpportunities
-  // Paginated iterates the whole stage), so there's no separate "old but
-  // still open" case to handle here the way there is for calendar events
-  // below — an open one just stays, however long it's been in this stage.
+  // Live-transferred calls: opportunities carrying a "live transferred" tag
+  // — a different GHL object entirely from a booked calendar appointment,
+  // but Jacob wants both on the same check-in page. Kept purely by status
+  // (`open`), not by age: unlike calendar events, this list was never
+  // date-bounded at the API level (listOpportunitiesPaginated iterates the
+  // whole pipeline), so there's no separate "old but still open" case to
+  // handle here the way there is for calendar events below — an open one
+  // just stays, however long ago it was transferred.
+  //
+  // Matched by TAG, not by pipeline stage alone — verified live 2026-09-25
+  // after Jacob reported real live-transferred leads missing from the page
+  // despite having already been checked/assigned. 3 real opportunities
+  // (contacts "Mark Buyer" test lead, Mylene Misa Badiola, Rene Manzano)
+  // carried the "live transferred" tag but had moved on to the "Replied"
+  // stage — some later automation or reply had advanced the stage without
+  // ever moving them out of the tag's scope. Matching on stage id alone
+  // silently dropped them, exactly like the assignedTo/followers bug
+  // above: trust the tag (applied once, at transfer time, by
+  // webhooks/vapi-webhook.ts) over a stage id that can keep moving
+  // afterward. Stage id is kept as a second, OR'd signal rather than
+  // removed outright, in case a transfer is ever stage-moved without the
+  // tag having landed for some reason.
   const pipelineId = config.scout?.pipelineId;
   const liveTransferStageId = config.iris?.liveTransferStageId;
+  const liveTransferTags: string[] = (config.iris?.liveTransferTags || []).map((t: string) => t.toLowerCase());
   const rawLiveTransfers: any[] = [];
-  if (pipelineId && liveTransferStageId) {
+  if (pipelineId && (liveTransferStageId || liveTransferTags.length > 0)) {
     for await (const opp of listOpportunitiesPaginated(ghlConfig.locationId, {
       pipelineId,
       apiKey: ghlConfig.apiKey,
     })) {
-      if (opp.pipelineStageId !== liveTransferStageId) continue;
       if (opp.status !== "open") continue;
+      const contactTags: string[] = (opp.contact?.tags || []).map((t: unknown) => String(t).toLowerCase());
+      const isTagged = liveTransferTags.length > 0 && contactTags.some((t) => liveTransferTags.includes(t));
+      const isInStage = !!liveTransferStageId && opp.pipelineStageId === liveTransferStageId;
+      if (!isTagged && !isInStage) continue;
       rawLiveTransfers.push(opp);
     }
   }

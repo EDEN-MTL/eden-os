@@ -265,6 +265,72 @@ describe("getCheckinData", () => {
     expect(data!.unassigned[0].ghlEventId).toBe("opp-3");
   });
 
+  function configJsonWithLiveTransferTags() {
+    return JSON.stringify({
+      clientName: "3 Percent East Coast",
+      scout: { calendars: { buyer: "buyer-cal", seller: "seller-cal" }, pipelineId: "pipeline-1" },
+      iris: { liveTransferStageId: "live-transfer-stage", liveTransferTags: ["live transferred", "live transfered"] },
+      teams: [
+        {
+          teamName: "Ashley Fleming Team",
+          teamLead: "Ashley Fleming",
+          members: [{ name: "Ashley Fleming", ghlUserId: "ashley-id" }],
+        },
+      ],
+    });
+  }
+
+  it("includes an opportunity tagged 'live transferred' even though it has since moved to a different stage (regression: verified live 2026-09-25 — real leads sat in the 'Replied' stage after transfer, and matching pipelineStageId alone dropped them)", async () => {
+    db.query.mockResolvedValueOnce([{ client_id: "3-percent-east-coast" }]).mockResolvedValueOnce([]);
+    readFileSyncMock.mockReturnValueOnce(configJsonWithLiveTransferTags());
+    ghl.getGhlConfig.mockResolvedValueOnce({ apiKey: "key", locationId: "loc" });
+    ghl.listCalendarEvents.mockResolvedValueOnce([]).mockResolvedValueOnce([]);
+    ghl.listOpportunitiesPaginated.mockReturnValueOnce(
+      asyncGeneratorOf([
+        {
+          id: "opp-tagged-but-moved",
+          name: "Mylene Misa Badiola",
+          pipelineStageId: "replied-stage",
+          status: "open",
+          lastStageChangeAt: new Date().toISOString(),
+          assignedTo: "ashley-id",
+          followers: [],
+          contact: { tags: ["buyer lead", "live transferred", "replied"] },
+        },
+      ])
+    );
+
+    const data = await getCheckinData("good-token");
+
+    expect(data!.teams[0].members[0].appointments).toHaveLength(1);
+    expect(data!.teams[0].members[0].appointments[0].ghlEventId).toBe("opp-tagged-but-moved");
+  });
+
+  it("still excludes an opportunity that's neither in the Live Transferred stage nor carries a live-transfer tag", async () => {
+    db.query.mockResolvedValueOnce([{ client_id: "3-percent-east-coast" }]);
+    readFileSyncMock.mockReturnValueOnce(configJsonWithLiveTransferTags());
+    ghl.getGhlConfig.mockResolvedValueOnce({ apiKey: "key", locationId: "loc" });
+    ghl.listCalendarEvents.mockResolvedValueOnce([]).mockResolvedValueOnce([]);
+    ghl.listOpportunitiesPaginated.mockReturnValueOnce(
+      asyncGeneratorOf([
+        {
+          id: "opp-untagged",
+          name: "Just Replied, Never Transferred",
+          pipelineStageId: "replied-stage",
+          status: "open",
+          lastStageChangeAt: new Date().toISOString(),
+          followers: ["ashley-id"],
+          contact: { tags: ["buyer lead", "replied"] },
+        },
+      ])
+    );
+
+    const data = await getCheckinData("good-token");
+
+    expect(data!.teams[0].members).toHaveLength(0);
+    expect(data!.unassigned).toHaveLength(0);
+  });
+
   it("excludes opportunities outside the Live Transferred stage, and non-open ones regardless of age", async () => {
     // Only ONE db.query call happens here (resolveClientId) — with every
     // opportunity filtered out and no calendar events, itemIds is empty, so
