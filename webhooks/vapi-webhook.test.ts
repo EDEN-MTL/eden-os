@@ -213,6 +213,18 @@ describe("describeOutcome", () => {
     expect(describeOutcome("assistant-ended-call", messageWithNoUserSpeech)).toMatch(/no response/i);
     expect(describeOutcome("assistant-ended-call", messageWithUserSpeech)).toContain("Answered");
   });
+
+  /**
+   * Real near-miss found live 2026-09-24: Jalpesh Patel — fully qualified,
+   * agreed to the transfer, disconnected before it actually connected him
+   * to an agent. Confirmed against Vapi's real endedReason enum: both the
+   * before- and after-attempt variants need their own label, distinct from
+   * a generic "answered, no transfer" — this lead needs a manual callback.
+   */
+  it("labels a disconnect right before/during a transfer attempt distinctly from a generic 'answered, no transfer'", () => {
+    expect(describeOutcome("customer-ended-call-before-warm-transfer", messageWithUserSpeech)).toMatch(/manual callback/i);
+    expect(describeOutcome("customer-ended-call-after-warm-transfer-attempt", messageWithUserSpeech)).toMatch(/manual callback/i);
+  });
 });
 
 describe("formatDuration", () => {

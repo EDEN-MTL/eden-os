@@ -52,6 +52,20 @@ const ANSWERED_REASON_PREFIXES = ["customer-ended-call", "assistant-ended-call"]
 const ANSWERED_REASONS = new Set(["assistant-forwarded-call", "exceeded-max-duration"]);
 
 /**
+ * A real near-miss: the lead was engaged all the way through a live
+ * transfer attempt but got disconnected before it actually connected them
+ * to a human — confirmed against Vapi's own endedReason enum
+ * (api.vapi.ai/api-json), 2026-09-24, after a real qualified lead (Jalpesh
+ * Patel) hit exactly this: fully qualified, agreed to the transfer, Iris
+ * said "Transferring the call now," then disconnected. wasAnswered's
+ * generic allowlist already (correctly) keeps this from being retried —
+ * this only changes the Slack LABEL, so it doesn't get lumped in with a
+ * lead who simply declined a transfer or wasn't offered one; it needs a
+ * manual callback, not a shrug.
+ */
+const TRANSFER_ABANDONED_REASONS = new Set(["customer-ended-call-before-warm-transfer", "customer-ended-call-after-warm-transfer-attempt"]);
+
+/**
  * Fails toward RETRYING on anything ambiguous now (an unrecognized or
  * missing endedReason) — inverted from the old direction along with the
  * allowlist above. The cost of wrongly retrying a lead who was actually
@@ -122,6 +136,7 @@ export function describeOutcome(endedReason: string | null, message: Record<stri
   if (endedReason === TRANSFER_SUCCEEDED_REASON) return "✅ Live transfer completed";
   if (endedReason === "voicemail") return "📵 Left voicemail";
   if (endedReason === "assistant-ended-call" && !customerSpokeAtAll(message)) return "🔇 No response (gave up after the idle nudge)";
+  if (TRANSFER_ABANDONED_REASONS.has(endedReason ?? "")) return "⚠️ Disconnected right before transfer connected — needs a manual callback";
   if (wasAnswered(endedReason)) return "💬 Answered (no transfer)";
   return `❌ No answer (\`${endedReason ?? "unknown"}\`)`;
 }
