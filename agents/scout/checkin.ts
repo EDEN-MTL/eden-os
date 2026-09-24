@@ -136,6 +136,10 @@ export async function getCheckinData(token: string): Promise<CheckinData | null>
   const ghlConfig = await getGhlConfig(clientId);
   if (!config || !ghlConfig) return null;
 
+  const teamsConfig: { teamName: string; teamLead: string; members: { name: string; ghlUserId: string }[] }[] =
+    config.teams || [];
+  const memberIds = new Set(teamsConfig.flatMap((t) => t.members.map((m) => m.ghlUserId)));
+
   const now = Date.now();
   const start = now - CHECKIN_WINDOW_DAYS * 24 * 60 * 60 * 1000;
   const extendedStart = now - EXTENDED_LOOKBACK_DAYS * 24 * 60 * 60 * 1000;
@@ -184,6 +188,20 @@ export async function getCheckinData(token: string): Promise<CheckinData | null>
     prospectName: string;
     appointmentAt: string;
     status: string;
+    // Candidate GHL user ids for "who owns this," in priority order —
+    // resolved against the real roster below rather than trusted blindly,
+    // because neither GHL field is reliable alone. Verified live twice
+    // with contradictory results: 2026-09-09, some opportunities had
+    // assignedTo null while followers[0] correctly held the real assignee.
+    // 2026-09-24, two opportunities had assignedTo correctly set to a
+    // real current team member (Stephanie McGrath) while followers[0]
+    // still held an unrelated dead/former-user id — if followers were
+    // checked first here, as it originally was, a properly-assigned lead
+    // would have wrongly landed in "Needs routing". Resolved by trying
+    // each candidate against the known roster (see memberIds below) and
+    // taking the first one that actually matches, instead of assuming
+    // either field's mere presence means it's correct.
+    assignedCandidates: string[];
     assignedId: string | null;
     // Live-transfer items are already filtered to status==="open" at the
     // fetch stage above, however old — the stale/open-opportunity re-check
@@ -200,7 +218,8 @@ export async function getCheckinData(token: string): Promise<CheckinData | null>
       prospectName: parseProspectName(e.title || ""),
       appointmentAt: e.startTime,
       status: e.appointmentStatus || "unknown",
-      assignedId: e.assignedUserId || null,
+      assignedCandidates: e.assignedUserId ? [e.assignedUserId] : [],
+      assignedId: null,
       isLiveTransfer: false,
     })),
     ...rawLiveTransfers.map((o) => ({
@@ -209,12 +228,10 @@ export async function getCheckinData(token: string): Promise<CheckinData | null>
       prospectName: o.name || "Unknown",
       appointmentAt: o.lastStageChangeAt || o.updatedAt,
       status: "live transferred",
-      // followers[0] tried first, assignedTo as fallback: assignedTo is
-      // verified live to sometimes be a DEAD user id (a direct
-      // GET /users/{id} -> 404, a former team member's account,
-      // presumably) — every recent row with a non-empty followers array
-      // had a real, current roster member there instead.
-      assignedId: (o.followers && o.followers.length ? o.followers[0] : null) || o.assignedTo || null,
+      assignedCandidates: [o.assignedTo, o.followers && o.followers[0]].filter(
+        (candidate: unknown): candidate is string => !!candidate
+      ),
+      assignedId: null,
       isLiveTransfer: true,
     })),
   ];
@@ -231,9 +248,13 @@ export async function getCheckinData(token: string): Promise<CheckinData | null>
   if (hiddenContactIds.length > 0) {
     items = items.filter((item) => !item.contactId || !hiddenContactIds.includes(item.contactId));
   }
+  // A manual override always wins; otherwise take the first candidate that
+  // actually matches a real, current roster member — not just whichever
+  // GHL field happened to be populated first (see RawItem's comment above).
   items = items.map((item) => {
     const override = item.contactId ? manualAssignments[item.contactId] : undefined;
-    return override ? { ...item, assignedId: override } : item;
+    const resolved = override ?? item.assignedCandidates.find((candidate) => memberIds.has(candidate)) ?? null;
+    return { ...item, assignedId: resolved };
   });
 
   // Anything within the "recent" 60-day window always shows, same as
@@ -301,11 +322,7 @@ export async function getCheckinData(token: string): Promise<CheckinData | null>
     };
   }
 
-  const teamsConfig: { teamName: string; teamLead: string; members: { name: string; ghlUserId: string }[] }[] =
-    config.teams || [];
-
   const appointmentsByMemberId = new Map<string, CheckinAppointment[]>();
-  const memberIds = new Set(teamsConfig.flatMap((t) => t.members.map((m) => m.ghlUserId)));
   const unassigned: CheckinAppointment[] = [];
 
   for (const item of items) {

@@ -214,6 +214,31 @@ describe("getCheckinData", () => {
     expect(data!.teams[0].members[0].appointments[0].ghlEventId).toBe("opp-2");
   });
 
+  it("prefers assignedTo over followers[0] when assignedTo resolves to a real team member and followers doesn't (regression: verified live 2026-09-24, a properly-assigned lead was landing in Needs routing because followers[0] still held an unrelated dead user id)", async () => {
+    db.query.mockResolvedValueOnce([{ client_id: "3-percent-east-coast" }]).mockResolvedValueOnce([]);
+    readFileSyncMock.mockReturnValueOnce(configJsonWithLiveTransfer());
+    ghl.getGhlConfig.mockResolvedValueOnce({ apiKey: "key", locationId: "loc" });
+    ghl.listCalendarEvents.mockResolvedValueOnce([]).mockResolvedValueOnce([]);
+    ghl.listOpportunitiesPaginated.mockReturnValueOnce(
+      asyncGeneratorOf([
+        {
+          id: "opp-real-assignment",
+          name: "Coker Oluwafemi G",
+          pipelineStageId: "live-transfer-stage",
+          status: "open",
+          lastStageChangeAt: "2026-09-20T03:37:53.000Z",
+          assignedTo: "ashley-id",
+          followers: ["some-dead-id-unrelated-to-the-roster"],
+        },
+      ])
+    );
+
+    const data = await getCheckinData("good-token");
+
+    expect(data!.unassigned).toHaveLength(0);
+    expect(data!.teams[0].members[0].appointments[0].ghlEventId).toBe("opp-real-assignment");
+  });
+
   it("puts a live-transferred opportunity under unassigned when neither followers nor assignedTo resolve to a known team member (e.g. a deleted GHL user id)", async () => {
     db.query.mockResolvedValueOnce([{ client_id: "3-percent-east-coast" }]).mockResolvedValueOnce([]);
     readFileSyncMock.mockReturnValueOnce(configJsonWithLiveTransfer());
