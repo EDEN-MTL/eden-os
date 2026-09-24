@@ -214,3 +214,22 @@ describe("detectIntent", () => {
     expect(detectIntent(opp({ contact: { tags: [] } }), "Long Term Nurturing", c)).toBe("unknown");
   });
 });
+
+describe("runEmberScanForClient — onlyOpportunityIds (live tests)", () => {
+  it("ignores every other opportunity in the pipeline", async () => {
+    configMod.loadEmberConfig.mockReturnValue(config());
+    configMod.loadEmberOutcomeStages.mockReturnValue(OUTCOME_STAGES);
+    const report = await runEmberScanForClient("c", {
+      now: NOW,
+      onlyOpportunityIds: ["o2"],
+      deps: {
+        listOpportunities: async function* () { yield opp({ id: "o1" }); yield opp({ id: "o2", contactId: "c2" }); },
+        stageNames: async () => STAGES,
+        hasPendingIrisCall: async () => false,
+        alert: vi.fn(async () => {}),
+      },
+    });
+    expect(report.scanned).toBe(1);
+    expect(report.enrolled.map((e) => e.opportunityId)).toEqual(["o2"]);
+  });
+});

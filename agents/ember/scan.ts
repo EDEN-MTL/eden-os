@@ -218,7 +218,14 @@ export async function buildScanDeps(clientId: string, config: EmberConfig): Prom
 
 export async function runEmberScanForClient(
   clientId: string,
-  options: { dryRun?: boolean; thresholdDaysOverride?: number; now?: Date; deps?: ScanDeps } = {}
+  options: {
+    dryRun?: boolean;
+    thresholdDaysOverride?: number;
+    now?: Date;
+    deps?: ScanDeps;
+    /** Live tests only: consider just these opportunities, ignore the rest of the pipeline. */
+    onlyOpportunityIds?: string[];
+  } = {}
 ): Promise<ScanReport> {
   const config = loadEmberConfig(clientId);
   if (!config) throw new Error(`No ember config for client "${clientId}"`);
@@ -266,6 +273,7 @@ export async function runEmberScanForClient(
 
   for await (const raw of deps.listOpportunities()) {
     const opp = toLite(raw);
+    if (options.onlyOpportunityIds && !options.onlyOpportunityIds.includes(opp.id)) continue;
     report.scanned++;
     const existing = tracked.get(opp.id);
 
