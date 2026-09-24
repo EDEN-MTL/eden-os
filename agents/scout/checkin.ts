@@ -11,9 +11,12 @@ import { join } from "path";
 import { query } from "../../shared/db";
 import {
   findOpenOpportunitiesForContact,
+  getConversationMessages,
+  getConversations,
   getGhlConfig,
   listCalendarEvents,
   listOpportunitiesPaginated,
+  listPipelines,
   updateOpportunityMonetaryValue,
 } from "../../shared/ghl";
 
@@ -97,6 +100,68 @@ export function parseProspectName(title: string): string {
     if (title.startsWith(prefix)) return title.slice(prefix.length).trim();
   }
   return title;
+}
+
+/**
+ * Recovers a live-transfer signal from a contact's raw conversation
+ * activity log — added 2026-09-25 per Jacob: some real transferred/booked
+ * leads carry neither the "live transferred" tag nor a current Live
+ * Transferred stage (the tag is best-effort and can silently fail to
+ * write, and a later GHL account transfer between users has been known to
+ * strip assignedTo/followers on top of that). GHL logs every pipeline
+ * stage move as a TYPE_ACTIVITY_OPPORTUNITY message with a human-readable
+ * stage name (verified live against contact H7hmrAoQRvUzdM7s6D1h, Rene
+ * Manzano: an "opportunity_stage_updated" activity recorded oldStageName
+ * "Not Qualified/Not Interested" -> newStageName "Live Transferred"),
+ * which survives even when the tag/current-stage signals don't. Also
+ * collects every TYPE_CALL message's userId as a fallback assignment
+ * candidate — the person who actually took the call — for the case where
+ * assignedTo/followers were wiped by an account migration. Fails open
+ * (returns "nothing found" rather than throwing): this is a recovery path
+ * for edge cases, not something that should ever break the page.
+ */
+async function findHistoricalLiveTransferSignal(
+  contactId: string,
+  locationId: string,
+  apiKey: string | undefined,
+  // null when the caller only wants callUserIds (the assignment-recovery
+  // fallback below) and has no stage name to match against — the
+  // newStageName check is simply skipped in that case.
+  targetStageName: string | null
+): Promise<{ transferredAt: string | null; callUserIds: string[] }> {
+  try {
+    const conversations = await getConversations(contactId, locationId, apiKey);
+    const conversationId = conversations?.conversations?.[0]?.id;
+    if (!conversationId) return { transferredAt: null, callUserIds: [] };
+
+    const payload = await getConversationMessages(conversationId, locationId, apiKey);
+    const messages: any[] = payload?.messages?.messages || [];
+
+    // Messages come back newest-first (see getConversationMessages), so the
+    // LAST matching stage-change activity found in this loop is the
+    // earliest one chronologically — i.e. when the transfer first happened.
+    let transferredAt: string | null = null;
+    const callUserIds: string[] = [];
+    for (const msg of messages) {
+      const newStageName = msg?.activity?.data?.stage?.newStageName;
+      if (
+        targetStageName &&
+        msg.messageType === "TYPE_ACTIVITY_OPPORTUNITY" &&
+        msg.activity?.type === "opportunity_stage_updated" &&
+        typeof newStageName === "string" &&
+        newStageName.toLowerCase() === targetStageName.toLowerCase()
+      ) {
+        transferredAt = msg.dateAdded;
+      }
+      if (msg.messageType === "TYPE_CALL" && typeof msg.userId === "string" && !callUserIds.includes(msg.userId)) {
+        callUserIds.push(msg.userId);
+      }
+    }
+    return { transferredAt, callUserIds };
+  } catch (error) {
+    console.error(`[CHECKIN] Failed to check conversation history for contact ${contactId}:`, error);
+    return { transferredAt: null, callUserIds: [] };
+  }
 }
 
 async function resolveClientId(token: string): Promise<string | null> {
@@ -185,7 +250,15 @@ export async function getCheckinData(token: string): Promise<CheckinData | null>
   const pipelineId = config.scout?.pipelineId;
   const liveTransferStageId = config.iris?.liveTransferStageId;
   const liveTransferTags: string[] = (config.iris?.liveTransferTags || []).map((t: string) => t.toLowerCase());
+  // Stages worth re-checking via conversation history when neither the tag
+  // nor the current stage says "live transferred" — see
+  // findHistoricalLiveTransferSignal. Deliberately a small, explicit list
+  // (not "every open stage") to keep the extra per-contact conversation
+  // fetch bounded: 3% East Coast's is just the "Replied" stage, where
+  // Jacob found real transferred leads with neither signal intact.
+  const reviewStageIds: string[] = config.scout?.reviewStageIds || [];
   const rawLiveTransfers: any[] = [];
+  const reviewCandidates: any[] = [];
   if (pipelineId && (liveTransferStageId || liveTransferTags.length > 0)) {
     for await (const opp of listOpportunitiesPaginated(ghlConfig.locationId, {
       pipelineId,
@@ -195,8 +268,37 @@ export async function getCheckinData(token: string): Promise<CheckinData | null>
       const contactTags: string[] = (opp.contact?.tags || []).map((t: unknown) => String(t).toLowerCase());
       const isTagged = liveTransferTags.length > 0 && contactTags.some((t) => liveTransferTags.includes(t));
       const isInStage = !!liveTransferStageId && opp.pipelineStageId === liveTransferStageId;
-      if (!isTagged && !isInStage) continue;
-      rawLiveTransfers.push(opp);
+      if (isTagged || isInStage) {
+        rawLiveTransfers.push(opp);
+      } else if (reviewStageIds.includes(opp.pipelineStageId)) {
+        reviewCandidates.push(opp);
+      }
+    }
+  }
+
+  if (reviewCandidates.length > 0 && liveTransferStageId) {
+    let liveTransferStageName: string | null = null;
+    try {
+      const pipelines = await listPipelines(ghlConfig.locationId, ghlConfig.apiKey);
+      const pipeline = pipelines.find((p: any) => p.id === pipelineId);
+      liveTransferStageName = pipeline?.stages?.find((s: any) => s.id === liveTransferStageId)?.name ?? null;
+    } catch (error) {
+      console.error("[CHECKIN] Failed to resolve Live Transferred stage name for historical lookup:", error);
+    }
+
+    if (liveTransferStageName) {
+      for (const opp of reviewCandidates) {
+        if (!opp.contactId) continue;
+        const { transferredAt, callUserIds } = await findHistoricalLiveTransferSignal(
+          opp.contactId,
+          ghlConfig.locationId,
+          ghlConfig.apiKey,
+          liveTransferStageName
+        );
+        if (transferredAt) {
+          rawLiveTransfers.push({ ...opp, __historicalTransferAt: transferredAt, __recoveredCallUserIds: callUserIds });
+        }
+      }
     }
   }
 
@@ -244,9 +346,17 @@ export async function getCheckinData(token: string): Promise<CheckinData | null>
       id: o.id,
       contactId: o.contactId || null,
       prospectName: o.name || "Unknown",
-      appointmentAt: o.lastStageChangeAt || o.updatedAt,
+      // __historicalTransferAt only exists on an item recovered via
+      // findHistoricalLiveTransferSignal (see reviewCandidates above) — the
+      // actual moment it moved to Live Transferred, which is more accurate
+      // than this opportunity's current (possibly much-later) stage change.
+      appointmentAt: o.__historicalTransferAt || o.lastStageChangeAt || o.updatedAt,
       status: "live transferred",
-      assignedCandidates: [o.assignedTo, o.followers && o.followers[0]].filter(
+      // Recovered call userIds (also only present on a historically-
+      // recovered item) are appended AFTER assignedTo/followers, not
+      // before — they're a last-resort fallback for when an account
+      // migration has wiped the real fields, not a replacement for them.
+      assignedCandidates: [o.assignedTo, o.followers && o.followers[0], ...(o.__recoveredCallUserIds || [])].filter(
         (candidate: unknown): candidate is string => !!candidate
       ),
       assignedId: null,
@@ -274,6 +384,27 @@ export async function getCheckinData(token: string): Promise<CheckinData | null>
     const resolved = override ?? item.assignedCandidates.find((candidate) => memberIds.has(candidate)) ?? null;
     return { ...item, assignedId: resolved };
   });
+
+  // Last-resort assignment recovery, added 2026-09-25 per Jacob: a GHL
+  // account migration between users is known to have stripped
+  // assignedTo/followers off some real leads/appointments after the fact,
+  // so a plain resolution failure above isn't necessarily "never
+  // assigned" — check who actually took the call before writing the item
+  // off to "Needs routing". Scoped to just the items still unresolved at
+  // this point (already a small set in practice) to keep the extra
+  // per-contact conversation fetch bounded, and skips anything a manual
+  // override or checkinOverrides.hidden already settled.
+  const stillUnresolved = items.filter((item) => item.assignedId === null && item.contactId);
+  for (const item of stillUnresolved) {
+    const { callUserIds } = await findHistoricalLiveTransferSignal(
+      item.contactId!,
+      ghlConfig.locationId,
+      ghlConfig.apiKey,
+      null
+    );
+    const recovered = callUserIds.find((candidate) => memberIds.has(candidate));
+    if (recovered) item.assignedId = recovered;
+  }
 
   // Anything within the "recent" 60-day window always shows, same as
   // before. Anything older (only discoverable at all because calendar

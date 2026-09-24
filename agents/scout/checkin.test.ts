@@ -12,6 +12,9 @@ const ghl = vi.hoisted(() => ({
   listOpportunitiesPaginated: vi.fn(),
   findOpenOpportunitiesForContact: vi.fn(),
   updateOpportunityMonetaryValue: vi.fn(),
+  listPipelines: vi.fn(),
+  getConversations: vi.fn(),
+  getConversationMessages: vi.fn(),
 }));
 vi.mock("../../shared/ghl", () => ghl);
 
@@ -329,6 +332,187 @@ describe("getCheckinData", () => {
 
     expect(data!.teams[0].members).toHaveLength(0);
     expect(data!.unassigned).toHaveLength(0);
+  });
+
+  it("recovers assignment from a TYPE_CALL userId in conversation history when a live-transfer's assignedTo and followers are both unresolved (e.g. wiped by a GHL account migration between users)", async () => {
+    db.query.mockResolvedValueOnce([{ client_id: "3-percent-east-coast" }]).mockResolvedValueOnce([]);
+    readFileSyncMock.mockReturnValueOnce(configJsonWithLiveTransfer());
+    ghl.getGhlConfig.mockResolvedValueOnce({ apiKey: "key", locationId: "loc" });
+    ghl.listCalendarEvents.mockResolvedValueOnce([]).mockResolvedValueOnce([]);
+    ghl.listOpportunitiesPaginated.mockReturnValueOnce(
+      asyncGeneratorOf([
+        {
+          id: "opp-migration-wiped",
+          name: "Wiped Assignment",
+          contactId: "contact-wiped",
+          pipelineStageId: "live-transfer-stage",
+          status: "open",
+          lastStageChangeAt: "2026-09-01T00:00:00.000Z",
+          assignedTo: null,
+          followers: [],
+        },
+      ])
+    );
+    ghl.getConversations.mockResolvedValueOnce({ conversations: [{ id: "conv-3" }] });
+    ghl.getConversationMessages.mockResolvedValueOnce({
+      messages: { messages: [{ messageType: "TYPE_CALL", userId: "ashley-id", dateAdded: "2026-08-30T00:00:00.000Z" }] },
+    });
+
+    const data = await getCheckinData("good-token");
+
+    expect(data!.unassigned).toHaveLength(0);
+    expect(data!.teams[0].members[0].appointments[0].ghlEventId).toBe("opp-migration-wiped");
+  });
+
+  it("still lands in Needs routing when conversation history has no roster-matching call either", async () => {
+    db.query.mockResolvedValueOnce([{ client_id: "3-percent-east-coast" }]).mockResolvedValueOnce([]);
+    readFileSyncMock.mockReturnValueOnce(configJsonWithLiveTransfer());
+    ghl.getGhlConfig.mockResolvedValueOnce({ apiKey: "key", locationId: "loc" });
+    ghl.listCalendarEvents.mockResolvedValueOnce([]).mockResolvedValueOnce([]);
+    ghl.listOpportunitiesPaginated.mockReturnValueOnce(
+      asyncGeneratorOf([
+        {
+          id: "opp-truly-unassigned",
+          name: "Truly Unassigned",
+          contactId: "contact-truly-unassigned",
+          pipelineStageId: "live-transfer-stage",
+          status: "open",
+          lastStageChangeAt: "2026-09-01T00:00:00.000Z",
+          assignedTo: null,
+          followers: [],
+        },
+      ])
+    );
+    ghl.getConversations.mockResolvedValueOnce({ conversations: [{ id: "conv-4" }] });
+    ghl.getConversationMessages.mockResolvedValueOnce({
+      messages: { messages: [{ messageType: "TYPE_CALL", userId: "some-unrelated-user", dateAdded: "2026-08-30T00:00:00.000Z" }] },
+    });
+
+    const data = await getCheckinData("good-token");
+
+    expect(data!.teams[0].members).toHaveLength(0);
+    expect(data!.unassigned).toHaveLength(1);
+    expect(data!.unassigned[0].ghlEventId).toBe("opp-truly-unassigned");
+  });
+
+  function configJsonWithReviewStage() {
+    return JSON.stringify({
+      clientName: "3 Percent East Coast",
+      scout: {
+        calendars: { buyer: "buyer-cal", seller: "seller-cal" },
+        pipelineId: "pipeline-1",
+        reviewStageIds: ["review-stage"],
+      },
+      iris: { liveTransferStageId: "live-transfer-stage" },
+      teams: [
+        {
+          teamName: "Ashley Fleming Team",
+          teamLead: "Ashley Fleming",
+          members: [{ name: "Ashley Fleming", ghlUserId: "ashley-id" }],
+        },
+      ],
+    });
+  }
+
+  it("recovers a live-transfer that has neither the tag nor the current stage, from a historical 'moved to Live Transferred' activity in its conversation — and recovers its assignment from a TYPE_CALL userId when assignedTo/followers are both empty (account-migration wipe)", async () => {
+    db.query.mockResolvedValueOnce([{ client_id: "3-percent-east-coast" }]).mockResolvedValueOnce([]);
+    readFileSyncMock.mockReturnValueOnce(configJsonWithReviewStage());
+    ghl.getGhlConfig.mockResolvedValueOnce({ apiKey: "key", locationId: "loc" });
+    ghl.listCalendarEvents.mockResolvedValueOnce([]).mockResolvedValueOnce([]);
+    ghl.listOpportunitiesPaginated.mockReturnValueOnce(
+      asyncGeneratorOf([
+        {
+          id: "opp-recovered",
+          name: "Rene Manzano",
+          pipelineStageId: "review-stage",
+          status: "open",
+          contactId: "contact-rene",
+          assignedTo: null,
+          followers: [],
+          contact: { tags: ["seller lead", "replied"] }, // no live-transfer tag
+        },
+      ])
+    );
+    ghl.listPipelines.mockResolvedValueOnce([
+      {
+        id: "pipeline-1",
+        stages: [
+          { id: "live-transfer-stage", name: "Live Transferred" },
+          { id: "review-stage", name: "Replied" },
+        ],
+      },
+    ]);
+    ghl.getConversations.mockResolvedValueOnce({ conversations: [{ id: "conv-1" }] });
+    ghl.getConversationMessages.mockResolvedValueOnce({
+      messages: {
+        messages: [
+          // Newest first, same ordering GHL itself returns.
+          { messageType: "TYPE_SMS", dateAdded: "2026-09-15T18:41:07.990Z" },
+          {
+            messageType: "TYPE_CALL",
+            userId: "ashley-id",
+            dateAdded: "2026-09-10T18:07:55.542Z",
+          },
+          {
+            messageType: "TYPE_ACTIVITY_OPPORTUNITY",
+            dateAdded: "2026-09-10T18:12:37.416Z",
+            activity: { type: "opportunity_stage_updated", data: { stage: { newStageName: "Live Transferred" } } },
+          },
+        ],
+      },
+    });
+
+    const data = await getCheckinData("good-token");
+
+    expect(data!.unassigned).toHaveLength(0);
+    expect(data!.teams[0].members[0].appointments).toHaveLength(1);
+    expect(data!.teams[0].members[0].appointments[0]).toMatchObject({
+      ghlEventId: "opp-recovered",
+      prospectName: "Rene Manzano",
+      status: "live transferred",
+      appointmentAt: "2026-09-10T18:12:37.416Z",
+    });
+  });
+
+  it("does not recover a review-stage opportunity whose conversation history shows no historical move to Live Transferred", async () => {
+    db.query.mockResolvedValueOnce([{ client_id: "3-percent-east-coast" }]);
+    readFileSyncMock.mockReturnValueOnce(configJsonWithReviewStage());
+    ghl.getGhlConfig.mockResolvedValueOnce({ apiKey: "key", locationId: "loc" });
+    ghl.listCalendarEvents.mockResolvedValueOnce([]).mockResolvedValueOnce([]);
+    ghl.listOpportunitiesPaginated.mockReturnValueOnce(
+      asyncGeneratorOf([
+        {
+          id: "opp-never-transferred",
+          name: "Just A Reply",
+          pipelineStageId: "review-stage",
+          status: "open",
+          contactId: "contact-plain",
+          assignedTo: null,
+          followers: [],
+          contact: { tags: ["buyer lead", "replied"] },
+        },
+      ])
+    );
+    ghl.listPipelines.mockResolvedValueOnce([
+      {
+        id: "pipeline-1",
+        stages: [
+          { id: "live-transfer-stage", name: "Live Transferred" },
+          { id: "review-stage", name: "Replied" },
+        ],
+      },
+    ]);
+    ghl.getConversations.mockResolvedValueOnce({ conversations: [{ id: "conv-2" }] });
+    ghl.getConversationMessages.mockResolvedValueOnce({
+      messages: {
+        messages: [{ messageType: "TYPE_SMS", dateAdded: "2026-09-15T18:41:07.990Z" }],
+      },
+    });
+
+    const data = await getCheckinData("good-token");
+
+    expect(data!.unassigned).toHaveLength(0);
+    expect(data!.teams[0].members).toHaveLength(0);
   });
 
   it("excludes opportunities outside the Live Transferred stage, and non-open ones regardless of age", async () => {

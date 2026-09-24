@@ -178,6 +178,8 @@
     },
     "pipelineId": "g8DgskR6GqDvRR3A6jnN",
     "pipelineName": "1. Real Estate Pipeline",
+    "reviewStageIds": ["6b623173-a23b-42f2-ae96-2d162c17f112"],
+    "reviewStageIdsNote": "Added 2026-09-25 per Jacob: opportunities sitting here ('1. Real Estate Pipeline' -> 'Replied', id verified live via GET /pipelines) that don't already carry the 'live transferred' tag or sit in the Live Transferred stage get a one-time conversation-history check (agents/scout/checkin.ts's findHistoricalLiveTransferSignal) before being written off as never-transferred. Jacob's report: some leads were genuinely live-transferred or had their assignment stripped by a later GHL account migration between users, but neither the tag nor the current stage survived to say so. Deliberately scoped to just this one stage, not every open stage, to keep the extra per-contact conversation fetch small.",
     "intakeStages": {
       "_comment": "No single 'new' stage — the lead type IS the entry stage. Lead type is also captured in the propertyInterest field.",
       "Buyer Leads": "f83b5ac8-e445-4a3e-b1e0-ac99a4747b56",
