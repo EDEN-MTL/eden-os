@@ -136,6 +136,10 @@ export async function getCheckinData(token: string): Promise<CheckinData | null>
   const ghlConfig = await getGhlConfig(clientId);
   if (!config || !ghlConfig) return null;
 
+  const teamsConfig: { teamName: string; teamLead: string; members: { name: string; ghlUserId: string }[] }[] =
+    config.teams || [];
+  const memberIds = new Set(teamsConfig.flatMap((t) => t.members.map((m) => m.ghlUserId)));
+
   const now = Date.now();
   const start = now - CHECKIN_WINDOW_DAYS * 24 * 60 * 60 * 1000;
   const extendedStart = now - EXTENDED_LOOKBACK_DAYS * 24 * 60 * 60 * 1000;
@@ -184,6 +188,20 @@ export async function getCheckinData(token: string): Promise<CheckinData | null>
     prospectName: string;
     appointmentAt: string;
     status: string;
+    // Candidate GHL user ids for "who owns this," in priority order —
+    // resolved against the real roster below rather than trusted blindly,
+    // because neither GHL field is reliable alone. Verified live twice
+    // with contradictory results: 2026-09-09, some opportunities had
+    // assignedTo null while followers[0] correctly held the real assignee.
+    // 2026-09-24, two opportunities had assignedTo correctly set to a
+    // real current team member (Stephanie McGrath) while followers[0]
+    // still held an unrelated dead/former-user id — if followers were
+    // checked first here, as it originally was, a properly-assigned lead
+    // would have wrongly landed in "Needs routing". Resolved by trying
+    // each candidate against the known roster (see memberIds below) and
+    // taking the first one that actually matches, instead of assuming
+    // either field's mere presence means it's correct.
+    assignedCandidates: string[];
     assignedId: string | null;
     // Live-transfer items are already filtered to status==="open" at the
     // fetch stage above, however old — the stale/open-opportunity re-check
@@ -200,7 +218,8 @@ export async function getCheckinData(token: string): Promise<CheckinData | null>
       prospectName: parseProspectName(e.title || ""),
       appointmentAt: e.startTime,
       status: e.appointmentStatus || "unknown",
-      assignedId: e.assignedUserId || null,
+      assignedCandidates: e.assignedUserId ? [e.assignedUserId] : [],
+      assignedId: null,
       isLiveTransfer: false,
     })),
     ...rawLiveTransfers.map((o) => ({
@@ -209,12 +228,10 @@ export async function getCheckinData(token: string): Promise<CheckinData | null>
       prospectName: o.name || "Unknown",
       appointmentAt: o.lastStageChangeAt || o.updatedAt,
       status: "live transferred",
-      // followers[0] tried first, assignedTo as fallback: assignedTo is
-      // verified live to sometimes be a DEAD user id (a direct
-      // GET /users/{id} -> 404, a former team member's account,
-      // presumably) — every recent row with a non-empty followers array
-      // had a real, current roster member there instead.
-      assignedId: (o.followers && o.followers.length ? o.followers[0] : null) || o.assignedTo || null,
+      assignedCandidates: [o.assignedTo, o.followers && o.followers[0]].filter(
+        (candidate: unknown): candidate is string => !!candidate
+      ),
+      assignedId: null,
       isLiveTransfer: true,
     })),
   ];
@@ -231,9 +248,13 @@ export async function getCheckinData(token: string): Promise<CheckinData | null>
   if (hiddenContactIds.length > 0) {
     items = items.filter((item) => !item.contactId || !hiddenContactIds.includes(item.contactId));
   }
+  // A manual override always wins; otherwise take the first candidate that
+  // actually matches a real, current roster member — not just whichever
+  // GHL field happened to be populated first (see RawItem's comment above).
   items = items.map((item) => {
     const override = item.contactId ? manualAssignments[item.contactId] : undefined;
-    return override ? { ...item, assignedId: override } : item;
+    const resolved = override ?? item.assignedCandidates.find((candidate) => memberIds.has(candidate)) ?? null;
+    return { ...item, assignedId: resolved };
   });
 
   // Anything within the "recent" 60-day window always shows, same as
@@ -301,11 +322,7 @@ export async function getCheckinData(token: string): Promise<CheckinData | null>
     };
   }
 
-  const teamsConfig: { teamName: string; teamLead: string; members: { name: string; ghlUserId: string }[] }[] =
-    config.teams || [];
-
   const appointmentsByMemberId = new Map<string, CheckinAppointment[]>();
-  const memberIds = new Set(teamsConfig.flatMap((t) => t.members.map((m) => m.ghlUserId)));
   const unassigned: CheckinAppointment[] = [];
 
   for (const item of items) {
@@ -451,11 +468,33 @@ export function renderCheckinPage(): string {
   header h1 { margin: 0 0 4px; font-size: 20px; }
   header p { margin: 0; color: #666; font-size: 14px; }
   main { max-width: 720px; margin: 0 auto; padding: 0 16px 60px; }
-  .team { margin-top: 28px; }
-  .team h2 { font-size: 16px; margin: 0 0 4px; }
-  .team .lead { font-size: 13px; color: #666; margin: 0 0 12px; }
-  .member { margin-bottom: 8px; }
-  .member h3 { font-size: 14px; margin: 0 0 6px; }
+  .team {
+    --team-color: #6b7280;
+    margin-top: 20px;
+    background: #fff;
+    border: 1px solid #e3e3e6;
+    border-left: 5px solid var(--team-color);
+    border-radius: 10px;
+    padding: 16px 18px 18px;
+  }
+  .team h2 {
+    font-size: 16px; margin: 0 0 4px; display: flex; align-items: center; gap: 8px;
+  }
+  .team h2::before {
+    content: ""; width: 10px; height: 10px; border-radius: 50%;
+    background: var(--team-color); flex: none;
+  }
+  .team .lead { font-size: 13px; color: #666; margin: 0 0 14px; }
+  .team.needs-routing { --team-color: #b45309; }
+  .member { margin-bottom: 14px; }
+  .member h3 {
+    display: inline-block; font-size: 12px; font-weight: 700; margin: 0 0 8px;
+    padding: 3px 10px; border-radius: 999px; text-transform: uppercase; letter-spacing: 0.02em;
+    background: #f0f0f0; color: var(--team-color);
+  }
+  @supports (background: color-mix(in srgb, red 10%, white)) {
+    .member h3 { background: color-mix(in srgb, var(--team-color) 14%, #fff); }
+  }
   .appt { background: #fff; border: 1px solid #e3e3e6; border-radius: 10px; padding: 14px 16px; margin-bottom: 10px; }
   .appt-top { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; flex-wrap: wrap; }
   .appt-prospect { font-weight: 600; font-size: 14px; }
@@ -664,9 +703,23 @@ export function renderCheckinPage(): string {
     });
   }
 
+  // A small fixed palette, picked by a stable hash of the team's name so
+  // the same team always gets the same color on every load and in both
+  // tabs — not by list position, which shifts depending on which teams
+  // have anything in a given bucket.
+  var TEAM_COLORS = ["#4F46E5", "#0891B2", "#7C3AED", "#DB2777", "#059669", "#2563EB"];
+  function colorForTeam(teamName) {
+    var hash = 0;
+    for (var i = 0; i < teamName.length; i++) {
+      hash = (hash * 31 + teamName.charCodeAt(i)) | 0;
+    }
+    return TEAM_COLORS[Math.abs(hash) % TEAM_COLORS.length];
+  }
+
   function renderTeam(team) {
     var section = document.createElement("section");
     section.className = "team";
+    section.style.setProperty("--team-color", colorForTeam(team.teamName));
     var h2 = document.createElement("h2");
     h2.textContent = team.teamName;
     var lead = document.createElement("p");
@@ -699,7 +752,7 @@ export function renderCheckinPage(): string {
     bucket.teams.forEach(function (team) { panel.appendChild(renderTeam(team)); });
     if (bucket.unassigned.length > 0) {
       var section = document.createElement("section");
-      section.className = "team";
+      section.className = "team needs-routing";
       var h2 = document.createElement("h2");
       h2.textContent = "Needs routing";
       var note = document.createElement("p");
