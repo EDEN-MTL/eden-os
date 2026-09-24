@@ -172,6 +172,7 @@ describe("getCheckinData", () => {
           id: "opp-1",
           name: "Megan Roberts",
           pipelineStageId: "live-transfer-stage",
+          status: "open",
           lastStageChangeAt: "2026-09-08T17:50:19.000Z",
           followers: ["ashley-id"],
           assignedTo: null, // real live shape: assignedTo can be null while followers carries the real assignee
@@ -200,6 +201,7 @@ describe("getCheckinData", () => {
           id: "opp-2",
           name: "Roger Perry",
           pipelineStageId: "live-transfer-stage",
+          status: "open",
           lastStageChangeAt: "2026-09-04T19:40:06.000Z",
           followers: [],
           assignedTo: "ashley-id",
@@ -223,6 +225,7 @@ describe("getCheckinData", () => {
           id: "opp-3",
           name: "Indu Singh Matta",
           pipelineStageId: "live-transfer-stage",
+          status: "open",
           lastStageChangeAt: "2026-08-25T10:44:59.000Z",
           followers: [],
           assignedTo: "a-deleted-user-id",
@@ -237,7 +240,7 @@ describe("getCheckinData", () => {
     expect(data!.unassigned[0].ghlEventId).toBe("opp-3");
   });
 
-  it("excludes opportunities outside the Live Transferred stage and outside the 60-day window", async () => {
+  it("excludes opportunities outside the Live Transferred stage, and non-open ones regardless of age", async () => {
     // Only ONE db.query call happens here (resolveClientId) — with every
     // opportunity filtered out and no calendar events, itemIds is empty, so
     // getCheckinData skips the checkin-rows query entirely rather than
@@ -252,14 +255,16 @@ describe("getCheckinData", () => {
           id: "opp-wrong-stage",
           name: "Not Live Transferred",
           pipelineStageId: "some-other-stage",
+          status: "open",
           lastStageChangeAt: new Date().toISOString(),
           followers: ["ashley-id"],
         },
         {
-          id: "opp-too-old",
-          name: "Ancient Transfer",
+          id: "opp-closed",
+          name: "Deal Won Already",
           pipelineStageId: "live-transfer-stage",
-          lastStageChangeAt: "2020-01-01T00:00:00.000Z",
+          status: "won",
+          lastStageChangeAt: new Date().toISOString(),
           followers: ["ashley-id"],
         },
       ])
@@ -269,6 +274,109 @@ describe("getCheckinData", () => {
 
     expect(data!.teams[0].members).toHaveLength(0);
     expect(data!.unassigned).toHaveLength(0);
+  });
+
+  it("keeps a Live Transferred opportunity that's still open, however old it is", async () => {
+    db.query
+      .mockResolvedValueOnce([{ client_id: "3-percent-east-coast" }]) // resolveClientId
+      .mockResolvedValueOnce([]); // checkin rows
+    readFileSyncMock.mockReturnValueOnce(configJsonWithLiveTransfer());
+    ghl.getGhlConfig.mockResolvedValueOnce({ apiKey: "key", locationId: "loc" });
+    ghl.listCalendarEvents.mockResolvedValueOnce([]).mockResolvedValueOnce([]);
+    ghl.listOpportunitiesPaginated.mockReturnValueOnce(
+      asyncGeneratorOf([
+        {
+          id: "opp-ancient-but-open",
+          name: "Still Going Strong",
+          pipelineStageId: "live-transfer-stage",
+          status: "open",
+          lastStageChangeAt: "2020-01-01T00:00:00.000Z",
+        },
+      ])
+    );
+
+    const data = await getCheckinData("good-token");
+
+    expect(data!.unassigned).toHaveLength(1);
+    expect(data!.unassigned[0].ghlEventId).toBe("opp-ancient-but-open");
+  });
+
+  it("keeps a calendar-based appointment older than 60 days when its contact still has an open opportunity", async () => {
+    db.query
+      .mockResolvedValueOnce([{ client_id: "3-percent-east-coast" }]) // resolveClientId
+      .mockResolvedValueOnce([]); // checkin rows
+    readFileSyncMock.mockReturnValueOnce(configJson());
+    ghl.getGhlConfig.mockResolvedValueOnce({ apiKey: "key", locationId: "loc" });
+    var oldDate = new Date(Date.now() - 90 * 24 * 60 * 60 * 1000).toISOString();
+    ghl.listCalendarEvents
+      .mockResolvedValueOnce([
+        {
+          id: "evt-old-open",
+          contactId: "contact-still-open",
+          title: "Buyer Consultation with Slow Buyer",
+          startTime: oldDate,
+          appointmentStatus: "showed",
+          assignedUserId: "ashley-id",
+        },
+      ])
+      .mockResolvedValueOnce([]);
+    ghl.findOpenOpportunitiesForContact.mockResolvedValueOnce([{ id: "opp-1" }]);
+
+    const data = await getCheckinData("good-token");
+
+    expect(ghl.findOpenOpportunitiesForContact).toHaveBeenCalledWith("contact-still-open", "loc", "key");
+    expect(data!.teams[0].members[0].appointments[0].ghlEventId).toBe("evt-old-open");
+  });
+
+  it("drops a calendar-based appointment older than 60 days when its contact has no open opportunity", async () => {
+    db.query.mockResolvedValueOnce([{ client_id: "3-percent-east-coast" }]); // resolveClientId only — no items survive
+    readFileSyncMock.mockReturnValueOnce(configJson());
+    ghl.getGhlConfig.mockResolvedValueOnce({ apiKey: "key", locationId: "loc" });
+    var oldDate = new Date(Date.now() - 90 * 24 * 60 * 60 * 1000).toISOString();
+    ghl.listCalendarEvents
+      .mockResolvedValueOnce([
+        {
+          id: "evt-old-closed",
+          contactId: "contact-resolved",
+          title: "Buyer Consultation with Done Deal",
+          startTime: oldDate,
+          appointmentStatus: "showed",
+          assignedUserId: "ashley-id",
+        },
+      ])
+      .mockResolvedValueOnce([]);
+    ghl.findOpenOpportunitiesForContact.mockResolvedValueOnce([]);
+
+    const data = await getCheckinData("good-token");
+
+    expect(data!.teams[0].members).toHaveLength(0);
+    expect(data!.unassigned).toHaveLength(0);
+  });
+
+  it("keeps a stale appointment when the open-opportunity check itself fails (fail-open, never silently loses a lead)", async () => {
+    db.query
+      .mockResolvedValueOnce([{ client_id: "3-percent-east-coast" }])
+      .mockResolvedValueOnce([]); // checkin rows
+    readFileSyncMock.mockReturnValueOnce(configJson());
+    ghl.getGhlConfig.mockResolvedValueOnce({ apiKey: "key", locationId: "loc" });
+    var oldDate = new Date(Date.now() - 90 * 24 * 60 * 60 * 1000).toISOString();
+    ghl.listCalendarEvents
+      .mockResolvedValueOnce([
+        {
+          id: "evt-old-error",
+          contactId: "contact-error",
+          title: "Buyer Consultation with Uncertain Fate",
+          startTime: oldDate,
+          appointmentStatus: "showed",
+          assignedUserId: "ashley-id",
+        },
+      ])
+      .mockResolvedValueOnce([]);
+    ghl.findOpenOpportunitiesForContact.mockRejectedValueOnce(new Error("GHL is down"));
+
+    const data = await getCheckinData("good-token");
+
+    expect(data!.teams[0].members[0].appointments[0].ghlEventId).toBe("evt-old-error");
   });
 
   it("checkinOverrides.assignments reassigns an event GHL couldn't attribute, keyed by contactId", async () => {
