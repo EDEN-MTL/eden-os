@@ -42,6 +42,14 @@ export interface EmberConfig {
    */
   excludeStages: string[];
   /**
+   * When non-empty, the ONLY stage names Ember enrolls from. Mark,
+   * 2026-09-25: "Ember must focus on nurturing mainly in Not Yet Ready,
+   * Long Term Nurturing, or Replied, for now." Everything else in the
+   * pipeline is left alone, however long it's been quiet. Empty/absent =
+   * every open stage not excluded above.
+   */
+  includeStages?: string[];
+  /**
    * CASL: an inquiry gives implied consent for commercial messages for 6
    * months from the inquiry — not indefinitely. Measured from the LATEST
    * real inquiry: the original form, or the lead's own most recent message

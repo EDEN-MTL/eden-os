@@ -113,6 +113,8 @@
       "Listing Active",
       "International Numbers"
     ],
+    "includeStages": ["Not Ready - [Endless Loop]", "Long Term Nurturing", "Replied"],
+    "includeStagesNote": "Mark, 2026-09-25: Ember focuses on these three stages only, for now. Names verified live against this pipeline (and 3-percent-east-coast's, which has the same three).",
     "consentWindowDays": 180,
     "reApproachAfterDays": 180,
     "reApproachNote": "Mark, 2026-09-24: 'not interested' / 'already bought' / 'working with another agent' is tried again 180 days after they said it. Real unsubscribes (STOP, remove me, don't text me, wrong number, GHL DND) are never retried. consentWindowDays still applies, measured from their latest real inquiry — so most re-approaches need Jacob to confirm express consent before it's raised.",

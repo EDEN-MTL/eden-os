@@ -50,6 +50,12 @@ describe("classifyForEnrollment", () => {
     expect(classifyForEnrollment(opp({ createdAt: daysAgo(400), lastStageChangeAt: daysAgo(300) }), ctx())).toEqual({ eligible: true });
   });
 
+  it("with includeStages set, only enrolls from those stages (Mark, 2026-09-25)", () => {
+    const c = ctx({ config: config({ includeStages: ["Long Term Nurturing", "Replied"] }) });
+    expect(classifyForEnrollment(opp({ pipelineStageId: "s_nurture" }), c)).toEqual({ eligible: true });
+    expect(classifyForEnrollment(opp({ pipelineStageId: "s_day1" }), c)).toEqual({ eligible: false, reason: "not a nurture stage" });
+  });
+
   it("skips a contact with no phone and no email", () => {
     const o = opp({ contact: { name: "X", phone: null, email: null, tags: [] } });
     expect(classifyForEnrollment(o, ctx())).toEqual({ eligible: false, reason: "no phone or email" });

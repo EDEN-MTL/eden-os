@@ -71,6 +71,9 @@ export function classifyForEnrollment(opp: GhlOpportunityLite, ctx: EnrollContex
   if (deriveWon(opp.status, stageName, outcomeStages) !== null) return { eligible: false, reason: "won/lost stage" };
   if (derivePipelineActive(opp.status, stageName, outcomeStages)) return { eligible: false, reason: "active stage" };
   if (config.excludeStages.some((s) => sameName(s, stageName))) return { eligible: false, reason: "excluded stage" };
+  if (config.includeStages?.length && !config.includeStages.some((s) => sameName(s, stageName))) {
+    return { eligible: false, reason: "not a nurture stage" };
+  }
 
   // A renewed-interest tag on a quiet card means someone's already on it.
   if (hasRenewedInterestTag(opp.contact?.tags, config)) return { eligible: false, reason: "renewed-interest tag" };
