@@ -1,5 +1,6 @@
 import { Request, Response, Router } from "express";
 import { eventBus } from "../shared/events";
+import { query } from "../shared/db";
 import { buildEmailDeps, buildOutreachDeps } from "../agents/quarry/deps";
 import { parseAppointmentContactId, parseInboundMessage } from "../agents/quarry/inbound";
 import { handleEmailReply, handleReply } from "../agents/quarry/outreach";
@@ -109,6 +110,14 @@ export function createGHLRouter(): Router {
     // Full raw body, always — this is the ground truth for fixing
     // parseInboundMessage once a real reply actually arrives.
     console.log("[QRY] inbound message webhook:", JSON.stringify(body).slice(0, 1000));
+    // Temporary diagnostic (shared/db/schema.sql's own comment on
+    // webhook_debug_log has the full story) — the console.log above
+    // truncates at 1000 chars, nowhere near enough to see a real payload,
+    // and there's no way to read Render's own logs from this session.
+    // Best-effort: must never block or affect the real routing below.
+    query(`INSERT INTO webhook_debug_log (route, body) VALUES ($1, $2)`, ["/message", JSON.stringify(body)]).catch((error) => {
+      console.error("[QRY] Failed to write webhook_debug_log:", error instanceof Error ? error.message : error);
+    });
 
     const parsed = parseInboundMessage(body);
     if (!parsed.isInbound || !parsed.contactId || !parsed.text) {

@@ -10,6 +10,9 @@ vi.mock("../agents/quarry/store", () => quarryStore);
 const iris = vi.hoisted(() => ({ irisHandleInboundSms: vi.fn(async () => true) }));
 vi.mock("../agents/iris/sms", () => iris);
 
+const db = vi.hoisted(() => ({ query: vi.fn(async () => []) }));
+vi.mock("../shared/db", () => db);
+
 import { createGHLRouter } from "./ghl-webhook";
 
 /**
