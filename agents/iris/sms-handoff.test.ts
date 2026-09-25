@@ -36,7 +36,8 @@ import { chatWithTools } from "../../shared/claude";
 import { sendMessage } from "../../shared/slack";
 import { appendHistory, loadHistory } from "../../shared/conversation-memory";
 import { classifyInboundText } from "./text-signals";
-import { irisHandleInboundSms, hasActiveSmsConversation } from "./sms";
+const NO_WAIT = { wait: async () => {} };
+import { irisHandleInboundSms, hasActiveSmsConversation, humanReplyDelayMs } from "./sms";
 
 function toolUseBlock(id: string, name: string, input: any) {
   return { type: "tool_use" as const, id, name, input };
@@ -105,7 +106,7 @@ describe("text-qualification ending — call handoff", () => {
     readFileSyncMock.mockReturnValue(CLIENT_CONFIG);
     db.query.mockResolvedValueOnce(row());
     vi.mocked(chatWithTools).mockResolvedValueOnce(endTurn("Great, what area?"));
-    await irisHandleInboundSms("contact-1", "yes still looking");
+    await irisHandleInboundSms("contact-1", "yes still looking", NO_WAIT);
     expect(toolNames()).not.toContain("schedule_transfer_call");
     expect(systemPrompt()).toContain("request_human_followup once");
   });
@@ -116,7 +117,7 @@ describe("text-qualification ending — call handoff", () => {
       .mockResolvedValueOnce(toolTurn(toolUseBlock("t1", "schedule_transfer_call", { ...STRONG, when: "now" })))
       .mockResolvedValueOnce(endTurn("Perfect — expect a call from us in a couple of minutes!"));
 
-    await irisHandleInboundSms("contact-1", "now works");
+    await irisHandleInboundSms("contact-1", "now works", NO_WAIT);
 
     expect(toolNames()).toContain("schedule_transfer_call");
     const update = db.query.mock.calls.find((c) => String(c[0]).includes("sms_scheduled = true"));
@@ -134,7 +135,7 @@ describe("text-qualification ending — call handoff", () => {
       .mockResolvedValueOnce(toolTurn(toolUseBlock("t1", "schedule_transfer_call", { intent: "buyer", timeline: "maybe next year", financing: "not-approved", when: "now" })))
       .mockResolvedValueOnce(endTurn("No problem — someone from the team will follow up."));
 
-    await irisHandleInboundSms("contact-1", "sure");
+    await irisHandleInboundSms("contact-1", "sure", NO_WAIT);
 
     expect(db.query.mock.calls.find((c) => String(c[0]).includes("sms_scheduled = true"))).toBeUndefined();
     const toolResult = (vi.mocked(chatWithTools).mock.calls[1][1] as any[]).at(-1).content[0].content as string;
@@ -147,7 +148,7 @@ describe("text-qualification ending — call handoff", () => {
     vi.mocked(chatWithTools)
       .mockResolvedValueOnce(toolTurn(toolUseBlock("t1", "schedule_transfer_call", { ...STRONG, when: "after lunch-ish" })))
       .mockResolvedValueOnce(endTurn("What time works best?"));
-    await irisHandleInboundSms("contact-1", "after lunch-ish");
+    await irisHandleInboundSms("contact-1", "after lunch-ish", NO_WAIT);
     expect(db.query.mock.calls.find((c) => String(c[0]).includes("sms_scheduled = true"))).toBeUndefined();
   });
 });
@@ -156,7 +157,7 @@ describe("an old lead Ember handed over", () => {
   it("gets the reactivation context, re-confirms buy/sell, and an honest virtual-assistant answer", async () => {
     db.query.mockResolvedValueOnce(row({ source: "ember" }));
     vi.mocked(chatWithTools).mockResolvedValueOnce(endTurn("Great to hear from you! Still looking to buy?"));
-    await irisHandleInboundSms("contact-1", "yes actually");
+    await irisHandleInboundSms("contact-1", "yes actually", NO_WAIT);
     const prompt = systemPrompt();
     expect(prompt).toContain("OLDER lead");
     expect(prompt).toContain("still on the hunt");
@@ -167,7 +168,30 @@ describe("an old lead Ember handed over", () => {
   it("a normal new lead keeps the existing wording", async () => {
     db.query.mockResolvedValueOnce(row());
     vi.mocked(chatWithTools).mockResolvedValueOnce(endTurn("What area?"));
-    await irisHandleInboundSms("contact-1", "hi");
+    await irisHandleInboundSms("contact-1", "hi", NO_WAIT);
     expect(systemPrompt()).not.toContain("OLDER lead");
+  });
+});
+
+describe("humanReplyDelayMs — never reply instantly (Mark, 2026-09-25)", () => {
+  const at = new Date("2026-09-25T15:00:00Z");
+  it("waits at least 30s after the lead's text arrived, plus typing time and jitter", () => {
+    expect(humanReplyDelayMs(at, "", at, () => 0)).toBe(30_000);
+    expect(humanReplyDelayMs(at, "x".repeat(100), at, () => 0)).toBe(35_000);
+    expect(humanReplyDelayMs(at, "x".repeat(1000), at, () => 0)).toBe(45_000); // typing capped at 15s
+    expect(humanReplyDelayMs(at, "", at, () => 0.99)).toBe(39_900);
+  });
+  it("counts time already passed — a reply picked up late doesn't wait twice", () => {
+    expect(humanReplyDelayMs(at, "", new Date(at.getTime() + 20_000), () => 0)).toBe(10_000);
+    expect(humanReplyDelayMs(at, "", new Date(at.getTime() + 120_000), () => 0)).toBe(0);
+  });
+  it("actually pauses before the reply goes out", async () => {
+    db.query.mockResolvedValueOnce(row());
+    vi.mocked(chatWithTools).mockResolvedValueOnce(endTurn("Great, what area are you looking in?"));
+    const waits: number[] = [];
+    await irisHandleInboundSms("contact-1", "yes still looking", { wait: async (ms) => { waits.push(ms); } });
+    expect(waits).toHaveLength(1);
+    expect(waits[0]).toBeGreaterThanOrEqual(29_000);
+    expect(ghl.sendSMS).toHaveBeenCalledTimes(1);
   });
 });

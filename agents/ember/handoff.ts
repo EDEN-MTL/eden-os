@@ -47,7 +47,15 @@ const LIVE_DEPS: HandoffDeps = {
 export async function handOffToIris(
   lead: NurtureLead,
   text: string,
-  ctx: { config: EmberConfig; clientName: string; alert: AlertFn; now?: Date; deps?: HandoffDeps }
+  ctx: {
+    config: EmberConfig;
+    clientName: string;
+    alert: AlertFn;
+    now?: Date;
+    deps?: HandoffDeps;
+    /** When the lead's reply arrived — Iris's human-like reply delay counts from here. */
+    receivedAt?: Date;
+  }
 ): Promise<HandoffResult> {
   const deps = ctx.deps ?? LIVE_DEPS;
   const now = ctx.now ?? new Date();
@@ -97,7 +105,7 @@ export async function handOffToIris(
     console.error(`[EMB] handoff alert failed for lead ${lead.id}:`, error);
   }
 
-  const answered = await deps.irisHandleInboundSms(lead.ghlContactId, text);
+  const answered = await deps.irisHandleInboundSms(lead.ghlContactId, text, { receivedAt: ctx.receivedAt ?? now });
   if (!answered) {
     console.warn(`[EMB] Iris did not pick up the handoff for lead ${lead.id} — the reply is unanswered, a human should follow up.`);
   }

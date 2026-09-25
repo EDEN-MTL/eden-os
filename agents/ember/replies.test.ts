@@ -26,7 +26,7 @@ describe("pollRepliesForClient", () => {
     const d = deps({ text: "yes still looking", dateAdded: daysAgo(1) });
     const r = await pollRepliesForClient("c", d);
     expect(r.routedToEmber).toBe(1);
-    expect(d.emberHandleInboundMessage).toHaveBeenCalledWith("c1", "yes still looking");
+    expect(d.emberHandleInboundMessage).toHaveBeenCalledWith("c1", "yes still looking", new Date(daysAgo(1)));
     expect(store.updateLead).toHaveBeenCalledWith(1, { lastInboundSeenAt: daysAgo(1) });
   });
 
@@ -35,7 +35,7 @@ describe("pollRepliesForClient", () => {
     const d = deps({ text: "in 2 months", dateAdded: daysAgo(1) });
     const r = await pollRepliesForClient("c", d);
     expect(r.routedToIris).toBe(1);
-    expect(d.irisHandleInboundSms).toHaveBeenCalledWith("c1", "in 2 months");
+    expect(d.irisHandleInboundSms).toHaveBeenCalledWith("c1", "in 2 months", { receivedAt: new Date(daysAgo(1)) });
   });
 
   it("never re-answers a reply already seen (e.g. the webhook got it first)", async () => {

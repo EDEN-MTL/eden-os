@@ -23,8 +23,8 @@ import { NurtureLead } from "./types";
 
 export interface ReplyPollDeps {
   lastInboundText(contactId: string): Promise<{ text: string; dateAdded: string | null } | null>;
-  irisHandleInboundSms(contactId: string, text: string): Promise<boolean>;
-  emberHandleInboundMessage(contactId: string, text: string): Promise<boolean>;
+  irisHandleInboundSms(contactId: string, text: string, options?: { receivedAt?: Date }): Promise<boolean>;
+  emberHandleInboundMessage(contactId: string, text: string, receivedAt?: Date): Promise<boolean>;
 }
 
 export interface ReplyPollReport {
@@ -71,10 +71,10 @@ export async function pollRepliesForClient(clientId: string, deps?: ReplyPollDep
       // be worse than one reply left for a human to see in GHL.
       await updateLead(lead.id, { lastInboundSeenAt: at.toISOString() });
       if (lead.status === "handed_off") {
-        await d.irisHandleInboundSms(lead.ghlContactId, inbound.text);
+        await d.irisHandleInboundSms(lead.ghlContactId, inbound.text, { receivedAt: at });
         report.routedToIris++;
       } else {
-        await d.emberHandleInboundMessage(lead.ghlContactId, inbound.text);
+        await d.emberHandleInboundMessage(lead.ghlContactId, inbound.text, at);
         report.routedToEmber++;
       }
     }

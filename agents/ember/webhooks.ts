@@ -49,7 +49,7 @@ export async function emberMarkInboundSeen(contactId: string, at: Date = new Dat
 }
 
 /** An inbound SMS/email from a contact. Returns true if Ember handled it. */
-export async function emberHandleInboundMessage(contactId: string, text: string): Promise<boolean> {
+export async function emberHandleInboundMessage(contactId: string, text: string, receivedAt: Date = new Date()): Promise<boolean> {
   const leads = await listOpenLeadsByContactId(contactId);
   let handled = false;
   for (const lead of leads) {
@@ -65,7 +65,7 @@ export async function emberHandleInboundMessage(contactId: string, text: string)
       config,
       clientName: name,
       alert,
-      handoff: (l, t) => handOffToIris(l, t, { config, clientName: name, alert }),
+      handoff: (l, t) => handOffToIris(l, t, { config, clientName: name, alert, receivedAt }),
     });
     console.log(`[EMB] reply from ${lead.contactName ?? lead.ghlContactId}: ${sentiment}`);
     handled = true;
