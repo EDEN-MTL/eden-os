@@ -185,8 +185,17 @@ describe("humanReplyDelayMs — never reply instantly (Mark, 2026-09-25)", () =>
     expect(humanReplyDelayMs(at, "", new Date(at.getTime() + 20_000), () => 0)).toBe(10_000);
     expect(humanReplyDelayMs(at, "", new Date(at.getTime() + 120_000), () => 0)).toBe(0);
   });
-  it("actually pauses before the reply goes out", async () => {
+  it("delays Iris's own new-lead replies too — Mark confirmed the delay is for every Iris text (dev 9967a94)", async () => {
     db.query.mockResolvedValueOnce(row());
+    vi.mocked(chatWithTools).mockResolvedValueOnce(endTurn("Great, what area are you looking in?"));
+    const waits: number[] = [];
+    await irisHandleInboundSms("contact-1", "yes still looking", { wait: async (ms) => { waits.push(ms); } });
+    expect(waits).toHaveLength(1);
+    expect(waits[0]).toBeGreaterThanOrEqual(29_000);
+  });
+
+  it("actually pauses before replying to a lead Ember handed over", async () => {
+    db.query.mockResolvedValueOnce(row({ source: "ember" }));
     vi.mocked(chatWithTools).mockResolvedValueOnce(endTurn("Great, what area are you looking in?"));
     const waits: number[] = [];
     await irisHandleInboundSms("contact-1", "yes still looking", { wait: async (ms) => { waits.push(ms); } });
