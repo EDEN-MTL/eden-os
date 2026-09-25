@@ -65,6 +65,44 @@ async function finishIrisLead(clientId: string, contactId: string, reason: strin
   );
 }
 
+/**
+ * Mark's instruction, 2026-09-25: never reply instantly — "so the lead
+ * would not think they are chatting to an automation. Just like a human
+ * taking some time to read and type." Applies to EVERY reply Iris sends
+ * over text, not just a subset of leads. At least 30s, plus a little per
+ * character (typing time, capped so a long reply doesn't take forever),
+ * plus random jitter so the gap is never identical twice.
+ *
+ * Measured from when the lead's text ARRIVED (receivedAt), not from when
+ * this function started running — a reply that took a while to generate
+ * (a slow model call, a retry) shouldn't stack its own delay on top of
+ * time that's already passed.
+ */
+const HUMAN_REPLY_MIN_MS = 30_000;
+const HUMAN_TYPING_MS_PER_CHAR = 50; // ~1s per 20 characters
+const HUMAN_TYPING_MAX_MS = 15_000;
+const HUMAN_JITTER_MS = 10_000;
+
+export function humanReplyDelayMs(
+  receivedAt: Date,
+  reply: string,
+  now: Date = new Date(),
+  random: () => number = Math.random
+): number {
+  const typing = Math.min(reply.length * HUMAN_TYPING_MS_PER_CHAR, HUMAN_TYPING_MAX_MS);
+  const target = HUMAN_REPLY_MIN_MS + typing + Math.floor(random() * HUMAN_JITTER_MS);
+  return Math.max(0, target - (now.getTime() - receivedAt.getTime()));
+}
+
+export interface InboundSmsOptions {
+  /** When the lead's text arrived (GHL's dateAdded). Defaults to now — the webhook path. */
+  receivedAt?: Date;
+  /** Injected so tests don't actually wait. */
+  wait?: (ms: number) => Promise<void>;
+}
+
+const realWait = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
+
 const SMS_TOOLS: ToolDef[] = [
   {
     name: "save_qualification_notes",
@@ -152,7 +190,11 @@ async function executeSmsTool(
  * this contact isn't Iris's to answer at all, so the caller can fall
  * through to Ember.
  */
-export async function irisHandleInboundSms(contactId: string, text: string): Promise<boolean> {
+export async function irisHandleInboundSms(contactId: string, text: string, options: InboundSmsOptions = {}): Promise<boolean> {
+  const receivedAt = options.receivedAt ?? new Date();
+  const wait = options.wait ?? realWait;
+  const pauseLikeAHuman = (reply: string) => wait(humanReplyDelayMs(receivedAt, reply));
+
   const row = await loadIrisLeadRow(contactId);
   if (!row) return false;
   // Already resolved (exhausted, qualified by voice or a human, opted out,
@@ -180,6 +222,7 @@ export async function irisHandleInboundSms(contactId: string, text: string): Pro
       console.error(`[IRS-SMS] Failed to tag contact ${contactId} as "do not call":`, error instanceof Error ? error.message : error);
     });
     const reply = "No problem — we won't reach out again. Take care!";
+    await pauseLikeAHuman(reply);
     await sendSMS(contactId, reply, ghlConfig.locationId, ghlConfig.apiKey).catch((error) => {
       console.error(`[IRS-SMS] Failed to send opt-out acknowledgment to ${contactId}:`, error instanceof Error ? error.message : error);
     });
@@ -230,6 +273,7 @@ export async function irisHandleInboundSms(contactId: string, text: string): Pro
 
   const reply = finalText || "Thanks — someone from our team will follow up with you shortly.";
 
+  await pauseLikeAHuman(reply);
   await sendSMS(contactId, reply, ghlConfig.locationId, ghlConfig.apiKey).catch((error) => {
     console.error(`[IRS-SMS] Failed to send reply to ${contactId}:`, error instanceof Error ? error.message : error);
   });
