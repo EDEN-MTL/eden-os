@@ -34,7 +34,7 @@ import { chatWithTools } from "../../shared/claude";
 import { sendMessage } from "../../shared/slack";
 import { appendHistory, loadHistory } from "../../shared/conversation-memory";
 import { classifyInboundText } from "./text-signals";
-import { irisHandleInboundSms, hasActiveSmsConversation } from "./sms";
+import { irisHandleInboundSms, hasActiveSmsConversation, humanReplyDelayMs } from "./sms";
 
 function toolUseBlock(id: string, name: string, input: any) {
   return { type: "tool_use" as const, id, name, input };
@@ -110,7 +110,7 @@ describe("irisHandleInboundSms — opt-out", () => {
     db.query.mockResolvedValueOnce([{ client_id: "3-percent-east-coast", contact_id: "contact-1", lead: LEAD, status: "pending" }]);
     vi.mocked(classifyInboundText).mockResolvedValueOnce({ type: "opt_out" });
 
-    const handled = await irisHandleInboundSms("contact-1", "stop texting me");
+    const handled = await irisHandleInboundSms("contact-1", "stop texting me", { wait: async () => {} });
 
     expect(handled).toBe(true);
     expect(chatWithTools).not.toHaveBeenCalled();
@@ -127,7 +127,7 @@ describe("irisHandleInboundSms — full qualification loop", () => {
     db.query.mockResolvedValueOnce([{ client_id: "3-percent-east-coast", contact_id: "contact-1", lead: LEAD, status: "pending" }]);
     vi.mocked(chatWithTools).mockResolvedValueOnce(endTurn("Great, and what area are you looking in?"));
 
-    const handled = await irisHandleInboundSms("contact-1", "Looking to buy");
+    const handled = await irisHandleInboundSms("contact-1", "Looking to buy", { wait: async () => {} });
 
     expect(handled).toBe(true);
     expect(ghl.sendSMS).toHaveBeenCalledWith("contact-1", "Great, and what area are you looking in?", "loc-1", "key-1");
@@ -139,7 +139,7 @@ describe("irisHandleInboundSms — full qualification loop", () => {
     db.query.mockResolvedValueOnce([{ client_id: "3-percent-east-coast", contact_id: "contact-1", lead: LEAD, status: "pending" }]);
     vi.mocked(chatWithTools).mockResolvedValueOnce(endTurn("Got it."));
 
-    await irisHandleInboundSms("contact-1", "Buying");
+    await irisHandleInboundSms("contact-1", "Buying", { wait: async () => {} });
 
     expect(loadHistory).toHaveBeenCalledWith("iris", "sms:3-percent-east-coast:contact-1");
   });
@@ -150,7 +150,7 @@ describe("irisHandleInboundSms — full qualification loop", () => {
       .mockResolvedValueOnce(toolTurn(toolUseBlock("t1", "save_qualification_notes", { notes: "Buyer, area: downtown, budget 400k" })))
       .mockResolvedValueOnce(endTurn("Thanks! One of our team will reach out to book a time."));
 
-    const handled = await irisHandleInboundSms("contact-1", "Downtown, around 400k");
+    const handled = await irisHandleInboundSms("contact-1", "Downtown, around 400k", { wait: async () => {} });
 
     expect(handled).toBe(true);
     expect(ghl.updateContact).toHaveBeenCalledWith(
@@ -168,7 +168,7 @@ describe("irisHandleInboundSms — full qualification loop", () => {
       .mockResolvedValueOnce(toolTurn(toolUseBlock("t1", "request_human_followup", { summary: "Catherine, buyer, downtown, 400k, ready to book" })))
       .mockResolvedValueOnce(endTurn("Thanks — someone from our team will reach out shortly to book a time!"));
 
-    await irisHandleInboundSms("contact-1", "Sounds good");
+    await irisHandleInboundSms("contact-1", "Sounds good", { wait: async () => {} });
 
     expect(ghl.addContactTags).toHaveBeenCalledWith("contact-1", ["iris sms qualified"], "loc-1", "key-1");
     expect(sendMessage).toHaveBeenCalledWith(
@@ -178,6 +178,81 @@ describe("irisHandleInboundSms — full qualification loop", () => {
 
     const updateCall = db.query.mock.calls.find((c) => String(c[0]).includes("UPDATE iris_pending_calls"));
     expect(updateCall?.[1]).toEqual(["3-percent-east-coast", "contact-1", "qualified via text — handed off for human follow-up"]);
+  });
+});
+
+/**
+ * Mark's instruction, 2026-09-25: never reply instantly — "so the lead
+ * would not think they are chatting to an automation." Applies to every
+ * reply, not a subset of leads.
+ */
+describe("humanReplyDelayMs", () => {
+  it("is at least the 30s floor for an empty reply with no jitter", () => {
+    const receivedAt = new Date("2026-09-25T12:00:00.000Z");
+    const now = receivedAt; // no time elapsed yet
+    expect(humanReplyDelayMs(receivedAt, "", now, () => 0)).toBe(30_000);
+  });
+
+  it("scales up with reply length, capped at 15s of added typing time", () => {
+    const receivedAt = new Date("2026-09-25T12:00:00.000Z");
+    const shortReply = "ok".repeat(1); // 2 chars
+    const longReply = "x".repeat(500); // way past the cap
+    const shortDelay = humanReplyDelayMs(receivedAt, shortReply, receivedAt, () => 0);
+    const longDelay = humanReplyDelayMs(receivedAt, longReply, receivedAt, () => 0);
+    expect(longDelay).toBeGreaterThan(shortDelay);
+    expect(longDelay).toBe(30_000 + 15_000); // floor + capped typing time, no jitter
+  });
+
+  it("adds jitter so the same reply never waits the exact same amount twice", () => {
+    const receivedAt = new Date("2026-09-25T12:00:00.000Z");
+    expect(humanReplyDelayMs(receivedAt, "", receivedAt, () => 0)).toBe(30_000);
+    expect(humanReplyDelayMs(receivedAt, "", receivedAt, () => 0.5)).toBe(35_000);
+  });
+
+  it("subtracts time already elapsed since the text arrived — never double-counts", () => {
+    const receivedAt = new Date("2026-09-25T12:00:00.000Z");
+    const now = new Date("2026-09-25T12:00:20.000Z"); // 20s already passed
+    expect(humanReplyDelayMs(receivedAt, "", now, () => 0)).toBe(10_000);
+  });
+
+  it("never goes negative when more time has already passed than the target delay", () => {
+    const receivedAt = new Date("2026-09-25T12:00:00.000Z");
+    const now = new Date("2026-09-25T12:05:00.000Z"); // 5 minutes later
+    expect(humanReplyDelayMs(receivedAt, "", now, () => 0)).toBe(0);
+  });
+});
+
+describe("irisHandleInboundSms — reply delay", () => {
+  it("waits before sending, computed from the injected receivedAt, not from whenever the function happens to run", async () => {
+    db.query.mockResolvedValueOnce([{ client_id: "3-percent-east-coast", contact_id: "contact-1", lead: LEAD, status: "pending" }]);
+    vi.mocked(chatWithTools).mockResolvedValueOnce(endTurn("Great, what area?"));
+
+    const waited: number[] = [];
+    const receivedAt = new Date(Date.now() - 5_000); // arrived 5s ago
+    await irisHandleInboundSms("contact-1", "Looking to buy", {
+      receivedAt,
+      wait: async (ms) => {
+        waited.push(ms);
+      },
+    });
+
+    expect(waited).toHaveLength(1);
+    expect(waited[0]).toBeGreaterThan(0);
+    expect(ghl.sendSMS).toHaveBeenCalledWith("contact-1", "Great, what area?", "loc-1", "key-1");
+  });
+
+  it("waits before the opt-out acknowledgment too, not just the qualification loop", async () => {
+    db.query.mockResolvedValueOnce([{ client_id: "3-percent-east-coast", contact_id: "contact-1", lead: LEAD, status: "pending" }]);
+    vi.mocked(classifyInboundText).mockResolvedValueOnce({ type: "opt_out" });
+
+    const waited: number[] = [];
+    await irisHandleInboundSms("contact-1", "stop texting me", {
+      wait: async (ms) => {
+        waited.push(ms);
+      },
+    });
+
+    expect(waited).toHaveLength(1);
   });
 });
 
