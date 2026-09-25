@@ -122,6 +122,44 @@ describe("irisHandleInboundSms — opt-out", () => {
   });
 });
 
+/**
+ * Real mistake found live, 2026-09-25 (Kaitlyn Sheppard): dial-pending.ts's
+ * pre-dial recheck already reads and acts on a lead's first reply to the
+ * initial "you'll get a call from Iris — what time works?" text (scheduling
+ * the real callback via this same classifier). A bare "Yes!"/"After 4!"
+ * isn't the start of a text qualification conversation — it's confirming a
+ * callback time — but before this fix, irisHandleInboundSms had no
+ * awareness of that signal at all and launched straight into "are you
+ * looking to buy or sell?", ignoring what the lead actually said.
+ */
+describe("irisHandleInboundSms — schedule_for (confirming a callback time, not starting a text chat)", () => {
+  it("acknowledges the callback time and stops — never starts the qualification loop — when this is the lead's first reply", async () => {
+    db.query.mockResolvedValueOnce([{ client_id: "3-percent-east-coast", contact_id: "contact-1", lead: LEAD, status: "pending" }]);
+    vi.mocked(loadHistory).mockResolvedValueOnce([]);
+    vi.mocked(classifyInboundText).mockResolvedValueOnce({ type: "schedule_for", when: new Date("2026-09-26T19:00:00.000Z") });
+
+    const handled = await irisHandleInboundSms("contact-1", "After 4!", { wait: async () => {} });
+
+    expect(handled).toBe(true);
+    expect(chatWithTools).not.toHaveBeenCalled();
+    expect(ghl.sendSMS).toHaveBeenCalledWith("contact-1", expect.stringMatching(/give you a call/i), "loc-1", "key-1");
+    expect(appendHistory).toHaveBeenCalledWith("iris", "sms:3-percent-east-coast:contact-1", "user", "After 4!");
+  });
+
+  it("does NOT short-circuit a real ongoing qualification conversation — falls through to the normal loop when history already exists", async () => {
+    db.query.mockResolvedValueOnce([{ client_id: "3-percent-east-coast", contact_id: "contact-1", lead: LEAD, status: "pending" }]);
+    vi.mocked(loadHistory).mockResolvedValueOnce([{ role: "assistant", content: "What area are you interested in?" }]);
+    vi.mocked(classifyInboundText).mockResolvedValueOnce({ type: "schedule_for", when: new Date("2026-09-26T19:00:00.000Z") });
+    vi.mocked(chatWithTools).mockResolvedValueOnce(endTurn("Got it, noted — and what area works for you?"));
+
+    const handled = await irisHandleInboundSms("contact-1", "call me after 4 instead", { wait: async () => {} });
+
+    expect(handled).toBe(true);
+    expect(chatWithTools).toHaveBeenCalled();
+    expect(ghl.sendSMS).toHaveBeenCalledWith("contact-1", "Got it, noted — and what area works for you?", "loc-1", "key-1");
+  });
+});
+
 describe("irisHandleInboundSms — full qualification loop", () => {
   it("sends the model's plain-text reply as a real SMS and persists both sides of the exchange", async () => {
     db.query.mockResolvedValueOnce([{ client_id: "3-percent-east-coast", contact_id: "contact-1", lead: LEAD, status: "pending" }]);
