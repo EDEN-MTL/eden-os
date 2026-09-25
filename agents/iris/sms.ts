@@ -212,9 +212,15 @@ export async function irisHandleInboundSms(contactId: string, text: string, opti
 
   const timezone = (await getLocationTimezone(ghlConfig.locationId, ghlConfig.apiKey).catch(() => null)) || config.timezone || "America/St_Johns";
 
-  // Same conservative opt-out classifier dial-pending.ts already uses
-  // pre-dial — a clear "stop texting/calling me" ends things outright here
-  // too, rather than the qualification loop trying to talk them out of it.
+  const key = historyKey(clientId, contactId);
+  const history = await loadHistory(AGENT_ID, key).catch((error) => {
+    console.error(`[IRS-SMS] Failed to load conversation history for ${contactId}:`, error instanceof Error ? error.message : error);
+    return [] as ChatMessage[];
+  });
+
+  // Same conservative classifier dial-pending.ts already uses pre-dial — a
+  // clear "stop texting/calling me" ends things outright here too, rather
+  // than the qualification loop trying to talk them out of it.
   const signal = await classifyInboundText(text, new Date(), timezone);
   if (signal.type === "opt_out") {
     await finishIrisLead(clientId, contactId, "lead opted out via text — cadence stopped");
@@ -226,17 +232,34 @@ export async function irisHandleInboundSms(contactId: string, text: string, opti
     await sendSMS(contactId, reply, ghlConfig.locationId, ghlConfig.apiKey).catch((error) => {
       console.error(`[IRS-SMS] Failed to send opt-out acknowledgment to ${contactId}:`, error instanceof Error ? error.message : error);
     });
-    const key = historyKey(clientId, contactId);
     await appendHistory(AGENT_ID, key, "user", text).catch(() => {});
     await appendHistory(AGENT_ID, key, "assistant", reply).catch(() => {});
     return true;
   }
 
-  const key = historyKey(clientId, contactId);
-  const history = await loadHistory(AGENT_ID, key).catch((error) => {
-    console.error(`[IRS-SMS] Failed to load conversation history for ${contactId}:`, error instanceof Error ? error.message : error);
-    return [] as ChatMessage[];
-  });
+  // Real mistake found live, 2026-09-25 (Kaitlyn Sheppard): dial-pending.ts's
+  // own pre-dial recheck already reads and acts on a lead's FIRST reply to
+  // the initial "you'll get a call from Iris — what time works?" outreach
+  // text (scheduling the actual callback via this exact same classifier).
+  // But this function had no awareness of that at all — a bare "Yes!" then
+  // "After 4!" isn't the start of a text qualification conversation, it's
+  // confirming a callback time, and launching straight into "are you
+  // looking to buy or sell?" right after ignores what the lead actually
+  // said. Gated on history.length === 0 (no real text exchange has started
+  // yet) so this never derails an ACTUAL ongoing qualification chat where a
+  // callback-time aside comes up mid-conversation — there, falling through
+  // to the normal loop is correct, since the model has full context to
+  // handle it naturally.
+  if (signal.type === "schedule_for" && history.length === 0) {
+    const reply = "Sounds good — Iris will give you a call then. Talk soon!";
+    await pauseLikeAHuman(reply);
+    await sendSMS(contactId, reply, ghlConfig.locationId, ghlConfig.apiKey).catch((error) => {
+      console.error(`[IRS-SMS] Failed to send callback-time acknowledgment to ${contactId}:`, error instanceof Error ? error.message : error);
+    });
+    await appendHistory(AGENT_ID, key, "user", text).catch(() => {});
+    await appendHistory(AGENT_ID, key, "assistant", reply).catch(() => {});
+    return true;
+  }
 
   const systemPrompt = buildSmsQualificationPrompt(config, row.lead, branding.brandName, branding.city);
 
