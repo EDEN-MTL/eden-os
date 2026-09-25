@@ -56,6 +56,19 @@ describe("classifyForEnrollment", () => {
     expect(classifyForEnrollment(opp({ pipelineStageId: "s_day1" }), c)).toEqual({ eligible: false, reason: "not a nurture stage" });
   });
 
+  it("uses a per-stage wait when one is set — Replied after 14 days (Mark, 2026-09-25)", () => {
+    const c = ctx({ config: config({ stageDormancyDays: { Replied: 14 } }) });
+    expect(classifyForEnrollment(opp({ pipelineStageId: "s_replied", lastStageChangeAt: daysAgo(15) }), c)).toEqual({ eligible: true });
+    expect(classifyForEnrollment(opp({ pipelineStageId: "s_replied", lastStageChangeAt: daysAgo(10) }), c).eligible).toBe(false);
+    // other stages keep the 45-day default
+    expect(classifyForEnrollment(opp({ pipelineStageId: "s_nurture", lastStageChangeAt: daysAgo(15) }), c).eligible).toBe(false);
+  });
+
+  it("a test override wins over the per-stage wait", () => {
+    const c = ctx({ config: config({ stageDormancyDays: { Replied: 14 } }), thresholdDays: 1, forceThreshold: true });
+    expect(classifyForEnrollment(opp({ pipelineStageId: "s_replied", lastStageChangeAt: daysAgo(3) }), c)).toEqual({ eligible: true });
+  });
+
   it("skips a contact with no phone and no email", () => {
     const o = opp({ contact: { name: "X", phone: null, email: null, tags: [] } });
     expect(classifyForEnrollment(o, ctx())).toEqual({ eligible: false, reason: "no phone or email" });

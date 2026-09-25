@@ -106,6 +106,8 @@
     "enabled": false,
     "pipelineId": "Ghy9io9Va4wJPmwVrMC6",
     "dormancyThresholdDays": 45,
+    "stageDormancyDays": { "Replied": 14 },
+    "stageDormancyDaysNote": "Mark, 2026-09-25: Replied leads are picked up after 14 quiet days; Not Ready and Long Term Nurturing keep the 45-day default.",
     "excludeStages": [
       "Appointment Set",
       "Appointment Set (Not qualified)",

@@ -13,6 +13,7 @@ export const STAGES: Record<string, string> = {
   s_confirmed: "Buyer Confirmed",
   s_closed: "Deal Closed",
   s_lost: "Not Qualified/Not Interested",
+  s_replied: "Replied",
 };
 
 export const OUTCOME_STAGES = {

@@ -34,6 +34,13 @@ export interface EmberConfig {
   /** An open card with no stage change for this many days is dormant. */
   dormancyThresholdDays: number;
   /**
+   * Per-stage override of dormancyThresholdDays, by stage NAME. Mark,
+   * 2026-09-25: "Replied" leads are picked up after 14 days quiet, not 45 —
+   * they answered recently, and 18 of 3%'s 21 "Replied" cards were too
+   * fresh for the 45-day default to ever touch.
+   */
+  stageDormancyDays?: Record<string, number>;
+  /**
    * Stage NAMES never enrolled even if quiet — columns where a human is
    * already working the deal (an appointment set, a listing live), so an
    * automated "still thinking about buying?" text would be tone-deaf.

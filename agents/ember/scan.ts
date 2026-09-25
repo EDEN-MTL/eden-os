@@ -34,6 +34,8 @@ export interface EnrollContext {
   stageNames: Record<string, string>;
   now: Date;
   thresholdDays: number;
+  /** true when thresholdDays came from a test override — it then wins over stageDormancyDays. */
+  forceThreshold?: boolean;
 }
 
 export type EnrollDecision = { eligible: true } | { eligible: false; reason: string };
@@ -85,7 +87,9 @@ export function classifyForEnrollment(opp: GhlOpportunityLite, ctx: EnrollContex
   // never changed stage at all.
   const quietDays = daysBetween(opp.lastStageChangeAt ?? opp.createdAt, now);
   if (quietDays === null) return { eligible: false, reason: "no activity timestamp" };
-  if (quietDays < ctx.thresholdDays) return { eligible: false, reason: "not dormant yet" };
+  const stageDays = Object.entries(config.stageDormancyDays ?? {}).find(([name]) => sameName(name, stageName))?.[1];
+  const threshold = ctx.forceThreshold || stageDays === undefined ? ctx.thresholdDays : stageDays;
+  if (quietDays < threshold) return { eligible: false, reason: "not dormant yet" };
 
   // No consent check here on purpose (Mark, 2026-09-24: leads 6+ months
   // old must still be considered). Consent is measured at the first touch
@@ -250,6 +254,7 @@ export async function runEmberScanForClient(
     stageNames: await deps.stageNames(),
     now,
     thresholdDays: options.thresholdDaysOverride ?? config.dormancyThresholdDays,
+    forceThreshold: options.thresholdDaysOverride !== undefined,
   };
   if (Object.keys(ctx.stageNames).length === 0) {
     // A wrong pipelineId never errors in GHL — it just returns nothing, and
