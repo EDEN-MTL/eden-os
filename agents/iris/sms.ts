@@ -16,7 +16,7 @@ import { query } from "../../shared/db";
 import { NormalisedLead, buildKeyToId } from "../scout/intake";
 import { loadIrisConfig, loadClientBranding } from "./index";
 import { buildSmsQualificationPrompt } from "./scripts";
-import { classifyInboundText } from "./text-signals";
+import { classifyInboundText, lastInboundText } from "./text-signals";
 import { IrisConfig } from "./qualification";
 import { chatWithTools, ChatMessage, ToolDef } from "../../shared/claude";
 import { loadHistory, appendHistory } from "../../shared/conversation-memory";
@@ -261,7 +261,26 @@ export async function irisHandleInboundSms(contactId: string, text: string, opti
     return true;
   }
 
-  const systemPrompt = buildSmsQualificationPrompt(config, row.lead, branding.brandName, branding.city);
+  // Only fetched for a lead's first-ever reply — once a real text exchange
+  // is underway, the conversation history already gives the model context,
+  // and repeating a live GHL fetch every turn would be wasteful. Real gap
+  // found live, 2026-09-25 (Kaitlyn Sheppard): the schedule_for check above
+  // only catches a reply that names a SPECIFIC time — a bare "Yes!" replying
+  // to the exact same "you'll get a call from Iris — what time works?" text
+  // isn't a specific time, so it fell through to here with the model having
+  // no idea what it was actually answering, and launched straight into "are
+  // you looking to buy or sell?" as if starting a text conversation cold.
+  // Giving the model the real preceding outreach text lets it recognize a
+  // bare acknowledgment for what it is, instead of hardcoding every possible
+  // confirmation phrase ("yes", "sure", "ok", a thumbs up, ...) — the exact
+  // reasoning text-signals.ts's own doc comment already gives for using an
+  // LLM pass over regex here.
+  const initialOutreachText =
+    history.length === 0
+      ? (await lastInboundText(contactId, ghlConfig.locationId, ghlConfig.apiKey).catch(() => null))?.precedingOutbound ?? null
+      : null;
+
+  const systemPrompt = buildSmsQualificationPrompt(config, row.lead, branding.brandName, branding.city, { initialOutreachText });
 
   let working: ChatMessage[] = [...history, { role: "user", content: text }];
   let finalText = "";
