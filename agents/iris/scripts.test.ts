@@ -1293,4 +1293,24 @@ describe("buildSmsQualificationPrompt", () => {
     expect(prompt).toContain(EDGE_CASE_RESPONSES.notPreApproved[0]);
     expect(prompt).toContain(EDGE_CASE_RESPONSES.offTopic[0]);
   });
+
+  /**
+   * Real gap found live, 2026-09-25 (Kaitlyn Sheppard): a bare "Yes!"
+   * replying to "you'll get a call from Iris — what time works?" launched
+   * straight into qualifying questions, since the model had no idea what
+   * it was actually answering.
+   */
+  it("includes the real preceding outreach text and instructs the model to recognize a bare confirmation of it, when given", () => {
+    const prompt = buildSmsQualificationPrompt(IRIS_CONFIG, BLANK_LEAD, "3 Percent East Coast", "St. John's", {
+      initialOutreachText: "You'll get a quick call from Iris — what time works?",
+    });
+    expect(prompt).toContain("You'll get a quick call from Iris — what time works?");
+    expect(prompt).toMatch(/bare confirmation|acknowledge it briefly/i);
+    expect(prompt).toMatch(/do not launch into qualifying questions/i);
+  });
+
+  it("says nothing about a preceding outreach text when none is given — the normal case once a real exchange is underway", () => {
+    const prompt = buildSmsQualificationPrompt(IRIS_CONFIG, BLANK_LEAD, "3 Percent East Coast", "St. John's");
+    expect(prompt).not.toMatch(/what they're actually replying to/i);
+  });
 });

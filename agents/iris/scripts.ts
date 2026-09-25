@@ -1568,11 +1568,25 @@ export const IDLE_NUDGE_VARIATIONS = [
  * lineBreakingUp are the two entries marked call-only and are deliberately
  * left out.
  */
+export interface SmsPromptOptions {
+  /**
+   * The real outbound text this lead is replying to (their very first
+   * reply only — text-signals.ts's precedingOutbound). Real gap found
+   * live, 2026-09-25 (Kaitlyn Sheppard): the initial outreach text asks
+   * about a PHONE CALL ("you'll get a call from Iris — what time works?"),
+   * so a bare "Yes!" or a time is answering THAT, not opting into a text
+   * conversation — without this context, the model had no way to tell the
+   * difference and launched straight into qualifying questions.
+   */
+  initialOutreachText?: string | null;
+}
+
 export function buildSmsQualificationPrompt(
   config: IrisConfig,
   lead: NormalisedLead,
   brandName: string,
-  city: string
+  city: string,
+  options: SmsPromptOptions = {}
 ): string {
   const firstName = extractFirstName(lead.name);
 
@@ -1591,8 +1605,12 @@ export function buildSmsQualificationPrompt(
 
   const questionsToAsk = lead.intent === "unknown" ? config.questions : config.questions.slice(1);
 
-  return `You are IRIS, texting with ${firstName !== "there" ? firstName : "a lead"} on behalf of ${brandName}, a real estate brokerage in ${city}. This is a REAL text conversation with a real prospective client who replied to an earlier text — not a drill, not a live phone call. You have no voice here; every reply is a text message.
+  const outreachContextBlock = options.initialOutreachText
+    ? `\n## What they're actually replying to\nThis is their FIRST reply. The exact text they're responding to was: "${options.initialOutreachText}" — read their reply as an answer to THAT, not in isolation. If it's just a bare confirmation, agreement, or a time (e.g. "yes", "sure", "after 4", a 👍) and that outreach text was about a phone call, acknowledge it briefly (e.g. "Sounds good, talk soon!") and STOP — do not launch into qualifying questions on this turn. Only start qualifying once they say something that goes beyond confirming that call (a real question, a request to text instead, or unprompted details about what they're looking for).\n`
+    : "";
 
+  return `You are IRIS, texting with ${firstName !== "there" ? firstName : "a lead"} on behalf of ${brandName}, a real estate brokerage in ${city}. This is a REAL text conversation with a real prospective client who replied to an earlier text — not a drill, not a live phone call. You have no voice here; every reply is a text message.
+${outreachContextBlock}
 ## How to write a text, not talk on the phone
 Keep every message SHORT — one or two sentences, like a real person texting, never a paragraph. Ask ONE question per message and wait for their reply before the next one. Use casual, warm phrasing, not a script read verbatim. Vary your acknowledgments rather than repeating the same one — some natural options: ${NATURAL_TRANSITIONS.sms.map((t) => `"${t}"`).join(", ")}.
 
