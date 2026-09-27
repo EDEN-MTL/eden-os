@@ -118,6 +118,16 @@ export interface IrisConfig {
   timezone?: string;
   writeFields: IrisWriteFields;
   outreachCadence: OutreachCadenceConfig;
+  /**
+   * How a text-qualification conversation ends for a QUALIFIED lead (Mark,
+   * 2026-09-24: "the main goal is to live transfer them"). true = Iris asks
+   * "is now a good time for a quick call?" and queues herself to call for
+   * a live transfer. false/absent = the original ending — tag + Slack alert
+   * for a human to book (agents/iris/sms.ts). Unqualified leads get the
+   * human ending either way. Per-client so it can be proven on the test
+   * account before 3% ever sees it.
+   */
+  smsCallHandoff?: boolean;
 }
 
 export interface QualificationAnswers {

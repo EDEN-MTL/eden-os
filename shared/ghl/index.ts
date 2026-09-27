@@ -319,6 +319,52 @@ export async function* listOpportunitiesPaginated(
   console.warn(`[GHL] listOpportunitiesPaginated hit the ${MAX_PAGES}-page cap for location ${locationId} — stopping.`);
 }
 
+/**
+ * Every opportunity in ONE stage, paged with the cursor GHL itself returns
+ * (meta.startAfter / meta.startAfterId). Found live 2026-09-25 on
+ * 3-percent-east-coast: listOpportunitiesPaginated above yielded only 106
+ * of "1. Real Estate Pipeline"'s 280 opportunities — it builds its own
+ * cursor from the last record's updatedAt, which GHL doesn't page on — and
+ * showed 3 of the 10 cards in "WEEKEDN - AM FOLLOW UP" that the stage
+ * filter returns. Filtering per stage keeps each result set small, and
+ * following GHL's own cursor is what the API actually expects.
+ */
+export async function listOpportunitiesInStage(
+  locationId: string,
+  pipelineId: string,
+  stageId: string,
+  apiKey?: string,
+  limit = 100
+): Promise<any[]> {
+  const out: any[] = [];
+  const seen = new Set<string>();
+  let startAfter: string | undefined;
+  let startAfterId: string | undefined;
+  for (let page = 0; page < MAX_PAGES; page++) {
+    const params = new URLSearchParams({ location_id: locationId, pipeline_id: pipelineId, pipeline_stage_id: stageId, limit: String(limit) });
+    if (startAfterId) {
+      params.set("startAfterId", startAfterId);
+      if (startAfter) params.set("startAfter", startAfter);
+    }
+    const payload = await ghlRequest(`/opportunities/search?${params.toString()}`, { apiKey });
+    const opps: any[] = payload.opportunities || [];
+    let fresh = 0;
+    for (const o of opps) {
+      if (o?.id && !seen.has(o.id)) {
+        seen.add(o.id);
+        out.push(o);
+        fresh++;
+      }
+    }
+    const total = typeof payload?.meta?.total === "number" ? payload.meta.total : null;
+    const nextId = payload?.meta?.startAfterId;
+    if (fresh === 0 || opps.length < limit || (total !== null && out.length >= total) || !nextId || nextId === startAfterId) break;
+    startAfterId = String(nextId);
+    startAfter = payload?.meta?.startAfter !== undefined ? String(payload.meta.startAfter) : undefined;
+  }
+  return out;
+}
+
 export async function listPipelines(locationId: string, apiKey?: string): Promise<any[]> {
   const payload = await ghlRequest(`/opportunities/pipelines?locationId=${locationId}`, { apiKey });
   return payload.pipelines || [];
@@ -443,6 +489,32 @@ export async function createOpportunity(
     apiKey,
     locationId: data.locationId,
   });
+}
+
+/**
+ * A contact's CRM notes (what the team wrote after calls, etc). Verified
+ * live 2026-09-24 against eden-sub-account-one: { notes: [{ id, body,
+ * bodyText, userId, dateAdded, contactId, pinned, relations }] }.
+ */
+export async function getContactNotes(contactId: string, locationId?: string, apiKey?: string): Promise<any[]> {
+  const payload = await ghlRequest(`/contacts/${contactId}/notes`, { locationId, apiKey });
+  return payload?.notes ?? [];
+}
+
+/**
+ * One opportunity by id. Ember re-reads the card right before each nurture
+ * touch so a deal a human moved since the last scan never gets a "still
+ * thinking about it?" text. Verified live 2026-09-23 against
+ * eden-sub-account-one: the response wraps the record as { opportunity },
+ * with the same pipelineStageId/lastStageChangeAt fields as a search result.
+ */
+export async function getOpportunity(
+  opportunityId: string,
+  locationId?: string,
+  apiKey?: string
+): Promise<any> {
+  const payload = await ghlRequest(`/opportunities/${opportunityId}`, { locationId, apiKey });
+  return payload?.opportunity ?? payload;
 }
 
 export async function updateOpportunityStage(
@@ -724,9 +796,12 @@ export async function getConversations(
 export async function getConversationMessages(
   conversationId: string,
   locationId?: string,
-  apiKey?: string
+  apiKey?: string,
+  /** Page size. GHL's default is 20; Ember reads more to see a lead's whole story. */
+  limit?: number
 ): Promise<any> {
-  return ghlRequest(`/conversations/${conversationId}/messages`, {
+  const query = limit ? `?limit=${limit}` : "";
+  return ghlRequest(`/conversations/${conversationId}/messages${query}`, {
     locationId,
     apiKey,
   });

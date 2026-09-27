@@ -515,6 +515,18 @@ CREATE TABLE IF NOT EXISTS iris_pending_calls (
 ALTER TABLE iris_pending_calls ADD COLUMN IF NOT EXISTS attempts_made INTEGER NOT NULL DEFAULT 0;
 ALTER TABLE iris_pending_calls ADD COLUMN IF NOT EXISTS is_explicit_callback BOOLEAN NOT NULL DEFAULT FALSE;
 CREATE INDEX IF NOT EXISTS idx_iris_pending_due ON iris_pending_calls(status, call_after);
+-- Where this row came from. NULL = the normal new-lead intake (ContactCreate
+-- → Scout → lead.enriched). 'ember' = an old, dormant lead Ember reactivated
+-- — it replied to a nurture text and was handed to Iris to qualify and call.
+-- Ember rows skip the "already live-transferred / appt booked" gate: old
+-- leads often carry those tags from their first go-round months ago, and
+-- the whole point of the handoff is to transfer them again.
+ALTER TABLE iris_pending_calls ADD COLUMN IF NOT EXISTS source TEXT;
+-- True when this call was agreed over text: the lead qualified by SMS and
+-- said "yes, call me now/at 5". Skips the pause-while-texting gate — that
+-- gate exists so Iris doesn't dial on top of an open text thread, and here
+-- the text thread is literally the lead asking for this call.
+ALTER TABLE iris_pending_calls ADD COLUMN IF NOT EXISTS sms_scheduled BOOLEAN NOT NULL DEFAULT FALSE;
 
 -- One stable, revocable link per client for Scout's bi-weekly team
 -- check-in page (webhooks/checkin-api.ts). Not per-send: the page always
@@ -551,6 +563,91 @@ CREATE TABLE IF NOT EXISTS scout_appointment_checkins (
 -- can tell "nothing filled in" apart from "worth $0" — shown on the card as
 -- "Value: $X" only once actually set.
 ALTER TABLE scout_appointment_checkins ADD COLUMN IF NOT EXISTS potential_commission NUMERIC(12, 2);
+
+-- ─────────────────────────────────────────────────────────────────────
+-- EMBER — long-term nurture and reactivation of dormant client leads.
+--
+-- EDEN owns the drip cadence here rather than in a GHL workflow because
+-- GHL workflows are read-only over the API (gotcha 4 in CLAUDE.md) — the
+-- same reason Quarry keeps its own outreach sequence in quarry_leads. GHL
+-- is only the messaging pipe (SMS/email via /conversations/messages).
+--
+-- One row per OPPORTUNITY, not per contact: the thing that goes dormant is
+-- a deal sitting untouched in a pipeline column, and a contact can have
+-- more than one. The contact fields are denormalized copies taken at
+-- enrollment — convenient for Slack listings, never trusted for sending
+-- (send.ts re-reads the live contact for DND/phone/email before each touch).
+-- ─────────────────────────────────────────────────────────────────────
+
+CREATE TABLE IF NOT EXISTS ember_nurture_leads (
+    id BIGSERIAL PRIMARY KEY,
+    client_id TEXT NOT NULL,
+    ghl_contact_id TEXT NOT NULL,
+    ghl_opportunity_id TEXT NOT NULL,
+    contact_name TEXT,
+    phone TEXT,
+    email TEXT,
+    -- nurturing | paused | replied | handed_off | reactivated | exited | opted_out | completed
+    -- handed_off = replied and was passed to Iris to qualify by text + call.
+    -- Only `nurturing` is ever sent to. Everything else is terminal except
+    -- `paused`, which a human can resume from Slack.
+    status TEXT NOT NULL DEFAULT 'nurturing',
+    -- Why the row left `nurturing` ("stage moved to Buyer Confirmed",
+    -- "tag renewed interest added", "replied: 'yes still looking'") — kept
+    -- so a Slack listing can say why without re-deriving it from GHL.
+    status_reason TEXT,
+    -- The stage the card sat in when it was enrolled. A later scan seeing a
+    -- DIFFERENT stage is how reactivation is detected without depending on
+    -- GHL webhooks, which only fire if a human built the workflow for them.
+    -- buyer | seller | downsize | upgrading | unknown — picks the buyer or
+    -- seller reactivation script. From the contact's tags first, then the
+    -- stage it was enrolled from (see ember.intentTags / intentStages).
+    intent TEXT,
+    enrolled_stage_id TEXT,
+    enrolled_stage_name TEXT,
+    -- GHL's own lastStageChangeAt at enrollment — the dormancy clock.
+    last_ghl_activity_at TIMESTAMPTZ,
+    -- The opportunity's createdAt, i.e. when they inquired. CASL's implied
+    -- consent runs 6 months from the inquiry, so every send checks this —
+    -- a lead enrolled at month 4 must stop at month 6 mid-cadence.
+    inquiry_at TIMESTAMPTZ,
+    entered_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    touch_count INTEGER NOT NULL DEFAULT 0,
+    last_touch_at TIMESTAMPTZ,
+    -- Precomputed from the cadence so the send job is one indexed query,
+    -- not a scan of every row re-deriving "which touch is due".
+    next_touch_at TIMESTAMPTZ,
+    replied_at TIMESTAMPTZ,
+    reactivated_at TIMESTAMPTZ,
+    -- Newest inbound text already routed (to Ember's reply handling, or to
+    -- Iris after handoff). Both the webhook and the reply poll check and
+    -- set this, so a reply is never answered twice when both are live.
+    last_inbound_seen_at TIMESTAMPTZ,
+    -- Opaque token for the CASL unsubscribe link — never the row id, which
+    -- would let anyone opt out any other lead by editing the URL (same
+    -- reasoning as quarry_leads.email_unsubscribe_token).
+    unsubscribe_token TEXT,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    UNIQUE (client_id, ghl_opportunity_id)
+);
+CREATE INDEX IF NOT EXISTS idx_ember_due ON ember_nurture_leads(client_id, status, next_touch_at);
+CREATE INDEX IF NOT EXISTS idx_ember_contact ON ember_nurture_leads(client_id, ghl_contact_id);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_ember_unsub ON ember_nurture_leads(unsubscribe_token);
+
+CREATE TABLE IF NOT EXISTS ember_send_log (
+    id BIGSERIAL PRIMARY KEY,
+    client_id TEXT NOT NULL,
+    lead_id BIGINT NOT NULL REFERENCES ember_nurture_leads(id) ON DELETE CASCADE,
+    touch_index INTEGER NOT NULL,                   -- 0-based position in the cadence
+    channel TEXT NOT NULL,                          -- sms | email
+    sent_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    message_content TEXT NOT NULL,
+    ghl_message_id TEXT,
+    error TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_ember_send_day ON ember_send_log(client_id, sent_at DESC);
+CREATE INDEX IF NOT EXISTS idx_ember_send_lead ON ember_send_log(lead_id, touch_index);
 
 -- Temporary diagnostic, 2026-09-25: the real GHL "Customer Replied" webhook
 -- payload for 3-percent-east-coast doesn't match what parseInboundMessage

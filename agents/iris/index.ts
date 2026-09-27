@@ -311,6 +311,7 @@ export function loadIrisConfig(clientId: string): IrisConfig | null {
       timezone: raw.iris.timezone || undefined,
       writeFields: raw.iris.writeFields,
       outreachCadence: raw.iris.outreachCadence,
+      smsCallHandoff: raw.iris.sms?.callHandoff === true,
     };
   } catch {
     return null;

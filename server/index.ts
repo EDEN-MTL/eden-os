@@ -21,6 +21,7 @@ import { createTtsRouter } from "./tts-api";
 import { createSettingsRouter } from "./settings-api";
 import { createClientsRouter } from "./clients-api";
 import { createQuarryRouter } from "./quarry-api";
+import { createEmberRouter } from "./ember-api";
 import { createCheckinRouter } from "./checkin-api";
 
 const app = express();
@@ -68,6 +69,7 @@ app.use("/api/tts", createTtsRouter());
 app.use("/api/settings", createSettingsRouter());
 app.use("/api/clients", createClientsRouter());
 app.use("/api/quarry", createQuarryRouter());
+app.use("/api/ember", createEmberRouter());
 app.use(createCheckinRouter());
 
 // ─── Initialize & Start ───
