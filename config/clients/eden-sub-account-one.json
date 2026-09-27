@@ -62,7 +62,11 @@
       "seller": "TODO-no-seller-transfer-number-yet"
     },
     "liveTransferStageId": "d4cb572b-5fa5-48e5-bced-46c88715e2da",
-    "liveTransferStageIdNote": "Mark confirmed live, 2026-09-10: '*1. Real Estate Pipeline' (the pipeline this client actually uses — see ghl.attributionPipelineNameNote) → 'Live Transferred' stage, id verified live via GET /opportunities/pipelines. Same id as 3-percent-east-coast.json's, which makes sense — this test sub-account was created from a snapshot that reused the same pipeline/stage definitions. Moved into once a transfer actually completes (endedReason assistant-forwarded-call), not just attempted — see webhooks/vapi-webhook.ts's handleSuccessfulTransfer. Without this field the code path already existed but silently no-op'd — see its own doc comment."
+    "liveTransferStageIdNote": "Mark confirmed live, 2026-09-10: '*1. Real Estate Pipeline' (the pipeline this client actually uses — see ghl.attributionPipelineNameNote) → 'Live Transferred' stage, id verified live via GET /opportunities/pipelines. Same id as 3-percent-east-coast.json's, which makes sense — this test sub-account was created from a snapshot that reused the same pipeline/stage definitions. Moved into once a transfer actually completes (endedReason assistant-forwarded-call), not just attempted — see webhooks/vapi-webhook.ts's handleSuccessfulTransfer. Without this field the code path already existed but silently no-op'd — see its own doc comment.",
+    "sms": {
+      "_comment": "Mark, 2026-09-24: when a lead qualifies over text, Iris asks if now's a good time and queues a live-transfer call instead of only alerting a human. Test account only until proven — 3-percent-east-coast has no iris.sms block, so it keeps the original human-followup ending.",
+      "callHandoff": true
+    }
   },
   "slack": {
     "clientChannel": ""
@@ -96,5 +100,72 @@
     },
     "newLeadTags": ["buyer lead", "seller lead"],
     "touchedTags": ["appt booked", "live transferred", "no show", "showed up", "connection made"]
+  },
+  "ember": {
+    "_comment": "Mark, 2026-09-23: first Ember config, on the TEST account only. enabled stays false until a live dry run here is checked. excludeStages is a first guess from this pipeline's live stage list (GET /opportunities/pipelines, 2026-09-23) — columns where a human is already working the deal; confirm with Jacob before copying to a real client. consentWindowDays 180 is CASL's implied-consent window for an inquiry, not a tuning knob.",
+    "enabled": false,
+    "pipelineId": "Ghy9io9Va4wJPmwVrMC6",
+    "dormancyThresholdDays": 45,
+    "stageDormancyDays": { "Replied": 14 },
+    "stageDormancyDaysNote": "Mark, 2026-09-25: Replied leads are picked up after 14 quiet days; Not Ready and Long Term Nurturing keep the 45-day default.",
+    "excludeStages": [
+      "Appointment Set",
+      "Appointment Set (Not qualified)",
+      "Showed Up",
+      "Listing Active",
+      "International Numbers"
+    ],
+    "includeStages": ["Not Ready - [Endless Loop]", "Long Term Nurturing", "Replied"],
+    "includeStagesNote": "Mark, 2026-09-25: Ember focuses on these three stages only, for now. Names verified live against this pipeline (and 3-percent-east-coast's, which has the same three).",
+    "consentWindowDays": 180,
+    "reApproachAfterDays": 180,
+    "reApproachNote": "Mark, 2026-09-24: 'not interested' / 'already bought' / 'working with another agent' is tried again 180 days after they said it. Real unsubscribes (STOP, remove me, don't text me, wrong number, GHL DND) are never retried. consentWindowDays still applies, measured from their latest real inquiry — so most re-approaches need Jacob to confirm express consent before it's raised.",
+    "intentTags": { "buyer": ["buyer lead"], "seller": ["seller lead"] },
+    "intentStages": {
+      "Buyer Leads": "buyer",
+      "Seller Leads": "seller",
+      "Downsize Leads": "downsize",
+      "Upgrading Leads": "upgrading"
+    },
+    "renewedInterestTags": ["renewed interest", "ember reactivated"],
+    "alertChannel": "backend-ops",
+    "timezone": "America/Toronto",
+    "sendWindow": { "startHour": 10, "endHour": 19 },
+    "outreach": {
+      "senderName": "Mark's Realty",
+      "dailySendCap": 20,
+      "minSendSpacingSeconds": 90,
+      "jitterSeconds": 120,
+      "touchScheduleDays": [0, 14, 35, 70],
+      "positiveKeywords": ["yes", "yeah", "yep", "interested", "still looking", "call me", "sure", "ready"],
+      "negativeKeywords": ["no", "stop", "not interested", "unsubscribe", "remove me", "bought already", "already bought", "no thanks"],
+      "sms": {
+        "enabled": true,
+        "_scriptsNote": "Mark approved the buyer and seller wording, 2026-09-24. Seller + downsize leads get seller; buyer + upgrading get buyer; unknown intent gets neutral. Touch 4 reuses touch 3. Every script must keep its STOP line — validateForSending refuses to send otherwise.",
+        "scripts": {
+          "buyer": [
+            "Hi {{firstName}}, it's {{senderName}}. You were looking at homes with us a while back. Still on the hunt, or did the timing change? Reply STOP to opt out.",
+            "Hi {{firstName}}, a few new listings came up that might fit what you were after. Want me to send some over? Reply STOP to opt out.",
+            "Hi {{firstName}}, last check-in from {{senderName}}. If you're still thinking about buying this year, reply and we'll set up a quick call. Reply STOP to opt out."
+          ],
+          "seller": [
+            "Hi {{firstName}}, it's {{senderName}}. You asked about selling a while back. Still thinking about it? Happy to help whenever the timing works. Reply STOP to opt out.",
+            "Hi {{firstName}}, homes near you have been moving. Want a free, no-pressure update on what yours could sell for today? Reply STOP to opt out.",
+            "Hi {{firstName}}, last check-in from {{senderName}}. If selling is still on your mind, reply and we'll book a quick chat. Reply STOP to opt out."
+          ],
+          "neutral": [
+            "Hi {{firstName}}, it's {{senderName}}. You reached out about real estate a while back. Still thinking about a move? Happy to help whenever the timing's right. Reply STOP to opt out.",
+            "Hi {{firstName}}, {{senderName}} here. The market's shifted since we last spoke. Want a quick update on what's out there? Reply STOP to opt out.",
+            "Hi {{firstName}}, last check-in from {{senderName}}. If a move is still on your mind, reply and we'll set up a quick call. Reply STOP to opt out."
+          ]
+        }
+      },
+      "email": {
+        "enabled": false,
+        "fromAddress": "",
+        "physicalAddress": "",
+        "templates": []
+      }
+    }
   }
 }

@@ -64,6 +64,10 @@ interface PendingCallRow {
   attempts_made: number;
   created_at: Date;
   is_explicit_callback: boolean;
+  /** 'ember' = an old lead Ember reactivated and handed over. See schema.sql. */
+  source: string | null;
+  /** The lead agreed to this call over text. See schema.sql. */
+  sms_scheduled: boolean;
 }
 
 /** Ends the sequence for this row — no further attempts will be scheduled. */
@@ -161,7 +165,12 @@ async function resolveOne(row: PendingCallRow): Promise<void> {
       await finish(row.id, "skipped", "could not verify contact state before honoring callback");
       return;
     }
-    if (fresh.qualified) {
+    // Ember rows skip this on purpose: an old lead reactivated months later
+    // often still carries "live transferred"/"appt booked" from its first
+    // go-round, and transferring them again is the entire point. (The
+    // stage-based firstTouch check isn't on this path at all — explicit
+    // callbacks never ran it — so this tag check is the only gate to lift.)
+    if (fresh.qualified && row.source !== "ember") {
       await finish(row.id, "skipped", "already qualified since the callback was requested");
       return;
     }
@@ -260,7 +269,9 @@ async function resolveOne(row: PendingCallRow): Promise<void> {
     // single inbound text lastInboundText happened to find — the
     // opt_out/schedule_for cases above never create that history, so they
     // can't accidentally trip this.
-    if (inbound?.dateAdded) {
+    // sms_scheduled calls skip this: the recent text IS the lead saying
+    // "yes, call me now" — pausing would stall the exact call they asked for.
+    if (inbound?.dateAdded && !row.sms_scheduled) {
       const hoursSinceLastText = (Date.now() - new Date(inbound.dateAdded).getTime()) / (60 * 60 * 1000);
       if (hoursSinceLastText <= SMS_ACTIVE_COLD_OFF_HOURS && (await hasActiveSmsConversation(row.client_id, row.contact_id))) {
         await query(
@@ -300,7 +311,8 @@ async function resolveOne(row: PendingCallRow): Promise<void> {
         branding.city,
         Boolean(process.env.VAPI_SERVER_URL),
         Boolean(transferNumber),
-        Boolean(calendarId)
+        Boolean(calendarId),
+        row.source === "ember" || row.sms_scheduled ? "text" : "form"
       ),
       transferNumber,
       calendarId,
@@ -349,7 +361,7 @@ export async function scheduleExplicitCallback(clientId: string, contactId: stri
 /** Entry point called by the scheduler. Each row's failure is isolated — one bad row must not block the rest. */
 export async function runDialPendingCalls(): Promise<void> {
   const due = await query<PendingCallRow>(
-    `SELECT id, client_id, contact_id, lead, attempts_made, created_at, is_explicit_callback FROM iris_pending_calls
+    `SELECT id, client_id, contact_id, lead, attempts_made, created_at, is_explicit_callback, source, sms_scheduled FROM iris_pending_calls
      WHERE status = 'pending' AND call_after <= now()
      ORDER BY call_after ASC
      LIMIT 25`
