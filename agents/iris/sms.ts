@@ -16,7 +16,7 @@ import { query } from "../../shared/db";
 import { NormalisedLead, buildKeyToId } from "../scout/intake";
 import { loadIrisConfig, loadClientBranding } from "./index";
 import { buildSmsQualificationPrompt } from "./scripts";
-import { classifyInboundText } from "./text-signals";
+import { classifyInboundText, lastInboundText } from "./text-signals";
 import { IrisConfig, qualify, QualificationAnswers } from "./qualification";
 import { clampToLegalCallingWindow } from "./cadence";
 import { lastEmberTouchText } from "../ember/store";
@@ -320,9 +320,15 @@ export async function irisHandleInboundSms(contactId: string, text: string, opti
 
   const timezone = (await getLocationTimezone(ghlConfig.locationId, ghlConfig.apiKey).catch(() => null)) || config.timezone || "America/St_Johns";
 
-  // Same conservative opt-out classifier dial-pending.ts already uses
-  // pre-dial — a clear "stop texting/calling me" ends things outright here
-  // too, rather than the qualification loop trying to talk them out of it.
+  const key = historyKey(clientId, contactId);
+  const history = await loadHistory(AGENT_ID, key).catch((error) => {
+    console.error(`[IRS-SMS] Failed to load conversation history for ${contactId}:`, error instanceof Error ? error.message : error);
+    return [] as ChatMessage[];
+  });
+
+  // Same conservative classifier dial-pending.ts already uses pre-dial — a
+  // clear "stop texting/calling me" ends things outright here too, rather
+  // than the qualification loop trying to talk them out of it.
   const signal = await classifyInboundText(text, new Date(), timezone);
   if (signal.type === "opt_out") {
     await finishIrisLead(clientId, contactId, "lead opted out via text — cadence stopped");
@@ -334,24 +340,66 @@ export async function irisHandleInboundSms(contactId: string, text: string, opti
     await sendSMS(contactId, reply, ghlConfig.locationId, ghlConfig.apiKey).catch((error) => {
       console.error(`[IRS-SMS] Failed to send opt-out acknowledgment to ${contactId}:`, error instanceof Error ? error.message : error);
     });
-    const key = historyKey(clientId, contactId);
     await appendHistory(AGENT_ID, key, "user", text).catch(() => {});
     await appendHistory(AGENT_ID, key, "assistant", reply).catch(() => {});
     return true;
   }
 
-  const key = historyKey(clientId, contactId);
-  const history = await loadHistory(AGENT_ID, key).catch((error) => {
-    console.error(`[IRS-SMS] Failed to load conversation history for ${contactId}:`, error instanceof Error ? error.message : error);
-    return [] as ChatMessage[];
-  });
+  // Real mistake found live, 2026-09-25 (Kaitlyn Sheppard): dial-pending.ts's
+  // own pre-dial recheck already reads and acts on a lead's FIRST reply to
+  // the initial "you'll get a call from Iris — what time works?" outreach
+  // text (scheduling the actual callback via this exact same classifier).
+  // But this function had no awareness of that at all — a bare "Yes!" then
+  // "After 4!" isn't the start of a text qualification conversation, it's
+  // confirming a callback time, and launching straight into "are you
+  // looking to buy or sell?" right after ignores what the lead actually
+  // said. Gated on history.length === 0 (no real text exchange has started
+  // yet) so this never derails an ACTUAL ongoing qualification chat where a
+  // callback-time aside comes up mid-conversation — there, falling through
+  // to the normal loop is correct, since the model has full context to
+  // handle it naturally.
+  if (signal.type === "schedule_for" && history.length === 0) {
+    const reply = "Sounds good — Iris will give you a call then. Talk soon!";
+    await pauseLikeAHuman(reply);
+    await sendSMS(contactId, reply, ghlConfig.locationId, ghlConfig.apiKey).catch((error) => {
+      console.error(`[IRS-SMS] Failed to send callback-time acknowledgment to ${contactId}:`, error instanceof Error ? error.message : error);
+    });
+    await appendHistory(AGENT_ID, key, "user", text).catch(() => {});
+    await appendHistory(AGENT_ID, key, "assistant", reply).catch(() => {});
+    return true;
+  }
 
   const fromEmber = row.source === "ember";
   const openerText = fromEmber ? await lastEmberTouchText(clientId, contactId).catch(() => null) : null;
+
+  // Only fetched for a lead's first-ever reply, and only for a NORMAL
+  // (non-Ember) intake — once a real text exchange is underway, the
+  // conversation history already gives the model context, and repeating a
+  // live GHL fetch every turn would be wasteful. An Ember lead's "what are
+  // they replying to" context is already covered by openerText/emberBlock
+  // above (Ember's own reactivation text), not the normal-intake "you'll
+  // get a call from Iris" outreach this fetch is aimed at. Real gap found
+  // live, 2026-09-25 (Kaitlyn Sheppard): the schedule_for check above only
+  // catches a reply that names a SPECIFIC time — a bare "Yes!" replying to
+  // the exact same "you'll get a call from Iris — what time works?" text
+  // isn't a specific time, so it fell through to here with the model having
+  // no idea what it was actually answering, and launched straight into "are
+  // you looking to buy or sell?" as if starting a text conversation cold.
+  // Giving the model the real preceding outreach text lets it recognize a
+  // bare acknowledgment for what it is, instead of hardcoding every possible
+  // confirmation phrase ("yes", "sure", "ok", a thumbs up, ...) — the exact
+  // reasoning text-signals.ts's own doc comment already gives for using an
+  // LLM pass over regex here.
+  const initialOutreachText =
+    !fromEmber && history.length === 0
+      ? (await lastInboundText(contactId, ghlConfig.locationId, ghlConfig.apiKey).catch(() => null))?.precedingOutbound ?? null
+      : null;
+
   const systemPrompt = buildSmsQualificationPrompt(config, row.lead, branding.brandName, branding.city, {
     origin: fromEmber ? "ember" : "form",
     openerText,
     callHandoff: config.smsCallHandoff,
+    initialOutreachText,
   });
   const tools = config.smsCallHandoff ? [...SMS_TOOLS, SCHEDULE_TRANSFER_CALL_TOOL] : SMS_TOOLS;
 

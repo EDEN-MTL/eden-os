@@ -52,6 +52,51 @@ describe("parseInboundMessage", () => {
     expect(parseInboundMessage(null).contactId).toBeNull();
     expect(parseInboundMessage(undefined).text).toBeNull();
   });
+
+  /**
+   * Real payload, captured live 2026-09-25/26 via webhook_debug_log against
+   * 3-percent-east-coast's actual "zReply Automation" workflow (Kaitlyn
+   * Sheppard replying "Yes!"). This is GHL's own default Webhook-action
+   * payload when no Custom Data mapping is configured — a flat dump of the
+   * contact's custom fields keyed by their real GHL LABELS, plus workflow
+   * metadata and a message object with a NUMERIC type, no direction field
+   * anywhere. Every real reply was silently skipped against this shape
+   * until fixed. Trimmed to the fields that matter — the real payload also
+   * carries dozens of blank custom-field labels irrelevant to parsing.
+   */
+  function realWorkflowReplyPayload(overrides: Partial<{ contactId: string; text: string; messageType: number }> = {}) {
+    return {
+      tags: "buyer lead,replied",
+      contact_id: overrides.contactId ?? "vpgDkOtpBhFsPnWZcHkb",
+      first_name: "Kaitlyn",
+      last_name: "Sheppard",
+      full_name: "Kaitlyn Sheppard",
+      message: { body: overrides.text ?? "Yes!", type: overrides.messageType ?? 2 },
+      workflow: { id: "d5987aac-0f98-4538-ae7b-5acbeb831446", name: "zReply Automation" },
+      location: { id: "t3ypFoQY6EC5IJfj2UYl", name: "3% Realty East Coast" },
+      customData: {},
+      "LF Proprety": "",
+      "What is your Budget for the New Home?": "",
+    };
+  }
+
+  it("reads the REAL live GHL workflow-reply shape correctly — contactId, text, channel, and isInbound all resolve with no explicit direction field", () => {
+    const parsed = parseInboundMessage(realWorkflowReplyPayload());
+    expect(parsed).toEqual({ contactId: "vpgDkOtpBhFsPnWZcHkb", text: "Yes!", channel: "sms", isInbound: true });
+  });
+
+  it("reads message.type as a numeric code (2 = SMS), not a string", () => {
+    expect(parseInboundMessage(realWorkflowReplyPayload({ messageType: 2 })).channel).toBe("sms");
+    expect(parseInboundMessage(realWorkflowReplyPayload({ messageType: 3 })).channel).toBe("email");
+  });
+
+  it("does NOT treat an unrelated payload with a bare contact_id + message.body as inbound without the workflow marker", () => {
+    // Guards the shape-detection itself from becoming too loose — must
+    // stay narrow to this real, confirmed shape, not "any object with a
+    // contact_id and a message.body".
+    const parsed = parseInboundMessage({ contact_id: "c1", message: { body: "hi", type: 2 } });
+    expect(parsed.isInbound).toBe(false);
+  });
 });
 
 describe("parseAppointmentContactId", () => {

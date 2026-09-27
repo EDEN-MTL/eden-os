@@ -2,7 +2,7 @@ import crypto from "crypto";
 import { Request, Response, Router } from "express";
 import { query } from "../shared/db";
 import { getGhlConfig, getContact, addContactTags, findOpenOpportunitiesForContact, updateOpportunityStage, getCustomFieldDefs, updateContact } from "../shared/ghl";
-import { sendMessage } from "../shared/slack";
+import { sendMessage, uploadFile } from "../shared/slack";
 import { appendHistory } from "../shared/conversation-memory";
 import { loadIrisConfig } from "../agents/iris";
 import { reopenForNextAttempt } from "../agents/iris/dial-pending";
@@ -151,6 +151,38 @@ export function formatDuration(seconds: number | null | undefined): string {
 }
 
 /**
+ * Attaches the real call recording as a threaded reply under the call-log
+ * post — Mark's ask, 2026-09-27. Vapi records every call by default
+ * (assistant.artifactPlan.recordingEnabled defaults to true) and hands back
+ * short-lived (~30 min) presigned URLs on the SAME end-of-call-report
+ * payload this function already receives — confirmed live against a real
+ * call: the deprecated plain artifact.recordingUrl 400s (the bucket is
+ * private), but presignedStereoUrl/presignedMonoUrl work with a real GET.
+ * Uploads the actual audio to Slack (not a link) specifically because that
+ * link expires — a permanent Slack-hosted file plays forever, a link
+ * clicked even an hour later would already be dead. Best-effort and
+ * entirely optional: a call with no recording (or a transiently-failed
+ * fetch/upload) just skips this, never affecting the text post already sent.
+ */
+export async function attachRecording(message: Record<string, any>, channel: string, threadTs: string): Promise<void> {
+  const recordingUrl: string | undefined = message?.artifact?.presignedStereoUrl ?? message?.artifact?.presignedMonoUrl;
+  if (!recordingUrl) return;
+
+  try {
+    const audioResp = await fetch(recordingUrl);
+    if (!audioResp.ok) {
+      console.warn(`[VAPI] Recording fetch returned ${audioResp.status} — skipping Slack attachment.`);
+      return;
+    }
+    const file = Buffer.from(await audioResp.arrayBuffer());
+    const callId: string = message?.call?.id ?? "call";
+    await uploadFile("iris", { channel, threadTs, file, filename: `${callId}.wav` });
+  } catch (error) {
+    console.error("[VAPI] Failed to attach call recording to Slack:", error instanceof Error ? error.message : error);
+  }
+}
+
+/**
  * Posts every finished Iris call to #iris-call-logs — real or test, any
  * outcome — so the team has an ongoing eye on Iris's calls without
  * checking our own DB. Best-effort: a Slack failure here should never
@@ -196,6 +228,7 @@ export async function postCallLogToSlack(clientId: string, contactId: string | n
       await appendHistory("iris", `channel:${result.channel}:${result.ts}`, "assistant", text).catch((error) => {
         console.error("[VAPI] Failed to seed call-log thread history:", error instanceof Error ? error.message : error);
       });
+      await attachRecording(message, result.channel, result.ts);
     }
   } catch (error) {
     console.error("[VAPI] Failed to post call log to Slack:", error instanceof Error ? error.message : error);

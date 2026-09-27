@@ -18,6 +18,9 @@ const ember = vi.hoisted(() => ({
 }));
 vi.mock("../agents/ember/webhooks", () => ember);
 
+const db = vi.hoisted(() => ({ query: vi.fn(async () => []) }));
+vi.mock("../shared/db", () => db);
+
 import { createGHLRouter } from "./ghl-webhook";
 
 /**

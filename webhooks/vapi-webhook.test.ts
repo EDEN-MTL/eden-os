@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const ghl = vi.hoisted(() => ({
   getGhlConfig: vi.fn(),
@@ -11,7 +11,7 @@ const ghl = vi.hoisted(() => ({
 }));
 vi.mock("../shared/ghl", () => ghl);
 
-const slack = vi.hoisted(() => ({ sendMessage: vi.fn() }));
+const slack = vi.hoisted(() => ({ sendMessage: vi.fn(), uploadFile: vi.fn() }));
 vi.mock("../shared/slack", () => slack);
 
 const conversationMemory = vi.hoisted(() => ({ appendHistory: vi.fn() }));
@@ -25,6 +25,7 @@ vi.mock("../shared/db", () => ({ query: vi.fn() }));
 
 import {
   appendCallStatusNote,
+  attachRecording,
   customerSpokeAtAll,
   describeOutcome,
   formatDuration,
@@ -309,6 +310,83 @@ describe("postCallLogToSlack", () => {
     slack.sendMessage.mockResolvedValue({});
     await expect(postCallLogToSlack("3-percent-east-coast", null, message, "voicemail")).resolves.toBeUndefined();
     expect(conversationMemory.appendHistory).not.toHaveBeenCalled();
+  });
+
+  it("attaches the call recording as a threaded reply once the post succeeds", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: true, arrayBuffer: async () => new TextEncoder().encode("fake wav bytes").buffer }));
+    slack.sendMessage.mockResolvedValue({ ts: "5555.6666", channel: "C0REALCALLLOGS" });
+    conversationMemory.appendHistory.mockResolvedValue(undefined);
+    const messageWithRecording = { ...message, call: { ...message.call, id: "call-123" }, artifact: { presignedMonoUrl: "https://example.com/mono.wav" } };
+
+    await postCallLogToSlack("3-percent-east-coast", null, messageWithRecording, "voicemail");
+
+    expect(slack.uploadFile).toHaveBeenCalledWith(
+      "iris",
+      expect.objectContaining({ channel: "C0REALCALLLOGS", threadTs: "5555.6666", filename: "call-123.wav" })
+    );
+    vi.unstubAllGlobals();
+  });
+});
+
+/**
+ * Mark's ask, 2026-09-27: attach the real Vapi call recording to the
+ * Slack post. Confirmed live: the deprecated plain artifact.recordingUrl
+ * 400s (the storage bucket is private), but the presigned URLs Vapi hands
+ * back on the SAME end-of-call-report payload work with a real GET — and
+ * expire in ~30 minutes, which is exactly why the actual audio gets
+ * uploaded to Slack rather than just linking to it.
+ */
+describe("attachRecording", () => {
+  const fetchMock = vi.fn();
+  beforeEach(() => {
+    vi.stubGlobal("fetch", fetchMock);
+  });
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("downloads the presigned stereo recording and uploads it as a threaded reply", async () => {
+    fetchMock.mockResolvedValue({ ok: true, arrayBuffer: async () => new TextEncoder().encode("fake wav bytes").buffer });
+    const message = { call: { id: "call-123" }, artifact: { presignedStereoUrl: "https://example.com/stereo.wav", presignedMonoUrl: "https://example.com/mono.wav" } };
+
+    await attachRecording(message, "C0REALCALLLOGS", "5555.6666");
+
+    expect(fetchMock).toHaveBeenCalledWith("https://example.com/stereo.wav");
+    expect(slack.uploadFile).toHaveBeenCalledWith(
+      "iris",
+      expect.objectContaining({ channel: "C0REALCALLLOGS", threadTs: "5555.6666", filename: "call-123.wav" })
+    );
+  });
+
+  it("falls back to the mono URL when stereo isn't present", async () => {
+    fetchMock.mockResolvedValue({ ok: true, arrayBuffer: async () => new TextEncoder().encode("fake wav bytes").buffer });
+    const message = { call: { id: "call-123" }, artifact: { presignedMonoUrl: "https://example.com/mono.wav" } };
+
+    await attachRecording(message, "C0REALCALLLOGS", "5555.6666");
+
+    expect(fetchMock).toHaveBeenCalledWith("https://example.com/mono.wav");
+  });
+
+  it("does nothing — never throws — when there's no recording URL at all", async () => {
+    await expect(attachRecording({ call: { id: "call-123" } }, "C0REALCALLLOGS", "5555.6666")).resolves.toBeUndefined();
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(slack.uploadFile).not.toHaveBeenCalled();
+  });
+
+  it("skips the upload (never throws) when the recording fetch itself fails", async () => {
+    fetchMock.mockResolvedValue({ ok: false, status: 403 });
+    const message = { call: { id: "call-123" }, artifact: { presignedMonoUrl: "https://example.com/mono.wav" } };
+
+    await expect(attachRecording(message, "C0REALCALLLOGS", "5555.6666")).resolves.toBeUndefined();
+    expect(slack.uploadFile).not.toHaveBeenCalled();
+  });
+
+  it("never throws even if the Slack upload itself fails", async () => {
+    fetchMock.mockResolvedValue({ ok: true, arrayBuffer: async () => new TextEncoder().encode("fake wav bytes").buffer });
+    slack.uploadFile.mockRejectedValueOnce(new Error("Slack API down"));
+    const message = { call: { id: "call-123" }, artifact: { presignedMonoUrl: "https://example.com/mono.wav" } };
+
+    await expect(attachRecording(message, "C0REALCALLLOGS", "5555.6666")).resolves.toBeUndefined();
   });
 });
 

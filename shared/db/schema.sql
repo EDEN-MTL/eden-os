@@ -648,3 +648,21 @@ CREATE TABLE IF NOT EXISTS ember_send_log (
 );
 CREATE INDEX IF NOT EXISTS idx_ember_send_day ON ember_send_log(client_id, sent_at DESC);
 CREATE INDEX IF NOT EXISTS idx_ember_send_lead ON ember_send_log(lead_id, touch_index);
+
+-- Temporary diagnostic, 2026-09-25: the real GHL "Customer Replied" webhook
+-- payload for 3-percent-east-coast doesn't match what parseInboundMessage
+-- expects (agents/quarry/inbound.ts) — it's a flat, label-keyed dump of the
+-- contact's custom fields, not a message-object shape with a direction
+-- field, so isInbound comes back false and every real reply is silently
+-- skipped. Render's own console.log line truncates at 1000 characters,
+-- not enough to see the whole payload, and there's no way to pull Render's
+-- logs directly from this session. Captures the FULL raw body here instead
+-- — queryable directly, so the real fix can be verified against live data
+-- rather than guessed at (this repo's own standing rule). Safe to drop once
+-- parseInboundMessage is fixed and confirmed against a real payload.
+CREATE TABLE IF NOT EXISTS webhook_debug_log (
+    id BIGSERIAL PRIMARY KEY,
+    route TEXT NOT NULL,
+    body JSONB NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);

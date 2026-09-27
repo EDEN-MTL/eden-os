@@ -6,10 +6,10 @@ vi.mock("../../shared/conversation-memory", () => ({
   loadHistory: vi.fn(async () => []),
   appendHistory: vi.fn(async () => {}),
 }));
-vi.mock("./text-signals", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("./text-signals")>();
-  return { ...actual, classifyInboundText: vi.fn(async () => ({ type: "none" })) };
-});
+vi.mock("./text-signals", () => ({
+  classifyInboundText: vi.fn(async () => ({ type: "none" })),
+  lastInboundText: vi.fn(async () => null),
+}));
 
 const db = vi.hoisted(() => ({ query: vi.fn() }));
 vi.mock("../../shared/db", () => db);
@@ -33,7 +33,7 @@ vi.mock("fs", async (importOriginal) => {
 import { chatWithTools } from "../../shared/claude";
 import { sendMessage } from "../../shared/slack";
 import { appendHistory, loadHistory } from "../../shared/conversation-memory";
-import { classifyInboundText } from "./text-signals";
+import { classifyInboundText, lastInboundText } from "./text-signals";
 import { irisHandleInboundSms, hasActiveSmsConversation, humanReplyDelayMs } from "./sms";
 
 function toolUseBlock(id: string, name: string, input: any) {
@@ -119,6 +119,80 @@ describe("irisHandleInboundSms — opt-out", () => {
 
     const updateCall = db.query.mock.calls.find((c) => String(c[0]).includes("UPDATE iris_pending_calls"));
     expect(updateCall?.[1]).toEqual(["3-percent-east-coast", "contact-1", "lead opted out via text — cadence stopped"]);
+  });
+});
+
+/**
+ * Real mistake found live, 2026-09-25 (Kaitlyn Sheppard): dial-pending.ts's
+ * pre-dial recheck already reads and acts on a lead's first reply to the
+ * initial "you'll get a call from Iris — what time works?" text (scheduling
+ * the real callback via this same classifier). A bare "Yes!"/"After 4!"
+ * isn't the start of a text qualification conversation — it's confirming a
+ * callback time — but before this fix, irisHandleInboundSms had no
+ * awareness of that signal at all and launched straight into "are you
+ * looking to buy or sell?", ignoring what the lead actually said.
+ */
+describe("irisHandleInboundSms — schedule_for (confirming a callback time, not starting a text chat)", () => {
+  it("acknowledges the callback time and stops — never starts the qualification loop — when this is the lead's first reply", async () => {
+    db.query.mockResolvedValueOnce([{ client_id: "3-percent-east-coast", contact_id: "contact-1", lead: LEAD, status: "pending" }]);
+    vi.mocked(loadHistory).mockResolvedValueOnce([]);
+    vi.mocked(classifyInboundText).mockResolvedValueOnce({ type: "schedule_for", when: new Date("2026-09-26T19:00:00.000Z") });
+
+    const handled = await irisHandleInboundSms("contact-1", "After 4!", { wait: async () => {} });
+
+    expect(handled).toBe(true);
+    expect(chatWithTools).not.toHaveBeenCalled();
+    expect(ghl.sendSMS).toHaveBeenCalledWith("contact-1", expect.stringMatching(/give you a call/i), "loc-1", "key-1");
+    expect(appendHistory).toHaveBeenCalledWith("iris", "sms:3-percent-east-coast:contact-1", "user", "After 4!");
+  });
+
+  it("does NOT short-circuit a real ongoing qualification conversation — falls through to the normal loop when history already exists", async () => {
+    db.query.mockResolvedValueOnce([{ client_id: "3-percent-east-coast", contact_id: "contact-1", lead: LEAD, status: "pending" }]);
+    vi.mocked(loadHistory).mockResolvedValueOnce([{ role: "assistant", content: "What area are you interested in?" }]);
+    vi.mocked(classifyInboundText).mockResolvedValueOnce({ type: "schedule_for", when: new Date("2026-09-26T19:00:00.000Z") });
+    vi.mocked(chatWithTools).mockResolvedValueOnce(endTurn("Got it, noted — and what area works for you?"));
+
+    const handled = await irisHandleInboundSms("contact-1", "call me after 4 instead", { wait: async () => {} });
+
+    expect(handled).toBe(true);
+    expect(chatWithTools).toHaveBeenCalled();
+    expect(ghl.sendSMS).toHaveBeenCalledWith("contact-1", "Got it, noted — and what area works for you?", "loc-1", "key-1");
+  });
+});
+
+/**
+ * Real gap found live, 2026-09-25 (Kaitlyn Sheppard): a bare "Yes!" doesn't
+ * name a specific time, so it isn't caught by the schedule_for short-circuit
+ * above — it fell all the way through to the qualification loop with the
+ * model having no idea it was answering "you'll get a call from Iris — what
+ * time works?", not opting into a text conversation.
+ */
+describe("irisHandleInboundSms — gives the model real context for a lead's first-ever reply", () => {
+  it("fetches the real preceding outreach text and passes it into the system prompt, only for a first reply", async () => {
+    db.query.mockResolvedValueOnce([{ client_id: "3-percent-east-coast", contact_id: "contact-1", lead: LEAD, status: "pending" }]);
+    vi.mocked(loadHistory).mockResolvedValueOnce([]);
+    vi.mocked(lastInboundText).mockResolvedValueOnce({
+      text: "Yes!",
+      precedingOutbound: "You'll get a quick call from Iris — what time works?",
+      dateAdded: null,
+    });
+    vi.mocked(chatWithTools).mockResolvedValueOnce(endTurn("Sounds good, talk soon!"));
+
+    await irisHandleInboundSms("contact-1", "Yes!", { wait: async () => {} });
+
+    expect(lastInboundText).toHaveBeenCalledWith("contact-1", "loc-1", "key-1");
+    const systemPrompt = vi.mocked(chatWithTools).mock.calls[0][0] as string;
+    expect(systemPrompt).toContain("You'll get a quick call from Iris — what time works?");
+  });
+
+  it("does NOT fetch it again once a real text conversation is already underway", async () => {
+    db.query.mockResolvedValueOnce([{ client_id: "3-percent-east-coast", contact_id: "contact-1", lead: LEAD, status: "pending" }]);
+    vi.mocked(loadHistory).mockResolvedValueOnce([{ role: "assistant", content: "What area are you interested in?" }]);
+    vi.mocked(chatWithTools).mockResolvedValueOnce(endTurn("Got it, thanks!"));
+
+    await irisHandleInboundSms("contact-1", "Downtown area", { wait: async () => {} });
+
+    expect(lastInboundText).not.toHaveBeenCalled();
   });
 });
 
