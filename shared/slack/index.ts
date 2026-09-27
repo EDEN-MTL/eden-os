@@ -121,6 +121,36 @@ export async function sendMessage(
 }
 
 /**
+ * Uploads a file (as a Buffer, already in memory — never a path, since
+ * every current caller already has the bytes from a fetch()) as a specific
+ * agent, via Slack's modern 3-step external upload flow (handled internally
+ * by the SDK's uploadV2). Always replies within an existing message's
+ * thread (threadTs required) rather than posting a new top-level file —
+ * the intended use is attaching to a call-log post already sent via
+ * sendMessage, not a standalone upload; Slack's own types make
+ * channel_id+thread_ts a package deal (thread_ts alone without the other
+ * is typed as `never`), so this only supports the thread-reply shape.
+ */
+export async function uploadFile(
+  agentId: AgentId,
+  options: { channel: string; threadTs: string; file: Buffer; filename: string; initialComment?: string }
+): Promise<void> {
+  const client = getClient(agentId);
+  try {
+    await client.files.uploadV2({
+      channel_id: options.channel,
+      thread_ts: options.threadTs,
+      file: options.file,
+      filename: options.filename,
+      ...(options.initialComment ? { initial_comment: options.initialComment } : {}),
+    });
+  } catch (error) {
+    console.error(`[SLACK] Error uploading file as ${agentId}:`, error);
+    throw error;
+  }
+}
+
+/**
  * Send a rich message with blocks as a specific agent.
  */
 export async function sendBlocks(
