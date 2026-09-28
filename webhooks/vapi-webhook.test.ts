@@ -30,6 +30,7 @@ import {
   describeOutcome,
   formatDuration,
   genuinelyAnswered,
+  hitCallScreener,
   moveToFollowUpStage,
   postCallLogToSlack,
   tagSequenceExhausted,
@@ -130,6 +131,39 @@ describe("genuinelyAnswered", () => {
     expect(genuinelyAnswered("assistant-ended-call", spoke)).toBe(true);
     expect(genuinelyAnswered("assistant-ended-call", silent)).toBe(false);
   });
+
+  /**
+   * Real lead-loss bug found live 2026-09-26 (contact Yv2IP2sS51FuKGkinu4W,
+   * "Florida Lisa"): a call-screening service picked up, not the lead. Its
+   * scripted turns transcribed as real "customer" speech, so
+   * customerSpokeAtAll alone read this as a genuine conversation and the
+   * lead's automatic cadence stopped for good after a single attempt.
+   */
+  it("treats a call-screening service pickup as NOT genuinely answered, even though the customer 'spoke'", () => {
+    const screener = {
+      messages: [
+        { role: "user", message: "Hi. If you record your name and reason for calling, I'll see if this person is available." },
+        { role: "bot", message: "Hi. This is Iris with 3 percent East Coast. Am I speaking with Florida Lisa?" },
+        { role: "user", message: "I'm sorry. This person is not available. If you would like to leave an additional message, please reply after the tone." },
+      ],
+    };
+    expect(genuinelyAnswered("assistant-ended-call", screener)).toBe(false);
+  });
+});
+
+describe("hitCallScreener", () => {
+  it("detects the distinctive screener phrase regardless of casing", () => {
+    expect(hitCallScreener({ messages: [{ role: "user", message: "please RECORD your name and reason for calling" }] })).toBe(true);
+  });
+
+  it("is false for a real conversation, even one that mentions being unavailable", () => {
+    expect(hitCallScreener({ messages: [{ role: "user", message: "Sorry, he's not available right now, can you call back later?" }] })).toBe(false);
+  });
+
+  it("is false with no messages at all", () => {
+    expect(hitCallScreener({})).toBe(false);
+    expect(hitCallScreener({ messages: [] })).toBe(false);
+  });
 });
 
 /**
@@ -228,6 +262,22 @@ describe("describeOutcome", () => {
   it("labels a disconnect right before/during a transfer attempt distinctly from a generic 'answered, no transfer'", () => {
     expect(describeOutcome("customer-ended-call-before-warm-transfer", messageWithUserSpeech)).toMatch(/manual callback/i);
     expect(describeOutcome("customer-ended-call-after-warm-transfer-attempt", messageWithUserSpeech)).toMatch(/manual callback/i);
+  });
+
+  /**
+   * Real gap found live 2026-09-26: "Florida Lisa"'s call hit a call-
+   * screening service, not the actual lead — Vapi's own voicemailDetection
+   * never flagged it (it's an interactive screener, not a static
+   * voicemail greeting), so it would otherwise have posted as a plain
+   * "Answered (no transfer)", indistinguishable from a real short chat.
+   */
+  it("labels a call-screening service pickup distinctly, even though the endedReason looks like a real conversation", () => {
+    const screener = {
+      messages: [
+        { role: "user", message: "Hi. If you record your name and reason for calling, I'll see if this person is available." },
+      ],
+    };
+    expect(describeOutcome("assistant-ended-call", screener)).toMatch(/screening/i);
   });
 });
 
