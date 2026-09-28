@@ -128,6 +128,17 @@ export interface IrisConfig {
    * account before 3% ever sees it.
    */
   smsCallHandoff?: boolean;
+  /**
+   * The Vapi phone-number id that rings in for THIS client's inbound
+   * callers (agents/iris/inbound.ts's clientIdForVapiPhoneNumber scans
+   * every client config for a match against the phoneNumberId Vapi sends
+   * on an assistant-request). Vapi/Iris is effectively single-tenant today
+   * (getVapiEnvConfig reads one global VAPI_PHONE_NUMBER_ID env var), so
+   * only one client has this set right now — kept per-client rather than
+   * hardcoded so a second client's own number doesn't need a code change,
+   * per CLAUDE.md's "never hardcode client specifics."
+   */
+  inboundPhoneNumberId?: string;
 }
 
 export interface QualificationAnswers {

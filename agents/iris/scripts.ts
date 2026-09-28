@@ -334,15 +334,18 @@ export function callIdentifyLine(firstName: string): string {
  * rather than depending on the model to generate it correctly. Used both
  * as the literal `firstMessage` (calling.ts) and quoted in the system
  * prompt so the model knows what already got said and never repeats it.
+ *
+ * origin defaults to "form" (Iris placing the call) — "Hi, this is Iris
+ * with {brand}" reads as her opening the conversation, which is backwards
+ * for "inbound" (agents/iris/inbound.ts — the lead called US). "text" stays
+ * on the same "form" wording here; only the system prompt's context line
+ * changes for a text-originated call, not this guaranteed-verbatim greeting.
  */
-export function buildCallOpeningLine(firstName: string, brandName: string): string {
+export function buildCallOpeningLine(firstName: string, brandName: string, origin: CallOrigin = "form"): string {
   const identifyLine = callIdentifyLine(firstName);
   const identifyLineNoGreeting = identifyLine.replace(/^Hi,\s*/i, "");
-  return (
-    `Hi, this is Iris with ${brandName}. ` +
-    identifyLineNoGreeting.charAt(0).toUpperCase() +
-    identifyLineNoGreeting.slice(1)
-  );
+  const selfIntro = origin === "inbound" ? `Thanks for calling ${brandName}, this is Iris.` : `Hi, this is Iris with ${brandName}.`;
+  return `${selfIntro} ${identifyLineNoGreeting.charAt(0).toUpperCase()}${identifyLineNoGreeting.slice(1)}`;
 }
 
 /**
@@ -373,9 +376,14 @@ export function buildCallOpeningLine(firstName: string, brandName: string): stri
  * (a reactivated old lead from Ember, or a lead who qualified by text and
  * agreed to a call). Opening with "the form you submitted online" to
  * someone who inquired months ago and has been texting with us all
- * afternoon would sound like a machine that isn't listening.
+ * afternoon would sound like a machine that isn't listening. "inbound"
+ * means the LEAD called US — agents/iris/inbound.ts, answering a real call
+ * to our own number rather than one Iris placed. "I was calling about the
+ * form you submitted" is backwards there (they called us, not the other
+ * way around), so this gets its own framing in both the opening line and
+ * callOpeningContextLine below.
  */
-export type CallOrigin = "form" | "text";
+export type CallOrigin = "form" | "text" | "inbound";
 
 export function callOpeningContextLine(
   intent: CallIntent,
@@ -401,7 +409,9 @@ export function callOpeningContextLine(
   const first =
     origin === "text"
       ? `I'm following up on our text conversation about ${subject} — thanks for getting back to us!`
-      : `I was calling about the form you submitted online about ${subject} — we'd love to help you find some good options.`;
+      : origin === "inbound"
+        ? `Thanks so much for calling back — I see you'd reached out about ${subject}, so let's get you sorted.`
+        : `I was calling about the form you submitted online about ${subject} — we'd love to help you find some good options.`;
   return [
     first,
     "Awesome! We'd love to send some options your way.",
@@ -593,7 +603,7 @@ export function buildLeadQualificationPrompt(
 ): string {
   const firstName = extractFirstName(lead.name);
   const identifyLine = callIdentifyLine(firstName);
-  const openingLine = buildCallOpeningLine(firstName, brandName);
+  const openingLine = buildCallOpeningLine(firstName, brandName, origin);
   // Moved out of the firstMessage (see callOpeningGreeting) into the
   // opening-sequence instructions below, so the reason for the call is its
   // own turn rather than crammed into the first thing Iris says.

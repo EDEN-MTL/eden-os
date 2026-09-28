@@ -8,6 +8,7 @@ import { loadIrisConfig } from "../agents/iris";
 import { reopenForNextAttempt } from "../agents/iris/dial-pending";
 import { buildKeyToId, readField } from "../agents/scout/intake";
 import { formatLocal } from "../agents/iris/cadence";
+import { handleInboundCall } from "../agents/iris/inbound";
 
 /**
  * Every Iris call — real or test — gets posted here so the team can watch
@@ -498,11 +499,28 @@ export function createVapiRouter(): Router {
       return res.status(401).send("Invalid signature");
     }
 
+    const message = req.body?.message;
+
+    // assistant-request is the ONE message type Vapi actually waits on — it
+    // needs a real JSON body (an assistant to use) within ~7.5s, so this
+    // must NOT get the blank "ack immediately, process later" treatment
+    // every other message type below gets. Confirmed against Vapi's own
+    // docs, 2026-09-29: fires when an inbound call hits a phone number with
+    // no assistantId attached (agents/iris/inbound.ts).
+    if (message?.type === "assistant-request") {
+      try {
+        const { assistant, error } = await handleInboundCall(message);
+        return res.status(200).json(assistant ? { assistant } : { error });
+      } catch (error) {
+        console.error("[VAPI] Error handling assistant-request:", error);
+        return res.status(200).json({ error: "Sorry, something went wrong on our end. Please try again shortly." });
+      }
+    }
+
     // Acknowledge immediately — Vapi doesn't wait around, same as the Slack handler.
     res.status(200).send();
 
     try {
-      const message = req.body?.message;
       if (!message) return;
 
       if (message.type === "end-of-call-report") {

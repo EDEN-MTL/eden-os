@@ -44,7 +44,7 @@ Be concise and specific. Cite real field names and stage names.`;
 export const scoutAgent = new ScoutAgent();
 
 /** Per-client intake config, read from config/clients/{clientId}.json. */
-function loadScoutConfig(clientId: string): ScoutConfig | null {
+export function loadScoutConfig(clientId: string): ScoutConfig | null {
   try {
     const raw = JSON.parse(
       readFileSync(join(process.cwd(), "config", "clients", `${clientId}.json`), "utf-8")

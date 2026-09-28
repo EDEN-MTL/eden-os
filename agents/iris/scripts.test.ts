@@ -1338,4 +1338,30 @@ describe("callOpeningContextLine — call origin (Mark, 2026-09-24)", () => {
     );
     expect(callOpeningContextLine("buyer", "Toronto", null)?.[0]).toContain("the form you submitted online");
   });
+
+  /**
+   * Real gap found live 2026-09-29 (agents/iris/inbound.ts): "I was calling
+   * about the form you submitted" is backwards when the LEAD called us.
+   */
+  it("never references the form for inbound-origin calls", () => {
+    expect(callOpeningContextLine("buyer", "Toronto", null, "inbound")?.[0]).not.toContain("the form you submitted online");
+    expect(callOpeningContextLine("buyer", "Toronto", null, "inbound")?.[0]).toContain("calling back");
+  });
+});
+
+describe("buildCallOpeningLine — call origin", () => {
+  it("defaults to Iris introducing herself as the one who placed the call", () => {
+    expect(buildCallOpeningLine("Kaitlyn", "3 Percent East Coast")).toBe("Hi, this is Iris with 3 Percent East Coast. Am I speaking with Kaitlyn?");
+  });
+
+  /**
+   * Real gap found live 2026-09-29: "Hi, this is Iris with {brand}" reads
+   * as Iris opening the call, which is backwards for agents/iris/inbound.ts
+   * answering a call the lead placed themselves.
+   */
+  it("opens with 'thanks for calling', not 'this is Iris calling', for an inbound pickup", () => {
+    expect(buildCallOpeningLine("Kaitlyn", "3 Percent East Coast", "inbound")).toBe(
+      "Thanks for calling 3 Percent East Coast, this is Iris. Am I speaking with Kaitlyn?"
+    );
+  });
 });
