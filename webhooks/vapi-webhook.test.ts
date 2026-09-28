@@ -23,9 +23,13 @@ vi.mock("../agents/iris", () => iris);
 vi.mock("../agents/iris/dial-pending", () => ({ reopenForNextAttempt: vi.fn() }));
 vi.mock("../shared/db", () => ({ query: vi.fn() }));
 
+const inbound = vi.hoisted(() => ({ handleInboundCall: vi.fn() }));
+vi.mock("../agents/iris/inbound", () => inbound);
+
 import {
   appendCallStatusNote,
   attachRecording,
+  createVapiRouter,
   customerSpokeAtAll,
   describeOutcome,
   formatDuration,
@@ -294,6 +298,55 @@ describe("formatDuration", () => {
     expect(formatDuration(null)).toBe("unknown");
     expect(formatDuration(undefined)).toBe("unknown");
     expect(formatDuration(-1)).toBe("unknown");
+  });
+});
+
+/**
+ * Real gap found live 2026-09-29: Vapi's "assistant-request" is the ONE
+ * message type that needs a real, synchronous JSON response (an assistant
+ * to answer with) within ~7.5s — unlike every other message type, which
+ * this router acks with a blank 200 before processing. Getting this branch
+ * ordered wrong (ack-then-process, same as end-of-call-report) would send
+ * Vapi an empty body and fail every real inbound call silently.
+ */
+describe("POST / — routes assistant-request to Iris's inbound handler", () => {
+  function getRootHandler(): (req: any, res: any) => Promise<void> {
+    const router = createVapiRouter();
+    return (router as any).stack[0].route.stack[0].handle;
+  }
+
+  function fakeRes() {
+    const res: any = { status: vi.fn().mockReturnThis(), send: vi.fn(), json: vi.fn() };
+    return res;
+  }
+
+  it("responds with the built assistant, not a blank ack, for an assistant-request", async () => {
+    inbound.handleInboundCall.mockResolvedValue({ assistant: { firstMessage: "hi" } });
+    const res = fakeRes();
+
+    await getRootHandler()({ body: { message: { type: "assistant-request", call: { id: "call-1" } } }, headers: {} }, res);
+
+    expect(inbound.handleInboundCall).toHaveBeenCalledWith({ type: "assistant-request", call: { id: "call-1" } });
+    expect(res.json).toHaveBeenCalledWith({ assistant: { firstMessage: "hi" } });
+    expect(res.send).not.toHaveBeenCalled();
+  });
+
+  it("responds with an error body when the inbound handler can't answer", async () => {
+    inbound.handleInboundCall.mockResolvedValue({ error: "Sorry, try again shortly." });
+    const res = fakeRes();
+
+    await getRootHandler()({ body: { message: { type: "assistant-request", call: {} } }, headers: {} }, res);
+
+    expect(res.json).toHaveBeenCalledWith({ error: "Sorry, try again shortly." });
+  });
+
+  it("still acks with a blank 200 for every other message type, unchanged", async () => {
+    const res = fakeRes();
+
+    await getRootHandler()({ body: { message: { type: "end-of-call-report", call: { id: "call-1" } } }, headers: {} }, res);
+
+    expect(res.send).toHaveBeenCalled();
+    expect(inbound.handleInboundCall).not.toHaveBeenCalled();
   });
 });
 
