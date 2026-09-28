@@ -1150,6 +1150,21 @@ describe("buildLeadQualificationPrompt", () => {
   });
 
   /**
+   * Real gap found live 2026-09-26 (contact Yv2IP2sS51FuKGkinu4W, "Florida
+   * Lisa"): an automated call-screening service picked up and Iris kept
+   * conversing with it as if it were the lead for 47 seconds. Mark's
+   * follow-up instruction: the instant she recognizes a screener, she
+   * should just hang up — no more back-and-forth, no goodbye, no message.
+   */
+  it("tells Iris to recognize an automated call-screening service and hang up immediately, silently", () => {
+    const prompt = buildLeadQualificationPrompt(IRIS_CONFIG, BLANK_LEAD, "3 Percent East Coast", "St. John's", false, true, false);
+    expect(prompt).toMatch(/automated call-screening\/gatekeeper service/i);
+    expect(prompt).toMatch(/record your name and reason for calling/i);
+    expect(prompt).toMatch(/invoke endCall immediately and\s+silently/i);
+    expect(prompt).toMatch(/no goodbye line/i);
+  });
+
+  /**
    * Mark's spec, 2026-09-12: a name correction ("it's Mike, not Michael")
    * is a different case from denying being the lead entirely — the CRM
    * needs to actually get fixed, not just verbally acknowledged.
