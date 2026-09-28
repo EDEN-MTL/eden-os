@@ -19,11 +19,11 @@
  * it here once a fresh re-check confirms the lead still hasn't been
  * touched). Both go through the same two gates below either way.
  */
-import { createCall, getVapiEnvConfig, CreateCallPayload, VapiCallResult, VapiTool, VapiFunctionTool } from "../../shared/vapi";
+import { createCall, getVapiEnvConfig, CreateCallPayload, VapiAssistantConfig, VapiCallResult, VapiTool, VapiFunctionTool } from "../../shared/vapi";
 import { query } from "../../shared/db";
 import { isCallingEnabled } from "./calling-settings";
 import { CallIntent } from "./qualification";
-import { AGENT_UNAVAILABLE_LINE, buildCallOpeningLine, expandBudgetShorthand, IDLE_NUDGE_VARIATIONS } from "./scripts";
+import { AGENT_UNAVAILABLE_LINE, buildCallOpeningLine, CallOrigin, expandBudgetShorthand, IDLE_NUDGE_VARIATIONS } from "./scripts";
 
 export class CallingDisabledError extends Error {}
 
@@ -106,6 +106,13 @@ export interface PlaceCallParams {
   calendarId?: string;
   /** Passed through to the appointment-notes summary — see buildLeadDetails below. */
   workingWithRealtor?: boolean | null;
+  /**
+   * Threaded into buildCallOpeningLine's firstMessage — defaults to "form"
+   * (Iris placing the call), the only value every existing caller relies
+   * on. "inbound" (agents/iris/inbound.ts) is the one case where the
+   * greeting itself must change, since the lead called US.
+   */
+  origin?: CallOrigin;
 }
 
 /**
@@ -178,7 +185,7 @@ export function buildCallPayload(
   // showing, mechanically, regardless of what the system prompt said.
   // Everything else (how are you, the reason for the call) still happens
   // as its own later turn, driven by the system prompt.
-  const firstMessage = buildCallOpeningLine(params.firstName, params.brandName);
+  const firstMessage = buildCallOpeningLine(params.firstName, params.brandName, params.origin);
 
   const tools: VapiTool[] = [];
 
@@ -927,6 +934,21 @@ export function buildCallPayload(
       voicemailDetection: { provider: "vapi", backoffPlan: { startAtSeconds: 5, frequencySeconds: 5, maxRetries: 5 } },
     },
   };
+}
+
+/**
+ * The `assistant` half of buildCallPayload, for an INBOUND call — Vapi's
+ * own answer to an "assistant-request" webhook (agents/iris/inbound.ts)
+ * takes `{ assistant: {...} }` directly, with no `phoneNumberId`/`customer`
+ * (Vapi already knows both — it's the call that's already ringing). Reuses
+ * buildCallPayload as-is rather than duplicating any of its tool wiring
+ * (update_lead_name, save_isa_notes, transfer, scheduling, hooks,
+ * voicemail detection) — outbound and inbound calls should behave
+ * identically once the assistant is actually talking; only how that
+ * assistant gets attached to the call differs.
+ */
+export function buildInboundAssistantConfig(params: PlaceCallParams, vapiConfig: ReturnType<typeof getVapiEnvConfig>): VapiAssistantConfig {
+  return buildCallPayload(params, vapiConfig).assistant;
 }
 
 /**
