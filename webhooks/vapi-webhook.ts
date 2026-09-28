@@ -68,6 +68,41 @@ const ANSWERED_REASONS = new Set(["assistant-forwarded-call", "exceeded-max-dura
 const TRANSFER_ABANDONED_REASONS = new Set(["customer-ended-call-before-warm-transfer", "customer-ended-call-after-warm-transfer-attempt"]);
 
 /**
+ * A real gatekeeper/call-screening service picking up instead of the lead —
+ * confirmed live 2026-09-26 against a real 3% Realty lead (contact
+ * Yv2IP2sS51FuKGkinu4W, "Florida Lisa", vapi_call_id
+ * 01a0dfe6-829c-7cce-8a8c-32089f2e2bf5): the "customer" side of the
+ * transcript opened with "Hi. If you record your name and reason for
+ * calling, I'll see if this person is available." and closed with
+ * "...this person is not available. If you would like to leave an
+ * additional message, please reply after the tone." Vapi's own
+ * voicemailDetection (agents/iris/calling.ts) is trained on classic
+ * answering-machine monologues and never flagged this — it's an
+ * interactive screener, not a static greeting — so the call came back
+ * endedReason "assistant-ended-call" with real transcribed "customer"
+ * turns, which customerSpokeAtAll (correctly, for what IT'S checking)
+ * reads as a genuine conversation. Left unhandled, genuinelyAnswered marked
+ * this lead as reached: only 1 of the normal 8 automatic attempts ever
+ * ran, iris_pending_calls resolved permanently, and the lead will never be
+ * called again — confirmed live, same call.
+ *
+ * Keyed on the one distinctively robotic phrase actually seen rather than a
+ * broad keyword list ("please stay on the line" / "not available" alone
+ * are things a real human relaying a message could plausibly say too) —
+ * "record your name and reason for calling" is not. Extend this the same
+ * way TRANSFER_ABANDONED_REASONS grew, if a differently-worded screener
+ * shows up on a future real call.
+ */
+const CALL_SCREENER_PHRASES = [/record(?:ing)? your name and reason for calling/i];
+
+export function hitCallScreener(message: Record<string, any>): boolean {
+  const msgs: any[] = message?.messages ?? [];
+  return msgs.some(
+    (m) => m?.role === "user" && typeof m?.message === "string" && CALL_SCREENER_PHRASES.some((re) => re.test(m.message))
+  );
+}
+
+/**
  * Fails toward RETRYING on anything ambiguous now (an unrecognized or
  * missing endedReason) — inverted from the old direction along with the
  * allowlist above. The cost of wrongly retrying a lead who was actually
@@ -109,6 +144,7 @@ export function customerSpokeAtAll(message: Record<string, any>): boolean {
  */
 export function genuinelyAnswered(endedReason: string | null, message: Record<string, any>): boolean {
   if (!wasAnswered(endedReason)) return false;
+  if (hitCallScreener(message)) return false;
   if (endedReason === "assistant-ended-call") return customerSpokeAtAll(message);
   return true;
 }
@@ -137,6 +173,7 @@ function verifyVapiSecret(expectedSecret: string, req: Request): boolean {
 export function describeOutcome(endedReason: string | null, message: Record<string, any>): string {
   if (endedReason === TRANSFER_SUCCEEDED_REASON) return "✅ Live transfer completed";
   if (endedReason === "voicemail") return "📵 Left voicemail";
+  if (hitCallScreener(message)) return "🤖 Hit a call-screening service, not the actual lead — will retry";
   if (endedReason === "assistant-ended-call" && !customerSpokeAtAll(message)) return "🔇 No response (gave up after the idle nudge)";
   if (TRANSFER_ABANDONED_REASONS.has(endedReason ?? "")) return "⚠️ Disconnected right before transfer connected — needs a manual callback";
   if (wasAnswered(endedReason)) return "💬 Answered (no transfer)";
