@@ -26,7 +26,13 @@ async function main() {
     throw new Error("VAPI_SERVER_URL is not set — Vapi needs a real public URL to reach for inbound calls.");
   }
 
-  const url = `${config.serverUrl}/webhooks/vapi`;
+  // VAPI_SERVER_URL is already the full webhook path (confirmed against
+  // calling.ts's own use of it, unmodified, for both server.url and the
+  // per-tool server URLs) — NOT a bare origin. Fixed 2026-09-29 after this
+  // script's first run appended /webhooks/vapi on top of that and pointed
+  // the live phone number at a doubled, wrong URL
+  // (.../webhooks/vapi/webhooks/vapi).
+  const url = config.serverUrl;
   const resp = await fetch(`https://api.vapi.ai/phone-number/${config.phoneNumberId}`, {
     method: "PATCH",
     headers: { Authorization: `Bearer ${config.apiKey}`, "Content-Type": "application/json" },
