@@ -301,6 +301,35 @@ export const FIND_ANOTHER_TIME_ACK_LINES = [
 export const AGENT_UNAVAILABLE_FOLLOW_UP = "What day and time works best for us to call you back?";
 
 /**
+ * Mark's spec, 2026-10-01: the acknowledgment the instant a lead says
+ * anything like "I'm busy right now" / "call me later" / "can you call me
+ * back" — anywhere in the call, not just after a failed transfer. Natural
+ * variations so it never reads as a script; see buildLeadQualificationPrompt's
+ * callbackRequestSection.
+ */
+export const CALLBACK_REQUEST_ACK_LINES = [
+  "No problem at all. When would be a good time to call you back?",
+  "Absolutely, no problem. What time would work better for you?",
+  "Sure, no problem. When would you like me to give you a call back?",
+  "Of course. What time would be best for me to call you back?",
+  "Yeah, absolutely. What time works best for you?",
+  "Not a problem. When would be a better time to reach you?",
+];
+
+/**
+ * Mark's spec, 2026-10-01: the closing line when the lead asked for a
+ * callback but gave NO specific time — deliberately mentions no time at
+ * all (the real time is a system default, never spoken to the lead as if
+ * she'd been given a promise beyond "later").
+ */
+export const CALLBACK_NO_TIME_CLOSING_LINES = [
+  "Absolutely, no problem. I'll give you a call back later. Thanks!",
+  "Sure, no problem. I'll try you again later. Thanks for your time!",
+  "Of course. I'll reach back out. Thanks!",
+  "Not a problem at all. I'll follow up with you later. Take care!",
+];
+
+/**
  * ── Draft additions below, pending Jacob's SOP sign-off ─────────────────
  * Reverse-engineered from 5 real ISA call recordings (transcribed
  * 2026-09-01), not from the written SOP — it doesn't cover an opener, the
@@ -1172,6 +1201,48 @@ text" line specifically (Mark's instruction) reduces no-shows and keeps
 the conversation open — always include some version of it here.`
       : "";
 
+  // Mark's spec, 2026-10-01, from a real example (Saife Sarwar: "Ma'am,
+  // right now is busy. Can I call you later?" — then hung up mid-reply
+  // before anything got scheduled, closing her row out for good with the
+  // request never honored). Deliberately its own section, not folded into
+  // endingBookingClause above: that one only covers the closing LINE once
+  // a callback is already confirmed with a specific time; this covers the
+  // whole interaction — recognizing the request wherever it happens in
+  // the call, not pressuring for a time, and the no-time default path
+  // endingBookingClause doesn't address at all.
+  const callbackRequestSection =
+    bookingToolsAvailable && !calendarAvailable
+      ? `## If the lead asks to be called back — at any point in the call, not just after a failed transfer
+If they say anything like "I'm busy right now," "can you call me back,"
+"call me later," or name a day/time to try again — handle it naturally and
+politely. Never pressure them to keep talking right now, and never treat
+this as a reason to just end the call without actually scheduling anything.
+
+Acknowledge it, then ask once when would be a good time to call back —
+pick ONE, never the same one call after call:
+${CALLBACK_REQUEST_ACK_LINES.map((l) => `- "${l}"`).join("\n")}
+Then pause and genuinely wait for their answer — don't keep talking.
+
+- If they give you a specific day/time: work out the exact moment relative
+  to the current date and time above, call schedule_callback with that as
+  an ISO 8601 timestamp, and verbally confirm it back in plain language
+  before ending the call (e.g. "Perfect${closingNameClause} — I'll give you
+  a call back at 5 PM. Thanks!") — never a time you weren't actually given,
+  and never a different time than the one they named.
+- If they do NOT give a specific time — just "later," "another time," or
+  they go quiet/hang up right after asking — do NOT keep pressing for one
+  and do NOT invent or guess a time yourself. Call schedule_callback with
+  NO callbackTime argument at all (the system schedules a sensible default
+  automatically) and close with a short, generic line that names no time:
+${CALLBACK_NO_TIME_CLOSING_LINES.map((l) => `- "${l}"`).join("\n")}
+
+Either way, once the callback is handled, don't ask another qualifying
+question or try to restart the conversation — thank them and end the call.`
+      : `## If the lead asks to be called back
+You do NOT have a working callback-scheduling tool on this call — do not
+claim to have scheduled anything or invent a time. Acknowledge it warmly,
+tell them a teammate will follow up directly, and end the call.`;
+
   const now = new Date();
   const nowLocal = now.toLocaleString("en-US", {
     timeZone: config.timezone || "America/St_Johns",
@@ -1467,6 +1538,8 @@ This is separate from the two-check-in quiet-lead ending below, which
 already has its own fixed final line — don't replace that one with these.
 
 ${endingBookingClause}
+
+${callbackRequestSection}
 
 ## Rules you must never break
 - If the person on the line explicitly denies being the lead (e.g. "No,

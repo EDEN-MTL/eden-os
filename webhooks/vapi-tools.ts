@@ -4,7 +4,7 @@ import { getGhlConfig, addContactTags, updateContact, getCustomFieldDefs, getCal
 import { buildKeyToId } from "../agents/scout/intake";
 import { loadIrisConfig } from "../agents/iris";
 import { scheduleExplicitCallback } from "../agents/iris/dial-pending";
-import { isWithinLegalCallingWindow, formatLocal } from "../agents/iris/cadence";
+import { clampToLegalCallingWindow, isWithinLegalCallingWindow, formatLocal } from "../agents/iris/cadence";
 
 /**
  * Server-side handler for the schedule_callback function tool Vapi calls
@@ -33,6 +33,8 @@ import { isWithinLegalCallingWindow, formatLocal } from "../agents/iris/cadence"
 
 const MIN_CALLBACK_MINUTES_OUT = 10;
 const MAX_CALLBACK_DAYS_OUT = 14;
+/** Mark's spec, 2026-10-01: when the lead asks for a callback but gives no specific time, default to ~1 hour out rather than asking the model to invent or guess one. */
+const DEFAULT_CALLBACK_DELAY_MINUTES = 60;
 
 /** Same secret used for the end-of-call-report webhook — see webhooks/vapi-webhook.ts. */
 function verifyVapiSecret(expectedSecret: string, req: Request): boolean {
@@ -186,32 +188,43 @@ async function handleSaveIsaNotes(clientId: string, contactId: string, notes: un
   return "ISA notes saved. Continue the call normally — no need to mention this to the lead.";
 }
 
-async function handleScheduleCallback(clientId: string, contactId: string, callbackTime: unknown): Promise<string> {
-  if (typeof callbackTime !== "string" || !callbackTime) {
-    return "Could not schedule the callback — no valid time was provided. Do not claim to have scheduled anything; tell the lead a teammate will follow up directly instead.";
-  }
-
-  const when = new Date(callbackTime);
-  if (Number.isNaN(when.getTime())) {
-    return "Could not schedule the callback — that wasn't a valid time. Do not claim to have scheduled anything; tell the lead a teammate will follow up directly instead.";
-  }
-
-  const minutesOut = (when.getTime() - Date.now()) / 60_000;
-  if (minutesOut < MIN_CALLBACK_MINUTES_OUT) {
-    return `That time is too soon to schedule automatically — pick a time at least ${MIN_CALLBACK_MINUTES_OUT} minutes from now. If the lead wants to talk right now instead, just keep going with this call.`;
-  }
-  if (minutesOut > MAX_CALLBACK_DAYS_OUT * 24 * 60) {
-    return "That's too far out to schedule automatically. Do not claim to have scheduled anything — tell the lead a teammate will reach out directly to confirm a time that far ahead.";
-  }
-
+export async function handleScheduleCallback(clientId: string, contactId: string, callbackTime: unknown): Promise<string> {
   const timeZone = loadIrisConfig(clientId)?.timezone || "America/St_Johns";
-  // Mark's instruction, 2026-09-11: real calling-hours compliance — a lead's
-  // own stated preferred callback time was never checked against business
-  // hours before. Reject rather than silently move it: the lead chose this
-  // time on purpose, so ask again instead of surprising them with a
-  // different one they never agreed to.
-  if (!isWithinLegalCallingWindow(when, timeZone)) {
-    return `That time is outside legal calling hours (8am-9pm, ${timeZone}) — do not schedule it. Ask the lead for a different time within that window instead, and call this tool again once they give one. Do not tell them there's a technical issue — this is a real business-hours rule, not an error.`;
+  let when: Date;
+  let hadSpecificTime: boolean;
+
+  if (typeof callbackTime === "string" && callbackTime.trim()) {
+    when = new Date(callbackTime);
+    if (Number.isNaN(when.getTime())) {
+      return "Could not schedule the callback — that wasn't a valid time. Do not claim to have scheduled anything; tell the lead a teammate will follow up directly instead.";
+    }
+
+    const minutesOut = (when.getTime() - Date.now()) / 60_000;
+    if (minutesOut < MIN_CALLBACK_MINUTES_OUT) {
+      return `That time is too soon to schedule automatically — pick a time at least ${MIN_CALLBACK_MINUTES_OUT} minutes from now. If the lead wants to talk right now instead, just keep going with this call.`;
+    }
+    if (minutesOut > MAX_CALLBACK_DAYS_OUT * 24 * 60) {
+      return "That's too far out to schedule automatically. Do not claim to have scheduled anything — tell the lead a teammate will reach out directly to confirm a time that far ahead.";
+    }
+
+    // Mark's instruction, 2026-09-11: real calling-hours compliance — a lead's
+    // own stated preferred callback time was never checked against business
+    // hours before. Reject rather than silently move it: the lead chose this
+    // time on purpose, so ask again instead of surprising them with a
+    // different one they never agreed to.
+    if (!isWithinLegalCallingWindow(when, timeZone)) {
+      return `That time is outside legal calling hours (8am-9pm, ${timeZone}) — do not schedule it. Ask the lead for a different time within that window instead, and call this tool again once they give one. Do not tell them there's a technical issue — this is a real business-hours rule, not an error.`;
+    }
+    hadSpecificTime = true;
+  } else {
+    // Mark's spec, 2026-10-01: the lead asked for a callback but gave no
+    // specific time ("call me later") — never have the model invent one;
+    // default to ~1 hour out instead. Clamped rather than rejected (unlike
+    // the explicit-time branch above) since there's no lead-chosen time to
+    // protect here — just push the default itself into legal hours if it
+    // happens to land outside them.
+    when = clampToLegalCallingWindow(new Date(Date.now() + DEFAULT_CALLBACK_DELAY_MINUTES * 60_000), timeZone);
+    hadSpecificTime = false;
   }
 
   const scheduled = await scheduleExplicitCallback(clientId, contactId, when);
@@ -221,7 +234,9 @@ async function handleScheduleCallback(clientId: string, contactId: string, callb
 
   await recordCallbackNote(clientId, contactId, when);
 
-  return `Callback scheduled for ${formatSpoken(when.toISOString(), timeZone)}. Confirm this back to the lead in plain language — just the day and time (e.g. "Saturday at 5 PM"), and only give the exact date if they ask for it.`;
+  return hadSpecificTime
+    ? `Callback scheduled for ${formatSpoken(when.toISOString(), timeZone)}. Confirm this back to the lead in plain language — just the day and time (e.g. "Saturday at 5 PM"), and only give the exact date if they ask for it.`
+    : `Callback scheduled. The lead did NOT give a specific time, so do not state any time back to them — just acknowledge naturally (e.g. "Absolutely, no problem — I'll give you a call back later. Thanks!") and end the call.`;
 }
 
 /**

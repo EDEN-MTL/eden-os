@@ -629,11 +629,18 @@ describe("buildCallPayload", () => {
       expect(tool.server.secret).toBe("test-webhook-secret");
     });
 
-    it("requires a callbackTime argument from the model", () => {
+    /**
+     * Mark's spec, 2026-10-01: a lead doesn't always give a specific time
+     * ("call me later") — callbackTime must be OPTIONAL so the model can
+     * call this tool with none at all rather than inventing a time to
+     * satisfy a required argument. webhooks/vapi-tools.ts's
+     * handleScheduleCallback defaults to ~1 hour out when it's omitted.
+     */
+    it("does NOT require a callbackTime argument — the lead may not have given one", () => {
       const payload = buildCallPayload(withContactId, VAPI_CONFIG);
       const tool = payload.assistant.model.tools?.find((t) => t.type === "function" && t.function.name === "schedule_callback");
       if (tool?.type !== "function") throw new Error("expected function tool");
-      expect(tool.function.parameters.required).toEqual(["callbackTime"]);
+      expect(tool.function.parameters.required ?? []).toEqual([]);
     });
   });
 
