@@ -45,6 +45,17 @@ const IRIS_TOOLS: ToolDef[] = [
     },
   },
   {
+    name: "iris_newest_lead",
+    description:
+      "The single newest lead captured in the system — who, phone, buy/sell intent, when they were captured, plus the same real call-status detail iris_lookup_lead gives for a named lead. Use this for \"what about the new lead\" / \"the new lead that just came in\" / \"how's the newest lead doing\" — anything referring to the MOST RECENT lead without naming them. Never guess who that is from memory.",
+    input_schema: {
+      type: "object",
+      properties: {
+        clientId: { type: "string", description: `Which client to report on. Defaults to "${DEFAULT_CLIENT_ID}" if not given.` },
+      },
+    },
+  },
+  {
     name: "iris_calls_today",
     description:
       "Every call Iris placed or answered today (the client's own local calendar day, not UTC), in chronological order — who, what time, which direction (outbound/inbound), and the outcome. Use this for \"what calls did you make today\" / \"which leads did you call today\" / \"any calls today\" — never reconstruct this from memory or #iris-call-logs scrollback; call the tool.",
@@ -79,6 +90,43 @@ async function resolveTimezone(clientId: string): Promise<string> {
   return live || config?.timezone || "America/St_Johns";
 }
 
+/**
+ * The real call-status fields iris_lookup_lead reports, factored out so
+ * iris_newest_lead (below) can report the exact same depth for a contact
+ * resolved a different way (newest iris_pending_calls row instead of a
+ * name/phone search) without duplicating this query pair.
+ */
+async function leadStatusForContact(clientId: string, contactId: string, timezone: string) {
+  const [pending, callLog] = await Promise.all([
+    query<PendingRow>(
+      `SELECT status, resolution_reason, is_explicit_callback, call_after, attempts_made
+       FROM iris_pending_calls WHERE client_id = $1 AND contact_id = $2`,
+      [clientId, contactId]
+    ),
+    query<CallLogRow>(
+      `SELECT status, ended_reason, created_at, ended_at FROM iris_call_log
+       WHERE client_id = $1 AND contact_id = $2 ORDER BY created_at DESC LIMIT 5`,
+      [clientId, contactId]
+    ),
+  ]);
+
+  const lastCall = callLog[0];
+  const row = pending[0];
+  return {
+    lastCallAttempt: lastCall ? formatLocal(lastCall.created_at.toISOString(), timezone) : null,
+    lastCallOutcome: lastCall?.ended_reason ?? null,
+    attemptsMade: row?.attempts_made ?? callLog.length,
+    currentStatus: row?.status ?? "no active sequence",
+    currentStatusReason: row?.resolution_reason ?? null,
+    nextAttempt: row && row.status === "pending" ? formatLocal(row.call_after.toISOString(), timezone) : null,
+    isExplicitCallback: row?.is_explicit_callback ?? false,
+    recentCallHistory: callLog.map((c) => ({
+      when: formatLocal(c.created_at.toISOString(), timezone),
+      outcome: c.ended_reason,
+    })),
+  };
+}
+
 class IrisAgent extends BaseAgent {
   constructor() {
     super("iris", "Iris", "IRS");
@@ -107,35 +155,35 @@ class IrisAgent extends BaseAgent {
         if (!contact) return JSON.stringify({ found: false, searchedFor: nameOrPhone });
 
         const timezone = await resolveTimezone(clientId);
-        const [pending, callLog] = await Promise.all([
-          query<PendingRow>(
-            `SELECT status, resolution_reason, is_explicit_callback, call_after, attempts_made
-             FROM iris_pending_calls WHERE client_id = $1 AND contact_id = $2`,
-            [clientId, contact.id]
-          ),
-          query<CallLogRow>(
-            `SELECT status, ended_reason, created_at, ended_at FROM iris_call_log
-             WHERE client_id = $1 AND contact_id = $2 ORDER BY created_at DESC LIMIT 5`,
-            [clientId, contact.id]
-          ),
-        ]);
+        return JSON.stringify({ found: true, name: contact.name, ...(await leadStatusForContact(clientId, contact.id, timezone)) });
+      }
 
-        const lastCall = callLog[0];
-        const row = pending[0];
+      case "iris_newest_lead": {
+        const clientId = String(input?.clientId ?? DEFAULT_CLIENT_ID);
+
+        // iris_pending_calls gets a row the moment Scout fires lead.enriched
+        // (agents/iris/index.ts's own lead.enriched handler, below) — the
+        // newest one by created_at IS the newest lead in the system, same
+        // ground truth the automatic cadence itself dials from. Real gap
+        // found live 2026-10-01: Mark asked "how about the new lead?" /
+        // "the new lead that just came in" and Iris had no way to resolve
+        // that without already being given a name or number — she said so
+        // plainly rather than guessing, but couldn't actually answer.
+        const newest = await query<{ contact_id: string; lead: NormalisedLead; created_at: Date }>(
+          `SELECT contact_id, lead, created_at FROM iris_pending_calls WHERE client_id = $1 ORDER BY created_at DESC LIMIT 1`,
+          [clientId]
+        );
+        if (!newest[0]) return JSON.stringify({ found: false });
+
+        const { contact_id, lead, created_at } = newest[0];
+        const timezone = await resolveTimezone(clientId);
         return JSON.stringify({
           found: true,
-          name: contact.name,
-          lastCallAttempt: lastCall ? formatLocal(lastCall.created_at.toISOString(), timezone) : null,
-          lastCallOutcome: lastCall?.ended_reason ?? null,
-          attemptsMade: row?.attempts_made ?? callLog.length,
-          currentStatus: row?.status ?? "no active sequence",
-          currentStatusReason: row?.resolution_reason ?? null,
-          nextAttempt: row && row.status === "pending" ? formatLocal(row.call_after.toISOString(), timezone) : null,
-          isExplicitCallback: row?.is_explicit_callback ?? false,
-          recentCallHistory: callLog.map((c) => ({
-            when: formatLocal(c.created_at.toISOString(), timezone),
-            outcome: c.ended_reason,
-          })),
+          name: lead?.name || "(unknown name)",
+          phone: lead?.phone ?? null,
+          intent: lead?.intent ?? null,
+          capturedAt: formatLocal(created_at.toISOString(), timezone),
+          ...(await leadStatusForContact(clientId, contact_id, timezone)),
         });
       }
 
@@ -313,13 +361,15 @@ isn't in this client's config — say you don't know rather than guessing.
 ## Answering questions about specific leads or overall numbers, here in Slack
 You have real tools now — iris_lookup_lead (a specific lead's real call
 history, last-attempt time in their own local timezone, outcome, current
-status), iris_pipeline_stats (overall counts: pending, exhausted,
-opted-out, etc.), and iris_calls_today (every call placed or answered today,
-in order — who, when, direction, outcome). ALWAYS call the relevant tool
-for a factual question like this rather than guessing or estimating from
-memory — the data changes constantly, and a wrong guess is worse than
-admitting you'd need to look it up. If a tool comes back with nothing
-found, say so plainly rather than inventing a plausible-sounding answer.
+status), iris_newest_lead (whichever lead was captured most recently, for
+"what about the new lead" with no name given), iris_pipeline_stats (overall
+counts: pending, exhausted, opted-out, etc.), and iris_calls_today (every
+call placed or answered today, in order — who, when, direction, outcome).
+ALWAYS call the relevant tool for a factual question like this rather than
+guessing or estimating from memory — the data changes constantly, and a
+wrong guess is worse than admitting you'd need to look it up. If a tool
+comes back with nothing found, say so plainly rather than inventing a
+plausible-sounding answer.
 
 ## Recognize when someone is actually done talking to you
 Real bug found live 2026-09-22: after correctly answering a real question
