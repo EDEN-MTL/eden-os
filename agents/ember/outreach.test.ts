@@ -40,6 +40,8 @@ function deps(over: Partial<OutreachDeps> = {}): OutreachDeps {
     readHistory: vi.fn(async () => []),
     reviewHistory: vi.fn(async () => ({ action: "script", reason: "no replies in their history" }) as any),
     readContext: vi.fn(async () => ({ stageName: null, daysInStage: null, tags: [], knownAnswers: [], notes: [], irisCalls: [] })),
+    classifyStatus: vi.fn(async () => ({ verdict: "keep_nurturing", reason: "nothing that reads as a clear no" }) as any),
+    moveStage: vi.fn(async () => {}),
     ...over,
   };
 }
@@ -202,17 +204,17 @@ describe("sendTouch — conversation history (Mark, 2026-09-24)", () => {
     }));
   });
 
-  it("holds a soft decline for 6 months from when they said it, then tries again with it as context", async () => {
+  it("holds a temporary 'not right now' for 6 months from when they said it, then tries again with it as context", async () => {
     const said = (days: number, body: string) => ({ direction: "inbound" as const, channel: "sms" as const, body, at: daysAgo(days) });
     const recent = deps({ readHistory: vi.fn(async () => [said(60, "not interested right now")]) });
     await sendTouch(lead(), recent, ctx());
     expect(recent.sendSMS).not.toHaveBeenCalled();
     expect(store.updateLead).toHaveBeenCalledWith(1, expect.objectContaining({ nextTouchAt: new Date(NOW.getTime() + 120 * DAY).toISOString() }));
 
-    const old = deps({ readHistory: vi.fn(async () => [said(200, "not interested"), said(20, "hmm maybe later this year")]) });
+    const old = deps({ readHistory: vi.fn(async () => [said(200, "not right now"), said(20, "hmm what is out there these days?")]) });
     await sendTouch(lead(), old, ctx());
     expect(old.sendSMS).toHaveBeenCalledTimes(1);
-    expect((old.reviewHistory as any).mock.calls[0][1].priorDecline.body).toBe("not interested");
+    expect((old.reviewHistory as any).mock.calls[0][1].priorDecline.body).toBe("not right now");
   });
 
   it("reads the CRM context only for a cycle's first touch", async () => {
@@ -235,12 +237,39 @@ describe("sendTouch — conversation history (Mark, 2026-09-24)", () => {
     expect(d.sendSMS).not.toHaveBeenCalled();
   });
 
-  it("an opt-out anywhere in the history ends it on ANY touch, without asking the model", async () => {
-    const d = deps({ readHistory: vi.fn(async () => [inbound("please stop texting me")]) });
-    await sendTouch(lead({ touchCount: 1 }), d, ctx());
+  it("moves a lead to Not Interested on clear evidence in their history — on ANY touch — and never texts them", async () => {
+    const d = deps({
+      classifyStatus: vi.fn(async () => ({ verdict: "not_interested", category: "other_agent", evidence: "we're working with another agent now", by: "rule" }) as any),
+    });
+    const out = await sendTouch(lead({ touchCount: 1 }), d, ctx());
     expect(d.sendSMS).not.toHaveBeenCalled();
     expect(d.reviewHistory).not.toHaveBeenCalled();
-    expect(store.updateLead).toHaveBeenCalledWith(1, expect.objectContaining({ status: "opted_out" }));
+    expect(out.skippedReason).toContain("not interested");
+    expect(store.transitionStatus).toHaveBeenCalledWith(1, expect.any(Array), expect.objectContaining({ status: "not_interested" }));
+    expect(d.moveStage).toHaveBeenCalledWith("o1", "Not Qualified/Not Interested");
+    expect(d.alert).toHaveBeenCalledWith(expect.stringContaining("we're working with another agent now"));
+  });
+
+  it("a stop request is recorded as an opt-out as well as moved", async () => {
+    const d = deps({ classifyStatus: vi.fn(async () => ({ verdict: "not_interested", category: "asked_to_stop", evidence: "stop", by: "rule" }) as any) });
+    await sendTouch(lead(), d, ctx());
+    expect(store.transitionStatus).toHaveBeenCalledWith(1, expect.any(Array), expect.objectContaining({ status: "opted_out" }));
+    expect(d.moveStage).toHaveBeenCalled();
+  });
+
+  it("when a possible clear no can't be confirmed, neither moves nor texts — waits", async () => {
+    const d = deps({ classifyStatus: vi.fn(async () => ({ verdict: "unsure", reason: "status check failed" }) as any) });
+    await sendTouch(lead(), d, ctx());
+    expect(d.sendSMS).not.toHaveBeenCalled();
+    expect(d.moveStage).not.toHaveBeenCalled();
+    expect(store.updateLead).not.toHaveBeenCalled();
+  });
+
+  it("still texts when the check finds no clear no", async () => {
+    const d = deps();
+    await sendTouch(lead(), d, ctx());
+    expect(d.sendSMS).toHaveBeenCalledTimes(1);
+    expect(d.moveStage).not.toHaveBeenCalled();
   });
 
   it("later touches keep the approved scripts — only the first is reviewed", async () => {
@@ -278,22 +307,33 @@ describe("sendBatch", () => {
 });
 
 describe("handleReply", () => {
-  const replyCtx = (alert = vi.fn(async () => {})) => ({ config: config(), clientName: "Mark's Realty", alert, now: NOW });
-
-  it("an unsubscribe is permanent", async () => {
-    const r = replyCtx();
-    expect(await handleReply(lead(), "STOP", r)).toBe("negative");
-    expect(store.updateLead).toHaveBeenCalledWith(1, expect.objectContaining({ status: "opted_out" }));
-    expect(r.alert).not.toHaveBeenCalled();
+  const keep = async () => ({ verdict: "keep_nurturing", reason: "x" }) as any;
+  const replyCtx = (alert = vi.fn(async () => {})) => ({
+    config: config(), clientName: "Mark's Realty", alert, now: NOW,
+    classifyStatus: vi.fn(keep), moveStage: vi.fn(async () => {}),
   });
 
-  it("a plain 'not interested' pauses them for 6 months instead of opting them out", async () => {
+  it("clear evidence in a reply moves them to Not Interested for good (Mark's 2026-10-01 rule)", async () => {
+    const r = { ...replyCtx(), classifyStatus: vi.fn(async () => ({ verdict: "not_interested", category: "already_bought", evidence: "we already bought last month", by: "ai" }) as any) };
+    expect(await handleReply(lead(), "we already bought last month", r)).toBe("negative");
+    expect(store.transitionStatus).toHaveBeenCalledWith(1, expect.any(Array), expect.objectContaining({ status: "not_interested" }));
+    expect(r.moveStage).toHaveBeenCalledWith("o1", "Not Qualified/Not Interested");
+    expect(r.alert).toHaveBeenCalledWith(expect.stringContaining("Moved to Not Interested"));
+  });
+
+  it("'not ready yet' keeps nurturing — paused, never moved", async () => {
     const r = replyCtx();
-    expect(await handleReply(lead(), "No thanks, not interested", r)).toBe("negative");
-    expect(store.updateLead).toHaveBeenCalledWith(1, expect.objectContaining({
-      status: "nurturing", touchCount: 0, nextTouchAt: new Date(NOW.getTime() + 180 * DAY).toISOString(),
-    }));
-    expect(r.alert).not.toHaveBeenCalled();
+    await handleReply(lead(), "I'm not ready yet", r);
+    expect(r.moveStage).not.toHaveBeenCalled();
+    expect(store.updateLead).toHaveBeenCalledWith(1, expect.objectContaining({ status: "nurturing", touchCount: 0 }));
+  });
+
+  it("a possible no that can't be confirmed goes to a human — not moved, not handed to Iris", async () => {
+    const r = { ...replyCtx(), classifyStatus: vi.fn(async () => ({ verdict: "unsure", reason: "x" }) as any), handoff: vi.fn(async () => "handed_off" as const) };
+    await handleReply(lead(), "we sort of found something", r);
+    expect(r.moveStage).not.toHaveBeenCalled();
+    expect(r.handoff).not.toHaveBeenCalled();
+    expect(r.alert).toHaveBeenCalledWith(expect.stringContaining("please read it"));
   });
 
   it("a yes stops the cadence and alerts", async () => {
@@ -318,11 +358,6 @@ describe("handleReply", () => {
     expect(r.alert).toHaveBeenCalledTimes(1);
   });
 
-  it("never hands a 'no' to Iris", async () => {
-    const r = { ...replyCtx(), handoff: vi.fn(async () => "handed_off" as const) };
-    await handleReply(lead(), "we already bought, thanks", r);
-    expect(r.handoff).not.toHaveBeenCalled();
-  });
 
   it("an unclear reply also goes to a human", async () => {
     const r = replyCtx();

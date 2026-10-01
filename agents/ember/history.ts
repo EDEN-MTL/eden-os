@@ -80,13 +80,22 @@ export async function readConversationHistory(contactId: string, locationId: str
 const HARD_OPT_OUT = [
   /^\s*(stop|stopall|unsubscribe|cancel|end|quit)\s*[.!]*\s*$/i,
   /\b(unsubscribe|remove me|take me off|opt(ed)? out)\b/i,
-  /\b(do not|don'?t|dont|never|stop|quit)\s+(contact|text|txt|call|message|email|bother)(ing)?\b/i,
+  // "call" deliberately NOT here: "don't call me, text me" is a call
+  // preference (prefersText), not a request to stop texting — found
+  // 2026-10-01; with it in, a lead like Grace Penney would have been opted
+  // out of texting entirely and moved to Not Interested.
+  /\b(do not|don'?t|dont|never|stop|quit)\s+(contact|text|txt|texting|message|messaging|email|bother)(ing)?\b/i,
   /\bleave me alone\b/i,
   /\bwrong (number|person)\b/i,
 ];
 
-/** "Not now", not "never" — re-approached after the cool-off. */
-const SOFT_DECLINE = [
+/**
+ * Anything that reads like a decline — only used so a "no" never counts as
+ * a fresh inquiry for CASL consent (consentStart). Whether a decline is a
+ * CLEAR no (moved to Not Interested) or temporary is decided elsewhere:
+ * status.ts for the first, TEMPORARY_PAUSE below for the second.
+ */
+const DECLINE_LIKE = [
   /\bnot interested\b/i,
   /\b(already|just|we|i)\s+(bought|purchased|sold)\b/i,
   /\b(bought|sold) (a|our|my|the) (house|home|place|condo)\b/i,
@@ -94,6 +103,20 @@ const SOFT_DECLINE = [
   /\bhave an? (agent|realtor)\b/i,
   /\bnot (right now|now|ready|looking( anymore)?|at this time)\b/i,
   /\bno longer (looking|interested|selling|buying)\b/i,
+];
+
+/**
+ * "Not now", not "never" (Mark, 2026-10-01: "not ready yet", "next year",
+ * "still thinking" keep nurturing). Paused for reApproachAfterDays from
+ * when they said it, then worked again from scratch.
+ */
+const TEMPORARY_PAUSE = [
+  /\bnot (right now|now|ready|ready yet|yet|at this time|at the moment|this year)\b/i,
+  /\b(wait|waiting) (until|till|for) (next|the)\b/i,
+  /\bmaybe (later|next year|in the (spring|summer|fall|winter))\b/i,
+  // "not interested right now" — the qualifier makes it temporary (Mark's
+  // rule: delaying is not Not Interested).
+  /\b(not interested|not looking|no thanks?)\b.*\b(right now|for now|at the moment|yet|this year|currently)\b/i,
 ];
 
 function lastMatch(messages: HistoryMessage[], patterns: RegExp[]): HistoryMessage | null {
@@ -133,9 +156,9 @@ export function prefersText(messages: HistoryMessage[]): string | null {
   return lastMatch(messages, PREFERS_TEXT)?.body ?? null;
 }
 
-/** The most recent soft decline, if any. */
-export function findSoftDecline(messages: HistoryMessage[]): HistoryMessage | null {
-  return lastMatch(messages, SOFT_DECLINE);
+/** The most recent "not right now", if any. */
+export function findTemporaryPause(messages: HistoryMessage[]): HistoryMessage | null {
+  return lastMatch(messages, TEMPORARY_PAUSE);
 }
 
 /**
@@ -170,7 +193,7 @@ export interface ReviewContext {
   stopLine: string;
   now: Date;
   lead: LeadContext;
-  /** A soft decline older than the cool-off, if that's why we're back. */
+  /** A "not right now" older than the cool-off, if that's why we're back. */
   priorDecline: HistoryMessage | null;
 }
 
@@ -296,7 +319,7 @@ export function consentStart(inquiryAt: string | null, messages: HistoryMessage[
   let latest = inquiryAt;
   for (const m of messages) {
     if (m.direction !== "inbound" || m.channel === "call" || !m.at) continue;
-    if (isHardOptOut(m.body) || SOFT_DECLINE.some((p) => p.test(m.body))) continue;
+    if (isHardOptOut(m.body) || DECLINE_LIKE.some((p) => p.test(m.body))) continue;
     if (!latest || m.at > latest) latest = m.at;
   }
   return latest;

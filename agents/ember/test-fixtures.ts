@@ -30,6 +30,7 @@ export function config(over: Partial<EmberConfig> = {}): EmberConfig {
     excludeStages: ["Appointment Set"],
     consentWindowDays: 180,
     reApproachAfterDays: 180,
+    notInterestedStage: "Not Qualified/Not Interested",
     renewedInterestTags: ["renewed interest"],
     intentTags: { buyer: ["buyer lead"], seller: ["seller lead"] },
     intentStages: { "Buyer Leads": "buyer", "Seller Leads": "seller" },

@@ -12,6 +12,7 @@ import { getContact, getGhlConfig, getOpportunity } from "../../shared/ghl";
 import { EmberConfig } from "./config";
 import { readLeadContext } from "./context";
 import { readConversationHistory, reviewHistory } from "./history";
+import { classifyLeadStatus } from "./status";
 import { buildMessage, LiveContact, pickChannel, planTouch } from "./outreach";
 import { ScanReport } from "./scan";
 import { NurtureLead } from "./types";
@@ -20,7 +21,7 @@ export interface FirstTouchPreview {
   name: string | null;
   stage: string;
   intent: string;
-  outcome: "send" | "opt_out" | "defer" | "no_consent" | "retry" | "unreachable";
+  outcome: "send" | "not_interested" | "defer" | "no_consent" | "retry" | "unreachable";
   source?: "script" | "personalized";
   channel?: string;
   message?: string;
@@ -58,7 +59,7 @@ export async function previewFirstTouches(
     const history = await readConversationHistory(e.contactId, ghl.locationId, ghl.apiKey);
     const opp = await getOpportunity(e.opportunityId, ghl.locationId, ghl.apiKey);
     const context = await readLeadContext(lead, { ...opp, contact: { tags: c.tags ?? [] } }, stageNames, ghl, now);
-    const plan = await planTouch({ lead, contact, history, context, config, now, review: (m, ctx) => reviewHistory(m, ctx) });
+    const plan = await planTouch({ lead, contact, history, context, config, now, review: (m, ctx) => reviewHistory(m, ctx), classify: (m) => classifyLeadStatus(m) });
     const inboundMessages = history.filter((m) => m.direction === "inbound").length;
 
     if (plan.kind !== "send") {

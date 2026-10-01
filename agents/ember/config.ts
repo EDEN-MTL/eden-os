@@ -57,6 +57,14 @@ export interface EmberConfig {
    */
   includeStages?: string[];
   /**
+   * Where a lead goes on clear evidence they're no longer a prospect
+   * (status.ts). Mark, 2026-10-01: the existing "Not Qualified/Not
+   * Interested" stage. A lost stage, so Ember never enrolls them again.
+   * Unset = Ember still stops contacting them but leaves the card alone
+   * and asks a human to move it.
+   */
+  notInterestedStage?: string;
+  /**
    * CASL: an inquiry gives implied consent for commercial messages for 6
    * months from the inquiry — not indefinitely. Measured from the LATEST
    * real inquiry: the original form, or the lead's own most recent message
