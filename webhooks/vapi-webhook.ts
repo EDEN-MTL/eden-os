@@ -5,10 +5,11 @@ import { getGhlConfig, getContact, addContactTags, findOpenOpportunitiesForConta
 import { sendMessage, uploadFile } from "../shared/slack";
 import { appendHistory } from "../shared/conversation-memory";
 import { loadIrisConfig } from "../agents/iris";
-import { reopenForNextAttempt } from "../agents/iris/dial-pending";
+import { reopenForNextAttempt, scheduleExplicitCallback } from "../agents/iris/dial-pending";
 import { buildKeyToId, readField } from "../agents/scout/intake";
 import { formatLocal } from "../agents/iris/cadence";
 import { handleInboundCall } from "../agents/iris/inbound";
+import { classifyMissedCallback } from "../agents/iris/call-signals";
 
 /**
  * Every Iris call — real or test — gets posted here so the team can watch
@@ -374,8 +375,18 @@ async function handleEndOfCallReport(message: Record<string, any>): Promise<void
   // Only the automatic dial-pending queue's own retry cadence gets
   // reopened here — a manual test call (scripts/test-iris-call.ts etc.)
   // has no cadence to continue even if it happens to share a contactId.
-  if (row?.contact_id && row.triggered_by === "automatic" && !genuinelyAnswered(endedReason, message)) {
-    await maybeReopenPendingCall(row.client_id, row.contact_id);
+  if (row?.contact_id && row.triggered_by === "automatic") {
+    if (!genuinelyAnswered(endedReason, message)) {
+      await maybeReopenPendingCall(row.client_id, row.contact_id);
+    } else if (endedReason !== TRANSFER_SUCCEEDED_REASON) {
+      // Real case found live 2026-10-01 (Saife Sarwar): "Ma'am, right now
+      // is busy. Can I call you later?" then hung up mid-reply, before
+      // schedule_callback ever got a turn to run. genuinelyAnswered is
+      // true here (a real pickup), so the branch above never fires — this
+      // is the ONLY place left that can catch a callback request the live
+      // call itself missed.
+      await maybeHonorMissedCallback(row.client_id, row.contact_id, transcript);
+    }
   }
 }
 
@@ -450,6 +461,58 @@ async function maybeReopenPendingCall(clientId: string, contactId: string): Prom
     if (!reopened) await tagSequenceExhausted(clientId, contactId);
   } catch (error) {
     console.error(`[VAPI] Failed to check/reopen pending call for ${contactId}:`, error instanceof Error ? error.message : error);
+  }
+}
+
+/**
+ * Catches a callback request the LIVE call itself missed — the lead asked
+ * to be called back (a specific time, or just "later") and the call ended
+ * before Iris's own schedule_callback tool (webhooks/vapi-tools.ts) ever
+ * got a turn to run. Real case found live 2026-10-01 (Saife Sarwar): "right
+ * now is busy, can I call you later?" then hung up mid-reply — endedReason
+ * was a genuine pickup, so maybeReopenPendingCall above never runs, and
+ * without this the row just closes out with nothing scheduled, forever.
+ *
+ * Deliberately does NOT gate on is_explicit_callback the way
+ * maybeReopenPendingCall does — that flag means something narrower here
+ * ("this specific callback is already scheduled, don't let the AUTOMATIC
+ * cadence re-trigger over it"), and reusing it as a blanket skip would
+ * wrongly block this forever on any row that went through an earlier,
+ * unrelated explicit-callback path (e.g. a lead who consented to the FIRST
+ * call by text — agents/iris/dial-pending.ts's call_consent handling — and
+ * so already carries is_explicit_callback: true for a completely different
+ * reason by the time THIS call happens). Only gates on status === 'placed'
+ * — the same structural "nothing else already moved this row" guard
+ * maybeReopenPendingCall uses.
+ */
+export async function maybeHonorMissedCallback(clientId: string, contactId: string, transcript: string | null): Promise<void> {
+  if (!transcript) return;
+
+  try {
+    const rows = await query<{ id: number; attempts_made: number; created_at: Date; status: string }>(
+      `SELECT id, attempts_made, created_at, status FROM iris_pending_calls WHERE client_id = $1 AND contact_id = $2`,
+      [clientId, contactId]
+    );
+    const pending = rows[0];
+    if (!pending || pending.status !== "placed") return;
+
+    const config = loadIrisConfig(clientId);
+    const timezone = config?.timezone || "America/St_Johns";
+    const signal = await classifyMissedCallback(transcript, new Date(), timezone);
+
+    if (signal.type === "schedule_for") {
+      await scheduleExplicitCallback(clientId, contactId, signal.when);
+      console.log(`[VAPI] Contact ${contactId} asked to be called back at a specific time but the call ended first — scheduled for ${signal.when.toISOString()}.`);
+    } else if (signal.type === "call_later") {
+      const reopened = await reopenForNextAttempt(pending.id, clientId, pending.attempts_made, pending.created_at);
+      console.log(
+        `[VAPI] Contact ${contactId} asked to be called back later but the call ended first — ${reopened ? "requeued for the next attempt" : "cadence already exhausted, not requeuing"}.`
+      );
+      await moveToFollowUpStage(clientId, contactId, pending.attempts_made);
+      if (!reopened) await tagSequenceExhausted(clientId, contactId);
+    }
+  } catch (error) {
+    console.error(`[VAPI] Failed to check for a missed callback request for ${contactId}:`, error instanceof Error ? error.message : error);
   }
 }
 
