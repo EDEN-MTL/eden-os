@@ -119,6 +119,7 @@ describe("IrisAgent.getSystemPrompt reflects that calling is actually live", () 
   it("tells Iris she has real tools and must use them for factual lead/pipeline questions, never guess", () => {
     const prompt = irisAgent.getSystemPrompt();
     expect(prompt).toMatch(/iris_lookup_lead/);
+    expect(prompt).toMatch(/iris_call_transcript/);
     expect(prompt).toMatch(/iris_newest_lead/);
     expect(prompt).toMatch(/iris_pipeline_stats/);
     expect(prompt).toMatch(/iris_calls_today/);
@@ -201,6 +202,72 @@ describe("Iris Slack tools — iris_lookup_lead", () => {
     const toolResult = JSON.parse(secondCallMessages[secondCallMessages.length - 1].content[0].content);
     expect(toolResult).toEqual({ found: false, searchedFor: "Nobody Real" });
     expect(db.query).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * Real gap found live 2026-10-01 (#iris-call-logs): Mark asked "can you
+ * tell what happened here?" and Iris GUESSED from the outcome code,
+ * duration, and is_explicit_callback flag ("it looks like something
+ * triggered a callback request") instead of reading what was actually
+ * said. Asked to "pull out the conversation," she admitted she had no way
+ * to — even though the real transcript was sitting in iris_call_log the
+ * whole time (webhooks/vapi-webhook.ts's handleEndOfCallReport writes it
+ * on every call).
+ */
+describe("Iris Slack tools — iris_call_transcript", () => {
+  it("resolves a name to a contact and returns the real transcript of their most recent call", async () => {
+    ghl.getGhlConfig.mockResolvedValue({ locationId: "loc-1", apiKey: "key-1" });
+    ghl.getLocationTimezone.mockResolvedValue("America/St_Johns");
+    ghl.listContactsPaginated.mockReturnValue(asyncGeneratorOf([{ id: "contact-1", firstName: "Saife", lastName: "Sarwar" }]));
+    db.query.mockResolvedValue([
+      { transcript: "AI: Hi, this is Iris...\nUser: not interested right now", created_at: new Date("2026-10-01T19:20:03.000Z"), ended_reason: "customer-ended-call" },
+    ]);
+
+    vi.mocked(chatWithTools)
+      .mockResolvedValueOnce({ content: [toolUseBlock("c1", "iris_call_transcript", { nameOrPhone: "Saife" })], stop_reason: "tool_use" } as any)
+      .mockResolvedValueOnce(endTurn("She said she's not interested right now."));
+
+    await irisAgent.generateReply("k9", "can you pull out the conversation here?");
+
+    const secondCallMessages = vi.mocked(chatWithTools).mock.calls[1][1] as any;
+    const toolResult = JSON.parse(secondCallMessages[secondCallMessages.length - 1].content[0].content);
+    expect(toolResult.found).toBe(true);
+    expect(toolResult.name).toBe("Saife Sarwar");
+    expect(toolResult.outcome).toBe("customer-ended-call");
+    expect(toolResult.transcript).toContain("not interested right now");
+  });
+
+  it("reports found: false for an unmatched contact, rather than inventing a transcript", async () => {
+    ghl.getGhlConfig.mockResolvedValue({ locationId: "loc-1", apiKey: "key-1" });
+    ghl.listContactsPaginated.mockReturnValue(asyncGeneratorOf([]));
+
+    vi.mocked(chatWithTools)
+      .mockResolvedValueOnce({ content: [toolUseBlock("c1", "iris_call_transcript", { nameOrPhone: "Nobody Real" })], stop_reason: "tool_use" } as any)
+      .mockResolvedValueOnce(endTurn("Couldn't find that lead."));
+
+    await irisAgent.generateReply("k10", "what happened on the call with Nobody Real");
+
+    const secondCallMessages = vi.mocked(chatWithTools).mock.calls[1][1] as any;
+    const toolResult = JSON.parse(secondCallMessages[secondCallMessages.length - 1].content[0].content);
+    expect(toolResult).toEqual({ found: false, searchedFor: "Nobody Real" });
+    expect(db.query).not.toHaveBeenCalled();
+  });
+
+  it("reports hasCall: false when the contact exists but was never actually called", async () => {
+    ghl.getGhlConfig.mockResolvedValue({ locationId: "loc-1", apiKey: "key-1" });
+    ghl.listContactsPaginated.mockReturnValue(asyncGeneratorOf([{ id: "contact-2", firstName: "Brand", lastName: "New" }]));
+    db.query.mockResolvedValue([]);
+
+    vi.mocked(chatWithTools)
+      .mockResolvedValueOnce({ content: [toolUseBlock("c1", "iris_call_transcript", { nameOrPhone: "Brand New" })], stop_reason: "tool_use" } as any)
+      .mockResolvedValueOnce(endTurn("No calls yet."));
+
+    await irisAgent.generateReply("k11", "what happened on the call with Brand New");
+
+    const secondCallMessages = vi.mocked(chatWithTools).mock.calls[1][1] as any;
+    const toolResult = JSON.parse(secondCallMessages[secondCallMessages.length - 1].content[0].content);
+    expect(toolResult).toEqual({ found: true, name: "Brand New", hasCall: false });
   });
 });
 
