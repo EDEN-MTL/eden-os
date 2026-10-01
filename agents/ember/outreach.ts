@@ -20,14 +20,14 @@ import { AlertFn, formatReactivationAlert, markExited, markReactivated } from ".
 import { detectChange } from "./scan";
 import { logSend, sendsToday, updateLead } from "./store";
 import { GhlOpportunityLite, NurtureChannel, NurtureLead } from "./types";
+import { NotInterestedCategory, StatusDecision } from "./status";
+import { moveToNotInterested, MoveStageFn } from "./notinterested";
 import {
   consentStart,
   EMPTY_CONTEXT,
-  findHardOptOut,
-  findSoftDecline,
+  findTemporaryPause,
   HistoryDecision,
   HistoryMessage,
-  isHardOptOut,
   LeadContext,
   ReviewContext,
 } from "./history";
@@ -71,13 +71,17 @@ export interface OutreachDeps {
   reviewHistory(messages: HistoryMessage[], ctx: ReviewContext): Promise<HistoryDecision>;
   /** Where they stand in the CRM: stage, notes, Iris calls (context.ts). */
   readContext(lead: NurtureLead, opportunity: GhlOpportunityLite): Promise<LeadContext>;
+  /** Clear-evidence Not Interested check (status.ts). */
+  classifyStatus(messages: HistoryMessage[]): Promise<StatusDecision>;
+  /** Moves a GHL card to a stage by name. */
+  moveStage: MoveStageFn;
 }
 
 export type TouchPlan =
   /** body set = a personal opener replacing the script. */
   | { kind: "send"; body?: string; reason: string }
-  /** Permanent — CASL unsubscribe, or wrong number. */
-  | { kind: "opt_out"; reason: string }
+  /** Clear evidence they're no longer a prospect — move to Not Interested, never contact again (status.ts). */
+  | { kind: "not_interested"; category: NotInterestedCategory; evidence: string; by: "rule" | "ai"; reason: string }
   /** "Not now" — restart the cycle from scratch on `until`. */
   | { kind: "defer"; until: Date; reason: string }
   | { kind: "no_consent"; reason: string }
@@ -86,11 +90,15 @@ export type TouchPlan =
 /**
  * Everything that decides what (if anything) this touch says, in order:
  *
- *   1. A hard opt-out anywhere in history → never again. Code, not model.
+ *   1. Clear evidence they're no longer a prospect — a stop request,
+ *      another agent, bought, sold, no longer looking (status.ts, Mark's
+ *      2026-10-01 rule) → moved to Not Interested, never contacted again.
+ *      Checked first: moving a card isn't messaging, so it applies even to
+ *      a lead past the consent window.
  *   2. CASL consent from the latest real inquiry (consentStart) → parked
  *      as no_consent if it's run out.
- *   3. A soft decline inside the cool-off → deferred to decline +
- *      reApproachAfterDays (Mark, 2026-09-24: try again after 6 months).
+ *   3. A temporary "not right now" inside the cool-off → deferred to that
+ *      message + reApproachAfterDays, then worked again from scratch.
  *   4. First touch of a cycle only: the model reads history + CRM context
  *      and picks defer / script / personal opener. Later touches use the
  *      approved scripts.
@@ -106,18 +114,23 @@ export async function planTouch(input: {
   config: EmberConfig;
   now: Date;
   review: (messages: HistoryMessage[], ctx: ReviewContext) => Promise<HistoryDecision>;
+  classify: (messages: HistoryMessage[]) => Promise<StatusDecision>;
 }): Promise<TouchPlan> {
   const { lead, contact, history, context, config, now } = input;
 
-  const hard = findHardOptOut(history);
-  if (hard) return { kind: "opt_out", reason: `said "${hard.slice(0, 80)}"` };
+  const status = await input.classify(history);
+  if (status.verdict === "not_interested") {
+    return { kind: "not_interested", category: status.category, evidence: status.evidence, by: status.by, reason: `said "${status.evidence.slice(0, 80)}"` };
+  }
+  // A possible clear no the model couldn't confirm: neither move nor text.
+  if (status.verdict === "unsure") return { kind: "retry", reason: status.reason };
 
   const from = consentStart(lead.inquiryAt, history);
   if (from && now.getTime() - new Date(from).getTime() >= config.consentWindowDays * DAY_MS) {
     return { kind: "no_consent", reason: `last inquiry ${from.slice(0, 10)} is past the ${config.consentWindowDays}-day consent window` };
   }
 
-  const decline = findSoftDecline(history);
+  const decline = findTemporaryPause(history);
   const coolOffMs = config.reApproachAfterDays * DAY_MS;
   if (decline?.at && now.getTime() - new Date(decline.at).getTime() < coolOffMs) {
     return {
@@ -322,12 +335,12 @@ export async function sendTouch(lead: NurtureLead, deps: OutreachDeps, ctx: Touc
     return skip(`could not read conversation history: ${error instanceof Error ? error.message : String(error)}`);
   }
   const context = touchIndex === 0 ? await deps.readContext(lead, live.opportunity).catch(() => EMPTY_CONTEXT) : EMPTY_CONTEXT;
-  const plan = await planTouch({ lead, contact: live.contact, history, context, config, now, review: deps.reviewHistory });
+  const plan = await planTouch({ lead, contact: live.contact, history, context, config, now, review: deps.reviewHistory, classify: deps.classifyStatus });
 
   if (plan.kind === "retry") return skip(plan.reason);
-  if (plan.kind === "opt_out") {
-    await updateLead(lead.id, { status: "opted_out", statusReason: `history: ${plan.reason}`, nextTouchAt: null });
-    return skip(`opted out: ${plan.reason}`);
+  if (plan.kind === "not_interested") {
+    await moveToNotInterested(lead, plan, { config, clientName: ctx.clientName, alert: deps.alert, moveStage: deps.moveStage, now });
+    return skip(`not interested: ${plan.reason}`);
   }
   if (plan.kind === "no_consent") {
     await updateLead(lead.id, { status: "no_consent", statusReason: plan.reason, nextTouchAt: null });
@@ -483,6 +496,9 @@ export async function handleReply(
      * client, contact unreadable) falls back to the human alert below.
      */
     handoff?: (lead: NurtureLead, text: string) => Promise<"handed_off" | "not_available">;
+    /** Clear-evidence Not Interested check (status.ts). */
+    classifyStatus: (messages: HistoryMessage[]) => Promise<StatusDecision>;
+    moveStage: MoveStageFn;
   }
 ): Promise<ReplySentiment> {
   const now = ctx.now ?? new Date();
@@ -503,20 +519,32 @@ export async function handleReply(
       negativeKeywords: [],
     }) === "positive";
 
-  // Mark, 2026-09-24: only a real unsubscribe is forever. "No thanks" /
-  // "not interested" / "we bought" pauses them for reApproachAfterDays and
-  // the next cycle starts fresh from where they are in the CRM.
-  if (isHardOptOut(body)) {
-    await updateLead(lead.id, {
-      status: "opted_out",
-      statusReason: `replied "${snippet}"`,
-      repliedAt: now.toISOString(),
-      nextTouchAt: null,
-    });
+  // Mark, 2026-10-01: clear evidence they're no longer a prospect (asked to
+  // stop, another agent, bought, sold, no longer looking) moves them to Not
+  // Interested for good. Everything uncertain keeps nurturing.
+  const reply: HistoryMessage = { direction: "inbound", channel: "sms", body, at: now.toISOString() };
+  const status = await ctx.classifyStatus([reply]);
+  if (status.verdict === "not_interested") {
+    await updateLead(lead.id, { repliedAt: now.toISOString() });
+    await moveToNotInterested(lead, status, { config: ctx.config, clientName: ctx.clientName, alert: ctx.alert, moveStage: ctx.moveStage, now });
     return "negative";
   }
-  const softDecline = findSoftDecline([{ direction: "inbound", channel: "sms", body, at: now.toISOString() }]) !== null;
-  if ((sentiment === "negative" && !alsoPositive) || (softDecline && !alsoPositive && sentiment !== "positive")) {
+  if (status.verdict === "unsure") {
+    // Might be a clear no, but it couldn't be confirmed. Don't move the
+    // card and don't hand it to Iris — a human reads it.
+    await updateLead(lead.id, { status: "replied", statusReason: `replied "${snippet}" — needs a human look`, repliedAt: now.toISOString(), nextTouchAt: null });
+    try {
+      await ctx.alert(formatReactivationAlert(lead, `replied "${snippet}" — couldn't tell automatically whether that's a "no", please read it`, ctx.clientName, now));
+    } catch (error) {
+      console.error(`[EMB] reply alert failed for lead ${lead.id}:`, error);
+    }
+    return sentiment;
+  }
+
+  // Temporary "not right now" (or a bare "no thanks"): pause for
+  // reApproachAfterDays, then start a fresh cycle from where they are.
+  const temporary = findTemporaryPause([reply]) !== null;
+  if ((sentiment === "negative" && !alsoPositive) || (temporary && !alsoPositive && sentiment !== "positive")) {
     const until = new Date(now.getTime() + ctx.config.reApproachAfterDays * DAY_MS);
     await updateLead(lead.id, {
       status: "nurturing",

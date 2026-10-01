@@ -18,6 +18,8 @@ export type NurtureStatus =
   | "reactivated"
   | "exited"
   | "opted_out"
+  /** Clear evidence they're no longer a prospect — card moved to Not Interested (status.ts). */
+  | "not_interested"
   /** Past the CASL consent window — parked, reopenable if express consent is confirmed. */
   | "no_consent"
   | "completed";

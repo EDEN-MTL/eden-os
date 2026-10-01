@@ -15,7 +15,7 @@ const alert = vi.hoisted(() => vi.fn(async () => {}));
 vi.mock("./alerts", async (orig) => ({ ...(await orig<any>()), slackAlert: () => alert }));
 vi.mock("./deps", async () => {
   const { STAGES } = await import("./test-fixtures");
-  return { resolveStageNames: vi.fn(async () => STAGES) };
+  return { resolveStageNames: vi.fn(async () => STAGES), buildMoveStage: () => vi.fn(async () => {}) };
 });
 
 const handoff = vi.hoisted(() => ({ handOffToIris: vi.fn(async () => "not_available" as const) }));

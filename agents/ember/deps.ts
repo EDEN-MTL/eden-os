@@ -2,7 +2,9 @@
  * Builds the live GHL calls Ember's send path needs, resolved once per run
  * against a client's actual credentials — same role as agents/quarry/deps.ts.
  */
-import { getContact, getGhlConfig, getOpportunity, listPipelines, sendEmail, sendSMS } from "../../shared/ghl";
+import { getContact, getGhlConfig, getOpportunity, listPipelines, sendEmail, sendSMS, updateOpportunityStage } from "../../shared/ghl";
+import { classifyLeadStatus } from "./status";
+import { MoveStageFn } from "./notinterested";
 import { EmberConfig } from "./config";
 import { slackAlert } from "./alerts";
 import { OutreachDeps } from "./outreach";
@@ -66,6 +68,8 @@ export async function buildOutreachDeps(clientId: string, config: EmberConfig): 
     wait: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
     readHistory: (lead) => readConversationHistory(lead.ghlContactId, locationId, apiKey),
     reviewHistory: (messages, ctx) => reviewHistory(messages, ctx),
+    classifyStatus: (messages) => classifyLeadStatus(messages),
+    moveStage: buildMoveStage(clientId, config.pipelineId),
     readContext: async (lead, opportunity) =>
       readLeadContext(lead, opportunity, await resolveStageNames(lead.clientId, config.pipelineId), { locationId, apiKey }),
   };
@@ -81,4 +85,21 @@ export async function resolveStageNames(clientId: string, pipelineId: string): P
     for (const s of p.stages || []) names[s.id] = s.name;
   }
   return names;
+}
+
+/**
+ * Moves a card by stage NAME — cards carry stage ids (gotcha 5), so the
+ * name is resolved against the live pipeline at move time. An unknown name
+ * throws rather than silently doing nothing: notinterested.ts turns that
+ * into a "please move it by hand" alert.
+ */
+export function buildMoveStage(clientId: string, pipelineId: string): MoveStageFn {
+  return async (opportunityId, stageName) => {
+    const ghl = await getGhlConfig(clientId);
+    if (!ghl) throw new GhlNotConfiguredError(clientId);
+    const names = await resolveStageNames(clientId, pipelineId);
+    const stageId = Object.entries(names).find(([, n]) => n.trim().toLowerCase() === stageName.trim().toLowerCase())?.[0];
+    if (!stageId) throw new Error(`stage "${stageName}" not found in pipeline ${pipelineId}`);
+    await updateOpportunityStage(opportunityId, stageId, ghl.locationId, ghl.apiKey);
+  };
 }

@@ -14,7 +14,8 @@
  */
 import { loadEmberConfig, loadEmberOutcomeStages } from "./config";
 import { markExited, markReactivated, REACTIVATABLE, slackAlert } from "./alerts";
-import { resolveStageNames } from "./deps";
+import { buildMoveStage, resolveStageNames } from "./deps";
+import { classifyLeadStatus } from "./status";
 import { handleReply } from "./outreach";
 import { detectChange } from "./scan";
 import { getLeadByOpportunityId, listOpenLeadsByContactId, updateLead } from "./store";
@@ -66,6 +67,8 @@ export async function emberHandleInboundMessage(contactId: string, text: string,
       clientName: name,
       alert,
       handoff: (l, t) => handOffToIris(l, t, { config, clientName: name, alert, receivedAt }),
+      classifyStatus: (messages) => classifyLeadStatus(messages),
+      moveStage: buildMoveStage(lead.clientId, config.pipelineId),
     });
     console.log(`[EMB] reply from ${lead.contactName ?? lead.ghlContactId}: ${sentiment}`);
     handled = true;

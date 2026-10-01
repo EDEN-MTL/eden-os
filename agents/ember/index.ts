@@ -29,7 +29,7 @@ const TOOLS: ToolDef[] = [
         clientId: CLIENT_ID_PROP,
         status: {
           type: "string",
-          enum: ["nurturing", "paused", "replied", "handed_off", "reactivated", "exited", "opted_out", "no_consent", "completed"],
+          enum: ["nurturing", "paused", "replied", "handed_off", "reactivated", "exited", "opted_out", "not_interested", "no_consent", "completed"],
         },
         limit: { type: "number", description: "Max leads to return. Default 15." },
       },
@@ -72,7 +72,7 @@ const TOOLS: ToolDef[] = [
   {
     name: "ember_resume_lead",
     description:
-      "Resumes a paused nurture lead. Its next touch becomes due at the next send run. Only works on a paused lead — replied, reactivated and opted-out leads stay stopped on purpose.",
+      "Resumes a paused nurture lead, or undoes a wrong Not Interested move (after the card has been moved back in GHL). Its next touch becomes due at the next send run. Replied, reactivated and opted-out (unsubscribed) leads stay stopped on purpose.",
     input_schema: { type: "object", properties: { leadId: { type: "number" } }, required: ["leadId"] },
   },
 ];
@@ -133,10 +133,13 @@ asks why nothing is happening, that switch is usually the answer.
 Before the first text of each cycle you read the lead's whole record —
 texts, emails, team calls, Iris's calls, notes, pipeline stage — and either
 use the approved script, write a short opener that picks up where they
-left off, or wait. A real unsubscribe ("stop", "remove me", "don't text
-me", wrong number, GHL DND) is permanent. A "not interested" / "already
-bought" / "working with another agent" is paused and tried again 180 days
-after they said it.
+left off, or wait. Lead status management (Mark's rule, 2026-10-01): on CLEAR evidence a lead
+is no longer a prospect — they asked to stop, already bought, already sold,
+are working with another agent, are no longer looking, or their plans
+changed for good — you move their card to Not Interested and never contact
+them again, and post why in #backend-ops quoting their words. Never on
+assumptions: no reply, busy, unsure, "not ready yet", "next year", "still
+thinking" all keep nurturing (a "not right now" pauses them 180 days).
 
 Compliance you should be able to explain: texts only go out within the
 CASL consent window, counted from their latest real inquiry (the original
@@ -217,8 +220,12 @@ plainly. Respond concisely, like a teammate texting a quick update.`;
       case "ember_resume_lead": {
         const lead = await getLead(Number(input.leadId));
         if (!lead) return JSON.stringify({ error: `No nurture lead #${input.leadId}` });
-        if (lead.status !== "paused") {
-          return JSON.stringify({ error: `Lead #${lead.id} is ${lead.status} — only a paused lead can be resumed.` });
+        // not_interested can be resumed too: it's the undo for a wrong
+        // Not Interested call (the alert tells the team to do exactly this,
+        // after moving the card back in GHL). opted_out never can — that's
+        // a real unsubscribe.
+        if (lead.status !== "paused" && lead.status !== "not_interested") {
+          return JSON.stringify({ error: `Lead #${lead.id} is ${lead.status} — only a paused or Not Interested lead can be resumed.` });
         }
         // Due immediately rather than at its old next_touch_at, which may be
         // long past — the send run's gap logic spaces anything after this one.
