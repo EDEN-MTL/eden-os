@@ -119,6 +119,7 @@ describe("IrisAgent.getSystemPrompt reflects that calling is actually live", () 
   it("tells Iris she has real tools and must use them for factual lead/pipeline questions, never guess", () => {
     const prompt = irisAgent.getSystemPrompt();
     expect(prompt).toMatch(/iris_lookup_lead/);
+    expect(prompt).toMatch(/iris_newest_lead/);
     expect(prompt).toMatch(/iris_pipeline_stats/);
     expect(prompt).toMatch(/iris_calls_today/);
     expect(prompt).toMatch(/never guess|rather than guessing/i);
@@ -221,6 +222,68 @@ describe("Iris Slack tools — iris_pipeline_stats", () => {
     expect(toolResult.byStatus).toEqual({ pending: 5, placed: 3 });
     expect(toolResult.optedOutViaText).toBe(2);
     expect(toolResult.likelyExhaustedNoAnswer).toBe(1);
+  });
+});
+
+/**
+ * Real gap found live 2026-10-01 (#iris-call-logs): Mark asked "how about
+ * the new lead?" then "i mean the new lead that just came in?" and Iris
+ * said plainly she had no way to browse the lead list or see who just got
+ * added — only a name/phone lookup. iris_pending_calls gets a row the
+ * instant Scout's lead.enriched fires, so the newest row IS the newest
+ * lead, same ground truth the automatic cadence itself dials from.
+ */
+describe("Iris Slack tools — iris_newest_lead", () => {
+  it("resolves to the most recently captured lead and reports the same depth as iris_lookup_lead", async () => {
+    ghl.getLocationTimezone.mockResolvedValue("America/St_Johns");
+    db.query.mockImplementation((sql: string) => {
+      if (sql.includes("iris_pending_calls WHERE client_id = $1 ORDER BY")) {
+        return Promise.resolve([
+          {
+            contact_id: "contact-9",
+            lead: { name: "Saife Sarwar", phone: "+17095550199", intent: "buyer" },
+            created_at: new Date("2026-10-01T18:00:00.000Z"),
+          },
+        ]);
+      }
+      if (sql.includes("iris_pending_calls WHERE client_id = $1 AND contact_id")) {
+        return Promise.resolve([
+          { status: "pending", resolution_reason: null, is_explicit_callback: false, call_after: new Date("2026-10-02T14:00:00.000Z"), attempts_made: 1 },
+        ]);
+      }
+      return Promise.resolve([]);
+    });
+
+    vi.mocked(chatWithTools)
+      .mockResolvedValueOnce({ content: [toolUseBlock("c1", "iris_newest_lead", {})], stop_reason: "tool_use" } as any)
+      .mockResolvedValueOnce(endTurn("Newest lead is Saife Sarwar, a buyer."));
+
+    await irisAgent.generateReply("k7", "how about the new lead?");
+
+    const secondCallMessages = vi.mocked(chatWithTools).mock.calls[1][1] as any;
+    const toolResult = JSON.parse(secondCallMessages[secondCallMessages.length - 1].content[0].content);
+    expect(toolResult).toMatchObject({
+      found: true,
+      name: "Saife Sarwar",
+      phone: "+17095550199",
+      intent: "buyer",
+      currentStatus: "pending",
+      attemptsMade: 1,
+    });
+  });
+
+  it("reports found: false, rather than guessing, when the client has no leads at all yet", async () => {
+    db.query.mockResolvedValue([]);
+
+    vi.mocked(chatWithTools)
+      .mockResolvedValueOnce({ content: [toolUseBlock("c1", "iris_newest_lead", {})], stop_reason: "tool_use" } as any)
+      .mockResolvedValueOnce(endTurn("No leads yet."));
+
+    await irisAgent.generateReply("k8", "what about the newest lead?");
+
+    const secondCallMessages = vi.mocked(chatWithTools).mock.calls[1][1] as any;
+    const toolResult = JSON.parse(secondCallMessages[secondCallMessages.length - 1].content[0].content);
+    expect(toolResult).toEqual({ found: false });
   });
 });
 
