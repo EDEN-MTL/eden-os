@@ -37,6 +37,8 @@ describe("handOffToIris", () => {
     // Cold fallback: one call a day later if they stop texting.
     expect(callAfter.getTime()).toBe(NOW.getTime() + 24 * 3_600_000);
     expect(c.alert).toHaveBeenCalledWith(expect.stringContaining("Iris is qualifying them by text"));
+    expect(c.alert).toHaveBeenCalledWith(expect.stringContaining("Iris has the conversation"));
+    expect(c.alert).not.toHaveBeenCalledWith(expect.stringContaining("a human can take it from here"));
     expect(d.irisHandleInboundSms).toHaveBeenCalledWith("c1", "yes still thinking about it", { receivedAt: NOW });
   });
 

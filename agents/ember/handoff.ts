@@ -98,7 +98,8 @@ export async function handOffToIris(
         `replied "${snippet}" — Iris is qualifying them by text and will call for a live transfer if they qualify` +
           (textOnly ? ` (they've asked to be texted rather than called, so Iris will only call if they say yes to one)` : ""),
         ctx.clientName,
-        now
+        now,
+        "iris"
       )
     );
   } catch (error) {
