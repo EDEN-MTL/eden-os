@@ -203,11 +203,22 @@ function templateAt<T>(templates: T[], index: number): T {
 }
 
 /** "Jordan Smith" → "Jordan"; nothing usable → "there" ("Hi there,"). */
+/**
+ * "JACOB" → "Jacob", "sarah" → "Sarah"; anything already mixed-case
+ * ("McKenzie", "DeShawn") is left alone. Found 2026-10-01: the test
+ * account's JACOB EDEN contact would have been texted "Hi JACOB," — a
+ * shouted name reads as a mail merge, exactly what a nurture text must not.
+ */
+export function displayName(name: string): string {
+  if (name !== name.toUpperCase() && name !== name.toLowerCase()) return name;
+  return name.toLowerCase().replace(/(^|[\s'-])(\p{L})/gu, (_m, sep, ch) => sep + ch.toUpperCase());
+}
+
 function firstNameOf(lead: NurtureLead, contact: LiveContact): string {
   const fromContact = contact.firstName?.trim();
-  if (fromContact) return fromContact;
+  if (fromContact) return displayName(fromContact);
   const fromName = lead.contactName?.trim().split(/\s+/)[0];
-  return fromName || "there";
+  return fromName ? displayName(fromName) : "there";
 }
 
 export function buildMessage(

@@ -337,3 +337,13 @@ describe("handleReply", () => {
     expect(r.alert).toHaveBeenCalledTimes(1);
   });
 });
+
+describe("displayName — no shouted names in texts", () => {
+  it.each([["JACOB", "Jacob"], ["sarah", "Sarah"], ["MARY-JANE", "Mary-Jane"], ["O'BRIEN", "O'Brien"], ["McKenzie", "McKenzie"], ["DeShawn", "DeShawn"]])(
+    "%s → %s",
+    async (input, out) => {
+      const { displayName } = await import("./outreach");
+      expect(displayName(input)).toBe(out);
+    }
+  );
+});
