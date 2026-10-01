@@ -7,7 +7,7 @@ import { appendHistory } from "../shared/conversation-memory";
 import { loadIrisConfig } from "../agents/iris";
 import { reopenForNextAttempt, scheduleExplicitCallback } from "../agents/iris/dial-pending";
 import { buildKeyToId, readField } from "../agents/scout/intake";
-import { formatLocal } from "../agents/iris/cadence";
+import { clampToLegalCallingWindow, formatLocal } from "../agents/iris/cadence";
 import { handleInboundCall } from "../agents/iris/inbound";
 import { classifyMissedCallback } from "../agents/iris/call-signals";
 
@@ -298,6 +298,39 @@ export async function postCallLogToSlack(clientId: string, contactId: string | n
  * best-effort like every other post-call side effect in this handler, and
  * must never block or throw into the caller.
  */
+/**
+ * Reads the client's own callbackNotesFieldKey field on a contact and
+ * appends one more line to it — never overwrites, since this field can
+ * already carry a real qualification summary or an earlier call's status
+ * line that matters just as much as whatever's being added now. Shared by
+ * appendCallStatusNote (every call's generic status line) and
+ * maybeHonorMissedCallback below (the specific "lead asked for a callback"
+ * line Mark asked for, 2026-10-01: "store the callback time in the
+ * lead/opportunity record... not just in Iris's conversational state" —
+ * otherwise the next scheduled call loses all context for why it's
+ * calling back).
+ */
+async function appendNoteToContact(clientId: string, contactId: string, line: string): Promise<void> {
+  const ghlConfig = await getGhlConfig(clientId);
+  const config = loadIrisConfig(clientId);
+  if (!ghlConfig || !config) return;
+
+  const defs = await getCustomFieldDefs(ghlConfig.locationId, ghlConfig.apiKey);
+  const keyToId = buildKeyToId(defs);
+  const fieldId = keyToId.get(config.callbackNotesFieldKey);
+  if (!fieldId) {
+    console.warn(`[VAPI] callbackNotesFieldKey "${config.callbackNotesFieldKey}" did not resolve to a field id for ${clientId} — skipping note.`);
+    return;
+  }
+
+  const contactResp = await getContact(contactId, ghlConfig.locationId, ghlConfig.apiKey);
+  const contact = contactResp?.contact ?? contactResp;
+  const existing = readField(contact?.customFields, config.callbackNotesFieldKey, keyToId);
+  const notes = existing ? `${existing}\n\n${line}` : line;
+
+  await updateContact(contactId, { customFields: [{ id: fieldId, value: notes }] }, ghlConfig.locationId, ghlConfig.apiKey);
+}
+
 export async function appendCallStatusNote(
   clientId: string,
   contactId: string,
@@ -305,29 +338,13 @@ export async function appendCallStatusNote(
   message: Record<string, any>
 ): Promise<void> {
   try {
-    const ghlConfig = await getGhlConfig(clientId);
     const config = loadIrisConfig(clientId);
-    if (!ghlConfig || !config) return;
-
-    const defs = await getCustomFieldDefs(ghlConfig.locationId, ghlConfig.apiKey);
-    const keyToId = buildKeyToId(defs);
-    const fieldId = keyToId.get(config.callbackNotesFieldKey);
-    if (!fieldId) {
-      console.warn(`[VAPI] callbackNotesFieldKey "${config.callbackNotesFieldKey}" did not resolve to a field id for ${clientId} — skipping call-status note.`);
-      return;
-    }
-
-    const contactResp = await getContact(contactId, ghlConfig.locationId, ghlConfig.apiKey);
-    const contact = contactResp?.contact ?? contactResp;
-    const existing = readField(contact?.customFields, config.callbackNotesFieldKey, keyToId);
-
+    if (!config) return;
     const timezone = config.timezone || "America/St_Johns";
     const statusLine =
       `Iris call ${formatLocal(new Date().toISOString(), timezone)} — ${describeOutcome(endedReason, message)}. ` +
       `Duration: ${formatDuration(message?.durationSeconds)}.`;
-    const notes = existing ? `${existing}\n\n${statusLine}` : statusLine;
-
-    await updateContact(contactId, { customFields: [{ id: fieldId, value: notes }] }, ghlConfig.locationId, ghlConfig.apiKey);
+    await appendNoteToContact(clientId, contactId, statusLine);
   } catch (error) {
     console.error(`[VAPI] Failed to append call-status note for contact ${contactId}:`, error instanceof Error ? error.message : error);
   }
@@ -464,6 +481,9 @@ async function maybeReopenPendingCall(clientId: string, contactId: string): Prom
   }
 }
 
+/** Mark's spec, 2026-10-01: when the lead asked for a callback but gave no specific time, default to ~1 hour out — same constant the live schedule_callback tool uses for the identical scenario (webhooks/vapi-tools.ts). */
+const DEFAULT_CALLBACK_DELAY_MINUTES = 60;
+
 /**
  * Catches a callback request the LIVE call itself missed — the lead asked
  * to be called back (a specific time, or just "later") and the call ended
@@ -484,13 +504,24 @@ async function maybeReopenPendingCall(clientId: string, contactId: string): Prom
  * reason by the time THIS call happens). Only gates on status === 'placed'
  * — the same structural "nothing else already moved this row" guard
  * maybeReopenPendingCall uses.
+ *
+ * Both signal types converge on the SAME scheduleExplicitCallback path the
+ * live tool already uses — call_later just supplies a computed default
+ * time instead of one the lead gave — and both leave a durable note on the
+ * contact (appendNoteToContact, same append-never-overwrite field the
+ * live tool's recordCallbackNote writes to, just appending instead of
+ * replacing since a real call-status line may have just been written
+ * moments earlier in this same handler). Mark's explicit instruction: the
+ * callback time must live on the lead's own record, not just in internal
+ * state — otherwise the next scheduled call loses all context for why
+ * it's calling back.
  */
 export async function maybeHonorMissedCallback(clientId: string, contactId: string, transcript: string | null): Promise<void> {
   if (!transcript) return;
 
   try {
-    const rows = await query<{ id: number; attempts_made: number; created_at: Date; status: string }>(
-      `SELECT id, attempts_made, created_at, status FROM iris_pending_calls WHERE client_id = $1 AND contact_id = $2`,
+    const rows = await query<{ id: number; status: string }>(
+      `SELECT id, status FROM iris_pending_calls WHERE client_id = $1 AND contact_id = $2`,
       [clientId, contactId]
     );
     const pending = rows[0];
@@ -499,18 +530,23 @@ export async function maybeHonorMissedCallback(clientId: string, contactId: stri
     const config = loadIrisConfig(clientId);
     const timezone = config?.timezone || "America/St_Johns";
     const signal = await classifyMissedCallback(transcript, new Date(), timezone);
+    if (signal.type === "none") return;
 
-    if (signal.type === "schedule_for") {
-      await scheduleExplicitCallback(clientId, contactId, signal.when);
-      console.log(`[VAPI] Contact ${contactId} asked to be called back at a specific time but the call ended first — scheduled for ${signal.when.toISOString()}.`);
-    } else if (signal.type === "call_later") {
-      const reopened = await reopenForNextAttempt(pending.id, clientId, pending.attempts_made, pending.created_at);
-      console.log(
-        `[VAPI] Contact ${contactId} asked to be called back later but the call ended first — ${reopened ? "requeued for the next attempt" : "cadence already exhausted, not requeuing"}.`
-      );
-      await moveToFollowUpStage(clientId, contactId, pending.attempts_made);
-      if (!reopened) await tagSequenceExhausted(clientId, contactId);
-    }
+    const when =
+      signal.type === "schedule_for" ? signal.when : clampToLegalCallingWindow(new Date(Date.now() + DEFAULT_CALLBACK_DELAY_MINUTES * 60_000), timezone);
+
+    await scheduleExplicitCallback(clientId, contactId, when);
+    console.log(
+      `[VAPI] Contact ${contactId} asked to be called back but the call ended first — ${signal.type === "schedule_for" ? "scheduled for the time they gave" : "scheduled ~1h out (no time given)"}: ${when.toISOString()}.`
+    );
+
+    await appendNoteToContact(
+      clientId,
+      contactId,
+      `Iris: lead asked to be called back — scheduled for ${formatLocal(when.toISOString(), timezone)}${signal.type === "call_later" ? " (no specific time given, default)" : ""}.`
+    ).catch((error) => {
+      console.error(`[VAPI] Failed to note the missed callback for contact ${contactId}:`, error instanceof Error ? error.message : error);
+    });
   } catch (error) {
     console.error(`[VAPI] Failed to check for a missed callback request for ${contactId}:`, error instanceof Error ? error.message : error);
   }
