@@ -19,7 +19,7 @@ import { ask } from "../../shared/claude";
 import { getConversationMessages, getConversations } from "../../shared/ghl";
 import { clampToLegalCallingWindow } from "./cadence";
 
-export type TextSignal = { type: "opt_out" } | { type: "schedule_for"; when: Date } | { type: "none" };
+export type TextSignal = { type: "opt_out" } | { type: "schedule_for"; when: Date } | { type: "call_consent" } | { type: "none" };
 
 // Same bounds webhooks/vapi-tools.ts's handleScheduleCallback already
 // enforces for a live-call-requested callback (MIN_CALLBACK_MINUTES_OUT /
@@ -35,19 +35,33 @@ function buildSystemPrompt(nowIso: string, timezone: string, precedingOutbound: 
     ? `\nFor context, this is the lead's reply to our own immediately preceding text: "${precedingOutbound}" — read the lead's message as an answer to that, not in isolation. A bare answer like "6 pm" replying to "what's a good time to speak?" is a clear schedule_for, not a "none".\n`
     : "";
 
+  // Mark's spec, 2026-10-01, from a real example (Saife Sarwar replying
+  // "Ys" to "you'll receive a quick call from our AI assistant, IRIS...")
+  // — a clear, unambiguous yes to a text that was ITSELF offering/asking
+  // about an upcoming call means permission to call soon, not a reason to
+  // keep deferring to texting (which the pause-while-texting gate in
+  // dial-pending.ts would otherwise do for ANY recent inbound text,
+  // regardless of what it said). Deliberately narrow: only fires when the
+  // PRECEDING text was actually about a call — a "yes" answering "is this
+  // still your number?" is confirming contact info, not call permission,
+  // and must stay "none" here.
+  const callConsentLine = precedingOutbound
+    ? `\n{"type": "call_consent"} — ONLY when the preceding text above was itself telling the lead they'd be getting a call (e.g. mentions "a call from Iris/our assistant", "a quick call", "what's a good time to speak") AND the lead's reply is a clear, unambiguous yes to that specific thing — "yes", "yep", "sure", "sounds good", "that works", "go ahead", "I'm free", "I'm available now", or similar. Never infer this from a "yes" answering anything else (confirming a phone number, confirming interest in buying/selling, etc.) — only a clear yes to being called.\n`
+    : "";
+
   return `You are classifying a single inbound SMS reply from a real estate lead, to decide whether an automated calling assistant should change its behavior toward them. Respond with ONLY a single JSON object — no other text, no markdown code fence.
 
 Current date/time: ${nowIso} (timezone: ${timezone}). Use this as the reference point for resolving any relative time the lead mentions.
 ${contextLine}
-Classify the message into exactly ONE of these three shapes:
+Classify the message into exactly ONE of these shapes:
 
 {"type": "opt_out"} — the lead is clearly asking not to be called, to stop contacting them, or is declining any further contact. Examples: "stop calling me", "please don't call", "not interested, remove me", "quit texting/calling this number".
 
 {"type": "schedule_for", "when": "<ISO 8601 timestamp with timezone offset>"} — the lead is asking to be called back at a SPECIFIC time. Examples: "call me at 6pm", "can you call after 5 today", "call me tomorrow morning around 9". Resolve any relative/vague time against the current date/time above, in the ${timezone} timezone. A bare time of day with no date means the NEXT upcoming occurrence (today if it hasn't passed yet, otherwise tomorrow).
+${callConsentLine}
+{"type": "none"} — anything else, including an unclear/ambiguous reply, a "no"/"not today"/"not right now", or no clear signal either way. This is the default for MOST messages: a correction ("I'm not selling, I want X instead"), a question, general info, or anything that doesn't clearly request an opt-out, a specific callback time, or give clear consent to an offered call.
 
-{"type": "none"} — anything else. This is the default for MOST messages: a correction ("I'm not selling, I want X instead"), a question, general info, an unclear or ambiguous message, or anything that doesn't clearly request an opt-out or a specific callback time.
-
-Be conservative — only use opt_out or schedule_for when the lead's intent is unambiguous. When in doubt, use none.`;
+Be conservative — only use opt_out, schedule_for, or call_consent when the lead's intent is unambiguous. When in doubt, use none.`;
 }
 
 function extractJsonObject(raw: string): unknown {
@@ -90,6 +104,12 @@ export async function classifyInboundText(
   if (!parsed || typeof parsed.type !== "string") return { type: "none" };
 
   if (parsed.type === "opt_out") return { type: "opt_out" };
+
+  // Defensive, code-level backstop (same philosophy as schedule_for's
+  // MIN_MINUTES_OUT bound below) — call_consent only means anything when
+  // the preceding text actually offered a call; without that, there's
+  // nothing for a bare "yes" to have consented to.
+  if (parsed.type === "call_consent" && /\bcall\b/i.test(precedingOutbound ?? "")) return { type: "call_consent" };
 
   if (parsed.type === "schedule_for" && typeof parsed.when === "string") {
     const when = new Date(parsed.when);

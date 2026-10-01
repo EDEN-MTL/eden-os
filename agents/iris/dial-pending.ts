@@ -45,6 +45,8 @@ import { getGhlConfig, getLocationTimezone, addContactTags } from "../../shared/
 const SMS_ACTIVE_COLD_OFF_HOURS = 24;
 /** How soon to look again once a call is paused for active texting — not a real cadence attempt, so attempts_made is never bumped for this. */
 const SMS_PAUSE_RECHECK_MINUTES = 60;
+/** Mark's spec, 2026-10-01: call ~5 minutes after a clear text consent to being called, not immediately — same reasoning as scheduleTransferCall's own TRANSFER_CALL_MIN_DELAY_MINUTES (agents/iris/sms.ts). */
+const CALL_CONSENT_DELAY_MINUTES = 5;
 
 /**
  * Client timezone for cadence slot times (10am/2pm local — see
@@ -259,6 +261,30 @@ async function resolveOne(row: PendingCallRow): Promise<void> {
              resolution_reason = 'lead requested this time via text', resolved_at = NULL
          WHERE id = $1`,
         [row.id, signal.when]
+      );
+      return;
+    }
+
+    // Mark's spec, 2026-10-01, from a real example (Saife Sarwar replying
+    // "Ys" to the intake automation's "you'll receive a quick call from
+    // our AI assistant, IRIS..." text): a clear, unambiguous yes to a text
+    // that was ITSELF offering a call is explicit permission to call soon
+    // — not a reason to defer to texting the way the pause-while-texting
+    // gate below otherwise would for any recent inbound text. Guarded on
+    // !row.sms_scheduled so this only ever fires ONCE per row: without it,
+    // the NEXT recheck (5 minutes later) would reclassify the SAME "Ys"
+    // text, see call_consent again, and push call_after another 5 minutes
+    // out forever, never actually calling. Setting sms_scheduled = true
+    // here also makes the pause gate below skip itself on that next
+    // recheck (its own existing guard), so the call actually goes through.
+    if (signal.type === "call_consent" && !row.sms_scheduled) {
+      const callTime = clampToLegalCallingWindow(new Date(Date.now() + CALL_CONSENT_DELAY_MINUTES * 60_000), timezone);
+      await query(
+        `UPDATE iris_pending_calls
+         SET call_after = $2, status = 'pending', is_explicit_callback = true, sms_scheduled = true,
+             resolution_reason = 'lead confirmed by text they are okay with a call', resolved_at = NULL
+         WHERE id = $1`,
+        [row.id, callTime]
       );
       return;
     }
