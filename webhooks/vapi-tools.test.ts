@@ -1,6 +1,23 @@
-import { describe, expect, it } from "vitest";
-import { resolveRequestedTime, parseToolArguments, matchTransferAgentCandidates, ToolCall } from "./vapi-tools";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+
+const ghl = vi.hoisted(() => ({
+  getGhlConfig: vi.fn(),
+  getCustomFieldDefs: vi.fn(),
+  updateContact: vi.fn(),
+  getContact: vi.fn(),
+}));
+vi.mock("../shared/ghl", () => ghl);
+
+const iris = vi.hoisted(() => ({ loadIrisConfig: vi.fn() }));
+vi.mock("../agents/iris", () => iris);
+
+const dialPending = vi.hoisted(() => ({ scheduleExplicitCallback: vi.fn(async () => true) }));
+vi.mock("../agents/iris/dial-pending", () => dialPending);
+
+import { resolveRequestedTime, parseToolArguments, matchTransferAgentCandidates, handleScheduleCallback, ToolCall } from "./vapi-tools";
 import { GhlUser } from "../shared/ghl";
+
+afterEach(() => vi.clearAllMocks());
 
 /**
  * Round two of this bug, 2026-09-08. First fix assumed Vapi's own OpenAPI
@@ -135,5 +152,78 @@ describe("matchTransferAgentCandidates", () => {
     // "Flemish" as a mishearing of "Fleming" — the exact scenario the
     // spec's own "reality check" section calls out.
     expect(matchTransferAgentCandidates("Fleming", roster)).toEqual([andrewFleming]);
+  });
+});
+
+/**
+ * Mark's spec, 2026-10-01, from a real example (Saife Sarwar: "Ma'am,
+ * right now is busy. Can I call you later?"): the lead doesn't always give
+ * a specific time, and Iris must never invent one — the system defaults to
+ * ~1 hour out instead. Previously callbackTime was REQUIRED and the tool
+ * returned an error whenever the lead hadn't given a concrete time, which
+ * pushed the model toward guessing one to avoid the error.
+ */
+describe("handleScheduleCallback", () => {
+  const CONFIG = { timezone: "America/St_Johns", callbackNotesFieldKey: "contact.isa_notes" };
+
+  beforeEach(() => {
+    iris.loadIrisConfig.mockReturnValue(CONFIG);
+    ghl.getGhlConfig.mockResolvedValue({ locationId: "loc-1", apiKey: "key-1" });
+    ghl.getCustomFieldDefs.mockResolvedValue([{ id: "field-1", fieldKey: "contact.isa_notes" }]);
+    dialPending.scheduleExplicitCallback.mockResolvedValue(true);
+  });
+
+  it("schedules exactly the lead's named time when one is given", async () => {
+    const when = new Date(Date.now() + 2 * 60 * 60 * 1000).toISOString();
+    const result = await handleScheduleCallback("3-percent-east-coast", "contact-1", when);
+
+    expect(dialPending.scheduleExplicitCallback).toHaveBeenCalledWith("3-percent-east-coast", "contact-1", new Date(when));
+    expect(result).toContain("Confirm this back to the lead");
+  });
+
+  it("defaults to ~1 hour out and tells the model NOT to state a time, when no callbackTime is given at all", async () => {
+    const before = Date.now();
+    const result = await handleScheduleCallback("3-percent-east-coast", "contact-1", undefined);
+    const after = Date.now();
+
+    expect(dialPending.scheduleExplicitCallback).toHaveBeenCalledTimes(1);
+    const scheduledFor = (dialPending.scheduleExplicitCallback.mock.calls[0][2] as Date).getTime();
+    expect(scheduledFor).toBeGreaterThanOrEqual(before + 59 * 60 * 1000);
+    expect(scheduledFor).toBeLessThanOrEqual(after + 61 * 60 * 1000);
+    expect(result).toMatch(/do not state any time/i);
+  });
+
+  it("also defaults to ~1 hour out for an empty string or non-string callbackTime, rather than erroring", async () => {
+    await handleScheduleCallback("3-percent-east-coast", "contact-1", "");
+    expect(dialPending.scheduleExplicitCallback).toHaveBeenCalledTimes(1);
+
+    dialPending.scheduleExplicitCallback.mockClear();
+    await handleScheduleCallback("3-percent-east-coast", "contact-1", null);
+    expect(dialPending.scheduleExplicitCallback).toHaveBeenCalledTimes(1);
+  });
+
+  it("still rejects an explicit time that's too soon, too far out, or outside legal hours — only the no-time path gets a default", async () => {
+    const tooSoon = new Date(Date.now() + 5 * 60 * 1000).toISOString();
+    expect(await handleScheduleCallback("3-percent-east-coast", "contact-1", tooSoon)).toMatch(/too soon/i);
+    expect(dialPending.scheduleExplicitCallback).not.toHaveBeenCalled();
+
+    const tooFar = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString();
+    expect(await handleScheduleCallback("3-percent-east-coast", "contact-1", tooFar)).toMatch(/too far out/i);
+    expect(dialPending.scheduleExplicitCallback).not.toHaveBeenCalled();
+  });
+
+  it("writes a callback note on the contact for both the specific-time and default-time paths", async () => {
+    const when = new Date(Date.now() + 2 * 60 * 60 * 1000).toISOString();
+    await handleScheduleCallback("3-percent-east-coast", "contact-1", when);
+    expect(ghl.updateContact).toHaveBeenCalledWith(
+      "contact-1",
+      { customFields: [{ id: "field-1", value: expect.stringContaining("Iris scheduled a callback") }] },
+      "loc-1",
+      "key-1"
+    );
+
+    ghl.updateContact.mockClear();
+    await handleScheduleCallback("3-percent-east-coast", "contact-1", undefined);
+    expect(ghl.updateContact).toHaveBeenCalledTimes(1);
   });
 });

@@ -20,11 +20,17 @@ vi.mock("../shared/conversation-memory", () => conversationMemory);
 const iris = vi.hoisted(() => ({ loadIrisConfig: vi.fn() }));
 vi.mock("../agents/iris", () => iris);
 
-vi.mock("../agents/iris/dial-pending", () => ({ reopenForNextAttempt: vi.fn() }));
-vi.mock("../shared/db", () => ({ query: vi.fn() }));
+const dialPending = vi.hoisted(() => ({ reopenForNextAttempt: vi.fn(), scheduleExplicitCallback: vi.fn() }));
+vi.mock("../agents/iris/dial-pending", () => dialPending);
+
+const db = vi.hoisted(() => ({ query: vi.fn(async () => []) }));
+vi.mock("../shared/db", () => db);
 
 const inbound = vi.hoisted(() => ({ handleInboundCall: vi.fn() }));
 vi.mock("../agents/iris/inbound", () => inbound);
+
+const callSignals = vi.hoisted(() => ({ classifyMissedCallback: vi.fn(async () => ({ type: "none" })) }));
+vi.mock("../agents/iris/call-signals", () => callSignals);
 
 import {
   appendCallStatusNote,
@@ -35,6 +41,7 @@ import {
   formatDuration,
   genuinelyAnswered,
   hitCallScreener,
+  maybeHonorMissedCallback,
   moveToFollowUpStage,
   postCallLogToSlack,
   tagSequenceExhausted,
@@ -608,5 +615,116 @@ describe("tagSequenceExhausted", () => {
 
     await expect(tagSequenceExhausted("3-percent-east-coast", "contact-1")).resolves.toBeUndefined();
     expect(ghl.addContactTags).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * Real case found live 2026-10-01 (Saife Sarwar): "Ma'am, right now is
+ * busy. Can I call you later?" then hung up mid-reply, before
+ * schedule_callback ever got a turn to run. endedReason was a genuine
+ * pickup, so maybeReopenPendingCall never fires — this is the only place
+ * left that can catch a callback request the live call itself missed.
+ */
+describe("maybeHonorMissedCallback", () => {
+  const PENDING_ROW = { id: 69, attempts_made: 1, created_at: new Date("2026-10-01T16:36:06.698Z"), status: "placed" };
+
+  beforeEach(() => {
+    db.query.mockResolvedValue([PENDING_ROW]);
+    iris.loadIrisConfig.mockReturnValue({ timezone: "America/St_Johns" });
+  });
+
+  it("schedules an explicit callback when the lead named a specific time with no confirmation", async () => {
+    const when = new Date("2026-10-01T20:30:00.000Z");
+    callSignals.classifyMissedCallback.mockResolvedValue({ type: "schedule_for", when });
+
+    await maybeHonorMissedCallback("3-percent-east-coast", "contact-1", "User: call me at 6pm\nAI: Sure, let me");
+
+    expect(dialPending.scheduleExplicitCallback).toHaveBeenCalledWith("3-percent-east-coast", "contact-1", when);
+    expect(dialPending.reopenForNextAttempt).not.toHaveBeenCalled();
+  });
+
+  /**
+   * Mark's spec, 2026-10-01: "later" with no specific time defaults to
+   * ~1 hour out — the exact same default webhooks/vapi-tools.ts's live
+   * schedule_callback tool uses for the identical scenario — never the
+   * normal multi-hour/next-day cadence slot.
+   */
+  it("schedules a callback ~1 hour out, via the same mechanism as a named time, when the lead asked for 'later' with no specific time", async () => {
+    ghl.getGhlConfig.mockResolvedValue({ locationId: "loc-1", apiKey: "key-1" });
+    callSignals.classifyMissedCallback.mockResolvedValue({ type: "call_later" });
+    const before = Date.now();
+
+    await maybeHonorMissedCallback("3-percent-east-coast", "contact-1", "User: I'm busy, call me later\nAI: No problem at");
+
+    expect(dialPending.reopenForNextAttempt).not.toHaveBeenCalled();
+    expect(dialPending.scheduleExplicitCallback).toHaveBeenCalledTimes(1);
+    const [calledClientId, calledContactId, when] = dialPending.scheduleExplicitCallback.mock.calls[0];
+    expect(calledClientId).toBe("3-percent-east-coast");
+    expect(calledContactId).toBe("contact-1");
+    expect((when as Date).getTime()).toBeGreaterThanOrEqual(before + 59 * 60 * 1000);
+    expect((when as Date).getTime()).toBeLessThanOrEqual(Date.now() + 61 * 60 * 1000);
+  });
+
+  /**
+   * Mark's explicit instruction, 2026-10-01: "store the callback time in
+   * the lead/opportunity record... not just in Iris's conversational
+   * state. Otherwise, the next scheduled call could lose the context of
+   * why it is calling back and when the lead requested it." Appends
+   * (never overwrites) the SAME field appendCallStatusNote already writes
+   * a generic status line to moments earlier in this same handler.
+   */
+  it("writes a durable note on the contact explaining the callback, appending rather than overwriting", async () => {
+    ghl.getGhlConfig.mockResolvedValue({ locationId: "loc-1", apiKey: "key-1" });
+    ghl.getCustomFieldDefs.mockResolvedValue([{ fieldKey: "contact.isa_notes", id: "field-notes-1" }]);
+    ghl.getContact.mockResolvedValue({ contact: { customFields: [{ id: "field-notes-1", value: "Iris call Oct 1 — Answered. Duration: 38s." }] } });
+    iris.loadIrisConfig.mockReturnValue({ timezone: "America/St_Johns", callbackNotesFieldKey: "contact.isa_notes" });
+    callSignals.classifyMissedCallback.mockResolvedValue({ type: "call_later" });
+
+    await maybeHonorMissedCallback("3-percent-east-coast", "contact-1", "User: call me later\nAI: No problem at");
+
+    const writtenValue = ghl.updateContact.mock.calls[0][1].customFields[0].value;
+    expect(writtenValue).toContain("Iris call Oct 1 — Answered. Duration: 38s."); // the earlier status line is preserved
+    expect(writtenValue).toMatch(/lead asked to be called back/i);
+  });
+
+  it("does nothing when no callback was actually missed", async () => {
+    callSignals.classifyMissedCallback.mockResolvedValue({ type: "none" });
+
+    await maybeHonorMissedCallback("3-percent-east-coast", "contact-1", "User: great, talk soon!\nAI: Bye!");
+
+    expect(dialPending.scheduleExplicitCallback).not.toHaveBeenCalled();
+    expect(dialPending.reopenForNextAttempt).not.toHaveBeenCalled();
+  });
+
+  it("does nothing when there's no transcript at all", async () => {
+    await maybeHonorMissedCallback("3-percent-east-coast", "contact-1", null);
+
+    expect(callSignals.classifyMissedCallback).not.toHaveBeenCalled();
+    expect(db.query).not.toHaveBeenCalled();
+  });
+
+  it("does nothing when the pending row has already moved on from 'placed' (something else already handled it)", async () => {
+    db.query.mockResolvedValue([{ ...PENDING_ROW, status: "skipped" }]);
+
+    await maybeHonorMissedCallback("3-percent-east-coast", "contact-1", "User: call me later\nAI: Sure");
+
+    expect(callSignals.classifyMissedCallback).not.toHaveBeenCalled();
+  });
+
+  /**
+   * The deliberate behavior difference from maybeReopenPendingCall: a row
+   * already carrying is_explicit_callback: true (e.g. from an EARLIER,
+   * unrelated call_consent-by-text scheduling — agents/iris/dial-pending.ts)
+   * must still be checked for a callback missed on THIS call, not skipped
+   * outright the way the automatic-retry path skips it.
+   */
+  it("still checks for a missed callback even when is_explicit_callback is already true on the row", async () => {
+    ghl.getGhlConfig.mockResolvedValue({ locationId: "loc-1", apiKey: "key-1" });
+    db.query.mockResolvedValue([{ ...PENDING_ROW, is_explicit_callback: true }]);
+    callSignals.classifyMissedCallback.mockResolvedValue({ type: "call_later" });
+
+    await maybeHonorMissedCallback("3-percent-east-coast", "contact-1", "User: call me later\nAI: No problem at");
+
+    expect(dialPending.scheduleExplicitCallback).toHaveBeenCalledTimes(1);
   });
 });

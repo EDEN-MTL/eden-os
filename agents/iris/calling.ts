@@ -706,10 +706,12 @@ export function buildCallPayload(
       function: {
         name: "schedule_callback",
         description:
-          "Records that this lead asked to be called back at a specific time. Only call this once you " +
-          "and the lead have agreed on a concrete day and time — never a vague one. Leaves a note on the " +
-          "lead's record and schedules a real follow-up call for that exact moment; it does not book a " +
-          "calendar appointment.",
+          "Records that this lead asked to be called back, and schedules a real follow-up call — it does " +
+          "not book a calendar appointment. Call this as soon as the lead asks to be called back, whether " +
+          "or not they gave a specific time. If they gave one, pass it as callbackTime. If they did NOT " +
+          "give one (e.g. \"call me later\", \"I'm busy, try again another time\") — call this with NO " +
+          "callbackTime argument at all. Never invent or guess a time yourself; the system schedules a " +
+          "sensible default automatically when none is given.",
         parameters: {
           type: "object",
           properties: {
@@ -718,10 +720,10 @@ export function buildCallPayload(
               description:
                 "The exact moment the lead agreed to, as an ISO 8601 timestamp, computed relative to the " +
                 "current date and time given to you at the top of this prompt — never a bare time like " +
-                "'2pm' with no date, and never earlier than a few minutes from now.",
+                "'2pm' with no date, and never earlier than a few minutes from now. Omit this property " +
+                "entirely (do not pass an empty string or a guess) when the lead didn't give a specific time.",
             },
           },
-          required: ["callbackTime"],
         },
       },
       server: { url: `${vapiConfig.serverUrl}/tools/schedule-callback?${qs}`, secret: vapiConfig.webhookSecret },

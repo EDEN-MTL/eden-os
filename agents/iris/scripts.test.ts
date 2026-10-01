@@ -1365,3 +1365,34 @@ describe("buildCallOpeningLine — call origin", () => {
     );
   });
 });
+
+/**
+ * Real gap found live 2026-10-01, from a real example (Saife Sarwar:
+ * "Ma'am, right now is busy. Can I call you later?" then hung up mid-reply
+ * before anything got scheduled). Mark's explicit spec: handle this
+ * wherever it comes up in the call, never pressure for a time, never
+ * invent one when none is given.
+ */
+describe("buildLeadQualificationPrompt — callback request section (Mark, 2026-10-01)", () => {
+  it("tells Iris to ask for a time, not pressure, and never invent one when schedule_callback is available", () => {
+    const prompt = buildLeadQualificationPrompt(IRIS_CONFIG, BLANK_LEAD, "3 Percent East Coast", "St. John's", true, true, false);
+    expect(prompt).toContain("at any point in the call, not just after a failed transfer");
+    expect(prompt).toMatch(/never pressure them to keep talking/i);
+    expect(prompt).toContain("When would be a good time to call you back?");
+    expect(prompt).toContain("call schedule_callback with that as");
+    expect(prompt).toMatch(/do not keep pressing for one/i);
+    expect(prompt).toMatch(/do not invent or guess a time yourself/i);
+    expect(prompt).toMatch(/NO callbackTime argument at all/);
+  });
+
+  it("includes closing lines that name no time, for the no-specific-time path", () => {
+    const prompt = buildLeadQualificationPrompt(IRIS_CONFIG, BLANK_LEAD, "3 Percent East Coast", "St. John's", true, true, false);
+    expect(prompt).toContain("I'll give you a call back later. Thanks!");
+  });
+
+  it("tells Iris she has no callback tool at all when bookingToolsAvailable is false", () => {
+    const prompt = buildLeadQualificationPrompt(IRIS_CONFIG, BLANK_LEAD, "3 Percent East Coast", "St. John's", false, true, false);
+    expect(prompt).toMatch(/do not have a working callback-scheduling tool/i);
+    expect(prompt).not.toContain("schedule_callback with that as");
+  });
+});
