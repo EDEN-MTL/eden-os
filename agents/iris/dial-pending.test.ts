@@ -135,6 +135,55 @@ describe("resolveOne — pause-while-texting gate (Mark's confirmed design, 2026
   });
 });
 
+/**
+ * Mark's spec, 2026-10-01, from a real example (Saife Sarwar replying "Ys"
+ * to the intake automation's "you'll receive a quick call from our AI
+ * assistant, IRIS..." text): a clear yes to an offered call is explicit
+ * permission to call soon — not a reason to keep deferring to texting the
+ * way the pause-while-texting gate otherwise would.
+ */
+describe("resolveOne — call_consent signal (Mark, 2026-10-01)", () => {
+  const withRow = (over: any) =>
+    db.query.mockImplementation(async (sql: string) =>
+      sql.includes("WHERE status = 'pending' AND call_after <= now()") ? [{ ...DUE_ROW, ...over }] : []
+    );
+
+  it("schedules the call a few minutes out and marks sms_scheduled, rather than dialing immediately or pausing", async () => {
+    withRow({ is_explicit_callback: false, sms_scheduled: false });
+    textSignals.lastInboundText.mockResolvedValue({
+      text: "Ys",
+      precedingOutbound: "Just a quick heads-up — you'll receive a quick call from our AI assistant, IRIS.",
+      dateAdded: new Date().toISOString(),
+    });
+    textSignals.classifyInboundText.mockResolvedValue({ type: "call_consent" });
+
+    await runDialPendingCalls();
+
+    expect(calling.placeCall).not.toHaveBeenCalled();
+    const updateCall = db.query.mock.calls.find((c) => String(c[0]).includes("lead confirmed by text they are okay with a call"));
+    expect(updateCall).toBeDefined();
+    expect(updateCall?.[1][0]).toBe(42);
+  });
+
+  it("does not re-trigger (and does not get paused by the texting gate either) on the next recheck, once sms_scheduled is already true — this is what actually lets the call go through", async () => {
+    withRow({ is_explicit_callback: true, sms_scheduled: true });
+    scout.refreshLead.mockResolvedValue({ ...LEAD, qualified: false });
+    textSignals.lastInboundText.mockResolvedValue({
+      text: "Ys",
+      precedingOutbound: "Just a quick heads-up — you'll receive a quick call from our AI assistant, IRIS.",
+      dateAdded: new Date().toISOString(),
+    });
+    textSignals.classifyInboundText.mockResolvedValue({ type: "call_consent" });
+    smsModule.hasActiveSmsConversation.mockResolvedValue(true);
+
+    await runDialPendingCalls();
+
+    expect(calling.placeCall).toHaveBeenCalledTimes(1);
+    const rescheduleCall = db.query.mock.calls.find((c) => String(c[0]).includes("lead confirmed by text they are okay with a call"));
+    expect(rescheduleCall).toBeUndefined();
+  });
+});
+
 describe("resolveOne — Ember handoffs and text-agreed calls (Mark, 2026-09-24)", () => {
   const scripts = () => import("./scripts");
   const withRow = (over: any) =>
