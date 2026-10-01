@@ -45,6 +45,19 @@ const IRIS_TOOLS: ToolDef[] = [
     },
   },
   {
+    name: "iris_call_transcript",
+    description:
+      "The real transcript of a lead's most recent call — what was actually said, both sides. Use this whenever asked what happened on a call, to describe/summarize a conversation, or anything like \"can you pull out the conversation\" — NEVER guess or infer this from the outcome code, duration, or flags alone (e.g. do not reason \"is_explicit_callback is true, so something must have triggered a callback\" — read the actual transcript instead).",
+    input_schema: {
+      type: "object",
+      properties: {
+        nameOrPhone: { type: "string", description: "The lead's name or phone number, exactly as given." },
+        clientId: { type: "string", description: `Defaults to "${DEFAULT_CLIENT_ID}" if not given.` },
+      },
+      required: ["nameOrPhone"],
+    },
+  },
+  {
     name: "iris_newest_lead",
     description:
       "The single newest lead captured in the system — who, phone, buy/sell intent, when they were captured, plus the same real call-status detail iris_lookup_lead gives for a named lead. Use this for \"what about the new lead\" / \"the new lead that just came in\" / \"how's the newest lead doing\" — anything referring to the MOST RECENT lead without naming them. Never guess who that is from memory.",
@@ -127,6 +140,18 @@ async function leadStatusForContact(clientId: string, contactId: string, timezon
   };
 }
 
+/** Same contact resolution iris_lookup_lead and iris_call_transcript both need — a single shared lookup rather than two copies. */
+async function resolveContactByNameOrPhone(
+  ghlConfig: { locationId: string; apiKey: string },
+  nameOrPhone: string
+): Promise<{ id: string; name: string } | null> {
+  for await (const c of listContactsPaginated(ghlConfig.locationId, { limit: 5, query: nameOrPhone, apiKey: ghlConfig.apiKey })) {
+    const name = [c.firstName, c.lastName].filter(Boolean).join(" ") || c.contactName || nameOrPhone;
+    return { id: c.id, name };
+  }
+  return null;
+}
+
 class IrisAgent extends BaseAgent {
   constructor() {
     super("iris", "Iris", "IRS");
@@ -146,16 +171,50 @@ class IrisAgent extends BaseAgent {
         const ghlConfig = await getGhlConfig(clientId);
         if (!ghlConfig) return JSON.stringify({ error: `No GHL config for client "${clientId}"` });
 
-        let contact: { id: string; name: string } | null = null;
-        for await (const c of listContactsPaginated(ghlConfig.locationId, { limit: 5, query: nameOrPhone, apiKey: ghlConfig.apiKey })) {
-          const name = [c.firstName, c.lastName].filter(Boolean).join(" ") || c.contactName || nameOrPhone;
-          contact = { id: c.id, name };
-          break;
-        }
+        const contact = await resolveContactByNameOrPhone(ghlConfig, nameOrPhone);
         if (!contact) return JSON.stringify({ found: false, searchedFor: nameOrPhone });
 
         const timezone = await resolveTimezone(clientId);
         return JSON.stringify({ found: true, name: contact.name, ...(await leadStatusForContact(clientId, contact.id, timezone)) });
+      }
+
+      case "iris_call_transcript": {
+        const nameOrPhone = String(input?.nameOrPhone ?? "").trim();
+        if (!nameOrPhone) return JSON.stringify({ error: "nameOrPhone is required" });
+        const clientId = String(input?.clientId ?? DEFAULT_CLIENT_ID);
+
+        const ghlConfig = await getGhlConfig(clientId);
+        if (!ghlConfig) return JSON.stringify({ error: `No GHL config for client "${clientId}"` });
+
+        const contact = await resolveContactByNameOrPhone(ghlConfig, nameOrPhone);
+        if (!contact) return JSON.stringify({ found: false, searchedFor: nameOrPhone });
+
+        // Real gap found live 2026-10-01 (#iris-call-logs): Mark asked "can
+        // you tell what happened here?" and Iris guessed from the outcome
+        // code, duration, and the is_explicit_callback flag ("it LOOKS
+        // like something triggered a callback request") rather than
+        // reading what was actually said — then admitted, when asked to
+        // "pull out the conversation," that she has no tool for the real
+        // transcript at all, even though it's sitting right in
+        // iris_call_log.transcript the whole time (written by
+        // webhooks/vapi-webhook.ts's handleEndOfCallReport on every call).
+        const rows = await query<{ transcript: string | null; created_at: Date; ended_reason: string | null }>(
+          `SELECT transcript, created_at, ended_reason FROM iris_call_log
+           WHERE client_id = $1 AND contact_id = $2 ORDER BY created_at DESC LIMIT 1`,
+          [clientId, contact.id]
+        );
+        const row = rows[0];
+        if (!row) return JSON.stringify({ found: true, name: contact.name, hasCall: false });
+
+        const timezone = await resolveTimezone(clientId);
+        return JSON.stringify({
+          found: true,
+          name: contact.name,
+          when: formatLocal(row.created_at.toISOString(), timezone),
+          outcome: row.ended_reason,
+          transcript: row.transcript ?? null,
+          note: row.transcript ? undefined : "No transcript recorded for this call (e.g. it never connected).",
+        });
       }
 
       case "iris_newest_lead": {
@@ -361,15 +420,18 @@ isn't in this client's config — say you don't know rather than guessing.
 ## Answering questions about specific leads or overall numbers, here in Slack
 You have real tools now — iris_lookup_lead (a specific lead's real call
 history, last-attempt time in their own local timezone, outcome, current
-status), iris_newest_lead (whichever lead was captured most recently, for
-"what about the new lead" with no name given), iris_pipeline_stats (overall
-counts: pending, exhausted, opted-out, etc.), and iris_calls_today (every
-call placed or answered today, in order — who, when, direction, outcome).
-ALWAYS call the relevant tool for a factual question like this rather than
-guessing or estimating from memory — the data changes constantly, and a
-wrong guess is worse than admitting you'd need to look it up. If a tool
-comes back with nothing found, say so plainly rather than inventing a
-plausible-sounding answer.
+status), iris_call_transcript (the real transcript of a lead's most recent
+call — use this for "what happened on the call" / "what did they say" /
+"pull out the conversation," NEVER inferred from the outcome code or
+duration alone), iris_newest_lead (whichever lead was captured most
+recently, for "what about the new lead" with no name given),
+iris_pipeline_stats (overall counts: pending, exhausted, opted-out, etc.),
+and iris_calls_today (every call placed or answered today, in order — who,
+when, direction, outcome). ALWAYS call the relevant tool for a factual
+question like this rather than guessing or estimating from memory — the
+data changes constantly, and a wrong guess is worse than admitting you'd
+need to look it up. If a tool comes back with nothing found, say so
+plainly rather than inventing a plausible-sounding answer.
 
 ## Recognize when someone is actually done talking to you
 Real bug found live 2026-09-22: after correctly answering a real question
