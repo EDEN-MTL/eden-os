@@ -98,6 +98,37 @@ describe("classifyInboundText", () => {
     const result = await classifyInboundText("stop texting me", NOW, TIMEZONE);
     expect(result).toEqual({ type: "opt_out" });
   });
+
+  /**
+   * Mark's spec, 2026-10-01, from a real example (Saife Sarwar replying
+   * "Ys" to the intake automation's "you'll receive a quick call from our
+   * AI assistant, IRIS..." text): a clear yes to an offered call is
+   * explicit permission to call soon, distinct from schedule_for (no
+   * specific time given) and from "none" (which would otherwise leave this
+   * to the pause-while-texting gate, deferring a call the lead already
+   * agreed to).
+   */
+  describe("call_consent (Mark, 2026-10-01)", () => {
+    const CALL_OFFER_TEXT = "Just a quick heads-up — you'll receive a quick call from our AI assistant, IRIS. If you're not available, what would be a good time to speak?";
+
+    it("classifies a clear yes to a text that was itself offering a call", async () => {
+      claude.ask.mockResolvedValue('{"type": "call_consent"}');
+      const result = await classifyInboundText("Ys", NOW, TIMEZONE, CALL_OFFER_TEXT);
+      expect(result).toEqual({ type: "call_consent" });
+    });
+
+    it("ignores a call_consent classification when the preceding text wasn't actually about a call — a defensive backstop, not just trusting Claude's say-so", async () => {
+      claude.ask.mockResolvedValue('{"type": "call_consent"}');
+      const result = await classifyInboundText("Ys", NOW, TIMEZONE, "Just wanted to make sure do I have the right number here?");
+      expect(result).toEqual({ type: "none" });
+    });
+
+    it("ignores a call_consent classification with no preceding text at all", async () => {
+      claude.ask.mockResolvedValue('{"type": "call_consent"}');
+      const result = await classifyInboundText("Ys", NOW, TIMEZONE);
+      expect(result).toEqual({ type: "none" });
+    });
+  });
 });
 
 /**
