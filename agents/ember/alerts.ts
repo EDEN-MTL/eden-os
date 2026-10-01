@@ -40,14 +40,17 @@ export function formatReactivationAlert(
   lead: NurtureLead,
   reason: string,
   clientName: string,
-  now: Date = new Date()
+  now: Date = new Date(),
+  /** Who picks it up. "iris" for a reply handed to Iris; "human" otherwise. */
+  next: "iris" | "human" = "human"
 ): string {
   const who = lead.contactName || lead.phone || lead.email || lead.ghlContactId;
   const since = monthsAgo(lead.inquiryAt, now);
   const lines = [
     `🔥 *Reactivation* — ${clientName}`,
     `*${who}*${since ? ` (first inquired ${since})` : ""} is showing buying signals again: ${reason}.`,
-    `Ember had sent ${lead.touchCount} nurture touch${lead.touchCount === 1 ? "" : "es"}; the cadence is stopped so a human can take it from here.`,
+    `Ember had sent ${lead.touchCount} nurture touch${lead.touchCount === 1 ? "" : "es"}; the cadence is stopped` +
+      (next === "iris" ? " and Iris has the conversation." : " so a human can take it from here."),
   ];
   const contact = [lead.phone, lead.email].filter(Boolean).join(" · ");
   if (contact) lines.push(contact);
