@@ -15,6 +15,7 @@ const ghl = vi.hoisted(() => ({
   getGhlConfig: vi.fn(),
   getLocationTimezone: vi.fn(),
   listContactsPaginated: vi.fn(),
+  getContact: vi.fn(),
 }));
 vi.mock("../../shared/ghl", () => ghl);
 
@@ -119,6 +120,7 @@ describe("IrisAgent.getSystemPrompt reflects that calling is actually live", () 
     const prompt = irisAgent.getSystemPrompt();
     expect(prompt).toMatch(/iris_lookup_lead/);
     expect(prompt).toMatch(/iris_pipeline_stats/);
+    expect(prompt).toMatch(/iris_calls_today/);
     expect(prompt).toMatch(/never guess|rather than guessing/i);
   });
 });
@@ -219,5 +221,89 @@ describe("Iris Slack tools — iris_pipeline_stats", () => {
     expect(toolResult.byStatus).toEqual({ pending: 5, placed: 3 });
     expect(toolResult.optedOutViaText).toBe(2);
     expect(toolResult.likelyExhaustedNoAnswer).toBe(1);
+  });
+});
+
+/**
+ * Real gap found live 2026-10-01: Mark asked Iris "can you specify those
+ * leads you called today?" and she had no tool for it at all — only a
+ * single-lead lookup and overall pipeline counts, neither of which lists a
+ * day's calls. She correctly said so rather than guessing, but pointed him
+ * at #iris-call-logs instead of just answering.
+ */
+describe("Iris Slack tools — iris_calls_today", () => {
+  it("lists every call from today, in order, with real lead names resolved via GHL", async () => {
+    ghl.getGhlConfig.mockResolvedValue({ locationId: "loc-1", apiKey: "key-1" });
+    ghl.getLocationTimezone.mockResolvedValue("America/St_Johns");
+    ghl.getContact.mockResolvedValue({ contact: { firstName: "Kaitlyn", lastName: "Sheppard" } });
+    db.query.mockResolvedValue([
+      {
+        contact_id: "contact-1",
+        phone: "+17095550100",
+        status: "ended",
+        ended_reason: "customer-ended-call",
+        created_at: new Date("2026-10-01T16:30:00.000Z"),
+        triggered_by: "automatic",
+      },
+    ]);
+
+    vi.mocked(chatWithTools)
+      .mockResolvedValueOnce({ content: [toolUseBlock("c1", "iris_calls_today", {})], stop_reason: "tool_use" } as any)
+      .mockResolvedValueOnce(endTurn("1 call today — Kaitlyn Sheppard."));
+
+    await irisAgent.generateReply("k4", "can you specify those leads you called today?");
+
+    const secondCallMessages = vi.mocked(chatWithTools).mock.calls[1][1] as any;
+    const toolResult = JSON.parse(secondCallMessages[secondCallMessages.length - 1].content[0].content);
+    expect(toolResult.count).toBe(1);
+    expect(toolResult.calls[0]).toMatchObject({
+      name: "Kaitlyn Sheppard",
+      phone: "+17095550100",
+      direction: "outbound",
+      outcome: "customer-ended-call",
+    });
+  });
+
+  it("returns an empty list, without any GHL name lookups, when nothing was called today", async () => {
+    ghl.getLocationTimezone.mockResolvedValue("America/St_Johns");
+    db.query.mockResolvedValue([]);
+
+    vi.mocked(chatWithTools)
+      .mockResolvedValueOnce({ content: [toolUseBlock("c1", "iris_calls_today", {})], stop_reason: "tool_use" } as any)
+      .mockResolvedValueOnce(endTurn("No calls today."));
+
+    await irisAgent.generateReply("k5", "any calls today?");
+
+    const secondCallMessages = vi.mocked(chatWithTools).mock.calls[1][1] as any;
+    const toolResult = JSON.parse(secondCallMessages[secondCallMessages.length - 1].content[0].content);
+    expect(toolResult.count).toBe(0);
+    expect(toolResult.calls).toEqual([]);
+    expect(ghl.getContact).not.toHaveBeenCalled();
+  });
+
+  it("labels an inbound-answered call distinctly from an outbound one, and never invents a name for an unmatched caller", async () => {
+    ghl.getLocationTimezone.mockResolvedValue("America/St_Johns");
+    db.query.mockResolvedValue([
+      {
+        contact_id: null,
+        phone: "+17095550199",
+        status: "initiated",
+        ended_reason: null,
+        created_at: new Date("2026-10-01T12:00:00.000Z"),
+        triggered_by: "inbound",
+      },
+    ]);
+
+    vi.mocked(chatWithTools)
+      .mockResolvedValueOnce({ content: [toolUseBlock("c1", "iris_calls_today", {})], stop_reason: "tool_use" } as any)
+      .mockResolvedValueOnce(endTurn("One inbound call."));
+
+    await irisAgent.generateReply("k6", "any calls today?");
+
+    const secondCallMessages = vi.mocked(chatWithTools).mock.calls[1][1] as any;
+    const toolResult = JSON.parse(secondCallMessages[secondCallMessages.length - 1].content[0].content);
+    expect(toolResult.calls[0].direction).toBe("inbound");
+    expect(toolResult.calls[0].name).toBe("(unknown name)");
+    expect(ghl.getContact).not.toHaveBeenCalled();
   });
 });

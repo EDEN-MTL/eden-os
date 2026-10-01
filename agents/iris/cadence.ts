@@ -106,7 +106,7 @@ function slotHours(attemptsPerDay: number): number[] {
  * scheduling bugs" — getting this wrong would silently call at the wrong
  * time, not throw.
  */
-function zonedHourToUtc(year: number, monthIndex: number, day: number, hour: number, timeZone: string): Date {
+export function zonedHourToUtc(year: number, monthIndex: number, day: number, hour: number, timeZone: string): Date {
   const asIfUtc = Date.UTC(year, monthIndex, day, hour, 0, 0);
   const probe = new Date(asIfUtc);
   const renderedInZone = new Date(probe.toLocaleString("en-US", { timeZone }));

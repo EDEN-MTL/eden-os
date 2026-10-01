@@ -6,8 +6,8 @@ import { eventBus } from "../../shared/events";
 import { NormalisedLead } from "../scout/intake";
 import { IrisConfig } from "./qualification";
 import { query } from "../../shared/db";
-import { isWithinLegalCallingWindow, nextFirstSlotTime, formatLocal } from "./cadence";
-import { getGhlConfig, getLocationTimezone, listContactsPaginated } from "../../shared/ghl";
+import { isWithinLegalCallingWindow, nextFirstSlotTime, formatLocal, zonedHourToUtc } from "./cadence";
+import { getContact, getGhlConfig, getLocationTimezone, listContactsPaginated } from "../../shared/ghl";
 
 /**
  * The one client Iris actually runs against in production today — same
@@ -37,6 +37,17 @@ const IRIS_TOOLS: ToolDef[] = [
     name: "iris_pipeline_stats",
     description:
       "Real counts of where Iris's outreach queue stands right now: how many leads are still pending a call, how many are mid-cadence, how many have exhausted every attempt with no answer, how many opted out via text, how many live-transferred. Use this for any \"how's Iris doing\" / overall-numbers question — never estimate.",
+    input_schema: {
+      type: "object",
+      properties: {
+        clientId: { type: "string", description: `Which client to report on. Defaults to "${DEFAULT_CLIENT_ID}" if not given.` },
+      },
+    },
+  },
+  {
+    name: "iris_calls_today",
+    description:
+      "Every call Iris placed or answered today (the client's own local calendar day, not UTC), in chronological order — who, what time, which direction (outbound/inbound), and the outcome. Use this for \"what calls did you make today\" / \"which leads did you call today\" / \"any calls today\" — never reconstruct this from memory or #iris-call-logs scrollback; call the tool.",
     input_schema: {
       type: "object",
       properties: {
@@ -165,6 +176,55 @@ class IrisAgent extends BaseAgent {
         });
       }
 
+      case "iris_calls_today": {
+        const clientId = String(input?.clientId ?? DEFAULT_CLIENT_ID);
+        const timezone = await resolveTimezone(clientId);
+
+        // "Today" in the CLIENT's own calendar day, not the server's/UTC's
+        // — same zonedHourToUtc technique cadence.ts already uses for
+        // business-hours math, just for a day boundary (hour 0) instead of
+        // a specific calling-window hour. Real gap found live 2026-10-01:
+        // Mark asked "can you specify those leads you called today?" and
+        // Iris had no tool for this at all — only a single-lead lookup and
+        // overall pipeline counts, neither of which lists a day's calls.
+        const inZone = new Date(new Date().toLocaleString("en-US", { timeZone: timezone }));
+        const startOfDay = zonedHourToUtc(inZone.getFullYear(), inZone.getMonth(), inZone.getDate(), 0, timezone);
+        const startOfTomorrow = zonedHourToUtc(inZone.getFullYear(), inZone.getMonth(), inZone.getDate() + 1, 0, timezone);
+
+        const rows = await query<{ contact_id: string | null; phone: string; status: string; ended_reason: string | null; created_at: Date; triggered_by: string }>(
+          `SELECT contact_id, phone, status, ended_reason, created_at, triggered_by FROM iris_call_log
+           WHERE client_id = $1 AND created_at >= $2 AND created_at < $3
+           ORDER BY created_at ASC`,
+          [clientId, startOfDay.toISOString(), startOfTomorrow.toISOString()]
+        );
+
+        const ghlConfig = rows.some((r) => r.contact_id) ? await getGhlConfig(clientId).catch(() => null) : null;
+        const calls = await Promise.all(
+          rows.map(async (r) => {
+            let name: string | null = null;
+            if (r.contact_id && ghlConfig) {
+              try {
+                const resp = await getContact(r.contact_id, ghlConfig.locationId, ghlConfig.apiKey);
+                const contact = resp?.contact ?? resp;
+                name = [contact?.firstName, contact?.lastName].filter(Boolean).join(" ").trim() || null;
+              } catch {
+                // Name is a nicety — fall back to the bare phone number below.
+              }
+            }
+            return {
+              name: name ?? "(unknown name)",
+              phone: r.phone,
+              when: formatLocal(r.created_at.toISOString(), timezone),
+              direction: r.triggered_by === "inbound" ? "inbound" : "outbound",
+              status: r.status,
+              outcome: r.ended_reason,
+            };
+          })
+        );
+
+        return JSON.stringify({ clientId, date: formatLocal(startOfDay.toISOString(), timezone), count: calls.length, calls });
+      }
+
       default:
         throw new Error(`Iris has no tool named "${name}"`);
     }
@@ -253,12 +313,13 @@ isn't in this client's config — say you don't know rather than guessing.
 ## Answering questions about specific leads or overall numbers, here in Slack
 You have real tools now — iris_lookup_lead (a specific lead's real call
 history, last-attempt time in their own local timezone, outcome, current
-status) and iris_pipeline_stats (overall counts: pending, exhausted,
-opted-out, etc.). ALWAYS call the relevant tool for a factual question like
-this rather than guessing or estimating from memory — the data changes
-constantly, and a wrong guess is worse than admitting you'd need to look it
-up. If a tool comes back with nothing found, say so plainly rather than
-inventing a plausible-sounding answer.
+status), iris_pipeline_stats (overall counts: pending, exhausted,
+opted-out, etc.), and iris_calls_today (every call placed or answered today,
+in order — who, when, direction, outcome). ALWAYS call the relevant tool
+for a factual question like this rather than guessing or estimating from
+memory — the data changes constantly, and a wrong guess is worse than
+admitting you'd need to look it up. If a tool comes back with nothing
+found, say so plainly rather than inventing a plausible-sounding answer.
 
 ## Recognize when someone is actually done talking to you
 Real bug found live 2026-09-22: after correctly answering a real question
