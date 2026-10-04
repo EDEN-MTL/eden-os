@@ -29,7 +29,6 @@ import { buildKeyToId, NormalisedLead, readField, ScoutConfig } from "./intake";
 import { classifyLeadHistory, HistoryConfig, HistoryContact, HistoryReason, HistorySubject, LeadHistory } from "./history";
 
 const DEFAULT_RETURNING_TAG = "returning lead";
-const DEFAULT_ALERT_CHANNEL = "iris-call-logs";
 const DEFAULT_MIN_AGE_MINUTES = 60;
 /** Same-person records to inspect when a client's GHL doesn't dedupe — more than a few means something else is going on. */
 const MAX_DUPLICATES = 3;
@@ -155,20 +154,21 @@ export function describeReasons(reasons: HistoryReason[], stageNames: Map<string
 }
 
 /**
- * Posts as Scout; if Scout's bot isn't in the channel, falls back to Iris
- * (which is) rather than losing the alert — a returning lead's agent
- * follow-up is time-sensitive, and Scout's token has chat:write but not
- * chat:write.public, so it can only post where it's been invited. Confirmed
- * live 2026-10-05: Scout got not_in_channel on #iris-call-logs.
+ * Posts as Scout only (Mark, 2026-10-05: alerts come from Scout, in the
+ * client's newleads channel — not from Iris, and not in the call-log
+ * channel). Scout's token has chat:write but not chat:write.public, so it
+ * can only post where it's been invited; a failure here is logged by every
+ * caller and never blocks the agent's task/tag/note.
  */
 async function postAlert(config: ScoutConfig, text: string): Promise<void> {
-  const channel = config.returningLeadSlackChannel || DEFAULT_ALERT_CHANNEL;
-  try {
-    await sendMessage("scout", { channel, text });
-  } catch (error) {
-    console.warn(`[SCT] Scout couldn't post to #${channel} (${error instanceof Error ? error.message : error}) — falling back to Iris. Invite Scout to that channel.`);
-    await sendMessage("iris", { channel, text: `${text}\n_(posted via Iris — Scout isn't in this channel yet)_` });
+  // No default channel on purpose: a default would point a new client's alerts
+  // at some other client's channel. Unconfigured means no Slack alert; the
+  // agent's tag/task/note still happen.
+  if (!config.returningLeadSlackChannel) {
+    console.warn("[SCT] scout.returningLeadSlackChannel isn't set for this client — skipping the Slack alert.");
+    return;
   }
+  await sendMessage("scout", { channel: config.returningLeadSlackChannel, text });
 }
 
 /** Fail-closed notice — see assessLeadHistory. A human can retrigger the lead once the cause (usually a GHL API blip) is gone. */
