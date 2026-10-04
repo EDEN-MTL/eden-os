@@ -35,7 +35,7 @@ const CONFIG = {
   touchedStageIds: [STAGE_LIVE],
   historyStageIds: [STAGE_LIVE],
   returningLeadTag: "returning lead",
-  returningLeadSlackChannel: "iris-call-logs",
+  returningLeadSlackChannel: "C0BRPC7FUMU",
   returningMinAgeMinutes: 60,
   fields: { isaNotes: "contact.isa_notes" },
 } as unknown as ScoutConfig;
@@ -186,7 +186,7 @@ describe("notifyReturningLead", () => {
     expect(ghl.createContactNote).toHaveBeenCalledWith("contact-glen", expect.stringContaining("Iris was NOT queued to call"), "loc-1", "key-1");
     const [agent, message] = slack.sendMessage.mock.calls[0] as unknown as [string, { channel: string; text: string }];
     expect(agent).toBe("scout");
-    expect(message.channel).toBe("iris-call-logs");
+    expect(message.channel).toBe("C0BRPC7FUMU");
     expect(message.text).toContain("Stephanie McGrath");
     expect(message.text).toContain("Iris will NOT call");
   });
@@ -250,17 +250,26 @@ describe("notifyReturningLead", () => {
     expect(slack.sendMessage).toHaveBeenCalled();
   });
 
-  it("falls back to posting as Iris when Scout's bot isn't in the Slack channel, so the alert isn't lost", async () => {
+  it("a failed Slack post doesn't stop the agent's tag, task or note, and never throws", async () => {
     db.query.mockResolvedValue([{ id: "1" }]);
     slack.sendMessage.mockRejectedValueOnce(new Error("not_in_channel"));
 
-    await notifyReturningLead("3-percent-east-coast", LEAD, assessed(STEPHANIE), CONFIG);
+    await expect(notifyReturningLead("3-percent-east-coast", LEAD, assessed(STEPHANIE), CONFIG)).resolves.toBeUndefined();
 
-    expect(slack.sendMessage).toHaveBeenCalledTimes(2);
-    const [agent, message] = slack.sendMessage.mock.calls[1] as unknown as [string, { text: string }];
-    expect(agent).toBe("iris");
-    expect(message.text).toContain("Returning lead");
-    expect(message.text).toContain("Scout isn't in this channel yet");
+    expect(ghl.addContactTags).toHaveBeenCalled();
+    expect(ghl.createContactTask).toHaveBeenCalled();
+    expect(slack.sendMessage).toHaveBeenCalledTimes(1);
+    expect(slack.sendMessage.mock.calls[0][0]).toBe("scout");
+  });
+
+  it("skips the Slack alert (but still tags, tasks and notes) when the client has no alert channel configured", async () => {
+    db.query.mockResolvedValue([{ id: "1" }]);
+    const noChannel = { ...CONFIG, returningLeadSlackChannel: undefined } as unknown as ScoutConfig;
+
+    await notifyReturningLead("3-percent-east-coast", LEAD, assessed(STEPHANIE), noChannel);
+
+    expect(slack.sendMessage).not.toHaveBeenCalled();
+    expect(ghl.addContactTags).toHaveBeenCalled();
   });
 
   it("never throws, even if the de-dupe insert itself fails", async () => {

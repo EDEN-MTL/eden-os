@@ -271,7 +271,8 @@
     ],
     "historyStageIdsNote": "Mark, 2026-10-04: stages that mean a human worked the lead — Live Transferred, Appointment Set, Appointment Set (Not qualified), Showed Up, No-Show, Buyer Confirmed, Seller Confirmed, Listing Active, Deal Closed, Not Qualified/Not Interested (ids verified live via GET /pipelines). Read by agents/scout/history.ts to recognize a RETURNING lead — one who re-enters the funnel but already belongs to an agent. Deliberately EXCLUDES the automated columns a lead lands in with no human involved: Replied, the DAY-N / WEEKEND follow-ups, Long Term Nurturing, Not Ready [Endless Loop], International Numbers.",
     "returningLeadTag": "returning lead",
-    "returningLeadSlackChannel": "iris-call-logs",
+    "returningLeadSlackChannel": "C0BRPC7FUMU",
+    "returningLeadSlackChannelNote": "Mark, 2026-10-05: returning-lead alerts go to #newleads, posted by Scout (Scout is a member). #newleads is a PRIVATE channel, so this is its channel id — Slack only resolves a channel by name for public channels.",
     "returningMinAgeMinutes": 60
   }
 }

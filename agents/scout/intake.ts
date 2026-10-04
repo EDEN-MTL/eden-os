@@ -60,7 +60,7 @@ export interface ScoutConfig {
   historyStageIds?: string[];
   /** Tag applied to a returning lead that has an assigned agent — what the client's GHL "tag added" workflow keys on to text them. Default "returning lead". */
   returningLeadTag?: string;
-  /** Slack channel Scout posts a returning-lead alert in. Default "iris-call-logs". */
+  /** Slack channel ID (not name — private channels need the id) Scout posts a returning-lead alert in. No default: unset means no Slack alert. */
   returningLeadSlackChannel?: string;
   /** A contact younger than this is brand new regardless of what's on it. Default 60. */
   returningMinAgeMinutes?: number;
