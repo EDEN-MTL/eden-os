@@ -50,6 +50,20 @@ export interface ScoutConfig {
    * checked alongside touchedTags, not instead of it — see isFirstTouch.
    */
   touchedStageIds?: string[];
+  /**
+   * Stage ids that mean a human worked the lead — Live Transferred,
+   * Appointment Set, Showed Up, Deal Closed, etc. Broader than
+   * touchedStageIds (which only gates Iris's own calling). Read by
+   * agents/scout/history.ts to recognize a RETURNING lead. Falls back to
+   * touchedStageIds when a client hasn't listed any.
+   */
+  historyStageIds?: string[];
+  /** Tag applied to a returning lead that has an assigned agent — what the client's GHL "tag added" workflow keys on to text them. Default "returning lead". */
+  returningLeadTag?: string;
+  /** Slack channel Scout posts a returning-lead alert in. Default "iris-call-logs". */
+  returningLeadSlackChannel?: string;
+  /** A contact younger than this is brand new regardless of what's on it. Default 60. */
+  returningMinAgeMinutes?: number;
   calendars: { buyer: string; seller: string };
   fields: ScoutFieldMap;
 }
