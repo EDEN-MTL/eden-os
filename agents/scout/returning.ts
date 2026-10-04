@@ -154,8 +154,21 @@ export function describeReasons(reasons: HistoryReason[], stageNames: Map<string
   return [...new Set(out)];
 }
 
+/**
+ * Posts as Scout; if Scout's bot isn't in the channel, falls back to Iris
+ * (which is) rather than losing the alert — a returning lead's agent
+ * follow-up is time-sensitive, and Scout's token has chat:write but not
+ * chat:write.public, so it can only post where it's been invited. Confirmed
+ * live 2026-10-05: Scout got not_in_channel on #iris-call-logs.
+ */
 async function postAlert(config: ScoutConfig, text: string): Promise<void> {
-  await sendMessage("scout", { channel: config.returningLeadSlackChannel || DEFAULT_ALERT_CHANNEL, text });
+  const channel = config.returningLeadSlackChannel || DEFAULT_ALERT_CHANNEL;
+  try {
+    await sendMessage("scout", { channel, text });
+  } catch (error) {
+    console.warn(`[SCT] Scout couldn't post to #${channel} (${error instanceof Error ? error.message : error}) — falling back to Iris. Invite Scout to that channel.`);
+    await sendMessage("iris", { channel, text: `${text}\n_(posted via Iris — Scout isn't in this channel yet)_` });
+  }
 }
 
 /** Fail-closed notice — see assessLeadHistory. A human can retrigger the lead once the cause (usually a GHL API blip) is gone. */
