@@ -250,6 +250,19 @@ describe("notifyReturningLead", () => {
     expect(slack.sendMessage).toHaveBeenCalled();
   });
 
+  it("falls back to posting as Iris when Scout's bot isn't in the Slack channel, so the alert isn't lost", async () => {
+    db.query.mockResolvedValue([{ id: "1" }]);
+    slack.sendMessage.mockRejectedValueOnce(new Error("not_in_channel"));
+
+    await notifyReturningLead("3-percent-east-coast", LEAD, assessed(STEPHANIE), CONFIG);
+
+    expect(slack.sendMessage).toHaveBeenCalledTimes(2);
+    const [agent, message] = slack.sendMessage.mock.calls[1] as unknown as [string, { text: string }];
+    expect(agent).toBe("iris");
+    expect(message.text).toContain("Returning lead");
+    expect(message.text).toContain("Scout isn't in this channel yet");
+  });
+
   it("never throws, even if the de-dupe insert itself fails", async () => {
     db.query.mockRejectedValue(new Error("db down"));
 
