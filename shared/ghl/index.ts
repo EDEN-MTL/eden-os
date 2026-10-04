@@ -161,6 +161,65 @@ export async function addContactTags(
   });
 }
 
+/**
+ * DELETE with a body — GHL's tag removal takes the tag list the same way
+ * addContactTags does. Used to remove-then-re-add a tag so a GHL "tag
+ * added" workflow trigger fires again on a repeat event (a trigger never
+ * re-fires for a tag the contact already carries).
+ */
+export async function removeContactTags(
+  contactId: string,
+  tags: string[],
+  locationId?: string,
+  apiKey?: string
+): Promise<any> {
+  return ghlRequest(`/contacts/${contactId}/tags`, {
+    method: "DELETE",
+    body: { tags },
+    locationId,
+    apiKey,
+  });
+}
+
+/**
+ * A plain contact Note — deliberately NOT the isa_notes custom field, which
+ * 3% has wired to automations (see agents/scout/returning.ts).
+ */
+export async function createContactNote(
+  contactId: string,
+  body: string,
+  locationId?: string,
+  apiKey?: string
+): Promise<any> {
+  return ghlRequest(`/contacts/${contactId}/notes`, {
+    method: "POST",
+    body: { body },
+    locationId,
+    apiKey,
+  });
+}
+
+/** A GHL task on the contact, assigned to a user — shows up in that agent's own task list. */
+export async function createContactTask(
+  contactId: string,
+  task: { title: string; body?: string; dueDate: string; assignedTo?: string },
+  locationId?: string,
+  apiKey?: string
+): Promise<any> {
+  return ghlRequest(`/contacts/${contactId}/tasks`, {
+    method: "POST",
+    body: { ...task, completed: false },
+    locationId,
+    apiKey,
+  });
+}
+
+/** Appointments GHL has on record for this contact (many real bookings have none — see listCalendarEvents). */
+export async function getContactAppointments(contactId: string, locationId?: string, apiKey?: string): Promise<any[]> {
+  const result = await ghlRequest(`/contacts/${contactId}/appointments`, { locationId, apiKey });
+  return result?.events || [];
+}
+
 // ─── Pipeline ───
 
 export async function getPipelines(locationId: string): Promise<any> {
@@ -195,6 +254,27 @@ export async function findOpenOpportunitiesForContact(
   return (payload.opportunities || [])
     .filter((o: any) => o.status === "open")
     .sort((a: any, b: any) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime());
+}
+
+/**
+ * EVERY opportunity this contact has ever had — any status, oldest first.
+ * findOpenOpportunitiesForContact above only sees open ones and sorts
+ * newest-first, which is wrong for history: a returning lead gets a fresh
+ * intake-stage card that sits at the top and masks the older card still
+ * parked in Live Transferred / Appointment Set.
+ */
+export async function listOpportunitiesForContact(
+  contactId: string,
+  locationId: string,
+  apiKey?: string
+): Promise<any[]> {
+  const payload = await ghlRequest(
+    `/opportunities/search?location_id=${locationId}&contact_id=${contactId}`,
+    { apiKey }
+  );
+  return (payload.opportunities || []).sort(
+    (a: any, b: any) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime()
+  );
 }
 
 function toEpochMs(isoTimestamp?: string | null): number | undefined {
