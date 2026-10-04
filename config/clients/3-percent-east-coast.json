@@ -256,6 +256,22 @@
       "connection made",
       "do not call"
     ],
-    "touchedTagsNote": "Evidence that a lead has actually been SPOKEN TO, so Iris should not open a new outreach sequence. 'replied' was originally in this list and has been removed: it is applied when a lead answers the text automation, which is engagement, not a conversation. 10 of 150 contacts carry 'replied' with no other contact evidence — they answered a text and nobody ever called them. Those are among the hottest leads on the board and blocking them was exactly backwards. Note this gates whether Iris STARTS a sequence, not each call within it: Iris dials morning and afternoon for 3-4 days and owns that cadence itself. 'do not call' added 2026-09-22 — the tag agents/iris/dial-pending.ts applies when a lead opts out via text (see text-signals.ts); listed here too as defense-in-depth so any FUTURE re-intake of this same contact (a new form submission down the road) is also blocked, not just the in-flight sequence at opt-out time."
+    "touchedTagsNote": "Evidence that a lead has actually been SPOKEN TO, so Iris should not open a new outreach sequence. 'replied' was originally in this list and has been removed: it is applied when a lead answers the text automation, which is engagement, not a conversation. 10 of 150 contacts carry 'replied' with no other contact evidence — they answered a text and nobody ever called them. Those are among the hottest leads on the board and blocking them was exactly backwards. Note this gates whether Iris STARTS a sequence, not each call within it: Iris dials morning and afternoon for 3-4 days and owns that cadence itself. 'do not call' added 2026-09-22 — the tag agents/iris/dial-pending.ts applies when a lead opts out via text (see text-signals.ts); listed here too as defense-in-depth so any FUTURE re-intake of this same contact (a new form submission down the road) is also blocked, not just the in-flight sequence at opt-out time.",
+    "historyStageIds": [
+      "d4cb572b-5fa5-48e5-bced-46c88715e2da",
+      "790a0988-f755-4242-84da-bf8aeb38d2d6",
+      "81e7f650-a71f-4660-ac47-de8acb88a402",
+      "60343259-792e-435f-a43e-2583abac6a5b",
+      "fb75bf0a-6386-4e76-8d80-c8086a6d5bd9",
+      "b5120bc5-417e-40e8-a5d1-f98671e495f3",
+      "f1b529f2-2120-413a-bead-ee5a3fb0543e",
+      "2b6d8955-0042-4bcf-a0af-fb66f730343b",
+      "0b8bb412-79cf-46dc-9a12-c85860d05e08",
+      "984ce4f3-a22a-4722-b8c9-252a11617a42"
+    ],
+    "historyStageIdsNote": "Mark, 2026-10-04: stages that mean a human worked the lead — Live Transferred, Appointment Set, Appointment Set (Not qualified), Showed Up, No-Show, Buyer Confirmed, Seller Confirmed, Listing Active, Deal Closed, Not Qualified/Not Interested (ids verified live via GET /pipelines). Read by agents/scout/history.ts to recognize a RETURNING lead — one who re-enters the funnel but already belongs to an agent. Deliberately EXCLUDES the automated columns a lead lands in with no human involved: Replied, the DAY-N / WEEKEND follow-ups, Long Term Nurturing, Not Ready [Endless Loop], International Numbers.",
+    "returningLeadTag": "returning lead",
+    "returningLeadSlackChannel": "iris-call-logs",
+    "returningMinAgeMinutes": 60
   }
 }

@@ -29,6 +29,7 @@ export interface AgentConfig {
 export type EventType =
   | "lead.captured"
   | "lead.enriched"
+  | "lead.returning"
   | "lead.qualified"
   | "lead.routed"
   | "appointment.booked"

@@ -4,6 +4,7 @@ import { BaseAgent } from "../base-agent";
 import { eventBus } from "../../shared/events";
 import { buildKeyToId, normaliseLead, NormalisedLead, ScoutConfig } from "./intake";
 import { findOpenOpportunitiesForContact, getContact, getCustomFieldDefs, getGhlConfig } from "../../shared/ghl";
+import { assessLeadHistory, notifyReturningLead, warnHistoryUnverified } from "./returning";
 
 class ScoutAgent extends BaseAgent {
   constructor() {
@@ -29,6 +30,20 @@ Pre-approval is the signal the team genuinely uses — the ISA pre-screens on it
 GHL's built-in "Engagement Score" was configured but never switched on, and the
 lead_score and urgency_flag fields are not connected to anything. Do not refer
 to them as if they were live.
+
+## Returning leads — you are the gatekeeper for these
+You are the only producer of the lead.enriched event Iris acts on, so you are
+also the one who decides whether a lead is genuinely new. At intake you check
+the lead's real history in GHL: an assigned agent, an earlier card in a worked
+stage (Live Transferred, Appointment Set, Deal Closed...), a touch tag, ISA
+notes an agent wrote, or an appointment on record — on this contact or a
+duplicate record of the same phone/email. If any of that exists the lead is
+RETURNING: you do not emit lead.enriched (so Iris cannot line up a call), you
+tag the lead so their agent gets a text from the client's GHL workflow, create
+a task for that agent, and post an alert in Slack. If the lead has history but
+no assigned agent, only Slack is told. An old contact nobody ever worked is
+treated as new. If you cannot verify history (GHL didn't respond), you fail
+closed: no call is queued and a Slack warning says so.
 
 ## Attribution
 Nine attribution fields exist on the contact record (fbclid, utm_*,
@@ -116,6 +131,33 @@ eventBus.subscribe("lead.captured", async (event) => {
   const lead = (contactId ? await refreshLead(contactId, clientId) : null) ?? processLead(event.data, clientId);
   if (!lead) return;
   logLead(lead, "intake");
+
+  // Mark's spec, 2026-10-04: a lead who already belongs to an agent must not
+  // be lined up for an Iris call — their agent gets told they came back
+  // instead. Scout is the only producer of lead.enriched, so holding it back
+  // here is what actually stops the call; Iris needs no changes to obey.
+  const config = loadScoutConfig(clientId);
+  if (config && contactId) {
+    const assessed = await assessLeadHistory(contactId, clientId, config);
+    if (!assessed) {
+      // Fails CLOSED, same philosophy as isFirstTouch: wrongly calling
+      // someone who already has an agent is worse than a new lead waiting
+      // for a human to retrigger it.
+      console.warn(`[SCT] Could not verify history for ${lead.name || contactId} — not emitting lead.enriched.`);
+      await warnHistoryUnverified(lead, config);
+      return;
+    }
+    if (assessed.history.returning) {
+      console.log(
+        `[SCT] ${lead.name || contactId} is a RETURNING lead (${assessed.history.reasons.map((r) => r.kind).join(", ")}) — ` +
+          `not emitting lead.enriched; alerting ${assessed.history.assignedUserId ? "their agent" : "Slack only (no assigned agent)"}.`
+      );
+      eventBus.publish("lead.returning", "scout", clientId, { ...(lead as unknown as Record<string, any>), history: assessed.history });
+      await notifyReturningLead(clientId, lead, assessed, config);
+      return;
+    }
+  }
+
   eventBus.publish("lead.enriched", "scout", clientId, lead as unknown as Record<string, any>);
 });
 

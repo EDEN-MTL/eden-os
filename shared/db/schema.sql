@@ -666,3 +666,18 @@ CREATE TABLE IF NOT EXISTS webhook_debug_log (
     body JSONB NOT NULL,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+
+-- One row per returning-lead alert Scout sent (agents/scout/returning.ts).
+-- Exists so a replayed or doubled GHL webhook can't text the same agent
+-- twice for one re-entry: notifyReturningLead inserts only when no row for
+-- the same (client, contact) exists in the last 24h. reasons is kept so the
+-- alert can be audited later without re-deriving why Iris was held back.
+CREATE TABLE IF NOT EXISTS returning_lead_alerts (
+    id BIGSERIAL PRIMARY KEY,
+    client_id TEXT NOT NULL,
+    contact_id TEXT NOT NULL,
+    assigned_user_id TEXT,
+    reasons JSONB,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_returning_lead_alerts_lookup ON returning_lead_alerts(client_id, contact_id, created_at DESC);
