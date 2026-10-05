@@ -27,7 +27,7 @@ import { NormalisedLead } from "../scout/intake";
 import { loadIrisConfig, loadClientBranding } from "./index";
 import { buildLeadQualificationPrompt, extractFirstName } from "./scripts";
 import { placeCall, CallingDisabledError } from "./calling";
-import { decideNextAttempt, nextAttemptTime, clampToLegalCallingWindow } from "./cadence";
+import { decideNextAttempt, nextAttemptTime, nextFirstSlotTime, clampToLegalCallingWindow } from "./cadence";
 import { transferNumberForIntent, callbackCalendarForIntent } from "./qualification";
 import { classifyInboundText, lastInboundText } from "./text-signals";
 import { hasActiveSmsConversation } from "./sms";
@@ -144,6 +144,68 @@ export async function reopenForNextAttempt(
   return true;
 }
 
+/** Mark's spec, 2026-10-05: a callback the lead asked for that goes unanswered gets ONE quick retry about this long after the miss. */
+const MISSED_CALLBACK_RETRY_HOURS = 2;
+/** The quick retry only lands between these local hours — otherwise it waits for the cadence's first daily slot (10am), not 8pm or 7am. */
+const MISSED_CALLBACK_EARLIEST_HOUR = 9;
+const MISSED_CALLBACK_LATEST_HOUR = 20;
+
+export type MissedCallbackOutcome =
+  | { reopened: false }
+  | { reopened: true; callAfter: Date; misses: number; phase: "quick-retry" | "cadence" };
+
+/**
+ * A lead-requested callback (or a call the lead agreed to by text) went
+ * unanswered. reopenForNextAttempt can't handle these: it only runs for
+ * non-explicit rows, and an explicit row can't be handed back to the plain
+ * cadence either — the callback note Iris wrote into isa_notes flips the
+ * firstTouch gate false, so the next recheck would skip the lead as
+ * "already touched". So the row stays explicit (gated on `qualified`
+ * instead) and only its schedule changes:
+ *   1st miss  -> one quick retry ~2h later, inside 9am-8pm (else next 10am)
+ *   2nd+ miss -> the cadence's own next slot, never sooner than the next
+ *                10am, until the cadence's attempts are used up.
+ * Mark, 2026-10-05, after Saife Sarwar's missed 6:55pm callback was never
+ * retried. Returns { reopened: false } when the cadence is exhausted.
+ */
+export async function reopenAfterMissedCallback(
+  id: number,
+  clientId: string,
+  attemptsMade: number,
+  createdAt: Date,
+  priorMisses: number
+): Promise<MissedCallbackOutcome> {
+  const config = loadIrisConfig(clientId);
+  if (!config) return { reopened: false };
+  if (decideNextAttempt(config.outreachCadence, attemptsMade, { firstTouch: true }) !== "attempt") return { reopened: false };
+
+  const timeZone = config.timezone || CLIENT_TIMEZONE;
+  const misses = priorMisses + 1;
+  const now = new Date();
+  let callAfter: Date;
+  if (misses === 1) {
+    const candidate = new Date(now.getTime() + MISSED_CALLBACK_RETRY_HOURS * 3_600_000);
+    const hour = new Date(candidate.toLocaleString("en-US", { timeZone })).getHours();
+    callAfter =
+      hour >= MISSED_CALLBACK_EARLIEST_HOUR && hour < MISSED_CALLBACK_LATEST_HOUR
+        ? candidate
+        : nextFirstSlotTime(config.outreachCadence, timeZone, candidate);
+  } else {
+    const slot = nextAttemptTime(config.outreachCadence, attemptsMade + 1, createdAt, timeZone);
+    const floor = nextFirstSlotTime(config.outreachCadence, timeZone, now);
+    callAfter = slot && slot.getTime() > floor.getTime() ? slot : floor;
+  }
+
+  await query(
+    `UPDATE iris_pending_calls
+     SET call_after = $2, status = 'pending', callback_misses = $3,
+         resolution_reason = 'callback not answered — retrying', resolved_at = NULL
+     WHERE id = $1`,
+    [id, callAfter, misses]
+  );
+  return { reopened: true, callAfter, misses, phase: misses === 1 ? "quick-retry" : "cadence" };
+}
+
 async function resolveOne(row: PendingCallRow): Promise<void> {
   const config = loadIrisConfig(row.client_id);
   const branding = loadClientBranding(row.client_id);
@@ -257,7 +319,7 @@ async function resolveOne(row: PendingCallRow): Promise<void> {
     if (signal.type === "schedule_for") {
       await query(
         `UPDATE iris_pending_calls
-         SET call_after = $2, status = 'pending', is_explicit_callback = true,
+         SET call_after = $2, status = 'pending', is_explicit_callback = true, callback_misses = 0,
              resolution_reason = 'lead requested this time via text', resolved_at = NULL
          WHERE id = $1`,
         [row.id, signal.when]
@@ -378,7 +440,7 @@ export async function scheduleExplicitCallback(clientId: string, contactId: stri
      VALUES ($1, $2, $3, $4, 'pending', true)
      ON CONFLICT (client_id, contact_id) DO UPDATE
      SET lead = EXCLUDED.lead, call_after = EXCLUDED.call_after, status = 'pending',
-         is_explicit_callback = true, resolution_reason = 'lead requested callback', resolved_at = NULL`,
+         is_explicit_callback = true, callback_misses = 0, resolution_reason = 'lead requested callback', resolved_at = NULL`,
     [clientId, contactId, JSON.stringify(lead), callbackTime]
   );
   return true;
