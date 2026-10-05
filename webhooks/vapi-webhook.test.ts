@@ -8,6 +8,7 @@ const ghl = vi.hoisted(() => ({
   updateOpportunityStage: vi.fn(),
   getCustomFieldDefs: vi.fn(),
   updateContact: vi.fn(),
+  sendSMS: vi.fn(),
 }));
 vi.mock("../shared/ghl", () => ghl);
 
@@ -17,10 +18,10 @@ vi.mock("../shared/slack", () => slack);
 const conversationMemory = vi.hoisted(() => ({ appendHistory: vi.fn() }));
 vi.mock("../shared/conversation-memory", () => conversationMemory);
 
-const iris = vi.hoisted(() => ({ loadIrisConfig: vi.fn() }));
+const iris = vi.hoisted(() => ({ loadIrisConfig: vi.fn(), loadClientBranding: vi.fn() }));
 vi.mock("../agents/iris", () => iris);
 
-const dialPending = vi.hoisted(() => ({ reopenForNextAttempt: vi.fn(), scheduleExplicitCallback: vi.fn() }));
+const dialPending = vi.hoisted(() => ({ reopenForNextAttempt: vi.fn(), reopenAfterMissedCallback: vi.fn(), scheduleExplicitCallback: vi.fn() }));
 vi.mock("../agents/iris/dial-pending", () => dialPending);
 
 const db = vi.hoisted(() => ({ query: vi.fn(async () => []) }));
@@ -42,6 +43,7 @@ import {
   genuinelyAnswered,
   hitCallScreener,
   maybeHonorMissedCallback,
+  maybeReopenPendingCall,
   moveToFollowUpStage,
   postCallLogToSlack,
   tagSequenceExhausted,
@@ -726,5 +728,107 @@ describe("maybeHonorMissedCallback", () => {
     await maybeHonorMissedCallback("3-percent-east-coast", "contact-1", "User: call me later\nAI: No problem at");
 
     expect(dialPending.scheduleExplicitCallback).toHaveBeenCalledTimes(1);
+  });
+});
+
+/**
+ * Mark, 2026-10-05: Saife Sarwar asked for a callback, Iris called at
+ * 6:55pm, no answer — and nothing ever tried again, because explicit
+ * callback rows were excluded from the retry logic entirely.
+ */
+describe("maybeReopenPendingCall — missed explicit callbacks", () => {
+  const ROW = {
+    id: 69,
+    attempts_made: 2,
+    created_at: new Date("2026-10-01T16:36:06.698Z"),
+    status: "placed",
+    is_explicit_callback: true,
+    source: null,
+    callback_misses: 0,
+    lead: { name: "Saife Sarwar" },
+  };
+  const RETRY_AT = new Date("2026-10-02T12:30:00.000Z");
+
+  beforeEach(() => {
+    db.query.mockResolvedValue([ROW]);
+    iris.loadIrisConfig.mockReturnValue({ timezone: "America/St_Johns", callbackNotesFieldKey: "contact.isa_notes" });
+    iris.loadClientBranding.mockReturnValue({ brandName: "3% Realty", city: "St. John's" });
+    ghl.getGhlConfig.mockResolvedValue({ locationId: "loc-1", apiKey: "key-1" });
+    ghl.getCustomFieldDefs.mockResolvedValue([]);
+  });
+
+  it("retries a missed callback and texts the lead once on the first miss", async () => {
+    dialPending.reopenAfterMissedCallback.mockResolvedValue({ reopened: true, callAfter: RETRY_AT, misses: 1, phase: "quick-retry" });
+
+    await maybeReopenPendingCall("3-percent-east-coast", "contact-1");
+
+    expect(dialPending.reopenAfterMissedCallback).toHaveBeenCalledWith(69, "3-percent-east-coast", 2, ROW.created_at, 0);
+    expect(dialPending.reopenForNextAttempt).not.toHaveBeenCalled();
+    expect(ghl.sendSMS).toHaveBeenCalledTimes(1);
+    const [contactId, text] = ghl.sendSMS.mock.calls[0];
+    expect(contactId).toBe("contact-1");
+    expect(text).toContain("Saife");
+    expect(text).toContain("3% Realty");
+    expect(text).toMatch(/missed you/i);
+    expect(text).toMatch(/what time/i);
+  });
+
+  it("does not text again on the second miss, and moves the card to the matching follow-up stage", async () => {
+    db.query.mockResolvedValue([{ ...ROW, attempts_made: 3, callback_misses: 1 }]);
+    iris.loadIrisConfig.mockReturnValue({ timezone: "America/St_Johns", followUpStageIds: ["s1", "s2", "s3"] });
+    ghl.findOpenOpportunitiesForContact.mockResolvedValue([{ id: "opp-1" }]);
+    dialPending.reopenAfterMissedCallback.mockResolvedValue({ reopened: true, callAfter: RETRY_AT, misses: 2, phase: "cadence" });
+
+    await maybeReopenPendingCall("3-percent-east-coast", "contact-1");
+
+    expect(ghl.sendSMS).not.toHaveBeenCalled();
+    expect(ghl.updateOpportunityStage).toHaveBeenCalledWith("opp-1", "s3", "loc-1", "key-1");
+  });
+
+  it("tags the lead when the cadence is exhausted", async () => {
+    dialPending.reopenAfterMissedCallback.mockResolvedValue({ reopened: false });
+
+    await maybeReopenPendingCall("3-percent-east-coast", "contact-1");
+
+    expect(ghl.addContactTags).toHaveBeenCalledWith("contact-1", ["iris no answer"], "loc-1", "key-1");
+    expect(ghl.sendSMS).not.toHaveBeenCalled();
+  });
+
+  it("leaves an Ember handoff one-shot, as before", async () => {
+    db.query.mockResolvedValue([{ ...ROW, source: "ember" }]);
+
+    await maybeReopenPendingCall("3-percent-east-coast", "contact-1");
+
+    expect(dialPending.reopenAfterMissedCallback).not.toHaveBeenCalled();
+    expect(dialPending.reopenForNextAttempt).not.toHaveBeenCalled();
+    expect(ghl.sendSMS).not.toHaveBeenCalled();
+  });
+
+  it("does nothing when the row isn't in the 'placed' state any more (a duplicate webhook)", async () => {
+    db.query.mockResolvedValue([{ ...ROW, status: "pending" }]);
+
+    await maybeReopenPendingCall("3-percent-east-coast", "contact-1");
+
+    expect(dialPending.reopenAfterMissedCallback).not.toHaveBeenCalled();
+    expect(ghl.sendSMS).not.toHaveBeenCalled();
+  });
+
+  it("still uses the normal cadence for an ordinary (non-explicit) row", async () => {
+    db.query.mockResolvedValue([{ ...ROW, is_explicit_callback: false }]);
+    dialPending.reopenForNextAttempt.mockResolvedValue(true);
+
+    await maybeReopenPendingCall("3-percent-east-coast", "contact-1");
+
+    expect(dialPending.reopenForNextAttempt).toHaveBeenCalledWith(69, "3-percent-east-coast", 2, ROW.created_at);
+    expect(dialPending.reopenAfterMissedCallback).not.toHaveBeenCalled();
+    expect(ghl.sendSMS).not.toHaveBeenCalled();
+  });
+
+  it("still retries even if the text fails to send", async () => {
+    dialPending.reopenAfterMissedCallback.mockResolvedValue({ reopened: true, callAfter: RETRY_AT, misses: 1, phase: "quick-retry" });
+    ghl.sendSMS.mockRejectedValue(new Error("boom"));
+
+    await expect(maybeReopenPendingCall("3-percent-east-coast", "contact-1")).resolves.toBeUndefined();
+    expect(dialPending.reopenAfterMissedCallback).toHaveBeenCalled();
   });
 });

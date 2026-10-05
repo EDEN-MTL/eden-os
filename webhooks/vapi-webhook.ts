@@ -1,11 +1,12 @@
 import crypto from "crypto";
 import { Request, Response, Router } from "express";
 import { query } from "../shared/db";
-import { getGhlConfig, getContact, addContactTags, findOpenOpportunitiesForContact, updateOpportunityStage, getCustomFieldDefs, updateContact } from "../shared/ghl";
+import { getGhlConfig, getContact, addContactTags, findOpenOpportunitiesForContact, updateOpportunityStage, getCustomFieldDefs, updateContact, sendSMS } from "../shared/ghl";
 import { sendMessage, uploadFile } from "../shared/slack";
 import { appendHistory } from "../shared/conversation-memory";
-import { loadIrisConfig } from "../agents/iris";
-import { reopenForNextAttempt, scheduleExplicitCallback } from "../agents/iris/dial-pending";
+import { loadIrisConfig, loadClientBranding } from "../agents/iris";
+import { reopenForNextAttempt, reopenAfterMissedCallback, scheduleExplicitCallback } from "../agents/iris/dial-pending";
+import { extractFirstName } from "../agents/iris/scripts";
 import { buildKeyToId, readField } from "../agents/scout/intake";
 import { clampToLegalCallingWindow, formatLocal } from "../agents/iris/cadence";
 import { handleInboundCall } from "../agents/iris/inbound";
@@ -456,18 +457,35 @@ export async function tagSequenceExhausted(clientId: string, contactId: string):
  * Looks up the one iris_pending_calls row for this (client, contact) pair
  * — UNIQUE(client_id, contact_id), so there's at most one — and reopens it
  * for the next cadence attempt if it's still sitting in the 'placed'
- * state this same call left it in (dial-pending.ts's markPlaced). Explicit
- * callbacks are never reopened, same one-shot behavior as always.
+ * state this same call left it in (dial-pending.ts's markPlaced). An
+ * explicit callback the lead asked for takes the missed-callback path
+ * instead (handleMissedExplicitCallback); Ember handoffs stay one-shot.
  */
-async function maybeReopenPendingCall(clientId: string, contactId: string): Promise<void> {
+export async function maybeReopenPendingCall(clientId: string, contactId: string): Promise<void> {
   try {
-    const rows = await query<{ id: number; attempts_made: number; created_at: Date; is_explicit_callback: boolean; status: string }>(
-      `SELECT id, attempts_made, created_at, is_explicit_callback, status FROM iris_pending_calls
+    const rows = await query<{
+      id: number;
+      attempts_made: number;
+      created_at: Date;
+      is_explicit_callback: boolean;
+      status: string;
+      source: string | null;
+      callback_misses: number;
+      lead: { name?: string | null } | null;
+    }>(
+      `SELECT id, attempts_made, created_at, is_explicit_callback, status, source, callback_misses, lead FROM iris_pending_calls
        WHERE client_id = $1 AND contact_id = $2`,
       [clientId, contactId]
     );
     const pending = rows[0];
-    if (!pending || pending.is_explicit_callback || pending.status !== "placed") return;
+    if (!pending || pending.status !== "placed") return;
+
+    if (pending.is_explicit_callback) {
+      // Ember reactivations were never a time the lead picked — one shot, as before.
+      if (pending.source === "ember") return;
+      await handleMissedExplicitCallback(clientId, contactId, pending);
+      return;
+    }
 
     const reopened = await reopenForNextAttempt(pending.id, clientId, pending.attempts_made, pending.created_at);
     console.log(
@@ -478,6 +496,55 @@ async function maybeReopenPendingCall(clientId: string, contactId: string): Prom
     if (!reopened) await tagSequenceExhausted(clientId, contactId);
   } catch (error) {
     console.error(`[VAPI] Failed to check/reopen pending call for ${contactId}:`, error instanceof Error ? error.message : error);
+  }
+}
+
+/**
+ * Mark, 2026-10-05 (Saife Sarwar asked for a callback, Iris called, no
+ * answer, and nothing ever tried again): a call the lead asked for that
+ * goes unanswered is retried once ~2h later with a text saying we missed
+ * them, then continues on the normal cadence slots — see
+ * reopenAfterMissedCallback for the schedule. The text goes out only on
+ * the first miss: it gives the lead an easy way to name a better time,
+ * which Iris's text handling already acts on, and a second text would just
+ * be nagging.
+ */
+async function handleMissedExplicitCallback(
+  clientId: string,
+  contactId: string,
+  pending: { id: number; attempts_made: number; created_at: Date; callback_misses: number; lead: { name?: string | null } | null }
+): Promise<void> {
+  const outcome = await reopenAfterMissedCallback(pending.id, clientId, pending.attempts_made, pending.created_at, pending.callback_misses);
+  if (!outcome.reopened) {
+    console.log(`[VAPI] Contact ${contactId} missed their callback and the cadence is exhausted — not requeuing.`);
+    await tagSequenceExhausted(clientId, contactId);
+    return;
+  }
+
+  const timezone = loadIrisConfig(clientId)?.timezone || "America/St_Johns";
+  console.log(`[VAPI] Contact ${contactId} didn't answer the callback they asked for (miss ${outcome.misses}) — retrying ${outcome.callAfter.toISOString()}.`);
+
+  if (outcome.phase === "cadence") await moveToFollowUpStage(clientId, contactId, pending.attempts_made);
+  if (outcome.phase === "quick-retry") await textMissedCall(clientId, contactId, pending.lead?.name);
+
+  await appendNoteToContact(
+    clientId,
+    contactId,
+    `Iris: callback went unanswered — trying again ${formatLocal(outcome.callAfter.toISOString(), timezone)}${outcome.phase === "quick-retry" ? " (texted the lead to ask for a better time)" : ""}.`
+  ).catch((error) => {
+    console.error(`[VAPI] Failed to note the missed callback retry for contact ${contactId}:`, error instanceof Error ? error.message : error);
+  });
+}
+
+async function textMissedCall(clientId: string, contactId: string, leadName: string | null | undefined): Promise<void> {
+  try {
+    const ghlConfig = await getGhlConfig(clientId);
+    const branding = loadClientBranding(clientId);
+    if (!ghlConfig || !branding) return;
+    const text = `Hi ${extractFirstName(leadName)}, it's Iris from ${branding.brandName}. I just tried to call you but missed you. What time works best for me to try again?`;
+    await sendSMS(contactId, text, ghlConfig.locationId, ghlConfig.apiKey);
+  } catch (error) {
+    console.error(`[VAPI] Failed to text contact ${contactId} after a missed callback:`, error instanceof Error ? error.message : error);
   }
 }
 

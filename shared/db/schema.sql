@@ -527,6 +527,11 @@ ALTER TABLE iris_pending_calls ADD COLUMN IF NOT EXISTS source TEXT;
 -- gate exists so Iris doesn't dial on top of an open text thread, and here
 -- the text thread is literally the lead asking for this call.
 ALTER TABLE iris_pending_calls ADD COLUMN IF NOT EXISTS sms_scheduled BOOLEAN NOT NULL DEFAULT FALSE;
+-- How many times in a row a lead-requested callback (is_explicit_callback,
+-- not Ember) went unanswered. Reset to 0 whenever the lead names a new
+-- time. 1st miss = one quick retry + a text; 2nd+ = back onto the normal
+-- cadence slots. See agents/iris/dial-pending.ts reopenAfterMissedCallback.
+ALTER TABLE iris_pending_calls ADD COLUMN IF NOT EXISTS callback_misses INTEGER NOT NULL DEFAULT 0;
 
 -- One stable, revocable link per client for Scout's bi-weekly team
 -- check-in page (webhooks/checkin-api.ts). Not per-send: the page always
