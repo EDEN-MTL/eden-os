@@ -7,7 +7,7 @@ import {
   consentStart,
   EMPTY_CONTEXT,
   findHardOptOut,
-  findSoftDecline,
+  findTemporaryPause,
   HistoryMessage,
   isHardOptOut,
   prefersText,
@@ -39,17 +39,18 @@ describe("hard opt-outs — permanent", () => {
   });
 });
 
-describe("soft declines — retried after the cool-off", () => {
-  it.each(["Not interested, thanks", "We already bought a place", "we bought a house in june", "I'm working with another agent", "we have a realtor", "not right now", "no longer looking"])(
-    "catches %j",
-    (body) => expect(findSoftDecline([inb(body)])?.body).toBe(body)
+describe("temporary pauses — 'not now', not 'never'", () => {
+  it.each(["not right now", "No thanks not now", "I'm not ready yet", "we'll wait until next year", "maybe in the spring", "not interested right now", "not looking at the moment"])("catches %j", (body) =>
+    expect(findTemporaryPause([inb(body)])?.body).toBe(body)
   );
-  it.each(["yes still looking", "we're not in a rush", "maybe in the spring"])("lets %j through", (body) => {
-    expect(findSoftDecline([inb(body)])).toBeNull();
+  it.each(["yes still looking", "we already bought", "not interested"])("lets %j through (clear no's are status.ts's job)", (body) => {
+    expect(findTemporaryPause([inb(body)])).toBeNull();
   });
-  it("returns the most recent decline", () => {
-    const d = findSoftDecline([inb("not interested", "2026-01-01T00:00:00Z"), inb("yes!", "2026-02-01T00:00:00Z"), inb("not right now", "2026-03-01T00:00:00Z")]);
-    expect(d?.at).toBe("2026-03-01T00:00:00Z");
+});
+
+describe("a call preference is not a texting opt-out", () => {
+  it.each(["don't call me, text is better", "please stop calling", "I would appreciate to not be called so many times"])("%j", (body) => {
+    expect(findHardOptOut([inb(body)])).toBeNull();
   });
 });
 

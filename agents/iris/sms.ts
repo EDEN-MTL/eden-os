@@ -19,7 +19,6 @@ import { buildSmsQualificationPrompt } from "./scripts";
 import { classifyInboundText, lastInboundText } from "./text-signals";
 import { IrisConfig, qualify, QualificationAnswers } from "./qualification";
 import { clampToLegalCallingWindow } from "./cadence";
-import { lastEmberTouchText } from "../ember/store";
 import { chatWithTools, ChatMessage, ToolDef } from "../../shared/claude";
 import { loadHistory, appendHistory } from "../../shared/conversation-memory";
 import { sendMessage } from "../../shared/slack";
@@ -309,6 +308,10 @@ export async function irisHandleInboundSms(contactId: string, text: string, opti
   // etc.) — not this contact's first real text exchange with Iris. Falls
   // through rather than reopening a concluded lead on an unrelated text.
   if (row.status !== "pending") return false;
+  // Ember owns the TEXT conversation with leads it reactivated (Mark,
+  // 2026-10-06: "Ember replies itself"); Iris only places the call Ember
+  // queued. Falling through lets the /message route hand it to Ember.
+  if (row.source === "ember") return false;
 
   const clientId = row.client_id;
   const config = loadIrisConfig(clientId);
@@ -369,16 +372,11 @@ export async function irisHandleInboundSms(contactId: string, text: string, opti
     return true;
   }
 
-  const fromEmber = row.source === "ember";
-  const openerText = fromEmber ? await lastEmberTouchText(clientId, contactId).catch(() => null) : null;
-
-  // Only fetched for a lead's first-ever reply, and only for a NORMAL
-  // (non-Ember) intake — once a real text exchange is underway, the
-  // conversation history already gives the model context, and repeating a
-  // live GHL fetch every turn would be wasteful. An Ember lead's "what are
-  // they replying to" context is already covered by openerText/emberBlock
-  // above (Ember's own reactivation text), not the normal-intake "you'll
-  // get a call from Iris" outreach this fetch is aimed at. Real gap found
+  // Only fetched for a lead's first-ever reply — once a real text exchange
+  // is underway, the conversation history already gives the model context,
+  // and repeating a live GHL fetch every turn would be wasteful. (Ember's
+  // reactivated leads never reach this point: Ember owns their texting, see
+  // the source === "ember" early return above.) Real gap found
   // live, 2026-09-25 (Kaitlyn Sheppard): the schedule_for check above only
   // catches a reply that names a SPECIFIC time — a bare "Yes!" replying to
   // the exact same "you'll get a call from Iris — what time works?" text
@@ -391,13 +389,12 @@ export async function irisHandleInboundSms(contactId: string, text: string, opti
   // reasoning text-signals.ts's own doc comment already gives for using an
   // LLM pass over regex here.
   const initialOutreachText =
-    !fromEmber && history.length === 0
+    history.length === 0
       ? (await lastInboundText(contactId, ghlConfig.locationId, ghlConfig.apiKey).catch(() => null))?.precedingOutbound ?? null
       : null;
 
   const systemPrompt = buildSmsQualificationPrompt(config, row.lead, branding.brandName, branding.city, {
-    origin: fromEmber ? "ember" : "form",
-    openerText,
+    origin: "form",
     callHandoff: config.smsCallHandoff,
     initialOutreachText,
   });

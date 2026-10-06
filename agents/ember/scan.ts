@@ -21,7 +21,7 @@ import { deriveWon, derivePipelineActive, OutcomeStageMap } from "../forge/ads/a
 import { getGhlConfig, listOpportunitiesInStage, listPipelines } from "../../shared/ghl";
 import { EmberConfig, loadEmberConfig, loadEmberOutcomeStages } from "./config";
 import { AlertFn, markExited, markReactivated, REACTIVATABLE, slackAlert } from "./alerts";
-import { enrollLead, hasPendingIrisCall, trackedByOpportunity } from "./store";
+import { enrollLead, hasPendingIrisCall, reviveQuietConversations, trackedByOpportunity } from "./store";
 import { GhlOpportunityLite, LeadIntent, NurtureLead } from "./types";
 import { readFileSync } from "fs";
 import { join } from "path";
@@ -263,6 +263,9 @@ export async function runEmberScanForClient(
     throw new Error(`ember.pipelineId "${config.pipelineId}" resolved to no stages for ${clientId}`);
   }
 
+  // Conversations that went quiet rejoin the check-in cadence first, so
+  // this pass sees their current status.
+  if (!dryRun) await reviveQuietConversations(clientId, config.conversationQuietDays ?? 3);
   let tracked: Map<string, NurtureLead>;
   try {
     tracked = await trackedByOpportunity(clientId);

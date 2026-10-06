@@ -153,16 +153,12 @@ describe("text-qualification ending — call handoff", () => {
   });
 });
 
-describe("an old lead Ember handed over", () => {
-  it("gets the reactivation context, re-confirms buy/sell, and an honest virtual-assistant answer", async () => {
+describe("a lead Ember reactivated (source 'ember')", () => {
+  it("is Ember's to text, not Iris's — Iris returns false and sends nothing (Mark, 2026-10-06)", async () => {
     db.query.mockResolvedValueOnce(row({ source: "ember" }));
-    vi.mocked(chatWithTools).mockResolvedValueOnce(endTurn("Great to hear from you! Still looking to buy?"));
-    await irisHandleInboundSms("contact-1", "yes actually", NO_WAIT);
-    const prompt = systemPrompt();
-    expect(prompt).toContain("OLDER lead");
-    expect(prompt).toContain("still on the hunt");
-    expect(prompt).toContain("Are you looking to buy or sell?");
-    expect(prompt).toContain("virtual assistant");
+    expect(await irisHandleInboundSms("contact-1", "yes actually", NO_WAIT)).toBe(false);
+    expect(chatWithTools).not.toHaveBeenCalled();
+    expect(ghl.sendSMS).not.toHaveBeenCalled();
   });
 
   it("a normal new lead keeps the existing wording", async () => {
@@ -194,8 +190,8 @@ describe("humanReplyDelayMs — never reply instantly (Mark, 2026-09-25)", () =>
     expect(waits[0]).toBeGreaterThanOrEqual(29_000);
   });
 
-  it("actually pauses before replying to a lead Ember handed over", async () => {
-    db.query.mockResolvedValueOnce(row({ source: "ember" }));
+  it("actually pauses before the reply goes out", async () => {
+    db.query.mockResolvedValueOnce(row());
     vi.mocked(chatWithTools).mockResolvedValueOnce(endTurn("Great, what area are you looking in?"));
     const waits: number[] = [];
     await irisHandleInboundSms("contact-1", "yes still looking", { wait: async (ms) => { waits.push(ms); } });

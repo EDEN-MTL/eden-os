@@ -15,19 +15,19 @@
  */
 import { classifyReply, ReplySentiment } from "../quarry/outreach";
 import type { OutcomeStageMap } from "../forge/ads/attribution";
-import { EmberConfig, renderTemplate, scriptKindFor } from "./config";
+import { CourtesyTemplates, EmberConfig, renderTemplate, scriptKindFor } from "./config";
 import { AlertFn, formatReactivationAlert, markExited, markReactivated } from "./alerts";
 import { detectChange } from "./scan";
 import { logSend, sendsToday, updateLead } from "./store";
 import { GhlOpportunityLite, NurtureChannel, NurtureLead } from "./types";
+import { NotInterestedCategory, StatusDecision } from "./status";
+import { moveToNotInterested, MoveStageFn } from "./notinterested";
 import {
   consentStart,
   EMPTY_CONTEXT,
-  findHardOptOut,
-  findSoftDecline,
+  findTemporaryPause,
   HistoryDecision,
   HistoryMessage,
-  isHardOptOut,
   LeadContext,
   ReviewContext,
 } from "./history";
@@ -71,13 +71,17 @@ export interface OutreachDeps {
   reviewHistory(messages: HistoryMessage[], ctx: ReviewContext): Promise<HistoryDecision>;
   /** Where they stand in the CRM: stage, notes, Iris calls (context.ts). */
   readContext(lead: NurtureLead, opportunity: GhlOpportunityLite): Promise<LeadContext>;
+  /** Clear-evidence Not Interested check (status.ts). */
+  classifyStatus(messages: HistoryMessage[]): Promise<StatusDecision>;
+  /** Moves a GHL card to a stage by name. */
+  moveStage: MoveStageFn;
 }
 
 export type TouchPlan =
   /** body set = a personal opener replacing the script. */
   | { kind: "send"; body?: string; reason: string }
-  /** Permanent — CASL unsubscribe, or wrong number. */
-  | { kind: "opt_out"; reason: string }
+  /** Clear evidence they're no longer a prospect — move to Not Interested, never contact again (status.ts). */
+  | { kind: "not_interested"; category: NotInterestedCategory; evidence: string; by: "rule" | "ai"; reason: string }
   /** "Not now" — restart the cycle from scratch on `until`. */
   | { kind: "defer"; until: Date; reason: string }
   | { kind: "no_consent"; reason: string }
@@ -86,11 +90,15 @@ export type TouchPlan =
 /**
  * Everything that decides what (if anything) this touch says, in order:
  *
- *   1. A hard opt-out anywhere in history → never again. Code, not model.
+ *   1. Clear evidence they're no longer a prospect — a stop request,
+ *      another agent, bought, sold, no longer looking (status.ts, Mark's
+ *      2026-10-01 rule) → moved to Not Interested, never contacted again.
+ *      Checked first: moving a card isn't messaging, so it applies even to
+ *      a lead past the consent window.
  *   2. CASL consent from the latest real inquiry (consentStart) → parked
  *      as no_consent if it's run out.
- *   3. A soft decline inside the cool-off → deferred to decline +
- *      reApproachAfterDays (Mark, 2026-09-24: try again after 6 months).
+ *   3. A temporary "not right now" inside the cool-off → deferred to that
+ *      message + reApproachAfterDays, then worked again from scratch.
  *   4. First touch of a cycle only: the model reads history + CRM context
  *      and picks defer / script / personal opener. Later touches use the
  *      approved scripts.
@@ -106,18 +114,23 @@ export async function planTouch(input: {
   config: EmberConfig;
   now: Date;
   review: (messages: HistoryMessage[], ctx: ReviewContext) => Promise<HistoryDecision>;
+  classify: (messages: HistoryMessage[]) => Promise<StatusDecision>;
 }): Promise<TouchPlan> {
   const { lead, contact, history, context, config, now } = input;
 
-  const hard = findHardOptOut(history);
-  if (hard) return { kind: "opt_out", reason: `said "${hard.slice(0, 80)}"` };
+  const status = await input.classify(history);
+  if (status.verdict === "not_interested") {
+    return { kind: "not_interested", category: status.category, evidence: status.evidence, by: status.by, reason: `said "${status.evidence.slice(0, 80)}"` };
+  }
+  // A possible clear no the model couldn't confirm: neither move nor text.
+  if (status.verdict === "unsure") return { kind: "retry", reason: status.reason };
 
   const from = consentStart(lead.inquiryAt, history);
   if (from && now.getTime() - new Date(from).getTime() >= config.consentWindowDays * DAY_MS) {
     return { kind: "no_consent", reason: `last inquiry ${from.slice(0, 10)} is past the ${config.consentWindowDays}-day consent window` };
   }
 
-  const decline = findSoftDecline(history);
+  const decline = findTemporaryPause(history);
   const coolOffMs = config.reApproachAfterDays * DAY_MS;
   if (decline?.at && now.getTime() - new Date(decline.at).getTime() < coolOffMs) {
     return {
@@ -203,11 +216,22 @@ function templateAt<T>(templates: T[], index: number): T {
 }
 
 /** "Jordan Smith" → "Jordan"; nothing usable → "there" ("Hi there,"). */
+/**
+ * "JACOB" → "Jacob", "sarah" → "Sarah"; anything already mixed-case
+ * ("McKenzie", "DeShawn") is left alone. Found 2026-10-01: the test
+ * account's JACOB EDEN contact would have been texted "Hi JACOB," — a
+ * shouted name reads as a mail merge, exactly what a nurture text must not.
+ */
+export function displayName(name: string): string {
+  if (name !== name.toUpperCase() && name !== name.toLowerCase()) return name;
+  return name.toLowerCase().replace(/(^|[\s'-])(\p{L})/gu, (_m, sep, ch) => sep + ch.toUpperCase());
+}
+
 function firstNameOf(lead: NurtureLead, contact: LiveContact): string {
   const fromContact = contact.firstName?.trim();
-  if (fromContact) return fromContact;
+  if (fromContact) return displayName(fromContact);
   const fromName = lead.contactName?.trim().split(/\s+/)[0];
-  return fromName || "there";
+  return fromName ? displayName(fromName) : "there";
 }
 
 export function buildMessage(
@@ -311,12 +335,12 @@ export async function sendTouch(lead: NurtureLead, deps: OutreachDeps, ctx: Touc
     return skip(`could not read conversation history: ${error instanceof Error ? error.message : String(error)}`);
   }
   const context = touchIndex === 0 ? await deps.readContext(lead, live.opportunity).catch(() => EMPTY_CONTEXT) : EMPTY_CONTEXT;
-  const plan = await planTouch({ lead, contact: live.contact, history, context, config, now, review: deps.reviewHistory });
+  const plan = await planTouch({ lead, contact: live.contact, history, context, config, now, review: deps.reviewHistory, classify: deps.classifyStatus });
 
   if (plan.kind === "retry") return skip(plan.reason);
-  if (plan.kind === "opt_out") {
-    await updateLead(lead.id, { status: "opted_out", statusReason: `history: ${plan.reason}`, nextTouchAt: null });
-    return skip(`opted out: ${plan.reason}`);
+  if (plan.kind === "not_interested") {
+    await moveToNotInterested(lead, plan, { config, clientName: ctx.clientName, alert: deps.alert, moveStage: deps.moveStage, now });
+    return skip(`not interested: ${plan.reason}`);
   }
   if (plan.kind === "no_consent") {
     await updateLead(lead.id, { status: "no_consent", statusReason: plan.reason, nextTouchAt: null });
@@ -450,13 +474,38 @@ function stripPhrases(text: string, phrases: string[]): string {
   return out;
 }
 
+export const DEFAULT_COURTESY: CourtesyTemplates = {
+  notReady: "No problem at all, {{firstName}} — I'll check back in a few months. If anything changes before then, just text me here!",
+  alreadyBought: "Congrats on the new place, {{firstName}}! Wishing you all the best — take care.",
+  alreadySold: "Congrats on the sale, {{firstName}}! All the best with what's next.",
+  otherAgent: "Good to know, {{firstName}} — glad you're in good hands. Wishing you all the best!",
+  notInterested: "No problem, {{firstName}} — thanks for letting me know. Take care!",
+};
+
+/** The one polite reply for a decline — null for a stop request (never answered). */
+export function courtesyFor(kind: NotInterestedCategory | "not_ready", firstName: string, config: EmberConfig): string | null {
+  if (kind === "asked_to_stop") return null;
+  const t = { ...DEFAULT_COURTESY, ...(config.outreach.courtesy ?? {}) };
+  const template =
+    kind === "not_ready" ? t.notReady
+    : kind === "already_bought" ? t.alreadyBought
+    : kind === "already_sold" ? t.alreadySold
+    : kind === "other_agent" ? t.otherAgent
+    : t.notInterested;
+  return renderTemplate(template, { firstName });
+}
+
 /**
- * An inbound reply from a nurture lead. An unsubscribe ("stop", "remove
- * me") is permanent; a plain "no" / "not interested" pauses them for
- * reApproachAfterDays. Anything else — a yes, a
- * question, "who is this?" — ends the cadence and alerts, because someone
- * who answers a months-later text is the signal this agent exists to find.
- * Nothing is auto-sent back either way.
+ * An inbound reply from a nurture lead. Mark, 2026-10-06: Ember answers
+ * them itself.
+ *   1. Clear evidence they're no longer a prospect (status.ts) → moved to
+ *      Not Interested, plus one polite reply — except after a stop request.
+ *   2. Couldn't tell whether it's a clear no → a human reads it; no reply.
+ *   3. First reply is "not ready yet" / a bare "no thanks" → paused
+ *      reApproachAfterDays, plus one polite reply. (Mid-conversation, the
+ *      model handles "not now" itself with pause_for_now.)
+ *   4. Anything else → Ember's own conversation (conversation.ts), which
+ *      qualifies them and hands only the CALL to Iris.
  */
 export async function handleReply(
   lead: NurtureLead,
@@ -466,46 +515,49 @@ export async function handleReply(
     clientName: string;
     alert: AlertFn;
     now?: Date;
-    /**
-     * Passes a non-"no" reply to Iris to qualify by text and call for a
-     * live transfer (handoff.ts). "not_available" (no Iris config for this
-     * client, contact unreadable) falls back to the human alert below.
-     */
-    handoff?: (lead: NurtureLead, text: string) => Promise<"handed_off" | "not_available">;
+    firstName: string;
+    classifyStatus: (messages: HistoryMessage[]) => Promise<StatusDecision>;
+    moveStage: MoveStageFn;
+    /** Sends one courtesy text after the human-like pause. */
+    sendCourtesy: (text: string) => Promise<void>;
+    /** Ember's conversation turn (conversation.ts emberConverse). */
+    converse?: (lead: NurtureLead, text: string) => Promise<string | null>;
   }
 ): Promise<ReplySentiment> {
   const now = ctx.now ?? new Date();
   const sentiment = classifyReply(body, ctx.config.outreach);
   const snippet = body.trim().replace(/\s+/g, " ").slice(0, 140);
+  const reply: HistoryMessage = { direction: "inbound", channel: "sms", body, at: now.toISOString() };
 
-  // quarry's classifyReply lets any negative keyword win outright, which is
-  // right for a cold pitch. Here the cadence stops on EVERY reply anyway, so
-  // the only thing a classification decides is whether a human hears about
-  // it — and "no rush, but yes still looking" silently filed as an opt-out
-  // is a lost buyer. Mixed replies go to a human.
-  // Negative phrases are stripped first (longest first) so "not interested"
-  // doesn't count as containing the positive "interested".
+  const status = await ctx.classifyStatus([reply]);
+  if (status.verdict === "not_interested") {
+    await updateLead(lead.id, { repliedAt: now.toISOString() });
+    const moved = await moveToNotInterested(lead, status, { config: ctx.config, clientName: ctx.clientName, alert: ctx.alert, moveStage: ctx.moveStage, now });
+    const courtesy = courtesyFor(status.category, ctx.firstName, ctx.config);
+    if (moved && courtesy) await ctx.sendCourtesy(courtesy).catch((e) => console.error(`[EMB] courtesy reply failed for lead ${lead.id}:`, e));
+    return "negative";
+  }
+  if (status.verdict === "unsure") {
+    await updateLead(lead.id, { status: "replied", statusReason: `replied "${snippet}" — needs a human look`, repliedAt: now.toISOString(), nextTouchAt: null });
+    try {
+      await ctx.alert(formatReactivationAlert(lead, `replied "${snippet}" — couldn't tell automatically whether that's a "no", please read it`, ctx.clientName, now));
+    } catch (error) {
+      console.error(`[EMB] reply alert failed for lead ${lead.id}:`, error);
+    }
+    return sentiment;
+  }
+
+  const midConversation = lead.status === "conversing" || lead.status === "handed_off";
+  // quarry's classifyReply lets any negative keyword win outright; "no
+  // rush, but yes still looking" must not be filed as a no.
   const alsoPositive =
     sentiment === "negative" &&
     classifyReply(stripPhrases(body, ctx.config.outreach.negativeKeywords), {
       positiveKeywords: ctx.config.outreach.positiveKeywords,
       negativeKeywords: [],
     }) === "positive";
-
-  // Mark, 2026-09-24: only a real unsubscribe is forever. "No thanks" /
-  // "not interested" / "we bought" pauses them for reApproachAfterDays and
-  // the next cycle starts fresh from where they are in the CRM.
-  if (isHardOptOut(body)) {
-    await updateLead(lead.id, {
-      status: "opted_out",
-      statusReason: `replied "${snippet}"`,
-      repliedAt: now.toISOString(),
-      nextTouchAt: null,
-    });
-    return "negative";
-  }
-  const softDecline = findSoftDecline([{ direction: "inbound", channel: "sms", body, at: now.toISOString() }]) !== null;
-  if ((sentiment === "negative" && !alsoPositive) || (softDecline && !alsoPositive && sentiment !== "positive")) {
+  const temporary = findTemporaryPause([reply]) !== null;
+  if (!midConversation && ((sentiment === "negative" && !alsoPositive) || (temporary && !alsoPositive && sentiment !== "positive"))) {
     const until = new Date(now.getTime() + ctx.config.reApproachAfterDays * DAY_MS);
     await updateLead(lead.id, {
       status: "nurturing",
@@ -514,21 +566,26 @@ export async function handleReply(
       repliedAt: now.toISOString(),
       statusReason: `cooling off until ${until.toISOString().slice(0, 10)}: replied "${snippet}"`,
     });
+    const courtesy = courtesyFor("not_ready", ctx.firstName, ctx.config);
+    if (courtesy) await ctx.sendCourtesy(courtesy).catch((e) => console.error(`[EMB] courtesy reply failed for lead ${lead.id}:`, e));
     return "negative";
   }
 
-  if (ctx.handoff && (await ctx.handoff(lead, body)) === "handed_off") return sentiment;
-
-  await updateLead(lead.id, {
-    status: "replied",
-    statusReason: `replied "${snippet}"`,
-    repliedAt: now.toISOString(),
-    nextTouchAt: null,
-  });
-  try {
-    await ctx.alert(formatReactivationAlert(lead, `replied "${snippet}"`, ctx.clientName, now));
-  } catch (error) {
-    console.error(`[EMB] reply alert failed for lead ${lead.id}:`, error);
+  if (!midConversation) {
+    await updateLead(lead.id, { repliedAt: now.toISOString() });
+    try {
+      await ctx.alert(formatReactivationAlert(lead, `replied "${snippet}" — Ember is texting with them to qualify for a live transfer`, ctx.clientName, now, "ember"));
+    } catch (error) {
+      console.error(`[EMB] reply alert failed for lead ${lead.id}:`, error);
+    }
   }
+  if (ctx.converse) {
+    await ctx.converse(lead, body);
+    return sentiment;
+  }
+
+  // No conversation available (no Iris questions configured for this
+  // client): a human takes it.
+  await updateLead(lead.id, { status: "replied", statusReason: `replied "${snippet}"`, repliedAt: now.toISOString(), nextTouchAt: null });
   return sentiment;
 }

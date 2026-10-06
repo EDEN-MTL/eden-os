@@ -4,6 +4,7 @@ const store = vi.hoisted(() => ({
   enrollLead: vi.fn(async (input: any) => ({ id: 99, ...input })),
   hasPendingIrisCall: vi.fn(async () => false),
   trackedByOpportunity: vi.fn(async () => new Map()),
+  reviveQuietConversations: vi.fn(async () => 0),
   transitionStatus: vi.fn(async () => true),
 }));
 vi.mock("./store", () => store);
