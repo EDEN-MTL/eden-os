@@ -44,6 +44,16 @@ describe("the real test-account config", () => {
     expect(validateForSending(c!)).toEqual([]);
   });
 
+  it("every script fits in ONE text (160 chars) for a typical name — 2-segment texts bill double", () => {
+    const c = loadEmberConfig("eden-sub-account-one")!;
+    for (const [kind, list] of Object.entries(c.outreach.sms.scripts)) {
+      list.forEach((t, i) => {
+        const rendered = t.replace("{{firstName}}", "Jennifer").replace("{{senderName}}", c.outreach.senderName);
+        expect(rendered.length, `${kind}[${i}]: ${rendered.length} chars`).toBeLessThanOrEqual(160);
+      });
+    }
+  });
+
   it("has no ember block on the real client yet", () => {
     expect(loadEmberConfig("3-percent-east-coast")).toBeNull();
   });
