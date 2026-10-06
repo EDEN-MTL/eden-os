@@ -240,13 +240,13 @@ export function buildCallPayload(
             notes: {
               type: "string",
               description:
-                "A concise, structured note using ONLY information actually collected on this call — " +
-                "never invented or guessed, and never a field that wasn't actually provided (leave it out " +
-                "entirely rather than guessing). Format as line-per-fact, e.g. for a buyer: " +
-                "\"Lead: [name]\\nIntent: Buyer\\nTimeline: [x]\\nTarget Area: [x]\\nBudget: [x]\\n" +
-                "Property Type: [x]\\nPre-Approval: [x]\\nAdditional Context: [anything fresh from this " +
-                "call, e.g. a corrected value].\" For a seller, use Property/Timeline/Property Type/" +
-                "Reason-Context/Replacement Home in place of the buyer-specific fields.",
+                "ONE short line, at most ~200 characters, plain ASCII (no emojis, no smart quotes), facts " +
+                "separated by \" | \". Use ONLY information actually collected on this call — never invented " +
+                "or guessed; leave out any fact you don't have. Skip the lead's name (the record already " +
+                "has it) and skip labels and full sentences. Example buyer: \"Buyer | ASAP | St. John's " +
+                "(Penjance) | $350-400K | Duplex w/ suite | Not pre-approved\". Example seller: \"Seller | " +
+                "3 months | 24 Elm St | Bungalow | Downsizing | Wants to buy after\". Add a few words " +
+                "only for something fresh from this call, e.g. a corrected value.",
             },
           },
           required: ["notes"],

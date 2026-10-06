@@ -1005,7 +1005,9 @@ picked up had no summary at all. Call it silently, in the background —
 never announce it or mention it to the lead. Use the FINAL, corrected
 values if anything changed from the original form during this call (e.g.
 the lead said their budget was actually different) — never the stale
-original value once they've corrected it.
+original value once they've corrected it. Keep it to ONE short
+line (about 200 characters, plain text, no emojis): the notes become a text
+message to the receiving agent, and every extra character costs money.
 
 Live transfer is the first priority — but only once EVERY item above is
 actually done: every fact in "Verify what's already known" confirmed, and
