@@ -306,70 +306,77 @@ describe("sendBatch", () => {
   });
 });
 
-describe("handleReply", () => {
+describe("handleReply — Ember answers old leads itself (Mark, 2026-10-06)", () => {
   const keep = async () => ({ verdict: "keep_nurturing", reason: "x" }) as any;
-  const replyCtx = (alert = vi.fn(async () => {})) => ({
-    config: config(), clientName: "Mark's Realty", alert, now: NOW,
+  const replyCtx = (over: any = {}) => ({
+    config: config(), clientName: "Mark's Realty", alert: vi.fn(async () => {}), now: NOW, firstName: "Jordan",
     classifyStatus: vi.fn(keep), moveStage: vi.fn(async () => {}),
+    sendCourtesy: vi.fn(async () => {}), converse: vi.fn(async () => "Great! Still looking to buy?"),
+    ...over,
   });
 
-  it("clear evidence in a reply moves them to Not Interested for good (Mark's 2026-10-01 rule)", async () => {
-    const r = { ...replyCtx(), classifyStatus: vi.fn(async () => ({ verdict: "not_interested", category: "already_bought", evidence: "we already bought last month", by: "ai" }) as any) };
-    expect(await handleReply(lead(), "we already bought last month", r)).toBe("negative");
-    expect(store.transitionStatus).toHaveBeenCalledWith(1, expect.any(Array), expect.objectContaining({ status: "not_interested" }));
+  it("an interested reply goes into Ember's own conversation, with one alert", async () => {
+    const r = replyCtx();
+    await handleReply(lead(), "yes still looking", r);
+    expect(r.converse).toHaveBeenCalledWith(expect.objectContaining({ id: 1 }), "yes still looking");
+    expect(r.alert).toHaveBeenCalledWith(expect.stringContaining("Ember is texting with them"));
+    expect(r.sendCourtesy).not.toHaveBeenCalled();
+  });
+
+  it("mid-conversation replies go straight to the conversation — no repeat alert, no pause rule", async () => {
+    const r = replyCtx();
+    await handleReply(lead({ status: "conversing" }), "not ready to talk right now, text me tomorrow", r);
+    expect(r.converse).toHaveBeenCalled();
+    expect(r.alert).not.toHaveBeenCalled();
+    expect(store.updateLead).not.toHaveBeenCalledWith(1, expect.objectContaining({ touchCount: 0 }));
+  });
+
+  it("a clear no is moved to Not Interested AND gets one polite reply", async () => {
+    const r = replyCtx({ classifyStatus: vi.fn(async () => ({ verdict: "not_interested", category: "already_bought", evidence: "we already bought last month", by: "ai" }) as any) });
+    await handleReply(lead(), "we already bought last month", r);
     expect(r.moveStage).toHaveBeenCalledWith("o1", "Not Qualified/Not Interested");
-    expect(r.alert).toHaveBeenCalledWith(expect.stringContaining("Moved to Not Interested"));
+    expect(r.sendCourtesy).toHaveBeenCalledWith("Congrats on the new place, Jordan! Wishing you all the best — take care.");
+    expect(r.converse).not.toHaveBeenCalled();
   });
 
-  it("'not ready yet' keeps nurturing — paused, never moved", async () => {
+  it("a STOP is moved and recorded as an opt-out, but never answered", async () => {
+    const r = replyCtx({ classifyStatus: vi.fn(async () => ({ verdict: "not_interested", category: "asked_to_stop", evidence: "STOP", by: "rule" }) as any) });
+    await handleReply(lead(), "STOP", r);
+    expect(r.moveStage).toHaveBeenCalled();
+    expect(r.sendCourtesy).not.toHaveBeenCalled();
+  });
+
+  it("'not ready yet' pauses them and gets one polite reply — never moved", async () => {
     const r = replyCtx();
     await handleReply(lead(), "I'm not ready yet", r);
     expect(r.moveStage).not.toHaveBeenCalled();
+    expect(r.converse).not.toHaveBeenCalled();
     expect(store.updateLead).toHaveBeenCalledWith(1, expect.objectContaining({ status: "nurturing", touchCount: 0 }));
+    expect(r.sendCourtesy).toHaveBeenCalledWith(expect.stringContaining("I'll check back in a few months"));
   });
 
-  it("a possible no that can't be confirmed goes to a human — not moved, not handed to Iris", async () => {
-    const r = { ...replyCtx(), classifyStatus: vi.fn(async () => ({ verdict: "unsure", reason: "x" }) as any), handoff: vi.fn(async () => "handed_off" as const) };
+  it("a possible no that can't be confirmed goes to a human — not moved, not answered", async () => {
+    const r = replyCtx({ classifyStatus: vi.fn(async () => ({ verdict: "unsure", reason: "x" }) as any) });
     await handleReply(lead(), "we sort of found something", r);
     expect(r.moveStage).not.toHaveBeenCalled();
-    expect(r.handoff).not.toHaveBeenCalled();
+    expect(r.converse).not.toHaveBeenCalled();
+    expect(r.sendCourtesy).not.toHaveBeenCalled();
     expect(r.alert).toHaveBeenCalledWith(expect.stringContaining("please read it"));
   });
 
-  it("a yes stops the cadence and alerts", async () => {
-    const r = replyCtx();
-    expect(await handleReply(lead(), "Yes! still looking actually", r)).toBe("positive");
-    expect(store.updateLead).toHaveBeenCalledWith(1, expect.objectContaining({ status: "replied", nextTouchAt: null }));
-    expect(r.alert).toHaveBeenCalledWith(expect.stringContaining('replied "Yes! still looking actually"'));
-  });
-
-  it("hands a non-'no' reply to Iris instead of alerting a human directly", async () => {
-    const r = { ...replyCtx(), handoff: vi.fn(async () => "handed_off" as const) };
-    await handleReply(lead(), "yes still looking", r);
-    expect(r.handoff).toHaveBeenCalledWith(expect.objectContaining({ id: 1 }), "yes still looking");
-    expect(store.updateLead).not.toHaveBeenCalled();
-    expect(r.alert).not.toHaveBeenCalled();
-  });
-
-  it("falls back to the human alert when Iris isn't available for this client", async () => {
-    const r = { ...replyCtx(), handoff: vi.fn(async () => "not_available" as const) };
-    await handleReply(lead(), "yes still looking", r);
-    expect(store.updateLead).toHaveBeenCalledWith(1, expect.objectContaining({ status: "replied" }));
-    expect(r.alert).toHaveBeenCalledTimes(1);
-  });
-
-
-  it("an unclear reply also goes to a human", async () => {
-    const r = replyCtx();
-    expect(await handleReply(lead(), "who is this?", r)).toBe("unclear");
-    expect(r.alert).toHaveBeenCalledTimes(1);
-  });
-
-  it("a mixed reply is not silently filed as an opt-out", async () => {
+  it("a mixed 'no rush but yes' reply is not filed as a no", async () => {
     const r = replyCtx();
     await handleReply(lead(), "no rush but yes still looking", r);
-    expect(store.updateLead).toHaveBeenCalledWith(1, expect.objectContaining({ status: "replied" }));
-    expect(r.alert).toHaveBeenCalledTimes(1);
+    expect(r.converse).toHaveBeenCalled();
+    expect(r.sendCourtesy).not.toHaveBeenCalled();
+  });
+
+  it("courtesy templates can be overridden per client", async () => {
+    const c = config();
+    c.outreach.courtesy = { notReady: "All good {{firstName}}, talk soon!" };
+    const r = replyCtx({ config: c });
+    await handleReply(lead(), "not right now", r);
+    expect(r.sendCourtesy).toHaveBeenCalledWith("All good Jordan, talk soon!");
   });
 });
 

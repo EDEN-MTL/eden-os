@@ -12,6 +12,14 @@ export interface EmberEmailTemplate {
   html: string;
 }
 
+export interface CourtesyTemplates {
+  notReady: string;
+  alreadyBought: string;
+  alreadySold: string;
+  otherAgent: string;
+  notInterested: string;
+}
+
 export interface SmsScripts {
   buyer: string[];
   seller: string[];
@@ -80,6 +88,11 @@ export interface EmberConfig {
    */
   reApproachAfterDays: number;
   /**
+   * A text conversation with no reply for this many days goes back to the
+   * regular check-in cadence (its next scripted touch becomes due). Default 3.
+   */
+  conversationQuietDays?: number;
+  /**
    * How a lead's buy/sell intent is read at enrollment, to pick a script:
    * contact tags first (they survive stage moves), then the NAME of the
    * stage the card was enrolled from. Case-insensitive.
@@ -118,6 +131,13 @@ export interface EmberConfig {
     touchScheduleDays: number[];
     positiveKeywords: string[];
     negativeKeywords: string[];
+    /**
+     * Mark, 2026-10-06: one short, polite reply instead of silence when a
+     * lead says "not ready yet" or gives a clear no. Never after a STOP /
+     * unsubscribe (the carrier confirms those). {{firstName}} is filled in.
+     * Any key left out falls back to DEFAULT_COURTESY in outreach.ts.
+     */
+    courtesy?: Partial<CourtesyTemplates>;
     /**
      * One script per touch index, per intent (Mark approved the buyer and
      * seller wording, 2026-09-24). Seller + downsize leads get the seller

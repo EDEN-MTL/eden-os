@@ -15,6 +15,8 @@ export type NurtureStatus =
   | "paused"
   | "replied"
   | "handed_off"
+  /** Mid text conversation with Ember (conversation.ts). */
+  | "conversing"
   | "reactivated"
   | "exited"
   | "opted_out"

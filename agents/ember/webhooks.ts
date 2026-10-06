@@ -14,12 +14,11 @@
  */
 import { loadEmberConfig, loadEmberOutcomeStages } from "./config";
 import { markExited, markReactivated, REACTIVATABLE, slackAlert } from "./alerts";
-import { buildMoveStage, resolveStageNames } from "./deps";
-import { classifyLeadStatus } from "./status";
+import { resolveStageNames } from "./deps";
 import { handleReply } from "./outreach";
 import { detectChange } from "./scan";
 import { getLeadByOpportunityId, listOpenLeadsByContactId, updateLead } from "./store";
-import { handOffToIris } from "./handoff";
+import { buildReplyContext } from "./reply-deps";
 import { NurtureLead } from "./types";
 import { readFileSync } from "fs";
 import { join } from "path";
@@ -57,19 +56,8 @@ export async function emberHandleInboundMessage(contactId: string, text: string,
     const config = enabledConfig(lead);
     if (!config) continue;
     await updateLead(lead.id, { lastInboundSeenAt: new Date().toISOString() });
-    // Already Iris's conversation — the /message route tries Iris first,
-    // so reaching here means her row is closed; nothing for Ember to do.
-    if (lead.status === "handed_off") continue;
-    const name = clientName(lead.clientId);
-    const alert = slackAlert(config.alertChannel);
-    const sentiment = await handleReply(lead, text, {
-      config,
-      clientName: name,
-      alert,
-      handoff: (l, t) => handOffToIris(l, t, { config, clientName: name, alert, receivedAt }),
-      classifyStatus: (messages) => classifyLeadStatus(messages),
-      moveStage: buildMoveStage(lead.clientId, config.pipelineId),
-    });
+    const replyCtx = await buildReplyContext(lead, config, { receivedAt, clientName: clientName(lead.clientId) });
+    const sentiment = await handleReply(lead, text, replyCtx);
     console.log(`[EMB] reply from ${lead.contactName ?? lead.ghlContactId}: ${sentiment}`);
     handled = true;
   }
