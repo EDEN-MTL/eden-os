@@ -352,7 +352,8 @@ export async function sendTouch(lead: NurtureLead, deps: OutreachDeps, ctx: Touc
   }
 
   // Personal openers are SMS-only; email keeps its CASL-checked template.
-  const message = plan.body && channel === "sms" ? { body: plan.body } : buildMessage(lead, live.contact, channel, touchIndex, config);
+  const built = plan.body && channel === "sms" ? { body: plan.body } : buildMessage(lead, live.contact, channel, touchIndex, config);
+  const message = channel === "sms" ? { ...built, body: smsSafe(built.body) } : built;
   const logged = message.subject ? `${message.subject}\n\n${message.body}` : message.body;
 
   try {
@@ -474,12 +475,28 @@ function stripPhrases(text: string, phrases: string[]): string {
   return out;
 }
 
+/**
+ * Keeps a text in the plain GSM-7 character set. Mark, 2026-10-06: one
+ * long dash or curly quote switches the WHOLE message to Unicode (UCS-2),
+ * which cuts a segment from 160 characters to 70 — a one-line reply bills
+ * as 2-3 texts instead of 1. Swaps the usual culprits for plain
+ * equivalents; anything else is left as written.
+ */
+export function smsSafe(text: string): string {
+  return text
+    .replace(/[\u2014\u2013\u2012\u2010\u2011\u2212]/g, "-")
+    .replace(/[\u2018\u2019\u201A\u2032]/g, "'")
+    .replace(/[\u201C\u201D\u201E\u2033]/g, '"')
+    .replace(/\u2026/g, "...")
+    .replace(/[\u00A0\u2007\u202F]/g, " ");
+}
+
 export const DEFAULT_COURTESY: CourtesyTemplates = {
-  notReady: "No problem at all, {{firstName}} — I'll check back in a few months. If anything changes before then, just text me here!",
-  alreadyBought: "Congrats on the new place, {{firstName}}! Wishing you all the best — take care.",
+  notReady: "No problem at all, {{firstName}} - I'll check back in a few months. If anything changes before then, just text me here!",
+  alreadyBought: "Congrats on the new place, {{firstName}}! Wishing you all the best - take care.",
   alreadySold: "Congrats on the sale, {{firstName}}! All the best with what's next.",
-  otherAgent: "Good to know, {{firstName}} — glad you're in good hands. Wishing you all the best!",
-  notInterested: "No problem, {{firstName}} — thanks for letting me know. Take care!",
+  otherAgent: "Good to know, {{firstName}} - glad you're in good hands. Wishing you all the best!",
+  notInterested: "No problem, {{firstName}} - thanks for letting me know. Take care!",
 };
 
 /** The one polite reply for a decline — null for a stop request (never answered). */
@@ -492,7 +509,7 @@ export function courtesyFor(kind: NotInterestedCategory | "not_ready", firstName
     : kind === "already_sold" ? t.alreadySold
     : kind === "other_agent" ? t.otherAgent
     : t.notInterested;
-  return renderTemplate(template, { firstName });
+  return smsSafe(renderTemplate(template, { firstName }));
 }
 
 /**

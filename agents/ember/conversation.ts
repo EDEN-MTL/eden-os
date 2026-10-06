@@ -27,6 +27,7 @@ import { EDGE_CASE_RESPONSES, NATURAL_TRANSITIONS, expandBudgetShorthand } from 
 import { AlertFn, formatReactivationAlert } from "./alerts";
 import { EmberConfig } from "./config";
 import { NurtureLead } from "./types";
+import { smsSafe } from "./outreach";
 
 export const EMBER_AGENT_ID = "ember";
 const MAX_TOOL_TURNS = 6;
@@ -135,7 +136,7 @@ export function buildEmberSmsPrompt(ctx: ConversationContext): string {
 Find out whether they still plan to buy or sell, and if so qualify them so one of our agents can talk to them live by phone. Their plans may have changed since they first reached out — confirm whether they're still thinking about buying or selling BEFORE anything else, and treat anything we knew months ago as possibly out of date.
 
 ## How to text
-Short — one or two sentences, like a real person texting, never a paragraph. ONE question per text, then wait. Warm and casual, not a script. Vary acknowledgments (${NATURAL_TRANSITIONS.sms.map((t) => `"${t}"`).join(", ")}). No links, no prices or market claims, never invent listings or availability.
+Short — one or two sentences, like a real person texting, never a paragraph. ONE question per text, then wait. Warm and casual, not a script. Vary acknowledgments (${NATURAL_TRANSITIONS.sms.map((t) => `"${t}"`).join(", ")}). No links, no prices or market claims, never invent listings or availability. Plain characters only: a normal hyphen "-" (never a long dash), straight quotes, no emoji — special characters make the text bill as 2-3 messages.
 
 ## What we may already know (possibly stale — confirm in passing, never re-ask cold)
 ${known.length ? known.map((x) => `- ${x}`).join("\n") : "- nothing on file"}
@@ -293,6 +294,7 @@ export async function emberConverse(
     await deps.appendHistory(key, "user", text).catch(() => {});
     return null;
   }
+  reply = smsSafe(reply);
   await deps.pauseLikeAHuman(reply);
   await deps.sendSMS(lead.ghlContactId, reply);
   await deps.appendHistory(key, "user", text).catch(() => {});

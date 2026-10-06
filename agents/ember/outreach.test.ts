@@ -335,7 +335,7 @@ describe("handleReply — Ember answers old leads itself (Mark, 2026-10-06)", ()
     const r = replyCtx({ classifyStatus: vi.fn(async () => ({ verdict: "not_interested", category: "already_bought", evidence: "we already bought last month", by: "ai" }) as any) });
     await handleReply(lead(), "we already bought last month", r);
     expect(r.moveStage).toHaveBeenCalledWith("o1", "Not Qualified/Not Interested");
-    expect(r.sendCourtesy).toHaveBeenCalledWith("Congrats on the new place, Jordan! Wishing you all the best — take care.");
+    expect(r.sendCourtesy).toHaveBeenCalledWith("Congrats on the new place, Jordan! Wishing you all the best - take care.");
     expect(r.converse).not.toHaveBeenCalled();
   });
 
@@ -388,4 +388,24 @@ describe("displayName — no shouted names in texts", () => {
       expect(displayName(input)).toBe(out);
     }
   );
+});
+
+describe("smsSafe — keep texts in the plain (GSM-7) character set so they bill as 1 segment", () => {
+  const GSM = /^[@£$¥èéùìòÇ\nØø\rÅåΔ_ΦΓΛΩΠΨΣΘΞÆæßÉ !"#¤%&'()*+,\-./0-9:;<=>?¡A-ZÄÖÑÜ§¿a-zäöñüà^{}\\[~\]|€]*$/;
+  it("swaps long dashes, curly quotes, ellipses and odd spaces for plain ones", async () => {
+    const { smsSafe } = await import("./outreach");
+    expect(smsSafe("Hi Jacob \u2014 it\u2019s \u201Cgreat\u201D\u2026 see\u00A0you")).toBe(`Hi Jacob - it's "great"... see you`);
+  });
+  it("every default courtesy reply is plain", async () => {
+    const { DEFAULT_COURTESY, courtesyFor } = await import("./outreach");
+    for (const kind of ["not_ready", "already_bought", "already_sold", "other_agent", "no_longer_looking"] as const) {
+      expect(courtesyFor(kind, "Jacob", config())).toMatch(GSM);
+    }
+    for (const t of Object.values(DEFAULT_COURTESY)) expect(t.replace("{{firstName}}", "J")).toMatch(GSM);
+  });
+  it("a scripted or AI-written touch goes out plain", async () => {
+    const d = deps({ reviewHistory: vi.fn(async () => ({ action: "personalized", reason: "r", message: "Hi Jordan \u2014 still keen on the east end? Reply STOP to opt out." }) as any) });
+    await sendTouch(lead(), d, ctx());
+    expect(d.sendSMS).toHaveBeenCalledWith("c1", "Hi Jordan - still keen on the east end? Reply STOP to opt out.");
+  });
 });
