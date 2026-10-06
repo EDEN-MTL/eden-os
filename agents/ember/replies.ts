@@ -16,14 +16,12 @@
  */
 import { getGhlConfig } from "../../shared/ghl";
 import { lastInboundText } from "../iris/text-signals";
-import { irisHandleInboundSms } from "../iris/sms";
 import { listReplyWatch, updateLead } from "./store";
 import { emberHandleInboundMessage } from "./webhooks";
 import { NurtureLead } from "./types";
 
 export interface ReplyPollDeps {
   lastInboundText(contactId: string): Promise<{ text: string; dateAdded: string | null } | null>;
-  irisHandleInboundSms(contactId: string, text: string, options?: { receivedAt?: Date }): Promise<boolean>;
   emberHandleInboundMessage(contactId: string, text: string, receivedAt?: Date): Promise<boolean>;
 }
 
@@ -55,7 +53,6 @@ export async function pollRepliesForClient(clientId: string, deps?: ReplyPollDep
       if (!ghl) throw new Error(`No GHL credentials configured for client "${clientId}"`);
       d = {
         lastInboundText: (contactId) => lastInboundText(contactId, ghl.locationId, ghl.apiKey),
-        irisHandleInboundSms,
         emberHandleInboundMessage,
       };
     }
@@ -70,13 +67,10 @@ export async function pollRepliesForClient(clientId: string, deps?: ReplyPollDep
       // Mark first: if routing throws halfway, a re-answer next pass would
       // be worse than one reply left for a human to see in GHL.
       await updateLead(lead.id, { lastInboundSeenAt: at.toISOString() });
-      if (lead.status === "handed_off") {
-        await d.irisHandleInboundSms(lead.ghlContactId, inbound.text, { receivedAt: at });
-        report.routedToIris++;
-      } else {
-        await d.emberHandleInboundMessage(lead.ghlContactId, inbound.text, at);
-        report.routedToEmber++;
-      }
+      // Ember answers every reply from its leads, including after it has
+      // queued Iris's call (Mark, 2026-10-06) — Iris only makes the call.
+      await d.emberHandleInboundMessage(lead.ghlContactId, inbound.text, at);
+      report.routedToEmber++;
     }
     return report;
   } finally {

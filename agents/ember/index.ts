@@ -29,7 +29,7 @@ const TOOLS: ToolDef[] = [
         clientId: CLIENT_ID_PROP,
         status: {
           type: "string",
-          enum: ["nurturing", "paused", "replied", "handed_off", "reactivated", "exited", "opted_out", "no_consent", "completed"],
+          enum: ["nurturing", "paused", "replied", "handed_off", "reactivated", "exited", "opted_out", "not_interested", "no_consent", "completed"],
         },
         limit: { type: "number", description: "Max leads to return. Default 15." },
       },
@@ -72,7 +72,7 @@ const TOOLS: ToolDef[] = [
   {
     name: "ember_resume_lead",
     description:
-      "Resumes a paused nurture lead. Its next touch becomes due at the next send run. Only works on a paused lead — replied, reactivated and opted-out leads stay stopped on purpose.",
+      "Resumes a paused nurture lead, or undoes a wrong Not Interested move (after the card has been moved back in GHL). Its next touch becomes due at the next send run. Replied, reactivated and opted-out (unsubscribed) leads stay stopped on purpose.",
     input_schema: { type: "object", properties: { leadId: { type: "number" } }, required: ["leadId"] },
   },
 ];
@@ -111,12 +111,14 @@ stage change for weeks, not won, not lost, not in a column a human is
 actively working — and work them through a slow SMS cadence with buyer or
 seller reactivation scripts. The goal for an old lead is the same as for a
 new one: qualify them and get them live-transferred to an agent. When one
-replies (anything but a clear "no"), you hand them to Iris, who qualifies
-them by text — plans, area, property, timeline, budget — and, if they
-qualify, calls them for a live transfer. A card moved to a new stage or a
-renewed-interest tag means a human's already on it: you stop and post a
-reactivation alert to #backend-ops. You never write replies to leads
-yourself.
+replies, YOU text them back (Mark, 2026-10-06) — about 30 seconds later,
+like a person — and qualify them over text with the client's own
+qualification questions: plans, area, home, timeline, budget/financing.
+If they qualify and say now (or a time) works, you queue Iris to call them
+for a live transfer; Iris only makes the call, you keep the texting. "Not
+ready yet" and clear "no"s get one short, polite reply. A card moved to a
+new stage or a renewed-interest tag means a human's already on it: you
+stop and post a reactivation alert to #backend-ops.
 
 ${senderLine}
 
@@ -133,10 +135,13 @@ asks why nothing is happening, that switch is usually the answer.
 Before the first text of each cycle you read the lead's whole record —
 texts, emails, team calls, Iris's calls, notes, pipeline stage — and either
 use the approved script, write a short opener that picks up where they
-left off, or wait. A real unsubscribe ("stop", "remove me", "don't text
-me", wrong number, GHL DND) is permanent. A "not interested" / "already
-bought" / "working with another agent" is paused and tried again 180 days
-after they said it.
+left off, or wait. Lead status management (Mark's rule, 2026-10-01): on CLEAR evidence a lead
+is no longer a prospect — they asked to stop, already bought, already sold,
+are working with another agent, are no longer looking, or their plans
+changed for good — you move their card to Not Interested and never contact
+them again, and post why in #backend-ops quoting their words. Never on
+assumptions: no reply, busy, unsure, "not ready yet", "next year", "still
+thinking" all keep nurturing (a "not right now" pauses them 180 days).
 
 Compliance you should be able to explain: texts only go out within the
 CASL consent window, counted from their latest real inquiry (the original
@@ -217,8 +222,12 @@ plainly. Respond concisely, like a teammate texting a quick update.`;
       case "ember_resume_lead": {
         const lead = await getLead(Number(input.leadId));
         if (!lead) return JSON.stringify({ error: `No nurture lead #${input.leadId}` });
-        if (lead.status !== "paused") {
-          return JSON.stringify({ error: `Lead #${lead.id} is ${lead.status} — only a paused lead can be resumed.` });
+        // not_interested can be resumed too: it's the undo for a wrong
+        // Not Interested call (the alert tells the team to do exactly this,
+        // after moving the card back in GHL). opted_out never can — that's
+        // a real unsubscribe.
+        if (lead.status !== "paused" && lead.status !== "not_interested") {
+          return JSON.stringify({ error: `Lead #${lead.id} is ${lead.status} — only a paused or Not Interested lead can be resumed.` });
         }
         // Due immediately rather than at its old next_touch_at, which may be
         // long past — the send run's gap logic spaces anything after this one.

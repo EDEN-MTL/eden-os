@@ -3,7 +3,6 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 const store = vi.hoisted(() => ({ listReplyWatch: vi.fn(async () => [] as any[]), updateLead: vi.fn(async () => {}) }));
 vi.mock("./store", () => store);
 vi.mock("./webhooks", () => ({ emberHandleInboundMessage: vi.fn() }));
-vi.mock("../iris/sms", () => ({ irisHandleInboundSms: vi.fn() }));
 vi.mock("../iris/text-signals", () => ({ lastInboundText: vi.fn() }));
 vi.mock("../../shared/ghl", () => ({ getGhlConfig: vi.fn() }));
 
@@ -15,7 +14,6 @@ afterEach(() => vi.clearAllMocks());
 function deps(inbound: { text: string; dateAdded: string | null } | null): ReplyPollDeps {
   return {
     lastInboundText: vi.fn(async () => inbound),
-    irisHandleInboundSms: vi.fn(async () => true),
     emberHandleInboundMessage: vi.fn(async () => true),
   };
 }
@@ -30,12 +28,12 @@ describe("pollRepliesForClient", () => {
     expect(store.updateLead).toHaveBeenCalledWith(1, { lastInboundSeenAt: daysAgo(1) });
   });
 
-  it("routes a handed-off lead's reply to Iris", async () => {
+  it("routes a reply to Ember even after Ember queued Iris's call — Iris only calls", async () => {
     store.listReplyWatch.mockResolvedValueOnce([lead({ status: "handed_off", lastTouchAt: daysAgo(3), lastInboundSeenAt: daysAgo(2) })]);
-    const d = deps({ text: "in 2 months", dateAdded: daysAgo(1) });
+    const d = deps({ text: "can we do 6pm instead?", dateAdded: daysAgo(1) });
     const r = await pollRepliesForClient("c", d);
-    expect(r.routedToIris).toBe(1);
-    expect(d.irisHandleInboundSms).toHaveBeenCalledWith("c1", "in 2 months", { receivedAt: new Date(daysAgo(1)) });
+    expect(r.routedToEmber).toBe(1);
+    expect(d.emberHandleInboundMessage).toHaveBeenCalledWith("c1", "can we do 6pm instead?", new Date(daysAgo(1)));
   });
 
   it("never re-answers a reply already seen (e.g. the webhook got it first)", async () => {

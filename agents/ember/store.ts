@@ -211,7 +211,7 @@ export async function getLeadByOpportunityId(opportunityId: string): Promise<Nur
 export async function listOpenLeadsByContactId(contactId: string): Promise<NurtureLead[]> {
   const rows = await query<LeadRow>(
     `SELECT * FROM ember_nurture_leads
-      WHERE ghl_contact_id = $1 AND status IN ('nurturing', 'paused', 'completed', 'handed_off')
+      WHERE ghl_contact_id = $1 AND status IN ('nurturing', 'paused', 'completed', 'handed_off', 'conversing')
       ORDER BY id`,
     [contactId]
   );
@@ -384,46 +384,65 @@ export async function lastEmberTouchText(clientId: string, contactId: string): P
 }
 
 /**
- * Leads whose replies the poll should look for: anyone Ember has actually
- * texted who is still nurturing/completed, plus handed-off leads whose
- * Iris text conversation is still open (Iris's own SMS handler only runs
- * off the GHL webhook, which neither account is confirmed to have).
+ * Leads whose replies the poll should look for: anyone Ember has texted who
+ * is still nurturing/completed, mid-conversation with Ember, or waiting on
+ * the Iris call Ember queued — Ember answers all of their texts (Mark,
+ * 2026-10-06), and no GHL reply-forwarding workflow is confirmed for any
+ * account, so polling is the path that always works.
  */
 export async function listReplyWatch(clientId: string): Promise<NurtureLead[]> {
   const rows = await query<LeadRow>(
-    `SELECT n.* FROM ember_nurture_leads n
-      WHERE n.client_id = $1 AND n.last_touch_at IS NOT NULL
-        AND (
-          n.status IN ('nurturing', 'completed')
-          OR (n.status = 'handed_off' AND EXISTS (
-                SELECT 1 FROM iris_pending_calls p
-                 WHERE p.client_id = n.client_id AND p.contact_id = n.ghl_contact_id AND p.status = 'pending'))
-        )
-      ORDER BY n.id`,
+    `SELECT * FROM ember_nurture_leads
+      WHERE client_id = $1 AND last_touch_at IS NOT NULL
+        AND status IN ('nurturing', 'completed', 'conversing', 'handed_off')
+      ORDER BY id`,
     [clientId]
   );
   return rows.map(rowToLead);
 }
 
 /**
- * Hands an old lead to Iris: creates (or reopens) its iris_pending_calls
- * row as source='ember' so irisHandleInboundSms will answer it. One-shot
- * (is_explicit_callback) so Iris's 8-attempt new-lead cadence never runs
- * against someone who texted back once months after inquiring. callAfter
- * is the fallback single call if the text conversation goes cold.
+ * A conversation that went quiet goes back into the nurture cadence: its
+ * next scripted check-in becomes due now (touch count unchanged). Without
+ * this, a lead who stopped mid-conversation would never hear from Ember
+ * again.
  */
-export async function upsertIrisHandoff(clientId: string, contactId: string, lead: unknown, callAfter: Date | "never"): Promise<void> {
+export async function reviveQuietConversations(clientId: string, quietDays: number): Promise<number> {
+  const rows = await query<{ id: string }>(
+    `UPDATE ember_nurture_leads
+        SET status = 'nurturing', next_touch_at = now(), status_reason = 'conversation went quiet — back to check-ins', updated_at = now()
+      WHERE client_id = $1 AND status = 'conversing' AND updated_at < now() - ($2 || ' days')::interval
+      RETURNING id`,
+    [clientId, String(quietDays)]
+  );
+  return rows.length;
+}
+
+/**
+ * Queues Iris's live-transfer CALL for a lead Ember qualified by text —
+ * source 'ember' (skips the "already live-transferred" tag gate),
+ * is_explicit_callback (one-shot, never Iris's 8-attempt cadence),
+ * sms_scheduled (the lead agreed to it by text, so the pause-while-texting
+ * gate doesn't hold it). Iris never texts these leads; Ember does.
+ */
+export async function upsertIrisHandoff(
+  clientId: string,
+  contactId: string,
+  lead: unknown,
+  callAfter: Date | "never",
+  smsScheduled = false
+): Promise<void> {
   await query(
     `INSERT INTO iris_pending_calls
        (client_id, contact_id, lead, call_after, status, is_explicit_callback, source, sms_scheduled, resolution_reason)
-     VALUES ($1, $2, $3, $4, 'pending', true, 'ember', false, 'reactivated by Ember')
+     VALUES ($1, $2, $3, $4, 'pending', true, 'ember', $5, 'qualified by Ember over text')
      ON CONFLICT (client_id, contact_id) DO UPDATE
        SET lead = EXCLUDED.lead, call_after = EXCLUDED.call_after, status = 'pending',
-           is_explicit_callback = true, source = 'ember', sms_scheduled = false,
-           resolution_reason = 'reactivated by Ember', resolved_at = NULL`,
+           is_explicit_callback = true, source = 'ember', sms_scheduled = EXCLUDED.sms_scheduled,
+           resolution_reason = 'qualified by Ember over text', resolved_at = NULL`,
     // "never" → Postgres 'infinity': the row stays open for Iris to text
     // with, but dial-pending's call_after <= now() never matches it. Only
     // schedule_transfer_call — the lead saying yes to a call — replaces it.
-    [clientId, contactId, JSON.stringify(lead), callAfter === "never" ? "infinity" : callAfter]
+    [clientId, contactId, JSON.stringify(lead), callAfter === "never" ? "infinity" : callAfter, smsScheduled]
   );
 }

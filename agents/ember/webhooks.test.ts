@@ -15,11 +15,13 @@ const alert = vi.hoisted(() => vi.fn(async () => {}));
 vi.mock("./alerts", async (orig) => ({ ...(await orig<any>()), slackAlert: () => alert }));
 vi.mock("./deps", async () => {
   const { STAGES } = await import("./test-fixtures");
-  return { resolveStageNames: vi.fn(async () => STAGES) };
+  return { resolveStageNames: vi.fn(async () => STAGES), buildMoveStage: () => vi.fn(async () => {}) };
 });
 
-const handoff = vi.hoisted(() => ({ handOffToIris: vi.fn(async () => "not_available" as const) }));
-vi.mock("./handoff", () => handoff);
+const replyDeps = vi.hoisted(() => ({ buildReplyContext: vi.fn(async () => ({ marker: "ctx" })) }));
+vi.mock("./reply-deps", () => replyDeps);
+const outreachMod = vi.hoisted(() => ({ handleReply: vi.fn(async () => "positive") }));
+vi.mock("./outreach", async (orig) => ({ ...(await orig<any>()), ...outreachMod }));
 
 import { emberHandleInboundMessage, emberHandleStageUpdate, emberHandleTagUpdate, emberMarkInboundSeen } from "./webhooks";
 import { config, lead, OUTCOME_STAGES } from "./test-fixtures";
@@ -37,6 +39,7 @@ describe("while ember.enabled is off", () => {
     store.listOpenLeadsByContactId.mockResolvedValue([lead()]);
     store.getLeadByOpportunityId.mockResolvedValue(lead());
     expect(await emberHandleInboundMessage("c1", "yes!")).toBe(false);
+    expect(outreachMod.handleReply).not.toHaveBeenCalled();
     await emberHandleTagUpdate("c1", ["renewed interest"]);
     await emberHandleStageUpdate("o1", "s_confirmed");
     expect(store.updateLead).not.toHaveBeenCalled();
@@ -46,29 +49,20 @@ describe("while ember.enabled is off", () => {
 });
 
 describe("with ember.enabled on", () => {
-  it("a reply from a tracked lead stops the cadence and alerts", async () => {
+  it("a reply from a tracked lead is answered by Ember (handleReply with Ember's live context)", async () => {
     enabled();
     store.listOpenLeadsByContactId.mockResolvedValueOnce([lead()]);
     expect(await emberHandleInboundMessage("c1", "yes still looking")).toBe(true);
-    expect(store.updateLead).toHaveBeenCalledWith(1, expect.objectContaining({ status: "replied" }));
-    expect(alert).toHaveBeenCalledTimes(1);
-  });
-
-  it("a reply goes to Iris when she can take it — no separate human alert", async () => {
-    enabled();
-    handoff.handOffToIris.mockResolvedValueOnce("handed_off" as any);
-    store.listOpenLeadsByContactId.mockResolvedValueOnce([lead()]);
-    await emberHandleInboundMessage("c1", "yes still looking");
-    expect(handoff.handOffToIris).toHaveBeenCalledWith(expect.objectContaining({ id: 1 }), "yes still looking", expect.anything());
-    expect(alert).not.toHaveBeenCalled();
+    expect(replyDeps.buildReplyContext).toHaveBeenCalled();
+    expect(outreachMod.handleReply).toHaveBeenCalledWith(expect.objectContaining({ id: 1 }), "yes still looking", { marker: "ctx" });
     expect(store.updateLead).toHaveBeenCalledWith(1, { lastInboundSeenAt: expect.any(String) });
   });
 
-  it("a reply from an already handed-off lead is left to Iris", async () => {
+  it("a lead whose Iris call is already queued is still answered by Ember", async () => {
     enabled();
     store.listOpenLeadsByContactId.mockResolvedValueOnce([lead({ status: "handed_off" })]);
-    await emberHandleInboundMessage("c1", "5pm works");
-    expect(handoff.handOffToIris).not.toHaveBeenCalled();
+    await emberHandleInboundMessage("c1", "5pm works better");
+    expect(outreachMod.handleReply).toHaveBeenCalled();
   });
 
   it("marks a reply seen when Iris answered it via the webhook", async () => {

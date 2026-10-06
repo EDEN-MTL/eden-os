@@ -44,7 +44,7 @@ describe("EmberAgent tools", () => {
 
   it("resumes only a paused lead — never an opted-out one", async () => {
     store.getLead.mockResolvedValueOnce(lead({ status: "opted_out" }));
-    expect((await run("ember_resume_lead", { leadId: 1 })).error).toMatch(/only a paused lead/);
+    expect((await run("ember_resume_lead", { leadId: 1 })).error).toMatch(/only a paused or Not Interested lead/);
     expect(store.updateLead).not.toHaveBeenCalled();
 
     store.getLead.mockResolvedValueOnce(lead({ status: "paused" }));
