@@ -832,3 +832,43 @@ describe("maybeReopenPendingCall — missed explicit callbacks", () => {
     expect(dialPending.reopenAfterMissedCallback).toHaveBeenCalled();
   });
 });
+
+/**
+ * Mark, 2026-10-06: the notes field feeds GHL text notifications billed per
+ * segment, so a successful live transfer must leave only Iris's own short
+ * summary — not an extra "Live transfer completed" line on top of it.
+ */
+describe("end-of-call-report — status line on the contact's notes", () => {
+  function getRootHandler(): (req: any, res: any) => Promise<void> {
+    const router = createVapiRouter();
+    return (router as any).stack[0].route.stack[0].handle;
+  }
+  const res = () => ({ status: vi.fn().mockReturnThis(), send: vi.fn(), json: vi.fn() });
+
+  beforeEach(() => {
+    db.query.mockResolvedValue([{ client_id: "3-percent-east-coast", contact_id: "contact-1", triggered_by: "manual" }]);
+    ghl.getGhlConfig.mockResolvedValue({ locationId: "loc-1", apiKey: "key-1" });
+    ghl.getCustomFieldDefs.mockResolvedValue([{ fieldKey: "contact.isa_notes", id: "field-notes-1" }]);
+    ghl.getContact.mockResolvedValue({ contact: { customFields: [] } });
+    iris.loadIrisConfig.mockReturnValue({ timezone: "America/St_Johns", callbackNotesFieldKey: "contact.isa_notes" });
+  });
+
+  it("writes no status line after a successful live transfer", async () => {
+    await getRootHandler()(
+      { body: { message: { type: "end-of-call-report", endedReason: "assistant-forwarded-call", call: { id: "call-1" }, durationSeconds: 297 } }, headers: {} },
+      res()
+    );
+
+    expect(ghl.updateContact).not.toHaveBeenCalled();
+  });
+
+  it("still writes the status line for any other outcome", async () => {
+    await getRootHandler()(
+      { body: { message: { type: "end-of-call-report", endedReason: "voicemail", call: { id: "call-2" }, durationSeconds: 12 } }, headers: {} },
+      res()
+    );
+
+    expect(ghl.updateContact).toHaveBeenCalledTimes(1);
+    expect(ghl.updateContact.mock.calls[0][1].customFields[0].value).toMatch(/^Iris call /);
+  });
+});

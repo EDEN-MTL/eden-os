@@ -150,6 +150,37 @@ async function recordCallbackNote(clientId: string, contactId: string, when: Dat
 }
 
 /**
+ * Mark, 2026-10-06: the ISA notes field feeds GHL text notifications on
+ * Jacob's side, billed per segment, so what Iris saves after a live
+ * transfer or booking has to be short. A real transferred lead's note had
+ * grown to 544 characters (and any emoji forces 70-character segments
+ * instead of 160). The prompt asks for one terse line; this is the hard
+ * backstop for when the model writes more anyway. Newlines become " | ",
+ * non-ASCII (emoji, smart punctuation) is dropped or flattened, and an
+ * over-long note loses whole trailing facts rather than ending mid-word.
+ */
+export const ISA_NOTES_MAX_CHARS = 240;
+
+export function compactIsaNotes(raw: string): string {
+  const flat = raw
+    .replace(/[\u2018\u2019]/g, "'")
+    .replace(/[\u201C\u201D]/g, '"')
+    .replace(/[\u2013\u2014]/g, "-")
+    .replace(/[^\x20-\x7E\n]/g, "")
+    .split("\n")
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .join(" | ")
+    .replace(/\s+/g, " ")
+    .trim();
+  if (flat.length <= ISA_NOTES_MAX_CHARS) return flat;
+
+  const cut = flat.slice(0, ISA_NOTES_MAX_CHARS);
+  const lastSeparator = cut.lastIndexOf(" | ");
+  return (lastSeparator > ISA_NOTES_MAX_CHARS / 2 ? cut.slice(0, lastSeparator) : cut.replace(/\s+\S*$/, "")).trim();
+}
+
+/**
  * Writes Iris's own structured qualification summary to the SAME field
  * recordCallbackNote already uses (config.callbackNotesFieldKey — GHL's
  * isa_notes-equivalent field, which surfaces on the contact's opportunity
@@ -172,6 +203,11 @@ async function handleSaveIsaNotes(clientId: string, contactId: string, notes: un
     return "Could not reach the CRM right now — continue the call normally, a teammate will fill this in directly.";
   }
 
+  const compact = compactIsaNotes(notes);
+  if (!compact) {
+    return "No usable notes were given — compose a short plain-text summary and call this tool again.";
+  }
+
   try {
     const defs = await getCustomFieldDefs(ghlConfig.locationId, ghlConfig.apiKey);
     const fieldId = buildKeyToId(defs).get(config.callbackNotesFieldKey);
@@ -179,7 +215,7 @@ async function handleSaveIsaNotes(clientId: string, contactId: string, notes: un
       console.warn(`[VAPI-TOOLS] callbackNotesFieldKey "${config.callbackNotesFieldKey}" did not resolve to a field id for ${clientId} — skipping ISA notes.`);
       return "Could not reach the CRM right now — continue the call normally, a teammate will fill this in directly.";
     }
-    await updateContact(contactId, { customFields: [{ id: fieldId, value: notes.trim() }] }, ghlConfig.locationId, ghlConfig.apiKey);
+    await updateContact(contactId, { customFields: [{ id: fieldId, value: compact }] }, ghlConfig.locationId, ghlConfig.apiKey);
   } catch (error) {
     console.error(`[VAPI-TOOLS] Failed to write ISA notes for contact ${contactId}:`, error instanceof Error ? error.message : error);
     return "Could not reach the CRM right now — continue the call normally, a teammate will fill this in directly.";
