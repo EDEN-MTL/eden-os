@@ -83,7 +83,7 @@ describe("emberConverse — Ember texts the old lead itself", () => {
     expect(when.getTime()).toBeGreaterThan(NOW.getTime());
     expect(d.updateLead).toHaveBeenCalledWith(1, expect.objectContaining({ status: "handed_off" }));
     expect(d.alert).toHaveBeenCalledWith(expect.stringContaining("live transfer"));
-    expect(d.sent).toEqual(["Perfect — expect a quick call from our team in a couple of minutes!"]);
+    expect(d.sent).toEqual(["Perfect - expect a quick call from our team in a couple of minutes!"]);
   });
 
   it("an unqualified lead never gets a call queued, whatever the model wanted", async () => {
@@ -110,6 +110,12 @@ describe("emberConverse — Ember texts the old lead itself", () => {
     expect(d.updateLead).toHaveBeenCalledWith(1, expect.objectContaining({
       status: "nurturing", touchCount: 0, nextTouchAt: new Date(NOW.getTime() + 60 * 86_400_000).toISOString(),
     }));
+  });
+
+  it("an AI reply with a long dash or curly quotes is sent plain", async () => {
+    const d = deps(text("Got it \u2014 what\u2019s your timeline?"));
+    expect(await emberConverse(lead(), "yes", ctx(), d)).toBe("Got it - what's your timeline?");
+    expect(d.sent).toEqual(["Got it - what's your timeline?"]);
   });
 
   it("sends nothing when the model produced no text", async () => {
