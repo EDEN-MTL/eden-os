@@ -384,7 +384,12 @@ async function handleEndOfCallReport(message: Record<string, any>): Promise<void
 
   const row = rows[0];
   if (row) await postCallLogToSlack(row.client_id, row.contact_id, message, endedReason);
-  if (row?.contact_id) await appendCallStatusNote(row.client_id, row.contact_id, endedReason, message);
+  // Mark, 2026-10-06: a successful live transfer already left Iris's own short
+  // summary in the notes field — the extra "Live transfer completed ..."
+  // status line only made the text sent to the agent longer and costlier.
+  if (row?.contact_id && endedReason !== TRANSFER_SUCCEEDED_REASON) {
+    await appendCallStatusNote(row.client_id, row.contact_id, endedReason, message);
+  }
 
   if (endedReason === TRANSFER_SUCCEEDED_REASON && row?.contact_id) {
     await handleSuccessfulTransfer(row.client_id, row.contact_id);

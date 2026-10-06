@@ -14,7 +14,7 @@ vi.mock("../agents/iris", () => iris);
 const dialPending = vi.hoisted(() => ({ scheduleExplicitCallback: vi.fn(async () => true) }));
 vi.mock("../agents/iris/dial-pending", () => dialPending);
 
-import { resolveRequestedTime, parseToolArguments, matchTransferAgentCandidates, handleScheduleCallback, ToolCall } from "./vapi-tools";
+import { resolveRequestedTime, parseToolArguments, matchTransferAgentCandidates, handleScheduleCallback, compactIsaNotes, ISA_NOTES_MAX_CHARS, ToolCall } from "./vapi-tools";
 import { GhlUser } from "../shared/ghl";
 
 afterEach(() => vi.clearAllMocks());
@@ -225,5 +225,46 @@ describe("handleScheduleCallback", () => {
     ghl.updateContact.mockClear();
     await handleScheduleCallback("3-percent-east-coast", "contact-1", undefined);
     expect(ghl.updateContact).toHaveBeenCalledTimes(1);
+  });
+});
+
+/** Mark, 2026-10-06: ISA notes become a per-segment-billed text to the receiving agent, so they stay short. */
+describe("compactIsaNotes", () => {
+  it("flattens the old multi-line format onto one line", () => {
+    expect(compactIsaNotes("Intent: Buyer\nTimeline: ASAP\nBudget: $350K")).toBe("Intent: Buyer | Timeline: ASAP | Budget: $350K");
+  });
+
+  it("leaves an already-short single line untouched", () => {
+    const line = "Buyer | ASAP | St. John's (Penjance) | $350-400K | Duplex w/ suite | Not pre-approved";
+    expect(compactIsaNotes(line)).toBe(line);
+  });
+
+  it("drops emojis and flattens smart punctuation, which would otherwise force 70-character text segments", () => {
+    expect(compactIsaNotes("\u2705 Buyer \u2014 ASAP \u2018hot\u2019")).toBe("Buyer - ASAP 'hot'");
+  });
+
+  it("caps a long note by dropping whole trailing facts, never ending mid-fact", () => {
+    const long = [
+      "Lead: Kiyoma",
+      "Intent: Buyer",
+      "Timeline: ASAP",
+      "Target Area: St. John's and surrounding neighborhoods (Penjance/Montpellier area)",
+      "Budget: $350,000 - $400,000",
+      "Property Type: Duplex with garage and basement apartment",
+      "Bedrooms/Bathrooms: Main unit - 5 bedrooms, 3 bathrooms; Basement apartment - 2 bedrooms, 1 bathroom",
+      "Pre-Approval: Not yet preapproved",
+      "Additional Context: Lead just returned from work, looking for multi-unit property with specific configuration.",
+    ].join("\n");
+
+    const out = compactIsaNotes(long);
+
+    expect(out.length).toBeLessThanOrEqual(ISA_NOTES_MAX_CHARS);
+    expect(out).toContain("Budget: $350,000 - $400,000");
+    expect(out.endsWith("|")).toBe(false);
+    expect(long.replace(/\n/g, " | ").startsWith(out)).toBe(true);
+  });
+
+  it("returns an empty string when nothing usable is left", () => {
+    expect(compactIsaNotes("\u2705\u2705")).toBe("");
   });
 });
