@@ -156,7 +156,7 @@
             "Hi {{firstName}}, last check-in from {{senderName}}. If selling is still on your mind, reply and we'll book a quick chat. Reply STOP to opt out."
           ],
           "neutral": [
-            "Hi {{firstName}}, it's {{senderName}}. You reached out about real estate a while back. Still thinking about a move? Happy to help whenever the timing's right. Reply STOP to opt out.",
+            "Hi {{firstName}}, it's {{senderName}}. You reached out about real estate a while back. Still thinking about a move? Reply STOP to opt out.",
             "Hi {{firstName}}, {{senderName}} here. The market's shifted since we last spoke. Want a quick update on what's out there? Reply STOP to opt out.",
             "Hi {{firstName}}, last check-in from {{senderName}}. If a move is still on your mind, reply and we'll set up a quick call. Reply STOP to opt out."
           ]
