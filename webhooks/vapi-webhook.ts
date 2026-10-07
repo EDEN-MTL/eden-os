@@ -1,7 +1,7 @@
 import crypto from "crypto";
 import { Request, Response, Router } from "express";
 import { query } from "../shared/db";
-import { getGhlConfig, getContact, addContactTags, findOpenOpportunitiesForContact, updateOpportunityStage, getCustomFieldDefs, updateContact, sendSMS, getMessage } from "../shared/ghl";
+import { getGhlConfig, getContact, addContactTags, findOpenOpportunitiesForContact, updateOpportunityStage, getCustomFieldDefs, updateContact, sendSMS, getMessage, listLocationUsers } from "../shared/ghl";
 import { sendMessage, uploadFile } from "../shared/slack";
 import { appendHistory } from "../shared/conversation-memory";
 import { loadIrisConfig, loadClientBranding } from "../agents/iris";
@@ -393,6 +393,7 @@ async function handleEndOfCallReport(message: Record<string, any>): Promise<void
 
   if (endedReason === TRANSFER_SUCCEEDED_REASON && row?.contact_id) {
     await handleSuccessfulTransfer(row.client_id, row.contact_id);
+    await postLiveTransferToSlack(row.client_id, row.contact_id);
   }
 
   // Only the automatic dial-pending queue's own retry cadence gets
@@ -717,6 +718,74 @@ export async function maybeHonorMissedCallback(clientId: string, contactId: stri
     });
   } catch (error) {
     console.error(`[VAPI] Failed to check for a missed callback request for ${contactId}:`, error instanceof Error ? error.message : error);
+  }
+}
+
+export interface LiveTransferPost {
+  intent: string | null | undefined;
+  clientLabel: string;
+  agentName: string | null;
+  leadName: string;
+  notes: string | null;
+}
+
+/**
+ * The same shape Mark has been typing into the live-transfers channel by
+ * hand (2026-10-07): who it was for, the lead, and the ISA notes as bullets.
+ * Accepts both the old multi-line notes and the new one-line "a | b | c"
+ * form, and drops Iris's own call-status lines — those belong in the
+ * call-log channel, not in a hand-off to an agent.
+ */
+export function formatLiveTransferPost(post: LiveTransferPost): string {
+  const kind = post.intent === "seller" || post.intent === "downsize" || post.intent === "upgrading" ? "Seller" : "Buyer";
+  const bullets = (post.notes ?? "")
+    .split(/\n| \| /)
+    .map((line) => line.trim())
+    .filter((line) => line && !/^Iris( call|:)/.test(line));
+  const lines = [`${kind} Live Transfer for ${post.clientLabel} with ${post.agentName ?? "an agent (not confirmed on the call)"}`, `Name: ${post.leadName}`];
+  if (bullets.length > 0) lines.push("", `ISA NOTES: ${bullets.map((b) => `- ${b}`).join("\n")}`);
+  return lines.join("\n");
+}
+
+/**
+ * Mark, 2026-10-07: Iris posts every completed live transfer to the
+ * live-transfers channel herself, so Mark doesn't have to type them from his
+ * own account. Runs after the transfer is already done, so it's best-effort:
+ * any failure is logged and never affects the transfer or the tagging.
+ */
+export async function postLiveTransferToSlack(clientId: string, contactId: string): Promise<void> {
+  try {
+    const config = loadIrisConfig(clientId);
+    const target = config?.liveTransferSlack;
+    if (!config || !target) return;
+    const ghlConfig = await getGhlConfig(clientId);
+    if (!ghlConfig) return;
+
+    const contactResp = await getContact(contactId, ghlConfig.locationId, ghlConfig.apiKey);
+    const contact = contactResp?.contact ?? contactResp;
+    const leadName = [contact?.firstName, contact?.lastName].filter(Boolean).join(" ").trim() || contact?.name || contactId;
+
+    const defs = await getCustomFieldDefs(ghlConfig.locationId, ghlConfig.apiKey);
+    const notes = readField(contact?.customFields, config.callbackNotesFieldKey, buildKeyToId(defs)) ?? null;
+
+    let agentName: string | null = null;
+    if (contact?.assignedTo) {
+      const users = await listLocationUsers(ghlConfig.locationId, ghlConfig.apiKey).catch(() => []);
+      agentName = users.find((u) => u.id === contact.assignedTo)?.name ?? null;
+    }
+
+    const pending = await query<{ lead: { intent?: string | null } | null }>(
+      `SELECT lead FROM iris_pending_calls WHERE client_id = $1 AND contact_id = $2`,
+      [clientId, contactId]
+    );
+    const intent = pending[0]?.lead?.intent ?? (((contact?.tags ?? []) as string[]).includes("seller lead") ? "seller" : "buyer");
+
+    await sendMessage("iris", {
+      channel: target.channel,
+      text: formatLiveTransferPost({ intent, clientLabel: target.clientLabel, agentName, leadName, notes }),
+    });
+  } catch (error) {
+    console.error(`[VAPI] Failed to post the live transfer for ${contactId} to Slack:`, error instanceof Error ? error.message : error);
   }
 }
 

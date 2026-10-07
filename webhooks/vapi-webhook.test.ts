@@ -10,6 +10,7 @@ const ghl = vi.hoisted(() => ({
   updateContact: vi.fn(),
   sendSMS: vi.fn(),
   getMessage: vi.fn(),
+  listLocationUsers: vi.fn(),
 }));
 vi.mock("../shared/ghl", () => ghl);
 
@@ -46,6 +47,8 @@ import {
   maybeHonorMissedCallback,
   maybeReopenPendingCall,
   buildSweepMissedCallText,
+  formatLiveTransferPost,
+  postLiveTransferToSlack,
   moveToFollowUpStage,
   smsConfirmation,
   postCallLogToSlack,
@@ -972,5 +975,100 @@ describe("buildSweepMissedCallText", () => {
 
   it("is plain ASCII, so it stays on the cheaper single-segment encoding", () => {
     expect(buildSweepMissedCallText("Stella", "3 Percent East Coast", "buyer")).toMatch(/^[\x20-\x7E]+$/);
+  });
+});
+
+/**
+ * Mark, 2026-10-07: Iris posts each completed live transfer to the
+ * live-transfers channel herself, in the shape Mark had been typing by hand.
+ */
+describe("formatLiveTransferPost", () => {
+  it("matches the post Mark writes by hand, with the notes as bullets", () => {
+    expect(
+      formatLiveTransferPost({
+        intent: "buyer",
+        clientLabel: "3% Realty East Coast",
+        agentName: "Candice Mayo",
+        leadName: "Mylene Misa Badiola",
+        notes: "4 beds | Looking near the hospital | First Home | Not pre-approved yet",
+      })
+    ).toBe(
+      "Buyer Live Transfer for 3% Realty East Coast with Candice Mayo\nName: Mylene Misa Badiola\n\nISA NOTES: - 4 beds\n- Looking near the hospital\n- First Home\n- Not pre-approved yet"
+    );
+  });
+
+  it("calls a seller, downsize or upgrading lead a Seller", () => {
+    for (const intent of ["seller", "downsize", "upgrading"]) {
+      expect(formatLiveTransferPost({ intent, clientLabel: "X", agentName: "A", leadName: "L", notes: null })).toMatch(/^Seller Live Transfer/);
+    }
+  });
+
+  it("splits the older multi-line notes too, and leaves Iris's own call-status lines out", () => {
+    const out = formatLiveTransferPost({
+      intent: "buyer",
+      clientLabel: "X",
+      agentName: "A",
+      leadName: "L",
+      notes: "Intent: Buyer\nBudget: $350K\n\nIris call Monday, September 28 at 6:04 PM - Live transfer completed. Duration: 4m 57s.",
+    });
+    expect(out).toContain("- Intent: Buyer\n- Budget: $350K");
+    expect(out).not.toContain("Iris call");
+  });
+
+  it("omits the notes section when there are none, and says so honestly when the agent isn't known", () => {
+    const out = formatLiveTransferPost({ intent: "buyer", clientLabel: "X", agentName: null, leadName: "L", notes: "" });
+    expect(out).not.toContain("ISA NOTES");
+    expect(out).toContain("not confirmed on the call");
+  });
+});
+
+describe("postLiveTransferToSlack", () => {
+  beforeEach(() => {
+    slack.sendMessage.mockReset().mockResolvedValue({});
+    iris.loadIrisConfig.mockReturnValue({
+      callbackNotesFieldKey: "contact.isa_notes",
+      liveTransferSlack: { channel: "C0BR8F84LUD", clientLabel: "3% Realty East Coast" },
+    });
+    ghl.getGhlConfig.mockResolvedValue({ locationId: "loc-1", apiKey: "key-1" });
+    ghl.getCustomFieldDefs.mockResolvedValue([{ fieldKey: "contact.isa_notes", id: "field-notes-1" }]);
+    ghl.getContact.mockResolvedValue({
+      contact: { firstName: "Rene", lastName: "Manzano", assignedTo: "user-brittany", tags: ["seller lead"], customFields: [{ id: "field-notes-1", value: "Her son's property | Looking to sell early next year | Townhouse" }] },
+    });
+    ghl.listLocationUsers.mockResolvedValue([{ id: "user-brittany", name: "Brittany Penney", firstName: "Brittany", lastName: "Penney" }]);
+    db.query.mockResolvedValue([{ lead: { intent: "seller" } }]);
+  });
+
+  it("posts the transfer to the live-transfers channel as Iris", async () => {
+    await postLiveTransferToSlack("3-percent-east-coast", "contact-1");
+
+    expect(slack.sendMessage).toHaveBeenCalledTimes(1);
+    const [agent, payload] = slack.sendMessage.mock.calls[0];
+    expect(agent).toBe("iris");
+    expect(payload.channel).toBe("C0BR8F84LUD");
+    expect(payload.text).toContain("Seller Live Transfer for 3% Realty East Coast with Brittany Penney");
+    expect(payload.text).toContain("Name: Rene Manzano");
+    expect(payload.text).toContain("- Townhouse");
+  });
+
+  it("falls back to the seller-lead tag for the intent when the lead has no queue row", async () => {
+    db.query.mockResolvedValue([]);
+
+    await postLiveTransferToSlack("3-percent-east-coast", "contact-1");
+
+    expect(slack.sendMessage.mock.calls[0][1].text).toMatch(/^Seller Live Transfer/);
+  });
+
+  it("posts nothing for a client with no live-transfers channel configured", async () => {
+    iris.loadIrisConfig.mockReturnValue({ callbackNotesFieldKey: "contact.isa_notes" });
+
+    await postLiveTransferToSlack("3-percent-east-coast", "contact-1");
+
+    expect(slack.sendMessage).not.toHaveBeenCalled();
+  });
+
+  it("never throws into the transfer handling when Slack or GHL fails", async () => {
+    slack.sendMessage.mockRejectedValue(new Error("not_in_channel"));
+
+    await expect(postLiveTransferToSlack("3-percent-east-coast", "contact-1")).resolves.toBeUndefined();
   });
 });
