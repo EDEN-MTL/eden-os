@@ -89,6 +89,10 @@
       "notesFieldKeyNote": "Same underlying field as scout.fields.isaNotes below, but named separately here as a single write target (not a read-priority list) — see IrisConfig.callbackNotesFieldKey.",
       "calendarNote": "3% REC - ISA Callback (Iris), id buxIQTE3TkpVpjrYBaRc, still exists in GHL (currently inactive) from the earlier calendar-booking design. Nothing in code reads it anymore — left as-is rather than deleted in case the calendar-booking approach comes back."
     },
+    "sms": {
+      "fromNumber": "+17097013598",
+      "fromNumberNote": "Mark, 2026-10-07: GHL reuses whichever number last texted a lead, and older leads were last texted from +17097021163, which is no longer available in the account — every send to them failed ('Invalid from number'). Iris's own proactive texts name the main 3% number explicitly. Same number Iris calls out from."
+    },
     "outreachCadence": {
       "_comment": "Jacob, 2026-08-25: Iris calls new leads morning and afternoon for the first 3-4 days trying to reach them. Iris owns this cadence internally — Scout fires ONCE per lead and does not trigger per attempt. scout.touchedTags gates whether a sequence STARTS, not each call.",
       "attemptsPerDay": 2,

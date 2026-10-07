@@ -485,6 +485,7 @@ export function loadIrisConfig(clientId: string): IrisConfig | null {
       writeFields: raw.iris.writeFields,
       outreachCadence: raw.iris.outreachCadence,
       smsCallHandoff: raw.iris.sms?.callHandoff === true,
+      smsFromNumber: raw.iris.sms?.fromNumber || undefined,
     };
   } catch {
     return null;
