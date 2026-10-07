@@ -5,7 +5,7 @@ import { getGhlConfig, getContact, addContactTags, findOpenOpportunitiesForConta
 import { sendMessage, uploadFile } from "../shared/slack";
 import { appendHistory } from "../shared/conversation-memory";
 import { loadIrisConfig, loadClientBranding } from "../agents/iris";
-import { reopenForNextAttempt, reopenAfterMissedCallback, scheduleExplicitCallback } from "../agents/iris/dial-pending";
+import { reopenForNextAttempt, reopenAfterMissedCallback, scheduleExplicitCallback, holdForTextReply, SWEEP_SOURCE } from "../agents/iris/dial-pending";
 import { extractFirstName } from "../agents/iris/scripts";
 import { buildKeyToId, readField } from "../agents/scout/intake";
 import { clampToLegalCallingWindow, formatLocal } from "../agents/iris/cadence";
@@ -400,7 +400,7 @@ async function handleEndOfCallReport(message: Record<string, any>): Promise<void
   // has no cadence to continue even if it happens to share a contactId.
   if (row?.contact_id && row.triggered_by === "automatic") {
     if (!genuinelyAnswered(endedReason, message)) {
-      await maybeReopenPendingCall(row.client_id, row.contact_id);
+      await maybeReopenPendingCall(row.client_id, row.contact_id, endedReason);
     } else if (endedReason !== TRANSFER_SUCCEEDED_REASON) {
       // Real case found live 2026-10-01 (Saife Sarwar): "Ma'am, right now
       // is busy. Can I call you later?" then hung up mid-reply, before
@@ -466,7 +466,7 @@ export async function tagSequenceExhausted(clientId: string, contactId: string):
  * explicit callback the lead asked for takes the missed-callback path
  * instead (handleMissedExplicitCallback); Ember handoffs stay one-shot.
  */
-export async function maybeReopenPendingCall(clientId: string, contactId: string): Promise<void> {
+export async function maybeReopenPendingCall(clientId: string, contactId: string, endedReason: string | null = null): Promise<void> {
   try {
     const rows = await query<{
       id: number;
@@ -476,7 +476,7 @@ export async function maybeReopenPendingCall(clientId: string, contactId: string
       status: string;
       source: string | null;
       callback_misses: number;
-      lead: { name?: string | null } | null;
+      lead: { name?: string | null; intent?: string | null } | null;
     }>(
       `SELECT id, attempts_made, created_at, is_explicit_callback, status, source, callback_misses, lead FROM iris_pending_calls
        WHERE client_id = $1 AND contact_id = $2`,
@@ -484,6 +484,11 @@ export async function maybeReopenPendingCall(clientId: string, contactId: string
     );
     const pending = rows[0];
     if (!pending || pending.status !== "placed") return;
+
+    if (pending.source === SWEEP_SOURCE) {
+      await handleUnansweredSweepCall(clientId, contactId, pending, endedReason);
+      return;
+    }
 
     if (pending.is_explicit_callback) {
       // Ember reactivations were never a time the lead picked — one shot, as before.
@@ -539,6 +544,43 @@ async function handleMissedExplicitCallback(
   ).catch((error) => {
     console.error(`[VAPI] Failed to note the missed callback retry for contact ${contactId}:`, error instanceof Error ? error.message : error);
   });
+}
+
+/**
+ * Mark, 2026-10-07: a cold lead Iris was lined up to call by hand (source
+ * 'sweep') who doesn't pick up — or whose voicemail picks up — gets ONE text
+ * instead of a retry. No voicemail is ever left (Iris hangs up on a machine,
+ * per her call config). A call that never connected because of a technical
+ * error is not a "missed you", so it's left alone rather than texted.
+ */
+async function handleUnansweredSweepCall(
+  clientId: string,
+  contactId: string,
+  pending: { id: number; lead: { name?: string | null; intent?: string | null } | null },
+  endedReason: string | null
+): Promise<void> {
+  if (endedReason && /error|failed/i.test(endedReason)) {
+    console.warn(`[VAPI] Sweep call to ${contactId} ended with ${endedReason} — not texting, nobody was actually missed.`);
+    return;
+  }
+  await holdForTextReply(pending.id);
+  await textMissedSweepCall(clientId, contactId, pending.lead?.name, pending.lead?.intent);
+}
+
+export function buildSweepMissedCallText(leadName: string | null | undefined, brandName: string, intent: string | null | undefined): string {
+  const subject = intent === "seller" || intent === "downsize" || intent === "upgrading" ? "selling your home" : "your home search";
+  return `Hi ${extractFirstName(leadName)}, it's Iris from ${brandName}. I tried to call you about ${subject} but missed you. Are you still interested, or is there a better time to chat?`;
+}
+
+async function textMissedSweepCall(clientId: string, contactId: string, leadName: string | null | undefined, intent: string | null | undefined): Promise<void> {
+  try {
+    const ghlConfig = await getGhlConfig(clientId);
+    const branding = loadClientBranding(clientId);
+    if (!ghlConfig || !branding) return;
+    await sendSMS(contactId, buildSweepMissedCallText(leadName, branding.brandName, intent), ghlConfig.locationId, ghlConfig.apiKey);
+  } catch (error) {
+    console.error(`[VAPI] Failed to text contact ${contactId} after an unanswered sweep call:`, error instanceof Error ? error.message : error);
+  }
 }
 
 async function textMissedCall(clientId: string, contactId: string, leadName: string | null | undefined): Promise<void> {
