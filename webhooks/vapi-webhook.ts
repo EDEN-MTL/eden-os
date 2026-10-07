@@ -721,6 +721,9 @@ export async function maybeHonorMissedCallback(clientId: string, contactId: stri
   }
 }
 
+/** One transfer shouldn't post twice; a genuine second transfer of the same lead this soon is vanishingly rare. */
+const LIVE_TRANSFER_POST_DEDUPE_HOURS = 6;
+
 export interface LiveTransferPost {
   intent: string | null | undefined;
   clientLabel: string;
@@ -754,12 +757,29 @@ export function formatLiveTransferPost(post: LiveTransferPost): string {
  * any failure is logged and never affects the transfer or the tagging.
  */
 export async function postLiveTransferToSlack(clientId: string, contactId: string): Promise<void> {
+  let claimId: string | null = null;
   try {
     const config = loadIrisConfig(clientId);
     const target = config?.liveTransferSlack;
     if (!config || !target) return;
     const ghlConfig = await getGhlConfig(clientId);
     if (!ghlConfig) return;
+
+    // The same transfer can arrive twice (Vapi's end-of-call report, then the
+    // GHL automation's webhook step). Whoever claims it first posts; the other
+    // stays quiet.
+    const claim = await query<{ id: string }>(
+      `INSERT INTO live_transfer_posts (client_id, contact_id)
+       SELECT $1, $2
+       WHERE NOT EXISTS (
+         SELECT 1 FROM live_transfer_posts
+         WHERE client_id = $1 AND contact_id = $2 AND posted_at > now() - ($3 || ' hours')::interval
+       )
+       RETURNING id`,
+      [clientId, contactId, String(LIVE_TRANSFER_POST_DEDUPE_HOURS)]
+    );
+    if (claim.length === 0) return;
+    claimId = claim[0].id;
 
     const contactResp = await getContact(contactId, ghlConfig.locationId, ghlConfig.apiKey);
     const contact = contactResp?.contact ?? contactResp;
@@ -786,6 +806,8 @@ export async function postLiveTransferToSlack(clientId: string, contactId: strin
     });
   } catch (error) {
     console.error(`[VAPI] Failed to post the live transfer for ${contactId} to Slack:`, error instanceof Error ? error.message : error);
+    // Nothing was posted, so give the claim back — the other path may still manage to.
+    if (claimId) await query(`DELETE FROM live_transfer_posts WHERE id = $1`, [claimId]).catch(() => {});
   }
 }
 

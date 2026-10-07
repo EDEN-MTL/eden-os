@@ -21,6 +21,9 @@ vi.mock("../agents/ember/webhooks", () => ember);
 const db = vi.hoisted(() => ({ query: vi.fn(async () => []) }));
 vi.mock("../shared/db", () => db);
 
+const vapiWebhook = vi.hoisted(() => ({ postLiveTransferToSlack: vi.fn(async () => {}) }));
+vi.mock("./vapi-webhook", () => vapiWebhook);
+
 import { createGHLRouter } from "./ghl-webhook";
 
 /**
@@ -88,5 +91,29 @@ describe("POST /message — Ember fallback", () => {
     await getRouteHandler("/message", "post")({ body: { contactId: "contact-1", body: "5pm", type: "SMS", direction: "inbound" } }, fakeRes());
     expect(ember.emberMarkInboundSeen).toHaveBeenCalledWith("contact-1");
     expect(ember.emberHandleInboundMessage).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * Mark, 2026-10-07: the live-transfer automation's webhook step lets Iris
+ * post transfers the team made by hand. The post itself is de-duplicated
+ * inside postLiveTransferToSlack, so this route just hands it over.
+ */
+describe("POST /contact — LiveTransfer", () => {
+  it("posts the transfer for the client that owns the GHL location", async () => {
+    const handler = getRouteHandler("/contact", "post");
+
+    await handler({ body: { customData: { type: "LiveTransfer", id: "contact-1", locationId: "t3ypFoQY6EC5IJfj2UYl" } } }, fakeRes());
+
+    expect(vapiWebhook.postLiveTransferToSlack).toHaveBeenCalledWith("3-percent-east-coast", "contact-1");
+  });
+
+  it("does nothing for a location no client owns, or a missing contact id", async () => {
+    const handler = getRouteHandler("/contact", "post");
+
+    await handler({ body: { customData: { type: "LiveTransfer", id: "contact-1", locationId: "not-a-real-location" } } }, fakeRes());
+    await handler({ body: { customData: { type: "LiveTransfer", locationId: "t3ypFoQY6EC5IJfj2UYl" } } }, fakeRes());
+
+    expect(vapiWebhook.postLiveTransferToSlack).not.toHaveBeenCalled();
   });
 });

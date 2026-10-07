@@ -1035,7 +1035,8 @@ describe("postLiveTransferToSlack", () => {
       contact: { firstName: "Rene", lastName: "Manzano", assignedTo: "user-brittany", tags: ["seller lead"], customFields: [{ id: "field-notes-1", value: "Her son's property | Looking to sell early next year | Townhouse" }] },
     });
     ghl.listLocationUsers.mockResolvedValue([{ id: "user-brittany", name: "Brittany Penney", firstName: "Brittany", lastName: "Penney" }]);
-    db.query.mockResolvedValue([{ lead: { intent: "seller" } }]);
+    // 1st query is the "first to post" claim, then the lead's queue row.
+    db.query.mockReset().mockResolvedValueOnce([{ id: "1" }] as never).mockResolvedValue([{ lead: { intent: "seller" } }] as never);
   });
 
   it("posts the transfer to the live-transfers channel as Iris", async () => {
@@ -1051,11 +1052,29 @@ describe("postLiveTransferToSlack", () => {
   });
 
   it("falls back to the seller-lead tag for the intent when the lead has no queue row", async () => {
-    db.query.mockResolvedValue([]);
+    db.query.mockReset().mockResolvedValueOnce([{ id: "1" }] as never).mockResolvedValue([] as never);
 
     await postLiveTransferToSlack("3-percent-east-coast", "contact-1");
 
     expect(slack.sendMessage.mock.calls[0][1].text).toMatch(/^Seller Live Transfer/);
+  });
+
+  it("stays quiet when this transfer was already posted (Vapi's report and the automation's webhook both arrive)", async () => {
+    db.query.mockReset().mockResolvedValue([] as never); // the claim finds an existing post
+
+    await postLiveTransferToSlack("3-percent-east-coast", "contact-1");
+
+    expect(slack.sendMessage).not.toHaveBeenCalled();
+    expect(ghl.getContact).not.toHaveBeenCalled();
+  });
+
+  it("gives the claim back when posting fails, so the other path can still post it", async () => {
+    slack.sendMessage.mockRejectedValue(new Error("not_in_channel"));
+
+    await postLiveTransferToSlack("3-percent-east-coast", "contact-1");
+
+    const deletes = db.query.mock.calls.filter((c: any[]) => String(c[0]).includes("DELETE FROM live_transfer_posts"));
+    expect(deletes).toHaveLength(1);
   });
 
   it("posts nothing for a client with no live-transfers channel configured", async () => {

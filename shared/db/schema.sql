@@ -686,3 +686,15 @@ CREATE TABLE IF NOT EXISTS returning_lead_alerts (
     created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 CREATE INDEX IF NOT EXISTS idx_returning_lead_alerts_lookup ON returning_lead_alerts(client_id, contact_id, created_at DESC);
+
+-- One row per live-transfer post Iris makes to the live-transfers Slack
+-- channel. A transfer can reach her twice — once from Vapi's end-of-call
+-- report and once from the live-transfer automation's webhook step (which
+-- also covers transfers a human made by hand) — and only the first may post.
+CREATE TABLE IF NOT EXISTS live_transfer_posts (
+    id BIGSERIAL PRIMARY KEY,
+    client_id TEXT NOT NULL,
+    contact_id TEXT NOT NULL,
+    posted_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_live_transfer_posts_contact ON live_transfer_posts(client_id, contact_id, posted_at);
