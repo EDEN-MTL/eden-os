@@ -372,10 +372,17 @@ export async function getCheckinData(token: string): Promise<CheckinData | null>
   const overrides = config.checkinOverrides || {};
   const manualAssignments: Record<string, string> = overrides.assignments || {};
   const hiddenContactIds: string[] = overrides.hidden || [];
+  // Pins a live-transfer's date to its real transfer when a later manual
+  // stage move reset lastStageChangeAt — see config's checkinOverrides.
+  const appointmentDates: Record<string, string> = overrides.appointmentDates || {};
 
   if (hiddenContactIds.length > 0) {
     items = items.filter((item) => !item.contactId || !hiddenContactIds.includes(item.contactId));
   }
+  items = items.map((item) => {
+    const pinned = item.isLiveTransfer && item.contactId ? appointmentDates[item.contactId] : undefined;
+    return pinned ? { ...item, appointmentAt: pinned } : item;
+  });
   // A manual override always wins; otherwise take the first candidate that
   // actually matches a real, current roster member — not just whichever
   // GHL field happened to be populated first (see RawItem's comment above).
