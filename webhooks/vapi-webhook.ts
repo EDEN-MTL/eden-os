@@ -1,7 +1,7 @@
 import crypto from "crypto";
 import { Request, Response, Router } from "express";
 import { query } from "../shared/db";
-import { getGhlConfig, getContact, addContactTags, findOpenOpportunitiesForContact, updateOpportunityStage, getCustomFieldDefs, updateContact, sendSMS } from "../shared/ghl";
+import { getGhlConfig, getContact, addContactTags, findOpenOpportunitiesForContact, updateOpportunityStage, getCustomFieldDefs, updateContact, sendSMS, getMessage } from "../shared/ghl";
 import { sendMessage, uploadFile } from "../shared/slack";
 import { appendHistory } from "../shared/conversation-memory";
 import { loadIrisConfig, loadClientBranding } from "../agents/iris";
@@ -564,13 +564,13 @@ async function handleUnansweredSweepCall(
     return;
   }
   await holdForTextReply(pending.id);
-  const sent = await textMissedSweepCall(clientId, contactId, pending.lead?.name, pending.lead?.intent);
-  if (sent) {
+  const outcome = await textMissedSweepCall(clientId, contactId, pending.lead?.name, pending.lead?.intent);
+  if (outcome !== "failed") {
     // Mark, 2026-10-07: the call-log channel is how these calls are monitored,
     // so the follow-up text shows up there too, not only the call itself.
     await sendMessage("iris", {
       channel: CALL_LOG_CHANNEL,
-      text: `📱 Texted *${pending.lead?.name ?? contactId}* after the unanswered call (no voicemail left) — waiting for a reply.`,
+      text: `📱 Texted *${pending.lead?.name ?? contactId}* after the unanswered call (no voicemail left) — ${outcome === "delivered" ? "delivered" : "sent"}, waiting for a reply.`,
     }).catch((error) => {
       console.error("[VAPI] Failed to post the sweep follow-up text to Slack:", error instanceof Error ? error.message : error);
     });
@@ -582,29 +582,71 @@ export function buildSweepMissedCallText(leadName: string | null | undefined, br
   return `Hi ${extractFirstName(leadName)}, it's Iris from ${brandName}. I tried to call you about ${subject} but missed you. Are you still interested, or is there a better time to chat?`;
 }
 
-async function textMissedSweepCall(clientId: string, contactId: string, leadName: string | null | undefined, intent: string | null | undefined): Promise<boolean> {
+/** How long to wait, after GHL accepts a text, before checking whether it was actually delivered. Tests set this to zeros. */
+export const smsConfirmation = { delaysMs: [4000, 6000] };
+
+export type TextOutcome = "delivered" | "sent" | "failed";
+
+/**
+ * Sends one of Iris's own proactive texts and finds out what really happened.
+ * POST /conversations/messages succeeds the moment GHL ACCEPTS a text — a
+ * rejected sender number only appears afterwards as status "failed". Real
+ * case, 2026-10-07: four sweep texts were rejected ("Invalid from number")
+ * while Slack said they'd been sent. So this names the client's own from
+ * number (config iris.sms.fromNumber), then checks the message's status, and
+ * posts a warning to the call-log channel when it failed.
+ */
+export async function sendIrisText(clientId: string, contactId: string, leadName: string | null | undefined, text: string): Promise<TextOutcome> {
+  const ghlConfig = await getGhlConfig(clientId);
+  if (!ghlConfig) return "failed";
+  const fromNumber = loadIrisConfig(clientId)?.smsFromNumber;
+
+  let failure: string | null = null;
+  let status: TextOutcome = "sent";
   try {
-    const ghlConfig = await getGhlConfig(clientId);
-    const branding = loadClientBranding(clientId);
-    if (!ghlConfig || !branding) return false;
-    await sendSMS(contactId, buildSweepMissedCallText(leadName, branding.brandName, intent), ghlConfig.locationId, ghlConfig.apiKey);
-    return true;
+    const sent = await sendSMS(contactId, text, ghlConfig.locationId, ghlConfig.apiKey, fromNumber);
+    const messageId: string | undefined = sent?.messageId ?? sent?.id ?? sent?.message?.id;
+    if (messageId) {
+      for (const delay of smsConfirmation.delaysMs) {
+        await new Promise((resolve) => setTimeout(resolve, delay));
+        const raw = await getMessage(messageId, ghlConfig.locationId, ghlConfig.apiKey);
+        const message = raw?.message ?? raw;
+        if (message?.status === "delivered") {
+          status = "delivered";
+          break;
+        }
+        if (message?.status === "failed" || message?.status === "undelivered") {
+          failure = message?.error || `status ${message.status}`;
+          break;
+        }
+      }
+    }
   } catch (error) {
-    console.error(`[VAPI] Failed to text contact ${contactId} after an unanswered sweep call:`, error instanceof Error ? error.message : error);
-    return false;
+    failure = error instanceof Error ? error.message : String(error);
   }
+
+  if (failure) {
+    console.error(`[VAPI] Text to contact ${contactId} could not be delivered: ${failure}`);
+    await sendMessage("iris", {
+      channel: CALL_LOG_CHANNEL,
+      text: `⚠️ The follow-up text to *${leadName ?? contactId}* could NOT be delivered: ${failure}`,
+    }).catch(() => {});
+    return "failed";
+  }
+  return status;
+}
+
+async function textMissedSweepCall(clientId: string, contactId: string, leadName: string | null | undefined, intent: string | null | undefined): Promise<TextOutcome> {
+  const branding = loadClientBranding(clientId);
+  if (!branding) return "failed";
+  return sendIrisText(clientId, contactId, leadName, buildSweepMissedCallText(leadName, branding.brandName, intent));
 }
 
 async function textMissedCall(clientId: string, contactId: string, leadName: string | null | undefined): Promise<void> {
-  try {
-    const ghlConfig = await getGhlConfig(clientId);
-    const branding = loadClientBranding(clientId);
-    if (!ghlConfig || !branding) return;
-    const text = `Hi ${extractFirstName(leadName)}, it's Iris from ${branding.brandName}. I just tried to call you but missed you. What time works best for me to try again?`;
-    await sendSMS(contactId, text, ghlConfig.locationId, ghlConfig.apiKey);
-  } catch (error) {
-    console.error(`[VAPI] Failed to text contact ${contactId} after a missed callback:`, error instanceof Error ? error.message : error);
-  }
+  const branding = loadClientBranding(clientId);
+  if (!branding) return;
+  const text = `Hi ${extractFirstName(leadName)}, it's Iris from ${branding.brandName}. I just tried to call you but missed you. What time works best for me to try again?`;
+  await sendIrisText(clientId, contactId, leadName, text);
 }
 
 /** Mark's spec, 2026-10-01: when the lead asked for a callback but gave no specific time, default to ~1 hour out — same constant the live schedule_callback tool uses for the identical scenario (webhooks/vapi-tools.ts). */

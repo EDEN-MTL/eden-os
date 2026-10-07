@@ -762,7 +762,8 @@ export async function sendSMS(
   contactId: string,
   message: string,
   locationId?: string,
-  apiKey?: string
+  apiKey?: string,
+  fromNumber?: string
 ): Promise<any> {
   return ghlRequest(`/conversations/messages`, {
     method: "POST",
@@ -770,10 +771,23 @@ export async function sendSMS(
       type: "SMS",
       contactId,
       message,
+      // Only when named: otherwise GHL reuses the number that last texted this
+      // lead, which for older leads may no longer exist in the account.
+      ...(fromNumber ? { fromNumber } : {}),
     },
     locationId,
     apiKey,
   });
+}
+
+/**
+ * A sent message's current state. POST /conversations/messages returns as
+ * soon as GHL ACCEPTS the text — delivery is decided afterwards, so a
+ * rejected sender number only shows up here as status "failed" (with the
+ * reason in `error`/`meta`), never as an error from the send itself.
+ */
+export async function getMessage(messageId: string, locationId?: string, apiKey?: string): Promise<any> {
+  return ghlRequest(`/conversations/messages/${messageId}`, { locationId, apiKey });
 }
 
 /**

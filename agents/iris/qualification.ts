@@ -129,6 +129,14 @@ export interface IrisConfig {
    */
   smsCallHandoff?: boolean;
   /**
+   * The number Iris's own proactive texts (missed-call follow-ups) are sent
+   * from, named explicitly. Without it GHL reuses whichever number last
+   * texted that lead, and for older leads that's a number no longer in the
+   * account — the send is rejected ("Invalid from number") and nobody is
+   * told. Mark, 2026-10-07.
+   */
+  smsFromNumber?: string;
+  /**
    * The Vapi phone-number id that rings in for THIS client's inbound
    * callers (agents/iris/inbound.ts's clientIdForVapiPhoneNumber scans
    * every client config for a match against the phoneNumberId Vapi sends

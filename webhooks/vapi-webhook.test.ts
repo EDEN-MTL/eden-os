@@ -9,6 +9,7 @@ const ghl = vi.hoisted(() => ({
   getCustomFieldDefs: vi.fn(),
   updateContact: vi.fn(),
   sendSMS: vi.fn(),
+  getMessage: vi.fn(),
 }));
 vi.mock("../shared/ghl", () => ghl);
 
@@ -46,12 +47,19 @@ import {
   maybeReopenPendingCall,
   buildSweepMissedCallText,
   moveToFollowUpStage,
+  smsConfirmation,
   postCallLogToSlack,
   tagSequenceExhausted,
   wasAnswered,
 } from "./vapi-webhook";
 
 afterEach(() => vi.clearAllMocks());
+
+beforeEach(() => {
+  smsConfirmation.delaysMs = [0, 0];
+  ghl.sendSMS.mockResolvedValue({ messageId: "msg-1" });
+  ghl.getMessage.mockResolvedValue({ status: "delivered" });
+});
 
 describe("wasAnswered", () => {
   /**
@@ -892,12 +900,38 @@ describe("maybeReopenPendingCall — unanswered sweep calls", () => {
   };
 
   beforeEach(() => {
-    ghl.sendSMS.mockReset().mockResolvedValue({});
+    ghl.sendSMS.mockReset().mockResolvedValue({ messageId: "msg-1" });
     slack.sendMessage.mockReset().mockResolvedValue({});
     db.query.mockResolvedValue([ROW]);
-    iris.loadIrisConfig.mockReturnValue({ timezone: "America/St_Johns" });
+    iris.loadIrisConfig.mockReturnValue({ timezone: "America/St_Johns", smsFromNumber: "+17097013598" });
     iris.loadClientBranding.mockReturnValue({ brandName: "3 Percent East Coast", city: "St. John's" });
     ghl.getGhlConfig.mockResolvedValue({ locationId: "loc-1", apiKey: "key-1" });
+  });
+
+  it("names the client's own from number, so a lead last texted from a retired number still gets the text", async () => {
+    await maybeReopenPendingCall("3-percent-east-coast", "contact-1", "voicemail");
+
+    expect(ghl.sendSMS).toHaveBeenCalledWith("contact-1", expect.any(String), "loc-1", "key-1", "+17097013598");
+  });
+
+  it("says so in the call-log channel — and does not claim a text was sent — when GHL rejects it afterwards", async () => {
+    ghl.getMessage.mockResolvedValue({ status: "failed", error: "Failed: Invalid from number. Number not available in account." });
+
+    await maybeReopenPendingCall("3-percent-east-coast", "contact-1", "voicemail");
+
+    const posts = slack.sendMessage.mock.calls.map((c: any[]) => c[1].text as string);
+    expect(posts.some((t) => t.includes("could NOT be delivered") && t.includes("Invalid from number"))).toBe(true);
+    expect(posts.some((t) => t.includes("📱 Texted"))).toBe(false);
+  });
+
+  it("also treats a send GHL rejects outright as a failure, not a success", async () => {
+    ghl.sendSMS.mockRejectedValue(new Error("GHL API Error 422"));
+
+    await maybeReopenPendingCall("3-percent-east-coast", "contact-1", "voicemail");
+
+    const posts = slack.sendMessage.mock.calls.map((c: any[]) => c[1].text as string);
+    expect(posts.some((t) => t.includes("could NOT be delivered"))).toBe(true);
+    expect(posts.some((t) => t.includes("📱 Texted"))).toBe(false);
   });
 
   it.each(["voicemail", "customer-did-not-answer", "customer-busy"])("texts once and holds the row open for a reply when the call ended %s", async (reason) => {
