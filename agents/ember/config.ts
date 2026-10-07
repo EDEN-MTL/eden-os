@@ -145,7 +145,18 @@ export interface EmberConfig {
      * one. A cadence longer than a list reuses its last entry. SMS is
      * preferred whenever the contact has a phone.
      */
-    sms: { enabled: boolean; scripts: SmsScripts };
+    sms: {
+      enabled: boolean;
+      scripts: SmsScripts;
+      /**
+       * The client's number every Ember text is sent FROM (E.164). Mark,
+       * 2026-10-08: pinned rather than left to GHL, because 3% has no
+       * default number set and has texted from two different numbers.
+       * Required whenever sms.enabled — validateForSending refuses otherwise.
+       * 3-percent-east-coast: +17097013598 (Mark confirmed).
+       */
+      fromNumber?: string;
+    };
     email: {
       enabled: boolean;
       fromAddress: string;
@@ -191,6 +202,9 @@ export function validateForSending(config: EmberConfig): string[] {
   if (!touchScheduleDays?.length) problems.push("outreach.touchScheduleDays is empty");
   if (!sms.enabled && !email.enabled) problems.push("neither sms nor email is enabled");
   if (sms.enabled) {
+    if (!sms.fromNumber || !/^\+\d{10,15}$/.test(sms.fromNumber)) {
+      problems.push("sms.fromNumber unset or not E.164 (e.g. +17097013598) — Ember never leaves the sending number to GHL");
+    }
     for (const kind of ["buyer", "seller", "neutral"] as const) {
       const list = sms.scripts?.[kind] ?? [];
       if (!list.length) problems.push(`sms.scripts.${kind} is empty`);

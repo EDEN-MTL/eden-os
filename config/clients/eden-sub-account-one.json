@@ -144,6 +144,8 @@
       "negativeKeywords": ["no", "stop", "not interested", "unsubscribe", "remove me", "bought already", "already bought", "no thanks"],
       "sms": {
         "enabled": true,
+        "fromNumber": "+17098001784",
+        "fromNumberNote": "Mark, 2026-10-08: every Ember text is sent from this number, never left to GHL. This account's only number (and its GHL default).",
         "_scriptsNote": "Mark approved the buyer and seller wording, 2026-09-24. Seller + downsize leads get seller; buyer + upgrading get buyer; unknown intent gets neutral. Touch 4 reuses touch 3. Every script must keep its STOP line — validateForSending refuses to send otherwise.",
         "scripts": {
           "buyer": [

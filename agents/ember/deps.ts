@@ -61,7 +61,7 @@ export async function buildOutreachDeps(clientId: string, config: EmberConfig): 
         },
       };
     },
-    sendSMS: (contactId, message) => sendSMS(contactId, message, locationId, apiKey),
+    sendSMS: (contactId, message) => sendSMS(contactId, message, locationId, apiKey, config.outreach.sms.fromNumber),
     sendEmail: (contactId, subject, html, fromEmail) =>
       sendEmail(contactId, { subject, html, fromEmail }, locationId, apiKey),
     alert: slackAlert(config.alertChannel),
