@@ -21,7 +21,7 @@ vi.mock("../shared/conversation-memory", () => conversationMemory);
 const iris = vi.hoisted(() => ({ loadIrisConfig: vi.fn(), loadClientBranding: vi.fn() }));
 vi.mock("../agents/iris", () => iris);
 
-const dialPending = vi.hoisted(() => ({ reopenForNextAttempt: vi.fn(), reopenAfterMissedCallback: vi.fn(), scheduleExplicitCallback: vi.fn() }));
+const dialPending = vi.hoisted(() => ({ reopenForNextAttempt: vi.fn(), reopenAfterMissedCallback: vi.fn(), scheduleExplicitCallback: vi.fn(), holdForTextReply: vi.fn(), SWEEP_SOURCE: "sweep" }));
 vi.mock("../agents/iris/dial-pending", () => dialPending);
 
 const db = vi.hoisted(() => ({ query: vi.fn(async () => []) }));
@@ -44,6 +44,7 @@ import {
   hitCallScreener,
   maybeHonorMissedCallback,
   maybeReopenPendingCall,
+  buildSweepMissedCallText,
   moveToFollowUpStage,
   postCallLogToSlack,
   tagSequenceExhausted,
@@ -870,5 +871,72 @@ describe("end-of-call-report — status line on the contact's notes", () => {
 
     expect(ghl.updateContact).toHaveBeenCalledTimes(1);
     expect(ghl.updateContact.mock.calls[0][1].customFields[0].value).toMatch(/^Iris call /);
+  });
+});
+
+/**
+ * Mark, 2026-10-07: a cold lead Iris was lined up to call by hand who doesn't
+ * pick up (or reaches a voicemail machine) gets one text instead of a retry —
+ * and never a voicemail.
+ */
+describe("maybeReopenPendingCall — unanswered sweep calls", () => {
+  const ROW = {
+    id: 77,
+    attempts_made: 1,
+    created_at: new Date("2026-07-14T12:00:00.000Z"),
+    status: "placed",
+    is_explicit_callback: true,
+    source: "sweep",
+    callback_misses: 0,
+    lead: { name: "Stella Max Clements", intent: "buyer" },
+  };
+
+  beforeEach(() => {
+    ghl.sendSMS.mockReset().mockResolvedValue({});
+    slack.sendMessage.mockReset().mockResolvedValue({});
+    db.query.mockResolvedValue([ROW]);
+    iris.loadIrisConfig.mockReturnValue({ timezone: "America/St_Johns" });
+    iris.loadClientBranding.mockReturnValue({ brandName: "3 Percent East Coast", city: "St. John's" });
+    ghl.getGhlConfig.mockResolvedValue({ locationId: "loc-1", apiKey: "key-1" });
+  });
+
+  it.each(["voicemail", "customer-did-not-answer", "customer-busy"])("texts once and holds the row open for a reply when the call ended %s", async (reason) => {
+    await maybeReopenPendingCall("3-percent-east-coast", "contact-1", reason);
+
+    expect(dialPending.holdForTextReply).toHaveBeenCalledWith(77);
+    expect(ghl.sendSMS).toHaveBeenCalledTimes(1);
+    expect(ghl.sendSMS.mock.calls[0][1]).toContain("Stella");
+    expect(slack.sendMessage).toHaveBeenCalledWith("iris", expect.objectContaining({ channel: "iris-call-logs", text: expect.stringContaining("Texted *Stella Max Clements*") }));
+    expect(dialPending.reopenForNextAttempt).not.toHaveBeenCalled();
+    expect(dialPending.reopenAfterMissedCallback).not.toHaveBeenCalled();
+  });
+
+  it("does not text when the call failed technically — nobody was actually missed", async () => {
+    await maybeReopenPendingCall("3-percent-east-coast", "contact-1", "call.start.error-get-transport");
+
+    expect(ghl.sendSMS).not.toHaveBeenCalled();
+    expect(dialPending.holdForTextReply).not.toHaveBeenCalled();
+    expect(slack.sendMessage).not.toHaveBeenCalled();
+  });
+
+  it("does nothing once the row has moved on from 'placed'", async () => {
+    db.query.mockResolvedValue([{ ...ROW, status: "pending" }]);
+
+    await maybeReopenPendingCall("3-percent-east-coast", "contact-1", "voicemail");
+
+    expect(ghl.sendSMS).not.toHaveBeenCalled();
+  });
+});
+
+describe("buildSweepMissedCallText", () => {
+  it("talks about a home search for a buyer and about selling for a seller", () => {
+    expect(buildSweepMissedCallText("Stella Max Clements", "3 Percent East Coast", "buyer")).toBe(
+      "Hi Stella, it's Iris from 3 Percent East Coast. I tried to call you about your home search but missed you. Are you still interested, or is there a better time to chat?"
+    );
+    expect(buildSweepMissedCallText("Roxane White", "3 Percent East Coast", "seller")).toContain("about selling your home");
+  });
+
+  it("is plain ASCII, so it stays on the cheaper single-segment encoding", () => {
+    expect(buildSweepMissedCallText("Stella", "3 Percent East Coast", "buyer")).toMatch(/^[\x20-\x7E]+$/);
   });
 });
