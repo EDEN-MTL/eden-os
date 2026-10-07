@@ -892,6 +892,8 @@ describe("maybeReopenPendingCall — unanswered sweep calls", () => {
   };
 
   beforeEach(() => {
+    ghl.sendSMS.mockReset().mockResolvedValue({});
+    slack.sendMessage.mockReset().mockResolvedValue({});
     db.query.mockResolvedValue([ROW]);
     iris.loadIrisConfig.mockReturnValue({ timezone: "America/St_Johns" });
     iris.loadClientBranding.mockReturnValue({ brandName: "3 Percent East Coast", city: "St. John's" });
@@ -904,6 +906,7 @@ describe("maybeReopenPendingCall — unanswered sweep calls", () => {
     expect(dialPending.holdForTextReply).toHaveBeenCalledWith(77);
     expect(ghl.sendSMS).toHaveBeenCalledTimes(1);
     expect(ghl.sendSMS.mock.calls[0][1]).toContain("Stella");
+    expect(slack.sendMessage).toHaveBeenCalledWith("iris", expect.objectContaining({ channel: "iris-call-logs", text: expect.stringContaining("Texted *Stella Max Clements*") }));
     expect(dialPending.reopenForNextAttempt).not.toHaveBeenCalled();
     expect(dialPending.reopenAfterMissedCallback).not.toHaveBeenCalled();
   });
@@ -913,6 +916,7 @@ describe("maybeReopenPendingCall — unanswered sweep calls", () => {
 
     expect(ghl.sendSMS).not.toHaveBeenCalled();
     expect(dialPending.holdForTextReply).not.toHaveBeenCalled();
+    expect(slack.sendMessage).not.toHaveBeenCalled();
   });
 
   it("does nothing once the row has moved on from 'placed'", async () => {

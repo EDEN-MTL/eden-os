@@ -564,7 +564,17 @@ async function handleUnansweredSweepCall(
     return;
   }
   await holdForTextReply(pending.id);
-  await textMissedSweepCall(clientId, contactId, pending.lead?.name, pending.lead?.intent);
+  const sent = await textMissedSweepCall(clientId, contactId, pending.lead?.name, pending.lead?.intent);
+  if (sent) {
+    // Mark, 2026-10-07: the call-log channel is how these calls are monitored,
+    // so the follow-up text shows up there too, not only the call itself.
+    await sendMessage("iris", {
+      channel: CALL_LOG_CHANNEL,
+      text: `📱 Texted *${pending.lead?.name ?? contactId}* after the unanswered call (no voicemail left) — waiting for a reply.`,
+    }).catch((error) => {
+      console.error("[VAPI] Failed to post the sweep follow-up text to Slack:", error instanceof Error ? error.message : error);
+    });
+  }
 }
 
 export function buildSweepMissedCallText(leadName: string | null | undefined, brandName: string, intent: string | null | undefined): string {
@@ -572,14 +582,16 @@ export function buildSweepMissedCallText(leadName: string | null | undefined, br
   return `Hi ${extractFirstName(leadName)}, it's Iris from ${brandName}. I tried to call you about ${subject} but missed you. Are you still interested, or is there a better time to chat?`;
 }
 
-async function textMissedSweepCall(clientId: string, contactId: string, leadName: string | null | undefined, intent: string | null | undefined): Promise<void> {
+async function textMissedSweepCall(clientId: string, contactId: string, leadName: string | null | undefined, intent: string | null | undefined): Promise<boolean> {
   try {
     const ghlConfig = await getGhlConfig(clientId);
     const branding = loadClientBranding(clientId);
-    if (!ghlConfig || !branding) return;
+    if (!ghlConfig || !branding) return false;
     await sendSMS(contactId, buildSweepMissedCallText(leadName, branding.brandName, intent), ghlConfig.locationId, ghlConfig.apiKey);
+    return true;
   } catch (error) {
     console.error(`[VAPI] Failed to text contact ${contactId} after an unanswered sweep call:`, error instanceof Error ? error.message : error);
+    return false;
   }
 }
 

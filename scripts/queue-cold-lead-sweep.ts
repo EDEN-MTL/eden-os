@@ -7,6 +7,7 @@
  */
 import "dotenv/config";
 import { queueColdLeadSweep } from "../agents/iris/dial-pending";
+import { initSlackClients, sendMessage } from "../shared/slack";
 
 async function main() {
   const [clientId, startIn, ...contactIds] = process.argv.slice(2);
@@ -18,6 +19,19 @@ async function main() {
   const queued = await queueColdLeadSweep(clientId, contactIds, startAt);
   for (const q of queued) console.log(`${q.callAfter.toISOString()}  ${q.name} (${q.contactId})`);
   console.log(`queued ${queued.length} of ${contactIds.length}`);
+
+  // Mark, 2026-10-07: these calls are monitored in #iris-call-logs, so say up
+  // front which leads are lined up and in what order.
+  if (queued.length > 0) {
+    initSlackClients();
+    await sendMessage("iris", {
+      channel: process.env.IRIS_CALL_LOG_CHANNEL || "iris-call-logs",
+      text:
+        `📋 Cold-lead sweep lined up — ${queued.length} calls, one at a time (each starts after the previous one ends; ` +
+        `no voicemail is left, and a lead who doesn't pick up gets one text):\n` +
+        queued.map((q, i) => `${i + 1}. ${q.name}`).join("\n"),
+    });
+  }
   process.exit(0);
 }
 
