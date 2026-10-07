@@ -206,6 +206,68 @@ export async function reopenAfterMissedCallback(
   return { reopened: true, callAfter, misses, phase: misses === 1 ? "quick-retry" : "cadence" };
 }
 
+/** Source tag for old, cold leads Mark has Iris work through by hand (2026-10-07). One call; if nobody picks up, one text instead of a retry. */
+export const SWEEP_SOURCE = "sweep";
+
+export interface SweepQueued {
+  contactId: string;
+  name: string;
+  callAfter: Date;
+}
+
+/**
+ * Lines up a one-shot call for each of these (old, cold) leads, spaced
+ * `spacingMinutes` apart so a run of live transfers never rings the same
+ * agent ring-group twice at once. Mark, 2026-10-07: weekend/follow-up-stage
+ * leads that no human has touched since July. Same shape as Ember's handoff
+ * rows (explicit, so the "already touched" gate that would skip every one of
+ * these doesn't apply; still skipped if the lead is qualified or has since
+ * texted a stop), but source 'sweep' — see webhooks/vapi-webhook.ts's
+ * handleUnansweredSweepCall for what happens when nobody picks up.
+ * Leads that can't be refreshed, or have no phone or confirmed name, are
+ * left out rather than queued.
+ */
+export async function queueColdLeadSweep(
+  clientId: string,
+  contactIds: string[],
+  startAt: Date,
+  spacingMinutes: number
+): Promise<SweepQueued[]> {
+  const queued: SweepQueued[] = [];
+  for (const contactId of contactIds) {
+    const lead = await refreshLead(contactId, clientId);
+    if (!lead || !lead.phone || !lead.name) continue;
+    const callAfter = new Date(startAt.getTime() + queued.length * spacingMinutes * 60_000);
+    await query(
+      `INSERT INTO iris_pending_calls
+         (client_id, contact_id, lead, call_after, status, is_explicit_callback, source, sms_scheduled, resolution_reason)
+       VALUES ($1, $2, $3, $4, 'pending', true, $5, false, 'cold-lead sweep')
+       ON CONFLICT (client_id, contact_id) DO UPDATE
+         SET lead = EXCLUDED.lead, call_after = EXCLUDED.call_after, status = 'pending',
+             is_explicit_callback = true, source = $5, sms_scheduled = false, callback_misses = 0,
+             resolution_reason = 'cold-lead sweep', resolved_at = NULL`,
+      [clientId, contactId, JSON.stringify(lead), callAfter, SWEEP_SOURCE]
+    );
+    queued.push({ contactId, name: lead.name, callAfter });
+  }
+  return queued;
+}
+
+/**
+ * After a sweep call nobody answered: keeps the row open (pending, but never
+ * due for another dial — Postgres 'infinity', same trick as Ember's handoff)
+ * so a reply to the follow-up text is still answered by Iris's text handling,
+ * which only talks to leads whose row is pending.
+ */
+export async function holdForTextReply(id: number): Promise<void> {
+  await query(
+    `UPDATE iris_pending_calls
+     SET call_after = 'infinity', status = 'pending', resolution_reason = 'no answer — texted instead, waiting for a reply', resolved_at = NULL
+     WHERE id = $1`,
+    [id]
+  );
+}
+
 async function resolveOne(row: PendingCallRow): Promise<void> {
   const config = loadIrisConfig(row.client_id);
   const branding = loadClientBranding(row.client_id);
