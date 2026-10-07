@@ -37,10 +37,9 @@ describe("renderTemplate", () => {
 describe("the real test-account config", () => {
   // Guards against a config edit that typechecks (it's JSON) but would make
   // every send refuse, or worse, ship a text with no opt-out.
-  it("is disabled and passes send validation", () => {
+  it("passes send validation (it's switched on for live tests — see enabledNote)", () => {
     const c = loadEmberConfig("eden-sub-account-one");
     expect(c).not.toBeNull();
-    expect(c!.enabled).toBe(false);
     expect(validateForSending(c!)).toEqual([]);
   });
 
