@@ -168,8 +168,14 @@
       "HiVBF2joOQYI1HqLE3sh",
       "J19dnljxPtyWqGjbB6z6",
       "Ewt7erbnmhE0izwTfEFR",
-      "hxcX0fynkVT1NWjyET7J"
-    ]
+      "hxcX0fynkVT1NWjyET7J",
+      "S6Bojyhw3GQK5UssVLcy"
+    ],
+    "appointmentDates": {
+      "Z9QYM3JSTcczzfVueaBq": "2026-09-17T20:27:59.028Z",
+      "H7hmrAoQRvUzdM7s6D1h": "2026-09-10T18:12:37.416Z"
+    },
+    "cleanupNote": "Jacob, 2026-10-08: on 2026-10-06 a manual move put Mylene Misa Badiola (Z9QYM3JSTcczzfVueaBq) and Rene Manzano (H7hmrAoQRvUzdM7s6D1h) back into the Live Transferred stage by mistake (Replied -> Live Transferred, found in each contact's opportunity_stage_updated activity), resetting lastStageChangeAt to Oct 6 so they showed under New. appointmentDates pins each to the real transfer before that: Mylene 2026-09-17 (Buyer Leads -> Live Transferred), Rene 2026-09-10 (Not Qualified/Not Interested -> Live Transferred), so they land under Continuing. 'S6Bojyhw3GQK5UssVLcy' appended to hidden is the 'Test Buyer' / 'Mark Buyer' test contact — Jacob asked for it off the form. Nothing was changed in GHL itself."
   },
   "scout": {
     "_comment": "Lead intake mapping for 3% East Coast, from Mark's GHL discovery (2026-08-25), verified against the live location before being committed. Every stage ID he mapped resolved correctly. Two values were corrected — see _corrections.",

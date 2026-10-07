@@ -717,6 +717,44 @@ describe("getCheckinData", () => {
 
     expect(data!.unassigned).toHaveLength(0);
   });
+
+  it("checkinOverrides.appointmentDates pins a live-transfer's date by contactId, but leaves a calendar appointment for the same contact alone", async () => {
+    db.query.mockResolvedValueOnce([{ client_id: "3-percent-east-coast" }]).mockResolvedValueOnce([]);
+    readFileSyncMock.mockReturnValueOnce(
+      JSON.stringify({
+        clientName: "3 Percent East Coast",
+        scout: { calendars: { buyer: "buyer-cal", seller: "seller-cal" }, pipelineId: "pipeline-1" },
+        iris: { liveTransferStageId: "live-transfer-stage" },
+        teams: [],
+        checkinOverrides: { appointmentDates: { "contact-pinned": "2026-09-17T20:27:59.028Z" } },
+      })
+    );
+    ghl.getGhlConfig.mockResolvedValueOnce({ apiKey: "key", locationId: "loc" });
+    const eventDate = new Date().toISOString();
+    ghl.listCalendarEvents
+      .mockResolvedValueOnce([
+        { id: "evt-same-contact", contactId: "contact-pinned", title: "Buyer Consultation with X", startTime: eventDate },
+      ])
+      .mockResolvedValueOnce([]);
+    ghl.listOpportunitiesPaginated.mockReturnValueOnce(
+      asyncGeneratorOf([
+        {
+          id: "opp-pinned",
+          name: "Mylene",
+          contactId: "contact-pinned",
+          pipelineStageId: "live-transfer-stage",
+          status: "open",
+          lastStageChangeAt: "2026-10-06T18:19:07.053Z", // the mistaken re-move being corrected
+        },
+      ])
+    );
+
+    const data = await getCheckinData("good-token");
+
+    const byId = Object.fromEntries(data!.unassigned.map((a) => [a.ghlEventId, a.appointmentAt]));
+    expect(byId["opp-pinned"]).toBe("2026-09-17T20:27:59.028Z");
+    expect(byId["evt-same-contact"]).toBe(eventDate);
+  });
 });
 
 describe("updateCheckinItem", () => {
