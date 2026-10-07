@@ -34,7 +34,7 @@ export async function buildReplyContext(
   const rawFirst = fresh?.name?.trim().split(/\s+/)[0] || lead.contactName?.trim().split(/\s+/)[0] || "";
   const firstName = rawFirst ? displayName(rawFirst) : "there";
   const humanPause = (reply: string) => wait(humanReplyDelayMs(receivedAt, reply));
-  const send = (text: string) => sendSMS(lead.ghlContactId, text, ghl.locationId, ghl.apiKey);
+  const send = (text: string) => sendSMS(lead.ghlContactId, text, ghl.locationId, ghl.apiKey, config.outreach.sms.fromNumber);
 
   const irisConfig = loadIrisConfig(lead.clientId);
   const branding = loadClientBranding(lead.clientId);

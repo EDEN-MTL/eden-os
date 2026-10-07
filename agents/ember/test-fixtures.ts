@@ -47,6 +47,7 @@ export function config(over: Partial<EmberConfig> = {}): EmberConfig {
       negativeKeywords: ["no", "stop", "not interested"],
       sms: {
         enabled: true,
+        fromNumber: "+17095550199",
         scripts: {
           buyer: ["Buyer one {{firstName}}, it's {{senderName}}. Reply STOP to opt out.", "Buyer two {{firstName}}. Reply STOP to opt out."],
           seller: ["Seller one {{firstName}}. Reply STOP to opt out."],
