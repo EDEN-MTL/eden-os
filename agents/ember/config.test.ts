@@ -21,6 +21,14 @@ describe("validateForSending", () => {
     );
   });
 
+  it("refuses to send SMS without a pinned sending number (Mark, 2026-10-08)", () => {
+    const c = config();
+    delete c.outreach.sms.fromNumber;
+    expect(validateForSending(c)).toEqual([expect.stringContaining("sms.fromNumber unset")]);
+    c.outreach.sms.fromNumber = "709-701-3598";
+    expect(validateForSending(c)).toEqual([expect.stringContaining("not E.164")]);
+  });
+
   it("rejects a config with no channel enabled", () => {
     const c = config();
     c.outreach.sms.enabled = false;
@@ -51,6 +59,10 @@ describe("the real test-account config", () => {
         expect(rendered.length, `${kind}[${i}]: ${rendered.length} chars`).toBeLessThanOrEqual(160);
       });
     }
+  });
+
+  it("sends from the test account's own number", () => {
+    expect(loadEmberConfig("eden-sub-account-one")!.outreach.sms.fromNumber).toBe("+17098001784");
   });
 
   it("has no ember block on the real client yet", () => {
