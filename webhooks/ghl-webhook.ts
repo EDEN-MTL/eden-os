@@ -1,5 +1,8 @@
 import { Request, Response, Router } from "express";
+import { readdirSync, readFileSync } from "fs";
+import { join } from "path";
 import { eventBus } from "../shared/events";
+import { postLiveTransferToSlack } from "./vapi-webhook";
 import { query } from "../shared/db";
 import { buildEmailDeps, buildOutreachDeps } from "../agents/quarry/deps";
 import { parseAppointmentContactId, parseInboundMessage } from "../agents/quarry/inbound";
@@ -8,6 +11,21 @@ import { getLeadByGhlContactId, updateLead } from "../agents/quarry/store";
 import { loadQuarryConfig } from "../agents/quarry/config";
 import { irisHandleInboundSms } from "../agents/iris/sms";
 import { emberHandleInboundMessage, emberHandleStageUpdate, emberHandleTagUpdate, emberMarkInboundSeen } from "../agents/ember/webhooks";
+
+/** Which client a GHL location belongs to — same lookup as Scout's, kept local so this file doesn't pull in Scout's event subscribers. */
+function clientIdForGhlLocation(locationId: string): string | null {
+  const dir = join(process.cwd(), "config", "clients");
+  try {
+    for (const file of readdirSync(dir)) {
+      if (!file.endsWith(".json")) continue;
+      const raw = JSON.parse(readFileSync(join(dir, file), "utf-8"));
+      if (raw?.ghl?.locationId === locationId) return raw.clientId;
+    }
+  } catch {
+    /* fall through */
+  }
+  return null;
+}
 
 /**
  * GHL webhook handler.
@@ -54,6 +72,16 @@ export function createGHLRouter(): Router {
             pipelineStageId: data.pipelineStageId,
           });
           break;
+
+        case "LiveTransfer": {
+          // The live-transfer automation's webhook step (Mark, 2026-10-07):
+          // lets Iris post transfers the team made by hand, not just her own.
+          // postLiveTransferToSlack stays quiet for one it already posted.
+          const clientId = data.locationId ? clientIdForGhlLocation(data.locationId) : null;
+          if (clientId && data.id) await postLiveTransferToSlack(clientId, data.id);
+          else console.warn(`[GHL] LiveTransfer webhook with no resolvable client/contact: location=${data.locationId} id=${data.id}`);
+          break;
+        }
 
         case "ContactUpdate":
           // Contact updated — could trigger re-scoring
