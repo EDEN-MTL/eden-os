@@ -103,7 +103,8 @@
   },
   "ember": {
     "_comment": "Mark, 2026-09-23: first Ember config, on the TEST account only. enabled stays false until a live dry run here is checked. excludeStages is a first guess from this pipeline's live stage list (GET /opportunities/pipelines, 2026-09-23) — columns where a human is already working the deal; confirm with Jacob before copying to a real client. consentWindowDays 180 is CASL's implied-consent window for an inquiry, not a tuning knob.",
-    "enabled": false,
+    "enabled": true,
+    "enabledNote": "Mark, 2026-10-08: switched ON for the live end-to-end test with Jacob's real phone (JACOB EDEN, Not Ready stage). Only 2 deals in this account's focus stages are tracked (Michael exited, Jacob nurturing) — a dry run confirmed nobody else is eligible. Set back to false to stop all Ember activity on this account.",
     "pipelineId": "Ghy9io9Va4wJPmwVrMC6",
     "dormancyThresholdDays": 45,
     "stageDormancyDays": { "Replied": 14 },
