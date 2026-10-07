@@ -136,6 +136,8 @@ export interface IrisConfig {
    * told. Mark, 2026-10-07.
    */
   smsFromNumber?: string;
+  /** Where Iris posts each completed live transfer (a private channel, so its ID), and the client name used in that post. */
+  liveTransferSlack?: { channel: string; clientLabel: string };
   /**
    * The Vapi phone-number id that rings in for THIS client's inbound
    * callers (agents/iris/inbound.ts's clientIdForVapiPhoneNumber scans

@@ -486,6 +486,9 @@ export function loadIrisConfig(clientId: string): IrisConfig | null {
       outreachCadence: raw.iris.outreachCadence,
       smsCallHandoff: raw.iris.sms?.callHandoff === true,
       smsFromNumber: raw.iris.sms?.fromNumber || undefined,
+      liveTransferSlack: raw.iris.liveTransferSlack?.channel
+        ? { channel: raw.iris.liveTransferSlack.channel, clientLabel: raw.iris.liveTransferSlack.clientLabel || raw.clientName }
+        : undefined,
     };
   } catch {
     return null;

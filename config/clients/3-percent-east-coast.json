@@ -89,6 +89,11 @@
       "notesFieldKeyNote": "Same underlying field as scout.fields.isaNotes below, but named separately here as a single write target (not a read-priority list) — see IrisConfig.callbackNotesFieldKey.",
       "calendarNote": "3% REC - ISA Callback (Iris), id buxIQTE3TkpVpjrYBaRc, still exists in GHL (currently inactive) from the earlier calendar-booking design. Nothing in code reads it anymore — left as-is rather than deleted in case the calendar-booking approach comes back."
     },
+    "liveTransferSlack": {
+      "channel": "C0BR8F84LUD",
+      "clientLabel": "3% Realty East Coast",
+      "note": "Mark, 2026-10-07: Iris posts each completed live transfer to #live-transfers-and-booked-appointments (private, so the channel ID — Iris was added to it) instead of Mark posting it by hand."
+    },
     "sms": {
       "fromNumber": "+17097013598",
       "fromNumberNote": "Mark, 2026-10-07: GHL reuses whichever number last texted a lead, and older leads were last texted from +17097021163, which is no longer available in the account — every send to them failed ('Invalid from number'). Iris's own proactive texts name the main 3% number explicitly. Same number Iris calls out from."
