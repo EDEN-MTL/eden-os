@@ -15,7 +15,7 @@ const configMod = vi.hoisted(() => ({
 }));
 vi.mock("./config", async (orig) => ({ ...(await orig<any>()), ...configMod }));
 
-import { classifyForEnrollment, detectChange, detectIntent, EnrollContext, firstTouchAt, runEmberScanForClient, ScanDeps } from "./scan";
+import { buildInternalContacts, classifyForEnrollment, detectChange, detectIntent, EnrollContext, firstTouchAt, runEmberScanForClient, ScanDeps } from "./scan";
 import { config, daysAgo, lead, NOW, opp, OUTCOME_STAGES, STAGES } from "./test-fixtures";
 
 afterEach(() => vi.clearAllMocks());
@@ -49,6 +49,16 @@ describe("classifyForEnrollment", () => {
 
   it("still enrolls a lead whose original inquiry is 6+ months old — consent is judged at the first touch, with history", () => {
     expect(classifyForEnrollment(opp({ createdAt: daysAgo(400), lastStageChangeAt: daysAgo(300) }), ctx())).toEqual({ eligible: true });
+  });
+
+  it("never enrolls a team member or one of our own numbers (Mark, 2026-10-09)", () => {
+    const internal = buildInternalContacts([{ phone: "+1 (709) 728-0208", email: "Brock.Roul@3percentrealty.ca" }], ["+17098001784"]);
+    const contact = (phone: string | null, email: string | null) => ({ name: "x", phone, email, tags: [] });
+    const reason = { eligible: false, reason: "team member or internal number" };
+    expect(classifyForEnrollment(opp({ contact: contact("7097280208", null) }), ctx({ internal }))).toEqual(reason);
+    expect(classifyForEnrollment(opp({ contact: contact(null, "brock.roul@3percentrealty.ca") }), ctx({ internal }))).toEqual(reason);
+    expect(classifyForEnrollment(opp({ contact: contact("+17098001784", null) }), ctx({ internal }))).toEqual(reason);
+    expect(classifyForEnrollment(opp(), ctx({ internal }))).toEqual({ eligible: true });
   });
 
   it("with includeStages set, only enrolls from those stages (Mark, 2026-09-25)", () => {
@@ -151,6 +161,17 @@ describe("runEmberScanForClient", () => {
     expect(store.enrollLead).toHaveBeenCalledWith(
       expect.objectContaining({ ghlOpportunityId: "o1", enrolledStageName: "Long Term Nurturing", nextTouchAt: NOW.toISOString() })
     );
+  });
+
+  it("skips team members found through the deps' team list", async () => {
+    setup();
+    const report = await runEmberScanForClient("c", {
+      now: NOW,
+      dryRun: true,
+      deps: deps([opp()], { internalContacts: async () => buildInternalContacts([{ phone: "+17095550100" }]) }),
+    });
+    expect(report.eligible).toHaveLength(0);
+    expect(report.skipped).toEqual({ "team member or internal number": 1 });
   });
 
   it("writes nothing in a dry run", async () => {

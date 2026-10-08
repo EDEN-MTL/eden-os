@@ -68,6 +68,9 @@ export interface GhlUser {
   firstName: string;
   lastName: string;
   name: string;
+  /** Present on /users/search results (confirmed live on 3%, 2026-10-09). */
+  phone?: string | null;
+  email?: string | null;
 }
 
 /**
