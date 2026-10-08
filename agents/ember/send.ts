@@ -8,6 +8,8 @@ import { EmberConfigError, loadEmberConfig, loadEmberOutcomeStages, validateForS
 import { buildOutreachDeps, resolveStageNames } from "./deps";
 import { BatchResult, inSendWindow, OutreachDeps, sendBatch } from "./outreach";
 import { listDue } from "./store";
+import { slackAlert } from "./alerts";
+import { assessBatch, assessOptOuts, checkHealth, HealthStore, tripHealth } from "./health";
 import { readFileSync } from "fs";
 import { join } from "path";
 
@@ -31,7 +33,7 @@ export class EmberDisabledError extends Error {
 const inFlight = new Set<string>();
 
 export type SendRunResult =
-  | { ran: false; reason: string }
+  | { ran: false; reason: string; paused?: boolean }
   | ({ ran: true; due: number } & BatchResult);
 
 function clientName(clientId: string): string {
@@ -49,6 +51,8 @@ export async function sendPendingForClient(
     deps?: OutreachDeps;
     stageNames?: Record<string, string>;
     log?: (line: string) => void;
+    health?: HealthStore;
+    optOuts?: (clientId: string) => Promise<{ stops: number; sends: number }>;
   } = {}
 ): Promise<SendRunResult> {
   const config = loadEmberConfig(clientId);
@@ -66,6 +70,16 @@ export async function sendPendingForClient(
   if (inFlight.has(clientId)) return { ran: false, reason: "a send run is already in progress" };
   inFlight.add(clientId);
   try {
+    // Ember's own pause (health.ts) — checked before anything is read or sent.
+    const alert = options.deps?.alert ?? slackAlert(config.alertChannel);
+    const gate = await checkHealth(clientId, alert, now, options.health);
+    if (!gate.ok) return { ran: false, paused: true, reason: `Ember is ${gate.state}: ${gate.reason}` };
+    const spike = await assessOptOuts(clientId, options.optOuts);
+    if (spike) {
+      await tripHealth(clientId, spike.severity, spike.reason, alert, now, options.health);
+      return { ran: false, paused: true, reason: spike.reason };
+    }
+
     const due = await listDue(clientId, now);
     if (due.length === 0) return { ran: false, reason: "no touches due" };
 
@@ -77,6 +91,8 @@ export async function sendPendingForClient(
       { config, clientName: clientName(clientId), outcomeStages: loadEmberOutcomeStages(clientId), stageNames, now },
       { log: options.log, clock: options.now ? () => now : () => new Date() }
     );
+    const trouble = assessBatch(result);
+    if (trouble) await tripHealth(clientId, trouble.severity, trouble.reason, alert, now, options.health);
     return { ran: true, due: due.length, ...result };
   } finally {
     inFlight.delete(clientId);
