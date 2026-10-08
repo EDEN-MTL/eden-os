@@ -175,3 +175,45 @@ export async function lastInboundText(contactId: string, locationId: string, api
     return null;
   }
 }
+
+export interface RecentText {
+  from: "lead" | "us";
+  text: string;
+  /** GHL's dateAdded for this message, or null if missing. */
+  at: string | null;
+  /** GHL's `source` — "workflow" for our own automated texts, "app" for Iris/a human typing. */
+  source: string | null;
+}
+
+/**
+ * The last few texts in this lead's thread, oldest first, BOTH directions —
+ * including the GHL automation's own messages, which Iris never sees in her
+ * own conversation history. Real case, 2026-10-08 (Dawnie Kearney): the
+ * automation asked "Quick question, why are you looking to sell?" and her
+ * answer ("Looking to relocate to west coast") reached Iris with no idea what
+ * it was answering, so she read a seller's reason for selling as a buyer's
+ * wish to buy out of town. Best-effort: [] on any failure.
+ */
+export async function recentTexts(contactId: string, locationId: string, apiKey: string, limit = 8): Promise<RecentText[]> {
+  try {
+    const convoResult = await getConversations(contactId, locationId, apiKey);
+    const conversationId: string | undefined = convoResult?.conversations?.[0]?.id;
+    if (!conversationId) return [];
+
+    const msgResult = await getConversationMessages(conversationId, locationId, apiKey);
+    const messages: any[] = msgResult?.messages?.messages ?? [];
+    return messages
+      .filter((m) => m?.messageType === "TYPE_SMS" && typeof m?.body === "string" && m.body.trim() !== "")
+      .slice(0, limit) // GHL returns newest first
+      .reverse()
+      .map((m) => ({
+        from: m.direction === "inbound" ? ("lead" as const) : ("us" as const),
+        text: m.body.trim(),
+        at: typeof m.dateAdded === "string" ? m.dateAdded : null,
+        source: typeof m.source === "string" ? m.source : null,
+      }));
+  } catch (error) {
+    console.error(`[IRS] recentTexts failed for contact ${contactId}:`, error instanceof Error ? error.message : error);
+    return [];
+  }
+}
