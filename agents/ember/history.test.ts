@@ -105,15 +105,15 @@ describe("reviewHistory", () => {
   });
 
   it("returns a personal opener and adds the STOP line", async () => {
-    const ask = vi.fn(async () => '{"action":"personalized","reason":"east end 3 bed","message":"Hi Sarah, still hoping for that 3 bed in the east end this fall?"}');
+    const ask = vi.fn(async () => `{"action":"personalized","reason":"east end 3 bed","message":"Hi Sarah, it's Mark's Realty - still hoping for that 3 bed in the east end this fall?"}`);
     const d = await reviewHistory([inb("3 bed in the east end, fall")], CTX, ask);
-    expect(d).toEqual({ action: "personalized", reason: "east end 3 bed", message: "Hi Sarah, still hoping for that 3 bed in the east end this fall? Reply STOP to opt out." });
+    expect(d).toEqual({ action: "personalized", reason: "east end 3 bed", message: "Hi Sarah, it's Mark's Realty - still hoping for that 3 bed in the east end this fall? Reply STOP to opt out." });
   });
 
   it("does not double the STOP line, and doesn't mistake 'stop by' for one", async () => {
-    const withLine = vi.fn(async () => '{"action":"personalized","reason":"r","message":"Hi Sarah, still looking? Reply STOP to opt out."}');
-    expect((await reviewHistory([inb("hi")], CTX, withLine) as any).message).toBe("Hi Sarah, still looking? Reply STOP to opt out.");
-    const stopBy = vi.fn(async () => '{"action":"personalized","reason":"r","message":"Hi Sarah, want to stop by an open house?"}');
+    const withLine = vi.fn(async () => `{"action":"personalized","reason":"r","message":"Hi Sarah, it's Mark's Realty. Still looking? Reply STOP to opt out."}`);
+    expect((await reviewHistory([inb("hi")], CTX, withLine) as any).message).toBe("Hi Sarah, it's Mark's Realty. Still looking? Reply STOP to opt out.");
+    const stopBy = vi.fn(async () => `{"action":"personalized","reason":"r","message":"Hi Sarah, it's Mark's Realty - want to stop by an open house?"}`);
     expect((await reviewHistory([inb("hi")], CTX, stopBy) as any).message).toMatch(/Reply STOP to opt out\.$/);
   });
 
@@ -122,6 +122,38 @@ describe("reviewHistory", () => {
       const ask = vi.fn(async () => JSON.stringify({ action: "personalized", reason: "r", message }));
       expect((await reviewHistory([inb("hi")], CTX, ask)).action).toBe("script");
     }
+  });
+
+  it("asks for one rewrite when an opener breaks a guardrail, and uses it if it passes (Mark, 2026-10-09)", async () => {
+    const ask = vi
+      .fn()
+      .mockResolvedValueOnce(JSON.stringify({ action: "personalized", reason: "r", message: "Hi Sarah, still looking in Paradise with that $400-520K budget and a shed?" }))
+      .mockResolvedValueOnce(JSON.stringify({ action: "personalized", reason: "r", message: "Hi Sarah, it's Mark's Realty - hoping for a place in Paradise with a shed?" }));
+    const d = await reviewHistory([inb("hi")], CTX, ask);
+    expect(ask).toHaveBeenCalledTimes(2);
+    expect(ask.mock.calls[1][1]).toMatch(/rejected: it mentions a price/);
+    expect(d).toEqual({ action: "personalized", reason: "r", message: "Hi Sarah, it's Mark's Realty - hoping for a place in Paradise with a shed? Reply STOP to opt out." });
+  });
+
+  it("never lets an opener sign as a named agent (Mark, 2026-10-09)", async () => {
+    const ask = vi.fn(async () => JSON.stringify({ action: "personalized", reason: "r", message: `Hi Sarah, it's Genna from ${CTX.brandName} - still looking?` }));
+    const d = await reviewHistory([inb("hi")], CTX, ask);
+    expect(d.action).toBe("script");
+    expect(ask.mock.calls[1][1]).toMatch(/signs as a named person/);
+    const ok = vi.fn(async () => JSON.stringify({ action: "personalized", reason: "r", message: `Hi Sarah, it's ${CTX.brandName} - still looking?` }));
+    expect((await reviewHistory([inb("hi")], CTX, ok)).action).toBe("personalized");
+  });
+
+  it("requires every opener to say who it's from (CASL)", async () => {
+    const ask = vi.fn(async () => JSON.stringify({ action: "personalized", reason: "r", message: "Hi Sarah, still looking?" }));
+    expect((await reviewHistory([inb("hi")], CTX, ask)).action).toBe("script");
+    expect(ask.mock.calls[1][1]).toMatch(/never says who it's from/);
+  });
+
+  it("only rewrites once — a second bad opener falls back to the script", async () => {
+    const ask = vi.fn(async () => JSON.stringify({ action: "personalized", reason: "r", message: "x".repeat(200) }));
+    expect((await reviewHistory([inb("hi")], CTX, ask)).action).toBe("script");
+    expect(ask).toHaveBeenCalledTimes(2);
   });
 
   it("maps the model's defer (and an old-style skip) to a pause, never a permanent stop", async () => {
