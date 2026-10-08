@@ -413,12 +413,11 @@ describe("smsSafe — keep texts in the plain (GSM-7) character set so they bill
   it("every approved script and courtesy reply fits one text, even for a long name", async () => {
     const { smsLength, courtesyFor } = await import("./outreach");
     const { readFileSync } = await import("fs");
-    const sender = "3% Realty East Coast";
     const name = "Christopher";
-    for (const id of ["eden-sub-account-one"]) {
-      const scripts = JSON.parse(readFileSync(`config/clients/${id}.json`, "utf-8")).ember.outreach.sms.scripts;
-      for (const t of Object.values(scripts).flat() as string[]) {
-        const text = t.replace("{{firstName}}", name).replace("{{senderName}}", sender);
+    for (const id of ["eden-sub-account-one", "3-percent-east-coast"]) {
+      const { senderName, sms } = JSON.parse(readFileSync(`config/clients/${id}.json`, "utf-8")).ember.outreach;
+      for (const t of Object.values(sms.scripts).flat() as string[]) {
+        const text = t.replace("{{firstName}}", name).replace("{{senderName}}", senderName);
         expect(smsLength(text), text).toBeLessThanOrEqual(160);
       }
     }
