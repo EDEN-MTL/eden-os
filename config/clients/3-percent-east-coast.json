@@ -289,5 +289,126 @@
     "returningLeadSlackChannel": "C0BRPC7FUMU",
     "returningLeadSlackChannelNote": "Mark, 2026-10-05: returning-lead alerts go to #newleads, posted by Scout (Scout is a member). #newleads is a PRIVATE channel, so this is its channel id — Slack only resolves a channel by name for public channels.",
     "returningMinAgeMinutes": 60
+  },
+  "ember": {
+    "_comment": "Mark, 2026-10-09: 3%'s Ember config, copied from the test account (eden-sub-account-one) where it was proven. enabled stays false until Jacob approves the SMS/AI cost and confirms CASL consent, and the first texts are previewed (scripts/ember-dry-run.ts 3-percent-east-coast --messages).",
+    "enabled": false,
+    "enabledNote": "Set to true only on Mark's explicit go. While false nothing runs for 3%: no scan, no sends, no reply handling.",
+    "pipelineId": "g8DgskR6GqDvRR3A6jnN",
+    "dormancyThresholdDays": 45,
+    "stageDormancyDays": {
+      "Replied": 14
+    },
+    "stageDormancyDaysNote": "Mark, 2026-09-25: Replied leads are picked up after 14 quiet days; Not Ready and Long Term Nurturing keep the 45-day default.",
+    "excludeStages": [
+      "Appointment Set",
+      "Appointment Set (Not qualified)",
+      "Showed Up",
+      "Listing Active",
+      "International Numbers"
+    ],
+    "includeStages": [
+      "Not Ready - [Endless Loop]",
+      "Long Term Nurturing",
+      "Replied"
+    ],
+    "includeStagesNote": "Mark, 2026-09-25: Ember focuses on these three stages only, for now. Names verified live against this pipeline (and 3-percent-east-coast's, which has the same three).",
+    "notInterestedStage": "Not Qualified/Not Interested",
+    "notInterestedNote": "Mark, 2026-10-01: on CLEAR evidence a lead is no longer a prospect (bought, sold, another agent, no longer looking, asked to stop), Ember moves the card here and never contacts them again. Not ready / next year / busy / no reply keep nurturing. See agents/ember/status.ts.",
+    "consentWindowDays": 180,
+    "reApproachAfterDays": 180,
+    "reApproachNote": "Mark, 2026-09-24: 'not interested' / 'already bought' / 'working with another agent' is tried again 180 days after they said it. Real unsubscribes (STOP, remove me, don't text me, wrong number, GHL DND) are never retried. consentWindowDays still applies, measured from their latest real inquiry — so most re-approaches need Jacob to confirm express consent before it's raised.",
+    "intentTags": {
+      "buyer": [
+        "buyer lead"
+      ],
+      "seller": [
+        "seller lead"
+      ]
+    },
+    "intentStages": {
+      "Buyer Leads": "buyer",
+      "Seller Leads": "seller",
+      "Downsize Leads": "downsize",
+      "Upgrading Leads": "upgrading"
+    },
+    "renewedInterestTags": [
+      "renewed interest",
+      "ember reactivated"
+    ],
+    "alertChannel": "backend-ops",
+    "timezone": "America/Toronto",
+    "sendWindow": {
+      "startHour": 10,
+      "endHour": 19
+    },
+    "outreach": {
+      "senderName": "3% Realty",
+      "dailySendCap": 20,
+      "minSendSpacingSeconds": 90,
+      "jitterSeconds": 120,
+      "touchScheduleDays": [
+        0,
+        14,
+        35,
+        70
+      ],
+      "positiveKeywords": [
+        "yes",
+        "yeah",
+        "yep",
+        "interested",
+        "still looking",
+        "call me",
+        "sure",
+        "ready"
+      ],
+      "negativeKeywords": [
+        "no",
+        "stop",
+        "not interested",
+        "unsubscribe",
+        "remove me",
+        "bought already",
+        "already bought",
+        "no thanks"
+      ],
+      "sms": {
+        "enabled": true,
+        "fromNumber": "+17097013598",
+        "fromNumberNote": "Mark, 2026-10-08: 3%'s main number, same as iris.sms.fromNumber. +17097021163 is an old number no longer in the account — sends from it fail.",
+        "_scriptsNote": "Mark approved the buyer and seller wording, 2026-09-24. Seller + downsize leads get seller; buyer + upgrading get buyer; unknown intent gets neutral. Touch 4 reuses touch 3. Every script must keep its STOP line — validateForSending refuses to send otherwise.",
+        "scripts": {
+          "buyer": [
+            "Hi {{firstName}}, it's {{senderName}}. You were looking at homes with us a while back. Still on the hunt, or did the timing change? Reply STOP to opt out.",
+            "Hi {{firstName}}, a few new listings came up that might fit what you were after. Want me to send some over? Reply STOP to opt out.",
+            "Hi {{firstName}}, last check-in from {{senderName}}. If you're still thinking about buying, reply and we'll set up a quick call. Reply STOP to opt out."
+          ],
+          "seller": [
+            "Hi {{firstName}}, it's {{senderName}}. You asked about selling a while back. Still thinking about it? Reply STOP to opt out.",
+            "Hi {{firstName}}, homes near you have been moving. Want a free, no-pressure update on what yours could sell for today? Reply STOP to opt out.",
+            "Hi {{firstName}}, last check-in from {{senderName}}. If selling is still on your mind, reply and we'll book a quick chat. Reply STOP to opt out."
+          ],
+          "neutral": [
+            "Hi {{firstName}}, it's {{senderName}}. You reached out about real estate a while back. Still thinking about a move? Reply STOP to opt out.",
+            "Hi {{firstName}}, {{senderName}} here. The market's shifted since we last spoke. Want a quick update on what's out there? Reply STOP to opt out.",
+            "Hi {{firstName}}, last check-in from {{senderName}}. If a move is still on your mind, reply and we'll set up a quick call. Reply STOP to opt out."
+          ]
+        }
+      },
+      "email": {
+        "enabled": false,
+        "fromAddress": "",
+        "physicalAddress": "",
+        "templates": []
+      },
+      "senderNameNote": "Mark, 2026-10-09: short on purpose — every text must fit one 160-character SMS."
+    },
+    "pipelineIdNote": "1. Real Estate Pipeline (verified live 2026-10-09). Has the same three focus stages as the test account.",
+    "excludePhones": [
+      "+17098001784",
+      "+14388174102"
+    ],
+    "excludePhonesNote": "Our own numbers that sit as contacts in 3%'s pipeline: the test account's number and Eden's GHL number. 3%'s agents are skipped automatically via their GHL user phone/email (a 2026-10-09 preview found Ashley, Genna, Brock, Andrew, Justin and Candice's phone in Replied)."
   }
 }

@@ -31,6 +31,8 @@ import {
   LeadContext,
   ReviewContext,
 } from "./history";
+import { smsSafe } from "./sms-text";
+export { fitOneSegment, smsLength, smsSafe, SMS_SEGMENT_CHARS } from "./sms-text";
 
 /** Appended to an AI-written personal opener; the scripts carry their own. */
 export const STOP_LINE = "Reply STOP to opt out.";
@@ -473,22 +475,6 @@ function stripPhrases(text: string, phrases: string[]): string {
     out = out.replace(new RegExp(`(^|\\W)${escaped}(?=\\W|$)`, "g"), "$1 ");
   }
   return out;
-}
-
-/**
- * Keeps a text in the plain GSM-7 character set. Mark, 2026-10-06: one
- * long dash or curly quote switches the WHOLE message to Unicode (UCS-2),
- * which cuts a segment from 160 characters to 70 — a one-line reply bills
- * as 2-3 texts instead of 1. Swaps the usual culprits for plain
- * equivalents; anything else is left as written.
- */
-export function smsSafe(text: string): string {
-  return text
-    .replace(/[\u2014\u2013\u2012\u2010\u2011\u2212]/g, "-")
-    .replace(/[\u2018\u2019\u201A\u2032]/g, "'")
-    .replace(/[\u201C\u201D\u201E\u2033]/g, '"')
-    .replace(/\u2026/g, "...")
-    .replace(/[\u00A0\u2007\u202F]/g, " ");
 }
 
 export const DEFAULT_COURTESY: CourtesyTemplates = {
