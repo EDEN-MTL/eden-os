@@ -295,11 +295,12 @@
     "enabled": false,
     "enabledNote": "Set to true only on Mark's explicit go. While false nothing runs for 3%: no scan, no sends, no reply handling.",
     "pipelineId": "g8DgskR6GqDvRR3A6jnN",
-    "dormancyThresholdDays": 45,
+    "dormancyThresholdDays": 60,
+    "dormancyThresholdNote": "Mark, 2026-10-09 (with Jacob): leads cold for 2 months are nurtured by Ember. Was 45.",
     "stageDormancyDays": {
       "Replied": 14
     },
-    "stageDormancyDaysNote": "Mark, 2026-09-25: Replied leads are picked up after 14 quiet days; Not Ready and Long Term Nurturing keep the 45-day default.",
+    "stageDormancyDaysNote": "Mark, 2026-09-25: Replied leads are picked up after 14 quiet days; Not Ready and Long Term Nurturing use the 60-day default.",
     "excludeStages": [
       "Appointment Set",
       "Appointment Set (Not qualified)",
@@ -316,6 +317,7 @@
     "notInterestedStage": "Not Qualified/Not Interested",
     "notInterestedNote": "Mark, 2026-10-01: on CLEAR evidence a lead is no longer a prospect (bought, sold, another agent, no longer looking, asked to stop), Ember moves the card here and never contacts them again. Not ready / next year / busy / no reply keep nurturing. See agents/ember/status.ts.",
     "consentWindowDays": 180,
+    "consentWindowNote": "Mark, 2026-10-09: Jacob confirmed the 6-month rule. Leads whose latest inquiry is older than 6 months are parked (no_consent), not texted.",
     "reApproachAfterDays": 180,
     "reApproachNote": "Mark, 2026-09-24: 'not interested' / 'already bought' / 'working with another agent' is tried again 180 days after they said it. Real unsubscribes (STOP, remove me, don't text me, wrong number, GHL DND) are never retried. consentWindowDays still applies, measured from their latest real inquiry — so most re-approaches need Jacob to confirm express consent before it's raised.",
     "intentTags": {
