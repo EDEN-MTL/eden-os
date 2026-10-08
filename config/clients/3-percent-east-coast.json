@@ -292,8 +292,8 @@
   },
   "ember": {
     "_comment": "Mark, 2026-10-09: 3%'s Ember config, copied from the test account (eden-sub-account-one) where it was proven. enabled stays false until Jacob approves the SMS/AI cost and confirms CASL consent, and the first texts are previewed (scripts/ember-dry-run.ts 3-percent-east-coast --messages).",
-    "enabled": false,
-    "enabledNote": "Set to true only on Mark's explicit go. While false nothing runs for 3%: no scan, no sends, no reply handling.",
+    "enabled": true,
+    "enabledNote": "Mark, 2026-10-09: switched ON for 3% after Jacob approved the cost, confirmed the 6-month consent rule, and the first texts were previewed. Set back to false to stop all Ember activity on 3% (no scan, no sends, no reply handling).",
     "pipelineId": "g8DgskR6GqDvRR3A6jnN",
     "dormancyThresholdDays": 60,
     "dormancyThresholdNote": "Mark, 2026-10-09 (with Jacob): leads cold for 2 months are nurtured by Ember. Was 45.",
@@ -339,7 +339,8 @@
       "ember reactivated"
     ],
     "alertChannel": "backend-ops",
-    "timezone": "America/Toronto",
+    "timezone": "America/St_Johns",
+    "timezoneNote": "3% is in Newfoundland (same as iris.timezone). Was copied from the test account as Toronto, which would have sent 90 minutes late.",
     "sendWindow": {
       "startHour": 10,
       "endHour": 19
