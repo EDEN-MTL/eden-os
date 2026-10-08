@@ -166,6 +166,16 @@ describe("matchTransferAgentCandidates", () => {
 describe("handleScheduleCallback", () => {
   const CONFIG = { timezone: "America/St_Johns", callbackNotesFieldKey: "contact.isa_notes" };
 
+  // The default-time path clamps to calling hours, so these tests only mean
+  // anything when "now" is mid-day — pinned so they don't fail after 8pm NL.
+  beforeEach(() => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date("2026-10-08T15:00:00.000Z"));
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
   beforeEach(() => {
     iris.loadIrisConfig.mockReturnValue(CONFIG);
     ghl.getGhlConfig.mockResolvedValue({ locationId: "loc-1", apiKey: "key-1" });

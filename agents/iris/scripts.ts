@@ -1715,6 +1715,15 @@ export interface SmsPromptOptions {
    * difference and launched straight into qualifying questions.
    */
   initialOutreachText?: string | null;
+  /**
+   * The last few texts in the thread, oldest first, INCLUDING the GHL
+   * automation's own messages (which Iris never sees in her own history).
+   * Mark, 2026-10-08, from Dawnie Kearney's thread: her reply "Looking to
+   * relocate to west coast" answered the automation's "why are you looking
+   * to sell?" — without that question in front of her, Iris read it as a
+   * buyer wanting to buy out of town.
+   */
+  recentTexts?: { from: "lead" | "us"; text: string }[];
 }
 
 export function buildSmsQualificationPrompt(
@@ -1742,7 +1751,17 @@ export function buildSmsQualificationPrompt(
 
   // An Ember lead's original buy/sell intent is months old — re-ask it
   // rather than assume it still holds.
-  const questionsToAsk = lead.intent === "unknown" || fromEmber ? config.questions : config.questions.slice(1);
+  // The config list is buyer-worded ("What area are you interested in?") — a
+  // seller asked that is being asked the wrong thing, so sellers and
+  // downsizers get their own sets (Mark, 2026-10-08).
+  const questionsToAsk =
+    fromEmber || lead.intent === "unknown"
+      ? config.questions
+      : lead.intent === "seller"
+        ? SELLER_QUESTIONS.sms
+        : lead.intent === "downsize"
+          ? DOWNSIZER_QUESTIONS.sms
+          : config.questions.slice(1);
 
   const emberBlock = fromEmber
     ? `\n## Who this is
@@ -1764,12 +1783,19 @@ Never call any of these tools more than once, and never promise a call before sc
     : `## Ending the conversation
 Once every question above is answered (or they've clearly declined to answer some), call save_qualification_notes with a concise structured summary of everything gathered THIS conversation — never invented, never a field they didn't actually give you. Then call request_human_followup once, tell them briefly that someone from the team will reach out to book a time (never promise a specific time yourself — you can't book anything over text), and stop texting after that. Never call either tool more than once in this conversation.`;
 
+  const recentTextsBlock =
+    options.recentTexts && options.recentTexts.length > 0
+      ? `\n## The conversation so far (oldest first)
+${options.recentTexts.map((t) => `${t.from === "lead" ? "Lead" : "Us"}: ${t.text}`).join("\n")}
+Some of the "Us" lines were sent by our automated texts before you joined — you didn't write them, but the lead is answering them. The newest "Lead" line is what you're replying to: read it as an answer to the "Us" line just before it, never in isolation. If our automated text already told them IRIS will call, don't say "someone from the team will be in touch" — say Iris will call. Don't repeat a question the lead has already answered above.\n`
+      : "";
+
   const outreachContextBlock = options.initialOutreachText
     ? `\n## What they're actually replying to\nThis is their FIRST reply. The exact text they're responding to was: "${options.initialOutreachText}" — read their reply as an answer to THAT, not in isolation. If it's just a bare confirmation, agreement, or a time (e.g. "yes", "sure", "after 4", a 👍) and that outreach text was about a phone call, acknowledge it briefly (e.g. "Sounds good, talk soon!") and STOP — do not launch into qualifying questions on this turn. Only start qualifying once they say something that goes beyond confirming that call (a real question, a request to text instead, or unprompted details about what they're looking for).\n`
     : "";
 
   return `You are IRIS, texting with ${firstName !== "there" ? firstName : "a lead"} on behalf of ${brandName}, a real estate brokerage in ${city}. This is a REAL text conversation with a real prospective client who replied to an earlier text — not a drill, not a live phone call. You have no voice here; every reply is a text message.
-${outreachContextBlock}
+${outreachContextBlock}${recentTextsBlock}
 ## How to write a text, not talk on the phone
 Keep every message SHORT — one or two sentences, like a real person texting, never a paragraph. Ask ONE question per message and wait for their reply before the next one. Use casual, warm phrasing, not a script read verbatim. Vary your acknowledgments rather than repeating the same one — some natural options: ${NATURAL_TRANSITIONS.sms.map((t) => `"${t}"`).join(", ")}.
 ${emberBlock}
@@ -1786,7 +1812,11 @@ ${questionsToAsk.map((q) => `- ${q}`).join("\n")}
 - If they ask whether you're a real person: "${realPersonLine}"
 - If they ask about renting rather than buying/selling: "${EDGE_CASE_RESPONSES.rentalRequest[0]}"
 - If they ask something you genuinely don't know or that needs real estate advice: "${EDGE_CASE_RESPONSES.dontKnowAnswer}"
-- If they're outside ${city} entirely: "${EDGE_CASE_RESPONSES.outOfServiceArea(city)[0]}"
+- ${
+    lead.intent === "seller" || lead.intent === "downsize"
+      ? `Where the HOME THEY'RE SELLING is decides the service area, not where they're headed next: only if that property is outside ${city} entirely, say "${EDGE_CASE_RESPONSES.outOfServiceArea(city)[0]}". A seller who is relocating away but selling a home in ${city} is a perfectly normal seller lead — never tell them we only serve ${city}; just carry on (a move out of town is a reason for selling, not a reason to turn them away).`
+      : `If the area they want to BUY in is outside ${city} entirely: "${EDGE_CASE_RESPONSES.outOfServiceArea(city)[0]}"`
+  }
 
 ${endingBlock}
 

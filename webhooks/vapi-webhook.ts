@@ -8,6 +8,7 @@ import { loadIrisConfig, loadClientBranding } from "../agents/iris";
 import { reopenForNextAttempt, reopenAfterMissedCallback, scheduleExplicitCallback, holdForTextReply, SWEEP_SOURCE } from "../agents/iris/dial-pending";
 import { extractFirstName } from "../agents/iris/scripts";
 import { buildKeyToId, readField } from "../agents/scout/intake";
+import { appendNoteToContact } from "../agents/iris/notes";
 import { clampToLegalCallingWindow, formatLocal } from "../agents/iris/cadence";
 import { handleInboundCall } from "../agents/iris/inbound";
 import { classifyMissedCallback } from "../agents/iris/call-signals";
@@ -311,27 +312,6 @@ export async function postCallLogToSlack(clientId: string, contactId: string | n
  * otherwise the next scheduled call loses all context for why it's
  * calling back).
  */
-async function appendNoteToContact(clientId: string, contactId: string, line: string): Promise<void> {
-  const ghlConfig = await getGhlConfig(clientId);
-  const config = loadIrisConfig(clientId);
-  if (!ghlConfig || !config) return;
-
-  const defs = await getCustomFieldDefs(ghlConfig.locationId, ghlConfig.apiKey);
-  const keyToId = buildKeyToId(defs);
-  const fieldId = keyToId.get(config.callbackNotesFieldKey);
-  if (!fieldId) {
-    console.warn(`[VAPI] callbackNotesFieldKey "${config.callbackNotesFieldKey}" did not resolve to a field id for ${clientId} — skipping note.`);
-    return;
-  }
-
-  const contactResp = await getContact(contactId, ghlConfig.locationId, ghlConfig.apiKey);
-  const contact = contactResp?.contact ?? contactResp;
-  const existing = readField(contact?.customFields, config.callbackNotesFieldKey, keyToId);
-  const notes = existing ? `${existing}\n\n${line}` : line;
-
-  await updateContact(contactId, { customFields: [{ id: fieldId, value: notes }] }, ghlConfig.locationId, ghlConfig.apiKey);
-}
-
 export async function appendCallStatusNote(
   clientId: string,
   contactId: string,

@@ -243,7 +243,8 @@ Respond with ONLY one JSON object, no markdown:
 {"action":"script","reason":"..."} — there's no real conversation or CRM detail worth building on (they barely replied, only a word or two, nothing useful on file). A standard check-in text will be used.
 
 {"action":"personalized","reason":"...","message":"..."} — there IS something real to pick up from. Write the check-in text:
-- Address them as ${ctx.firstName === "there" ? '"Hi there"' : ctx.firstName}, from ${ctx.brandName}.
+- Address them as ${ctx.firstName === "there" ? '"Hi there"' : ctx.firstName}, from ${ctx.brandName}. It MUST name "${ctx.brandName}" (the law requires every text to say who it's from). Sign as "${ctx.brandName}" only — NEVER as a person ("Genna from ${ctx.brandName}"). You're the team's assistant, not an agent, and whoever calls them may be someone else.
+- Get dates right: read each past message's date. "Next year" said in 2026 means 2027; "in the spring" said in May means the spring already passed. Never claim their timing "is now" unless the record clearly says so.
 - One or two short sentences, casual and warm, like a real person texting. UNDER 130 CHARACTERS — the opt-out line is added after it and the whole text must fit one SMS. Plain characters only: normal hyphen, straight quotes, no emoji.
 - Start from where they left off: reference ONE specific real thing (what they were looking for, their timing, that they spoke with our team, or — if they declined before — acknowledge it lightly, e.g. that it's been a while). Never invent anything not in the record.
 - End with one easy question about whether their plans have changed or are still on.
@@ -278,6 +279,27 @@ function hasContextWorthReading(messages: HistoryMessage[], ctx: ReviewContext):
   );
 }
 
+/** Why a personalized opener can't go out as written, or null if it can. */
+function openerProblem(message: string, ctx: ReviewContext): string | null {
+  if (!message) return "it was empty";
+  const room = MAX_TOTAL_CHARS - 1 - ctx.stopLine.length;
+  if (smsLength(message) > room) return `it is ${smsLength(message)} characters; it must be ${room} or fewer so the opt-out line still fits one SMS`;
+  if (/https?:|www\./i.test(message)) return "it contains a link; no links";
+  if (/\$\s?\d/.test(message)) return "it mentions a price or budget figure; no numbers with $";
+  // CASL: a commercial message must identify who sent it. Mark, 2026-10-09:
+  // five of eleven preview openers never said who they were from.
+  if (!message.toLowerCase().includes(ctx.brandName.toLowerCase())) {
+    return `it never says who it's from; it must include "${ctx.brandName}" (e.g. "Hi Sarah, it's ${ctx.brandName}.")`;
+  }
+  // "Genna from 3% Realty" / "it's Stephanie with 3% Realty" — Mark, 2026-10-09:
+  // a preview signed three openers as real agents. Ember is the assistant.
+  const brand = ctx.brandName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  if (new RegExp(`\\b[A-Z][a-z]+ (from|with|at|here at) ${brand}`).test(message)) {
+    return `it signs as a named person; sign as "${ctx.brandName}" only, never an agent's name`;
+  }
+  return null;
+}
+
 /**
  * The model's part of the plan. Hard opt-outs and the soft-decline cool-off
  * are decided in code BEFORE this runs (see planTouch in outreach.ts).
@@ -285,7 +307,7 @@ function hasContextWorthReading(messages: HistoryMessage[], ctx: ReviewContext):
 export async function reviewHistory(
   messages: HistoryMessage[],
   ctx: ReviewContext,
-  askFn: AskFn = (system, user) => ask(system, user, { maxTokens: 300, temperature: 0 })
+  askFn: AskFn = (system, user) => ask(system, user, { maxTokens: 500, temperature: 0 })
 ): Promise<HistoryDecision> {
   if (!hasContextWorthReading(messages, ctx)) {
     return { action: "script", reason: "no replies, calls or notes on record" };
@@ -304,11 +326,29 @@ export async function reviewHistory(
   if (parsed?.action === "script") return { action: "script", reason };
   if (parsed?.action === "personalized" && typeof parsed.message === "string") {
     let message = smsSafe(parsed.message.replace(/\s+/g, " "));
-    // Guardrails the model can't talk its way past. A failed check falls
-    // back to the approved script rather than sending the risky text.
-    if (!message || smsLength(message) + 1 + ctx.stopLine.length > MAX_TOTAL_CHARS || /https?:|www\.|\$\s?\d/i.test(message)) {
-      return { action: "script", reason: `personal opener rejected by guardrails (${reason})` };
+    let problem = openerProblem(message, ctx);
+    if (problem) {
+      // One rewrite before giving up on the personal touch. Mark, 2026-10-09:
+      // a 3% preview lost 4 good openers (Michelle, Marcia, Heidi, Michael)
+      // to the guardrails — mostly length or a budget figure — and fell back
+      // to the generic script. A second short ask (~1c) usually fixes it.
+      try {
+        const retryRaw = await askFn(
+          systemPrompt(ctx),
+          `${transcript(messages)}\n\nYou wrote this check-in text: "${message}"\nIt was rejected: ${problem}. Rewrite it to fix that, keeping the same idea. Respond with the same JSON shape.`
+        );
+        const retry = extractJson(retryRaw);
+        if (retry?.action === "personalized" && typeof retry.message === "string") {
+          message = smsSafe(retry.message.replace(/\s+/g, " "));
+          problem = openerProblem(message, ctx);
+        }
+      } catch {
+        // Fall through to the script — never send blind, never block the lead.
+      }
     }
+    // Guardrails the model can't talk its way past. A failed rewrite falls
+    // back to the approved script rather than sending the risky text.
+    if (problem) return { action: "script", reason: `personal opener rejected by guardrails: ${problem} (${reason})` };
     // "Reply STOP", not a bare "stop" — "feel free to stop by" is not an opt-out line.
     if (!/reply\s+stop/i.test(message)) message = `${message} ${ctx.stopLine}`;
     return { action: "personalized", reason, message };

@@ -642,6 +642,16 @@ describe("tagSequenceExhausted", () => {
 describe("maybeHonorMissedCallback", () => {
   const PENDING_ROW = { id: 69, attempts_made: 1, created_at: new Date("2026-10-01T16:36:06.698Z"), status: "placed" };
 
+  // The "later" path clamps to calling hours, so pin "now" to mid-day — the
+  // test would otherwise fail whenever it runs after 8pm in St. John's.
+  beforeEach(() => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date("2026-10-08T15:00:00.000Z"));
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
   beforeEach(() => {
     db.query.mockResolvedValue([PENDING_ROW]);
     iris.loadIrisConfig.mockReturnValue({ timezone: "America/St_Johns" });

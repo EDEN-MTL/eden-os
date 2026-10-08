@@ -6,10 +6,13 @@ vi.mock("../../shared/conversation-memory", () => ({
   loadHistory: vi.fn(async () => []),
   appendHistory: vi.fn(async () => {}),
 }));
-vi.mock("./text-signals", () => ({
+const textSignals = vi.hoisted(() => ({
   classifyInboundText: vi.fn(async () => ({ type: "none" })),
   lastInboundText: vi.fn(async () => null),
+  recentTexts: vi.fn(async () => []),
 }));
+vi.mock("./text-signals", () => textSignals);
+vi.mock("./notes", () => ({ appendNoteToContact: vi.fn(async () => {}) }));
 
 const db = vi.hoisted(() => ({ query: vi.fn() }));
 vi.mock("../../shared/db", () => db);
@@ -339,5 +342,126 @@ describe("hasActiveSmsConversation", () => {
   it("is false with no history yet", async () => {
     vi.mocked(loadHistory).mockResolvedValueOnce([]);
     expect(await hasActiveSmsConversation("3-percent-east-coast", "contact-1")).toBe(false);
+  });
+});
+
+/**
+ * Mark, 2026-10-08, from Dawnie Kearney's thread: three things went wrong at
+ * once in a fast text exchange alongside the GHL automation.
+ */
+describe("irisHandleInboundSms — a callback time named by text is stored right away", () => {
+  const ROW = { client_id: "3-percent-east-coast", contact_id: "contact-1", lead: LEAD, status: "pending" };
+  const WHEN = new Date("2026-10-13T14:00:00.000Z");
+
+  it("saves the time on the queue row — not left for the pre-dial check, which only reads the lead's NEWEST text", async () => {
+    db.query.mockResolvedValueOnce([ROW]);
+    vi.mocked(loadHistory).mockResolvedValueOnce([]);
+    vi.mocked(classifyInboundText).mockResolvedValueOnce({ type: "schedule_for", when: WHEN });
+
+    await irisHandleInboundSms("contact-1", "Tuesday would be a good time", { wait: async () => {} });
+
+    const update = db.query.mock.calls.find((c) => String(c[0]).includes("lead requested this time via text"));
+    expect(update?.[1]).toEqual(["3-percent-east-coast", "contact-1", WHEN]);
+    expect(String(update?.[0])).toMatch(/is_explicit_callback = true/);
+  });
+
+  it("also stores it mid-conversation, when the reply isn't the short-circuited canned one", async () => {
+    db.query.mockResolvedValueOnce([ROW]);
+    vi.mocked(loadHistory).mockResolvedValueOnce([{ role: "assistant", content: "What area?" }]);
+    vi.mocked(classifyInboundText).mockResolvedValueOnce({ type: "schedule_for", when: WHEN });
+    vi.mocked(chatWithTools).mockResolvedValueOnce(endTurn("Noted!"));
+
+    await irisHandleInboundSms("contact-1", "call me Tuesday", { wait: async () => {} });
+
+    expect(db.query.mock.calls.some((c) => String(c[0]).includes("lead requested this time via text"))).toBe(true);
+  });
+});
+
+describe("irisHandleInboundSms — answers one text at a time, in order", () => {
+  const ROW = { client_id: "3-percent-east-coast", contact_id: "contact-1", lead: LEAD, status: "pending" };
+
+  it("does not start on a lead's second text until the reply to the first has gone out", async () => {
+    db.query.mockResolvedValue([ROW]);
+    vi.mocked(loadHistory).mockResolvedValue([]);
+    vi.mocked(chatWithTools).mockResolvedValue(endTurn("ok"));
+    const events: string[] = [];
+    let releaseFirst!: () => void;
+    const firstGate = new Promise<void>((resolve) => (releaseFirst = resolve));
+    ghl.sendSMS.mockImplementation(async () => {
+      events.push("sent");
+      return {};
+    });
+
+    const first = irisHandleInboundSms("contact-1", "first text", {
+      wait: async () => {
+        events.push("first waiting");
+        await firstGate;
+      },
+    });
+    const second = irisHandleInboundSms("contact-1", "second text", {
+      wait: async () => {
+        events.push("second waiting");
+      },
+    });
+
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(events).toEqual(["first waiting"]); // the second hasn't even started
+
+    releaseFirst();
+    await Promise.all([first, second]);
+    expect(events).toEqual(["first waiting", "sent", "second waiting", "sent"]);
+  });
+
+  it("keeps going for later texts even if an earlier one failed", async () => {
+    db.query.mockRejectedValueOnce(new Error("db down")).mockResolvedValue([ROW]);
+    vi.mocked(loadHistory).mockResolvedValue([]);
+    vi.mocked(chatWithTools).mockResolvedValue(endTurn("ok"));
+
+    const first = irisHandleInboundSms("contact-1", "first", { wait: async () => {} });
+    const second = irisHandleInboundSms("contact-1", "second", { wait: async () => {} });
+
+    await expect(first).rejects.toThrow("db down");
+    await expect(second).resolves.toBe(true);
+  });
+});
+
+describe("irisHandleInboundSms — sees the whole thread, including the automation's own texts", () => {
+  const ROW = { client_id: "3-percent-east-coast", contact_id: "contact-1", lead: { ...LEAD, intent: "seller" }, status: "pending" };
+
+  it("puts the recent thread — automated lines included — into the prompt", async () => {
+    db.query.mockResolvedValueOnce([ROW]);
+    vi.mocked(loadHistory).mockResolvedValueOnce([]);
+    vi.mocked(chatWithTools).mockResolvedValueOnce(endTurn("Got it!"));
+    textSignals.recentTexts.mockResolvedValueOnce([
+      { from: "us", text: "Quick question, why are you looking to sell?", at: "2026-10-08T21:36:50.000Z", source: "workflow" },
+      { from: "lead", text: "Looking to relocate to west coast", at: "2026-10-08T21:37:12.000Z", source: null },
+    ] as never);
+
+    await irisHandleInboundSms("contact-1", "Looking to relocate to west coast", { wait: async () => {} });
+
+    const systemPrompt = vi.mocked(chatWithTools).mock.calls[0][0] as string;
+    expect(systemPrompt).toContain("Us: Quick question, why are you looking to sell?");
+    expect(systemPrompt).toContain("Lead: Looking to relocate to west coast");
+  });
+
+  it("waits for the automation to finish its sequence before answering, then re-reads the thread", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date("2026-10-08T21:37:00.000Z"));
+    try {
+      db.query.mockResolvedValueOnce([ROW]);
+      vi.mocked(loadHistory).mockResolvedValueOnce([]);
+      vi.mocked(chatWithTools).mockResolvedValueOnce(endTurn("ok"));
+      textSignals.recentTexts
+        .mockResolvedValueOnce([{ from: "us", text: "Quick question…", at: "2026-10-08T21:36:50.000Z", source: "workflow" }] as never) // 10s ago
+        .mockResolvedValueOnce([{ from: "us", text: "Quick question…", at: "2026-10-08T21:36:50.000Z", source: "workflow" }] as never);
+      const waits: number[] = [];
+
+      await irisHandleInboundSms("contact-1", "hi", { wait: async (ms) => void waits.push(ms) });
+
+      expect(waits[0]).toBe(35_000); // 45s quiet period minus the 10s already elapsed
+      expect(textSignals.recentTexts).toHaveBeenCalledTimes(2);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

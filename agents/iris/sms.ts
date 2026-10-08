@@ -16,9 +16,10 @@ import { query } from "../../shared/db";
 import { NormalisedLead, buildKeyToId } from "../scout/intake";
 import { loadIrisConfig, loadClientBranding } from "./index";
 import { buildSmsQualificationPrompt } from "./scripts";
-import { classifyInboundText, lastInboundText } from "./text-signals";
+import { classifyInboundText, lastInboundText, recentTexts } from "./text-signals";
+import { appendNoteToContact } from "./notes";
 import { IrisConfig, qualify, QualificationAnswers } from "./qualification";
-import { clampToLegalCallingWindow } from "./cadence";
+import { clampToLegalCallingWindow, formatLocal } from "./cadence";
 import { chatWithTools, ChatMessage, ToolDef } from "../../shared/claude";
 import { loadHistory, appendHistory } from "../../shared/conversation-memory";
 import { sendMessage } from "../../shared/slack";
@@ -297,7 +298,69 @@ async function executeSmsTool(
  * this contact isn't Iris's to answer at all, so the caller can fall
  * through to Ember.
  */
+/**
+ * Texts from one lead are answered strictly one at a time, in the order they
+ * arrived. Each reply waits a human-sized delay, and GHL fires a webhook per
+ * message — so a lead who sends two texts in a row had both handled at once,
+ * and the replies landed out of order and out of context (Dawnie Kearney,
+ * 2026-10-08: "Iris will give you a call then" arrived AFTER the answer to
+ * her next message). Queued per contact; the second text is processed only
+ * once the first reply has gone out, so it sees that reply in the history.
+ */
+const inboundQueues = new Map<string, Promise<unknown>>();
+
 export async function irisHandleInboundSms(contactId: string, text: string, options: InboundSmsOptions = {}): Promise<boolean> {
+  const previous = inboundQueues.get(contactId) ?? Promise.resolve();
+  const run = previous.catch(() => {}).then(() => handleInboundSms(contactId, text, options));
+  inboundQueues.set(contactId, run);
+  try {
+    return await run;
+  } finally {
+    if (inboundQueues.get(contactId) === run) inboundQueues.delete(contactId);
+  }
+}
+
+/** Don't answer while the GHL automation is still mid-sequence: wait until its last text is this old. */
+const AUTOMATION_QUIET_MS = 45_000;
+const AUTOMATION_QUIET_MAX_WAIT_MS = 60_000;
+
+async function recentTextsOnceAutomationQuiet(
+  contactId: string,
+  ghlConfig: { locationId: string; apiKey: string },
+  wait: (ms: number) => Promise<void>
+) {
+  let texts = await recentTexts(contactId, ghlConfig.locationId, ghlConfig.apiKey);
+  const lastAutomated = [...texts].reverse().find((t) => t.from === "us" && t.source === "workflow");
+  if (lastAutomated?.at) {
+    const age = Date.now() - Date.parse(lastAutomated.at);
+    if (age >= 0 && age < AUTOMATION_QUIET_MS) {
+      await wait(Math.min(AUTOMATION_QUIET_MS - age, AUTOMATION_QUIET_MAX_WAIT_MS));
+      texts = await recentTexts(contactId, ghlConfig.locationId, ghlConfig.apiKey);
+    }
+  }
+  return texts;
+}
+
+/**
+ * A lead who names a time for the call over text ("Tuesday would be a good
+ * time") has it stored right away, with a note on their record — not left to
+ * the pre-dial check, which only ever reads their MOST RECENT text and so
+ * loses it the moment they send another message.
+ */
+async function recordTextCallback(clientId: string, contactId: string, when: Date, timezone: string): Promise<void> {
+  await query(
+    `UPDATE iris_pending_calls
+     SET call_after = $3, status = 'pending', is_explicit_callback = true, callback_misses = 0,
+         resolution_reason = 'lead requested this time via text', resolved_at = NULL
+     WHERE client_id = $1 AND contact_id = $2`,
+    [clientId, contactId, when]
+  );
+  await appendNoteToContact(clientId, contactId, `Iris: lead asked by text for a call — scheduled for ${formatLocal(when.toISOString(), timezone)}.`).catch((error) => {
+    console.error(`[IRS-SMS] Failed to note the text callback for ${contactId}:`, error instanceof Error ? error.message : error);
+  });
+}
+
+async function handleInboundSms(contactId: string, text: string, options: InboundSmsOptions = {}): Promise<boolean> {
   const receivedAt = options.receivedAt ?? new Date();
   const wait = options.wait ?? realWait;
   const pauseLikeAHuman = (reply: string) => wait(humanReplyDelayMs(receivedAt, reply));
@@ -361,6 +424,8 @@ export async function irisHandleInboundSms(contactId: string, text: string, opti
   // callback-time aside comes up mid-conversation — there, falling through
   // to the normal loop is correct, since the model has full context to
   // handle it naturally.
+  if (signal.type === "schedule_for") await recordTextCallback(clientId, contactId, signal.when, timezone);
+
   if (signal.type === "schedule_for" && history.length === 0) {
     const reply = "Sounds good — Iris will give you a call then. Talk soon!";
     await pauseLikeAHuman(reply);
@@ -393,7 +458,10 @@ export async function irisHandleInboundSms(contactId: string, text: string, opti
       ? (await lastInboundText(contactId, ghlConfig.locationId, ghlConfig.apiKey).catch(() => null))?.precedingOutbound ?? null
       : null;
 
+  const recent = await recentTextsOnceAutomationQuiet(contactId, ghlConfig, wait);
+
   const systemPrompt = buildSmsQualificationPrompt(config, row.lead, branding.brandName, branding.city, {
+    recentTexts: recent,
     origin: "form",
     callHandoff: config.smsCallHandoff,
     initialOutreachText,

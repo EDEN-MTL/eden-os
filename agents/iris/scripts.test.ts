@@ -1396,3 +1396,48 @@ describe("buildLeadQualificationPrompt — callback request section (Mark, 2026-
     expect(prompt).not.toContain("schedule_callback with that as");
   });
 });
+
+/**
+ * Mark, 2026-10-08, from Dawnie Kearney's thread: a SELLER relocating to the
+ * west coast was told "our team currently helps clients in the St. John's
+ * area only" and asked "what area of St. John's are you looking in?" — both
+ * buyer-shaped.
+ */
+describe("buildSmsQualificationPrompt — sellers", () => {
+  const sellerLead = { ...BLANK_LEAD, intent: "seller" as const };
+
+  it("asks a seller seller questions, not the buyer-worded 'what area are you interested in?' list", () => {
+    const prompt = buildSmsQualificationPrompt(IRIS_CONFIG, sellerLead, "3 Percent East Coast", "St. John's");
+
+    expect(prompt).toContain("What's the property address?");
+    expect(prompt).not.toContain("What area are you interested in?");
+  });
+
+  it("judges the service area by the home being sold, so a seller relocating away is never told we only serve the city", () => {
+    const prompt = buildSmsQualificationPrompt(IRIS_CONFIG, sellerLead, "3 Percent East Coast", "St. John's");
+
+    expect(prompt).toMatch(/Where the HOME THEY'RE SELLING is/);
+    expect(prompt).toMatch(/relocating away but selling a home in St\. John's is a perfectly normal seller lead/);
+  });
+
+  it("keeps the buyer rule — the area they want to BUY in — for a buyer", () => {
+    const prompt = buildSmsQualificationPrompt(IRIS_CONFIG, { ...BLANK_LEAD, intent: "buyer" as const }, "3 Percent East Coast", "St. John's");
+
+    expect(prompt).toContain("If the area they want to BUY in is outside St. John's entirely");
+    expect(prompt).not.toMatch(/HOME THEY'RE SELLING/);
+  });
+
+  it("shows the thread so far, automated lines included, and tells her to read the reply as an answer to the line before it", () => {
+    const prompt = buildSmsQualificationPrompt(IRIS_CONFIG, sellerLead, "3 Percent East Coast", "St. John's", {
+      recentTexts: [
+        { from: "us", text: "Quick question, why are you looking to sell?" },
+        { from: "lead", text: "Looking to relocate to west coast" },
+      ],
+    });
+
+    expect(prompt).toContain("Us: Quick question, why are you looking to sell?");
+    expect(prompt).toContain("Lead: Looking to relocate to west coast");
+    expect(prompt).toMatch(/answer to the "Us" line just before it/);
+    expect(prompt).toMatch(/say Iris will call/);
+  });
+});
