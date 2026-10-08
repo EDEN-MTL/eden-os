@@ -24,6 +24,7 @@
  */
 import { ask } from "../../shared/claude";
 import { getConversationMessages, getConversations } from "../../shared/ghl";
+import { smsLength, smsSafe } from "./sms-text";
 
 export interface HistoryMessage {
   direction: "inbound" | "outbound";
@@ -199,7 +200,13 @@ export interface ReviewContext {
 
 export type AskFn = (system: string, user: string) => Promise<string>;
 
-const MAX_PERSONAL_CHARS = 320;
+/**
+ * The opener plus " Reply STOP to opt out." must fit ONE 160-character
+ * text (Mark, 2026-10-09: no texting in an expensive way). It was 320,
+ * which let a personalized opener bill as 2-3 messages. Over the limit
+ * falls back to the approved script, which already fits.
+ */
+const MAX_TOTAL_CHARS = 160;
 
 function monthsAgo(iso: string | null, now: Date): string {
   if (!iso) return "at some point";
@@ -237,7 +244,7 @@ Respond with ONLY one JSON object, no markdown:
 
 {"action":"personalized","reason":"...","message":"..."} — there IS something real to pick up from. Write the check-in text:
 - Address them as ${ctx.firstName === "there" ? '"Hi there"' : ctx.firstName}, from ${ctx.brandName}.
-- One or two short sentences, casual and warm, like a real person texting. Under 250 characters.
+- One or two short sentences, casual and warm, like a real person texting. UNDER 130 CHARACTERS — the opt-out line is added after it and the whole text must fit one SMS. Plain characters only: normal hyphen, straight quotes, no emoji.
 - Start from where they left off: reference ONE specific real thing (what they were looking for, their timing, that they spoke with our team, or — if they declined before — acknowledge it lightly, e.g. that it's been a while). Never invent anything not in the record.
 - End with one easy question about whether their plans have changed or are still on.
 - No links, no prices or market claims, no promises, no pressure, no guilt.
@@ -296,10 +303,10 @@ export async function reviewHistory(
   if (parsed?.action === "defer" || parsed?.action === "skip") return { action: "defer", reason };
   if (parsed?.action === "script") return { action: "script", reason };
   if (parsed?.action === "personalized" && typeof parsed.message === "string") {
-    let message = parsed.message.trim().replace(/\s+/g, " ");
+    let message = smsSafe(parsed.message.replace(/\s+/g, " "));
     // Guardrails the model can't talk its way past. A failed check falls
     // back to the approved script rather than sending the risky text.
-    if (!message || message.length > MAX_PERSONAL_CHARS || /https?:|www\.|\$\s?\d/i.test(message)) {
+    if (!message || smsLength(message) + 1 + ctx.stopLine.length > MAX_TOTAL_CHARS || /https?:|www\.|\$\s?\d/i.test(message)) {
       return { action: "script", reason: `personal opener rejected by guardrails (${reason})` };
     }
     // "Reply STOP", not a bare "stop" — "feel free to stop by" is not an opt-out line.

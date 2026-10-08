@@ -151,7 +151,7 @@
           "buyer": [
             "Hi {{firstName}}, it's {{senderName}}. You were looking at homes with us a while back. Still on the hunt, or did the timing change? Reply STOP to opt out.",
             "Hi {{firstName}}, a few new listings came up that might fit what you were after. Want me to send some over? Reply STOP to opt out.",
-            "Hi {{firstName}}, last check-in from {{senderName}}. If you're still thinking about buying this year, reply and we'll set up a quick call. Reply STOP to opt out."
+            "Hi {{firstName}}, last check-in from {{senderName}}. If you're still thinking about buying, reply and we'll set up a quick call. Reply STOP to opt out."
           ],
           "seller": [
             "Hi {{firstName}}, it's {{senderName}}. You asked about selling a while back. Still thinking about it? Reply STOP to opt out.",
