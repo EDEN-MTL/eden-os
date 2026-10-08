@@ -23,14 +23,18 @@ afterEach(() => vi.clearAllMocks());
 const run = (name: string, input: any) => (emberAgent as any).executeTool(name, input).then(JSON.parse);
 
 describe("EmberAgent tools", () => {
-  it("defaults to the only client with an ember block", async () => {
-    const out = await run("ember_pipeline_stats", {});
+  it("asks which client once more than one has an ember block", async () => {
+    await expect(run("ember_pipeline_stats", {})).rejects.toThrow(/say which one/);
+  });
+
+  it("reports stats for the named client", async () => {
+    const out = await run("ember_pipeline_stats", { clientId: "eden-sub-account-one" });
     expect(out).toEqual(expect.objectContaining({ clientId: "eden-sub-account-one", sendingEnabled: expect.any(Boolean), dueNow: 1 }));
   });
 
   it("reports the kill switch instead of throwing", async () => {
     sendMod.sendPendingForClient.mockRejectedValueOnce(new sendMod.EmberDisabledError("ember.enabled is false"));
-    expect(await run("ember_send_now", {})).toEqual({ sent: false, reason: "ember.enabled is false" });
+    expect(await run("ember_send_now", { clientId: "eden-sub-account-one" })).toEqual({ sent: false, reason: "ember.enabled is false" });
   });
 
   it("pauses only a nurturing lead", async () => {

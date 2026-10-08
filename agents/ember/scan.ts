@@ -18,7 +18,7 @@
  * dryRun, which reads GHL and writes nothing.
  */
 import { deriveWon, derivePipelineActive, OutcomeStageMap } from "../forge/ads/attribution";
-import { getGhlConfig, listOpportunitiesInStage, listPipelines } from "../../shared/ghl";
+import { getGhlConfig, listLocationUsers, listOpportunitiesInStage, listPipelines } from "../../shared/ghl";
 import { EmberConfig, loadEmberConfig, loadEmberOutcomeStages } from "./config";
 import { AlertFn, markExited, markReactivated, REACTIVATABLE, slackAlert } from "./alerts";
 import { enrollLead, hasPendingIrisCall, reviveQuietConversations, trackedByOpportunity } from "./store";
@@ -36,6 +36,38 @@ export interface EnrollContext {
   thresholdDays: number;
   /** true when thresholdDays came from a test override — it then wins over stageDormancyDays. */
   forceThreshold?: boolean;
+  /** Team members' and our own phones/emails, normalized — never enrolled. */
+  internal?: InternalContacts;
+}
+
+export interface InternalContacts {
+  phones: Set<string>;
+  emails: Set<string>;
+}
+
+/** Last 10 digits, so +1 (709) 728-0208 and 7097280208 compare equal. */
+export function normalizePhone(phone: string | null | undefined): string | null {
+  const digits = (phone ?? "").replace(/\D/g, "");
+  return digits.length >= 10 ? digits.slice(-10) : null;
+}
+
+export function buildInternalContacts(users: { phone?: string | null; email?: string | null }[], extraPhones: string[] = []): InternalContacts {
+  const phones = new Set<string>();
+  const emails = new Set<string>();
+  for (const p of [...users.map((u) => u.phone), ...extraPhones]) {
+    const n = normalizePhone(p);
+    if (n) phones.add(n);
+  }
+  for (const u of users) if (u.email?.trim()) emails.add(u.email.trim().toLowerCase());
+  return { phones, emails };
+}
+
+function isInternal(contact: GhlOpportunityLite["contact"], internal: InternalContacts | undefined): boolean {
+  if (!internal || !contact) return false;
+  const phone = normalizePhone(contact.phone);
+  if (phone && internal.phones.has(phone)) return true;
+  const email = contact.email?.trim().toLowerCase();
+  return Boolean(email && internal.emails.has(email));
 }
 
 export type EnrollDecision = { eligible: true } | { eligible: false; reason: string };
@@ -76,6 +108,10 @@ export function classifyForEnrollment(opp: GhlOpportunityLite, ctx: EnrollContex
   if (config.includeStages?.length && !config.includeStages.some((s) => sameName(s, stageName))) {
     return { eligible: false, reason: "not a nurture stage" };
   }
+
+  // Agents test their own funnel, so their numbers end up as contacts in
+  // the pipeline — a reactivation text to the team would be embarrassing.
+  if (isInternal(opp.contact, ctx.internal)) return { eligible: false, reason: "team member or internal number" };
 
   // A renewed-interest tag on a quiet card means someone's already on it.
   if (hasRenewedInterestTag(opp.contact?.tags, config)) return { eligible: false, reason: "renewed-interest tag" };
@@ -166,6 +202,8 @@ export interface ScanDeps {
   listOpportunities(): AsyncIterable<any>;
   stageNames(): Promise<Record<string, string>>;
   hasPendingIrisCall(contactId: string): Promise<boolean>;
+  /** Team members (GHL users) plus config.excludePhones. */
+  internalContacts?(): Promise<InternalContacts>;
   alert: AlertFn;
 }
 
@@ -227,6 +265,13 @@ export async function buildScanDeps(clientId: string, config: EmberConfig): Prom
       return names;
     },
     hasPendingIrisCall: (contactId) => hasPendingIrisCall(clientId, contactId),
+    internalContacts: async () => {
+      const users = await listLocationUsers(ghl.locationId, ghl.apiKey);
+      // An empty list would quietly let the team be texted — fail the scan
+      // instead (it retries next hour).
+      if (users.length === 0) throw new Error(`could not read GHL users for ${clientId} — refusing to scan without the team list`);
+      return buildInternalContacts(users, config.excludePhones);
+    },
     alert: slackAlert(config.alertChannel),
   };
 }
@@ -255,6 +300,7 @@ export async function runEmberScanForClient(
     now,
     thresholdDays: options.thresholdDaysOverride ?? config.dormancyThresholdDays,
     forceThreshold: options.thresholdDaysOverride !== undefined,
+    internal: deps.internalContacts ? await deps.internalContacts() : buildInternalContacts([], config.excludePhones),
   };
   if (Object.keys(ctx.stageNames).length === 0) {
     // A wrong pipelineId never errors in GHL — it just returns nothing, and

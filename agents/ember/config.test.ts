@@ -65,7 +65,10 @@ describe("the real test-account config", () => {
     expect(loadEmberConfig("eden-sub-account-one")!.outreach.sms.fromNumber).toBe("+17098001784");
   });
 
-  it("has no ember block on the real client yet", () => {
-    expect(loadEmberConfig("3-percent-east-coast")).toBeNull();
+  it("3%'s ember block is switched off and safe to send with once turned on (Mark, 2026-10-09)", () => {
+    const c = loadEmberConfig("3-percent-east-coast")!;
+    expect(c.enabled).toBe(false);
+    expect(c.outreach.sms.fromNumber).toBe("+17097013598");
+    expect(validateForSending(c)).toEqual([]);
   });
 });

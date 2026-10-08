@@ -396,6 +396,35 @@ describe("smsSafe — keep texts in the plain (GSM-7) character set so they bill
     const { smsSafe } = await import("./outreach");
     expect(smsSafe("Hi Jacob \u2014 it\u2019s \u201Cgreat\u201D\u2026 see\u00A0you")).toBe(`Hi Jacob - it's "great"... see you`);
   });
+  it("drops emoji, folds accents GSM-7 lacks, and swaps two-slot characters (Mark, 2026-10-09)", async () => {
+    const { smsSafe } = await import("./outreach");
+    expect(smsSafe("Great news \u{1F389}\u{1F3E1} Fran\u00E7ois! [3 bed] ~ok")).toBe("Great news Francois! (3 bed) -ok");
+    expect(smsSafe("Caf\u00E9  ready \u{1F44D}")).toBe("Caf\u00E9 ready");
+  });
+  it("keeps an over-long AI reply to one text, keeping the question at the end", async () => {
+    const { fitOneSegment, smsLength } = await import("./outreach");
+    const long = "That's great to hear, and thanks so much for getting back to me after all this time. " +
+      "We'd love to help you find the right place this spring. What area are you hoping to buy in?";
+    const fitted = fitOneSegment(long);
+    expect(smsLength(fitted)).toBeLessThanOrEqual(160);
+    expect(fitted.endsWith("What area are you hoping to buy in?")).toBe(true);
+    expect(fitOneSegment("Short and sweet. Still looking?")).toBe("Short and sweet. Still looking?");
+  });
+  it("every approved script and courtesy reply fits one text, even for a long name", async () => {
+    const { smsLength, courtesyFor } = await import("./outreach");
+    const { readFileSync } = await import("fs");
+    const name = "Christopher";
+    for (const id of ["eden-sub-account-one", "3-percent-east-coast"]) {
+      const { senderName, sms } = JSON.parse(readFileSync(`config/clients/${id}.json`, "utf-8")).ember.outreach;
+      for (const t of Object.values(sms.scripts).flat() as string[]) {
+        const text = t.replace("{{firstName}}", name).replace("{{senderName}}", senderName);
+        expect(smsLength(text), text).toBeLessThanOrEqual(160);
+      }
+    }
+    for (const kind of ["not_ready", "already_bought", "already_sold", "other_agent", "no_longer_looking"] as const) {
+      expect(smsLength(courtesyFor(kind, name, config())!)).toBeLessThanOrEqual(160);
+    }
+  });
   it("every default courtesy reply is plain", async () => {
     const { DEFAULT_COURTESY, courtesyFor } = await import("./outreach");
     for (const kind of ["not_ready", "already_bought", "already_sold", "other_agent", "no_longer_looking"] as const) {

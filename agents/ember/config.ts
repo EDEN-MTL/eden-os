@@ -65,6 +65,15 @@ export interface EmberConfig {
    */
   includeStages?: string[];
   /**
+   * Phone numbers (E.164) Ember never enrolls, on top of every GHL user on
+   * the location (team members are matched automatically by their GHL user
+   * phone and email). For our own numbers that show up as contacts: the
+   * test account's number, Eden's GHL number. Mark, 2026-10-09: a 3%
+   * preview found agents (Ashley, Genna, Brock, Andrew, Justin, Candice's
+   * phone) and our test numbers sitting in 3%'s "Replied" stage.
+   */
+  excludePhones?: string[];
+  /**
    * Where a lead goes on clear evidence they're no longer a prospect
    * (status.ts). Mark, 2026-10-01: the existing "Not Qualified/Not
    * Interested" stage. A lost stage, so Ember never enrolls them again.
