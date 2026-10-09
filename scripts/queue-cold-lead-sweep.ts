@@ -7,6 +7,7 @@
  */
 import "dotenv/config";
 import { queueColdLeadSweep } from "../agents/iris/dial-pending";
+import { formatLocal } from "../agents/iris/cadence";
 import { initSlackClients, sendMessage } from "../shared/slack";
 
 async function main() {
@@ -27,8 +28,8 @@ async function main() {
     await sendMessage("iris", {
       channel: process.env.IRIS_CALL_LOG_CHANNEL || "iris-call-logs",
       text:
-        `📋 Cold-lead sweep lined up — ${queued.length} calls, one at a time (each starts after the previous one ends; ` +
-        `no voicemail is left, and a lead who doesn't pick up gets one text):\n` +
+        `📋 Cold-lead sweep lined up — ${queued.length} calls starting ${formatLocal(queued[0].callAfter.toISOString(), "America/St_Johns")}, one at a time ` +
+        `(each starts after the previous one ends; no voicemail is left, and a lead who doesn't pick up gets one text — none if they were already texted):\n` +
         queued.map((q, i) => `${i + 1}. ${q.name}`).join("\n"),
     });
   }

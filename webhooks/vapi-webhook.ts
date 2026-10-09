@@ -537,7 +537,7 @@ async function handleMissedExplicitCallback(
 async function handleUnansweredSweepCall(
   clientId: string,
   contactId: string,
-  pending: { id: number; lead: { name?: string | null; intent?: string | null } | null },
+  pending: { id: number; attempts_made: number; lead: { name?: string | null; intent?: string | null } | null },
   endedReason: string | null
 ): Promise<void> {
   if (endedReason && /error|failed/i.test(endedReason)) {
@@ -545,6 +545,19 @@ async function handleUnansweredSweepCall(
     return;
   }
   await holdForTextReply(pending.id);
+  // Mark, 2026-10-08: a second round of calls to the same leads texts nobody
+  // again — they already got the one text after the first missed call. The row
+  // stays open so a reply to that earlier text is still answered.
+  if (pending.attempts_made >= 2) {
+    console.log(`[VAPI] Sweep call to ${contactId} unanswered again (attempt ${pending.attempts_made}) — not texting a second time.`);
+    await sendMessage("iris", {
+      channel: CALL_LOG_CHANNEL,
+      text: `📵 *${pending.lead?.name ?? contactId}* didn't answer the second attempt either — no voicemail, no second text.`,
+    }).catch((error) => {
+      console.error("[VAPI] Failed to post the second-round miss to Slack:", error instanceof Error ? error.message : error);
+    });
+    return;
+  }
   const outcome = await textMissedSweepCall(clientId, contactId, pending.lead?.name, pending.lead?.intent);
   if (outcome !== "failed") {
     // Mark, 2026-10-07: the call-log channel is how these calls are monitored,
