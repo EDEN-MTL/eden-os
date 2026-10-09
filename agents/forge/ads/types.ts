@@ -34,13 +34,25 @@ export interface EntityMetrics {
   impressions: number;
   clicks: number;
   frequency: number | null;
+  /** Best available lead count: the CRM's when it has any, else Meta's own. See lead_source. */
   lead_count: number;
+  /** Leads in GHL attributed to this entity. */
+  crm_lead_count: number;
+  /** Leads Meta itself reports for this entity (the `lead` action). */
+  meta_lead_count: number;
+  lead_source: "crm" | "meta" | "none";
   won_count: number;
   revenue: number;
   ctr: number | null;
   cpc: number | null;
+  cpm: number | null;
   cpl: number | null;
   roas: number | null;
+  /** YYYY-MM-DD of the first/last day it delivered inside the lookback window. */
+  first_date: string | null;
+  last_date: string | null;
+  /** Days it actually delivered inside the window (not calendar days). */
+  active_days: number;
   [key: string]: unknown;
 }
 

@@ -37,6 +37,7 @@ import { attributionReport, buildFieldIdLookup, extractAttribution, FieldMap } f
 import * as queue from "./ads/queue";
 import { MetaActions } from "./ads/actions";
 import { ActionExecutor } from "./ads/executor";
+import { getCampaignHealth } from "./ads/health";
 import { RuleScope } from "./ads/types";
 
 interface ClientSummary {
@@ -88,7 +89,7 @@ const TOOLS: ToolDef[] = [
   {
     name: "get_ad_performance",
     description:
-      "Real Meta ad performance for one client, rolled up to campaign, ad set, or ad level, over a trailing lookback window. Returns spend, impressions, clicks, CTR/CPC, plus attributed leads/won-deals/revenue/CPL/ROAS joined in from the CRM. Sorted by spend descending, capped at the top 15 entities.",
+      "Real Meta ad performance for one client, rolled up to campaign, ad set, or ad level, over a trailing lookback window. Returns spend, impressions, clicks, CTR/CPC, CPM, plus leads/won-deals/revenue/CPL/ROAS. lead_source says where the lead count came from: \"crm\" (attributed in GHL), \"meta\" (Meta's own count, used when GHL has no attribution, so quality and won deals are unknown) or \"none\". Sorted by spend descending, capped at the top 15 entities.",
     input_schema: {
       type: "object",
       properties: {
@@ -97,6 +98,19 @@ const TOOLS: ToolDef[] = [
         lookbackDays: { type: "integer", description: "Defaults to 7 if omitted." },
       },
       required: ["clientId", "scope"],
+    },
+  },
+  {
+    name: "get_campaign_health",
+    description:
+      "The morning health check. Judges every delivering campaign, ad set and ad for one client against that client's CPL targets (buyer/seller funnels where configured) and returns each one's verdict, from most to least urgent: kill, refresh_creative, scale, watch, healthy or too_early. Each comes with the reasons (real numbers), a recommended next step, Meta learning-phase status for ad sets, and where the budget lives (campaign vs ad set). Also returns account totals and current daily budget vs the client's cap. Use this first for any \"how are the ads doing / what should I turn off / what can I scale\" question. It only reads; it changes nothing.",
+    input_schema: {
+      type: "object",
+      properties: {
+        clientId: { type: "string" },
+        lookbackDays: { type: "integer", description: "Defaults to the client's configured window (14 days for low-volume real-estate accounts). Pass 7 to compare the recent week against the default window." },
+      },
+      required: ["clientId"],
     },
   },
   {
@@ -341,6 +355,19 @@ class ForgeAgent extends BaseAgent {
       `Known clients: ${clients}. Call list_clients if a client is mentioned that isn't in that list, or ask Jacob which client he means if it's genuinely ambiguous — never assume.`,
       "When Jacob asks you to do something that spends money or changes a live account (pause, resume, budget change, creating a campaign/adset/ad), just do it via the tool — him asking in this conversation is the approval, there's no separate confirmation step to wait for. Every create_* tool always lands PAUSED regardless, so nothing goes live from this alone — he still activates it himself once he's checked it over.",
       "To get an image into a real ad: Jacob attaches the finished image to his chat message (you can't generate one yourself — that's a separate, unwired pipeline), then in order: upload_ad_image (only works on an image attached to that exact message, not one from earlier in the conversation), create_ad_creative with the resulting hash plus headline/copy/landing-page link, then create_ad with the resulting creative id under the ad set. If he hasn't attached anything and asks you to build creative, say so plainly rather than pretending to have an image.",
+      [
+        "## Running real-estate accounts",
+        "Most of EDEN's clients are realtors, and their accounts don't behave like e-commerce ones. Manage them like this:",
+        "- Health first. For \"how are the ads doing\", \"what should I turn off\" or \"what can we scale\", call get_campaign_health and lead with the verdicts: what to kill, what to refresh, what to scale, each with its numbers. Then offer to make the changes. Don't make them unasked; this is the one place where you wait for Jacob to say go.",
+        "- Volume is low. A $50/day realtor account gets well under one lead per ad set per day, so judge on spend against target CPL, not on a few days of CPL. An ad hasn't failed until it has spent about 2–3 target CPLs with nothing, and hasn't won until it has several leads under target. One lead more or less in a week is noise; say so instead of overreacting.",
+        "- Buyers and sellers are separate funnels. Seller leads are fewer, cost more and are worth more (a listing), so never compare a seller ad's CPL against a buyer target or the other way round. get_campaign_health already applies each funnel's own target.",
+        "- Protect learning. Every significant edit (budget changes over ~20%, targeting, new creative in the ad set, pause/resume) restarts Meta's learning phase. Scale in ~20% steps with 3–4 days between them, batch edits together instead of tweaking daily, and expect \"Learning Limited\" on small budgets: the fix is fewer, consolidated ad sets, not more edits.",
+        "- Kill ads before ad sets. Pausing a losing ad inside a working ad set is cheap; pausing the ad set throws away its learning. Kill a whole ad set only when its targeting itself is failing across creatives.",
+        "- Fatigue means new creative, not a pause. With frequency high, keep the audience and launch a fresh hook or image in that ad set.",
+        "- Mind where the budget lives. In a CBO campaign the budget sits on the campaign, so scale the campaign, not the ad set. Stay under the client's daily budget cap; flag it rather than going over.",
+        "- Respect HOUSING. Real-estate ads are a Meta special ad category: no age or gender targeting, no radius under 15 miles (25km), no lookalike audiences. The compliance gate enforces it, but don't propose targeting it would reject.",
+        "- Be honest about lead quality. If lead_source is \"meta\", the count is Meta's and none of those leads are traced in GHL, so you can say what's cheap, not what's closing. Say that when it matters to the call.",
+      ].join("\n"),
       "Cite real numbers from your tool calls, not estimates. If a tool call fails or a client has no Meta account configured, say that plainly rather than inventing a plausible-sounding answer.",
       "Respond concisely, like a sharp media buyer texting a client back — not a report.",
     ].join("\n\n");
@@ -416,6 +443,14 @@ class ForgeAgent extends BaseAgent {
         const rows = await computeMetrics(input.scope as RuleScope, input.lookbackDays ?? 7, input.clientId);
         const top = rows.sort((a, b) => b.spend - a.spend).slice(0, 15);
         return JSON.stringify({ totalEntities: rows.length, shown: top.length, rows: top });
+      }
+
+      case "get_campaign_health": {
+        // A missing Meta config isn't fatal here: the report still judges the
+        // synced snapshots, it just can't filter out entities paused since.
+        const metaConfig = await getMetaConfig(input.clientId);
+        const client = metaConfig ? new MetaClient(metaConfig) : null;
+        return JSON.stringify(await getCampaignHealth(input.clientId, client, input.lookbackDays));
       }
 
       case "get_attribution_report": {
