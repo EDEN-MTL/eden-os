@@ -94,6 +94,11 @@
       "clientLabel": "3% Realty East Coast",
       "note": "Mark, 2026-10-07: Iris posts each completed live transfer to #live-transfers-and-booked-appointments (private, so the channel ID — Iris was added to it) instead of Mark posting it by hand."
     },
+    "humanHandsOff": {
+      "days": 7,
+      "blocksCalls": false,
+      "note": "Mark, 2026-10-10: when a teammate (Mark, Jacob, any 3% agent) has texted a lead from GHL in the last N days, Iris stays out of that text conversation — no auto-replies, no texts of her own. blocksCalls=false: calls are unaffected (Mark has asked Iris to call leads he texted by hand); set true to stop Iris calling them too."
+    },
     "sms": {
       "fromNumber": "+17097013598",
       "fromNumberNote": "Mark, 2026-10-07: GHL reuses whichever number last texted a lead, and older leads were last texted from +17097021163, which is no longer available in the account — every send to them failed ('Invalid from number'). Iris's own proactive texts name the main 3% number explicitly. Same number Iris calls out from."

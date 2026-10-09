@@ -136,6 +136,10 @@ export interface IrisConfig {
    * told. Mark, 2026-10-07.
    */
   smsFromNumber?: string;
+  /** How many days after a teammate's text Iris stays out of that lead's text conversation (default 7). */
+  humanHandsOffDays?: number;
+  /** When true, a recent teammate text also stops Iris CALLING that lead. Off by default — texting only. */
+  humanTextBlocksCalls?: boolean;
   /** Where Iris posts each completed live transfer (a private channel, so its ID), and the client name used in that post. */
   liveTransferSlack?: { channel: string; clientLabel: string };
   /**

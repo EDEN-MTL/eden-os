@@ -24,6 +24,7 @@ const ghl = vi.hoisted(() => ({
 }));
 vi.mock("../../shared/ghl", () => ghl);
 
+vi.mock("./human-touch", () => ({ checkHumanTouch: vi.fn(async () => ({ status: "none" })), DEFAULT_HUMAN_HANDS_OFF_DAYS: 7 }));
 vi.mock("../ember/store", () => ({ lastEmberTouchText: vi.fn(async () => "Hi Catherine, still on the hunt? Reply STOP to opt out.") }));
 
 const readFileSyncMock = vi.hoisted(() => vi.fn());

@@ -18,6 +18,7 @@ import { loadIrisConfig, loadClientBranding } from "./index";
 import { buildSmsQualificationPrompt } from "./scripts";
 import { classifyInboundText, lastInboundText, recentTexts } from "./text-signals";
 import { appendNoteToContact } from "./notes";
+import { checkHumanTouch, DEFAULT_HUMAN_HANDS_OFF_DAYS } from "./human-touch";
 import { IrisConfig, qualify, QualificationAnswers } from "./qualification";
 import { clampToLegalCallingWindow, formatLocal } from "./cadence";
 import { chatWithTools, ChatMessage, ToolDef } from "../../shared/claude";
@@ -383,6 +384,16 @@ async function handleInboundSms(contactId: string, text: string, options: Inboun
 
   const ghlConfig = await getGhlConfig(clientId).catch(() => null);
   if (!ghlConfig) return false;
+
+  // A teammate texting this lead means the conversation is theirs, not Iris's
+  // (Mark, 2026-10-10). Returns true — "handled" — so the route doesn't hand
+  // the same text on to Ember either. If the thread can't be read, stay quiet
+  // rather than risk talking over a person.
+  const humanTouch = await checkHumanTouch(contactId, ghlConfig.locationId, ghlConfig.apiKey, config.humanHandsOffDays ?? DEFAULT_HUMAN_HANDS_OFF_DAYS);
+  if (humanTouch.status !== "none") {
+    console.log(`[IRS-SMS] Staying out of ${contactId}'s text conversation — ${humanTouch.status === "human" ? `a teammate texted them ${humanTouch.at}` : "couldn't verify no teammate is texting them"}.`);
+    return true;
+  }
 
   const timezone = (await getLocationTimezone(ghlConfig.locationId, ghlConfig.apiKey).catch(() => null)) || config.timezone || "America/St_Johns";
 

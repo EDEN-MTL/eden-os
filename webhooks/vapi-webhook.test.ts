@@ -29,6 +29,9 @@ vi.mock("../agents/iris/dial-pending", () => dialPending);
 const db = vi.hoisted(() => ({ query: vi.fn(async () => []) }));
 vi.mock("../shared/db", () => db);
 
+const humanTouch = vi.hoisted(() => ({ checkHumanTouch: vi.fn(async () => ({ status: "none" })), DEFAULT_HUMAN_HANDS_OFF_DAYS: 7 }));
+vi.mock("../agents/iris/human-touch", () => humanTouch);
+
 const inbound = vi.hoisted(() => ({ handleInboundCall: vi.fn() }));
 vi.mock("../agents/iris/inbound", () => inbound);
 
@@ -59,6 +62,7 @@ import {
 afterEach(() => vi.clearAllMocks());
 
 beforeEach(() => {
+  humanTouch.checkHumanTouch.mockResolvedValue({ status: "none" });
   smsConfirmation.delaysMs = [0, 0];
   ghl.sendSMS.mockResolvedValue({ messageId: "msg-1" });
   ghl.getMessage.mockResolvedValue({ status: "delivered" });
@@ -1110,5 +1114,50 @@ describe("postLiveTransferToSlack", () => {
     slack.sendMessage.mockRejectedValue(new Error("not_in_channel"));
 
     await expect(postLiveTransferToSlack("3-percent-east-coast", "contact-1")).resolves.toBeUndefined();
+  });
+});
+
+/**
+ * Mark, 2026-10-10: Iris never texts a lead a teammate is already texting —
+ * including the one-text follow-up after an unanswered call.
+ */
+describe("sendIrisText — stays out when a teammate has texted the lead", () => {
+  const ROW = {
+    id: 77,
+    attempts_made: 1,
+    created_at: new Date("2026-07-14T12:00:00.000Z"),
+    status: "placed",
+    is_explicit_callback: true,
+    source: "sweep",
+    callback_misses: 0,
+    lead: { name: "Matthew Power", intent: "buyer" },
+  };
+
+  beforeEach(() => {
+    ghl.sendSMS.mockReset().mockResolvedValue({ messageId: "msg-1" });
+    slack.sendMessage.mockReset().mockResolvedValue({});
+    db.query.mockResolvedValue([ROW]);
+    iris.loadIrisConfig.mockReturnValue({ timezone: "America/St_Johns", smsFromNumber: "+17097013598" });
+    iris.loadClientBranding.mockReturnValue({ brandName: "3 Percent East Coast", city: "St. John's" });
+    ghl.getGhlConfig.mockResolvedValue({ locationId: "loc-1", apiKey: "key-1" });
+  });
+
+  it("sends no text after an unanswered call when a teammate texted the lead recently, and says so in the call-log channel", async () => {
+    humanTouch.checkHumanTouch.mockResolvedValue({ status: "human", at: "2026-10-06T18:28:00.000Z", userId: "user-mark" });
+
+    await maybeReopenPendingCall("3-percent-east-coast", "contact-1", "customer-did-not-answer");
+
+    expect(ghl.sendSMS).not.toHaveBeenCalled();
+    const posts = slack.sendMessage.mock.calls.map((c: any[]) => c[1].text as string);
+    expect(posts.some((t) => t.includes("Not texting") && t.includes("Matthew Power"))).toBe(true);
+    expect(posts.some((t) => t.includes("📱 Texted"))).toBe(false);
+  });
+
+  it("sends no text when the thread can't be read", async () => {
+    humanTouch.checkHumanTouch.mockResolvedValue({ status: "unknown" });
+
+    await maybeReopenPendingCall("3-percent-east-coast", "contact-1", "customer-did-not-answer");
+
+    expect(ghl.sendSMS).not.toHaveBeenCalled();
   });
 });

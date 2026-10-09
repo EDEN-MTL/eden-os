@@ -13,6 +13,8 @@ const textSignals = vi.hoisted(() => ({
 }));
 vi.mock("./text-signals", () => textSignals);
 vi.mock("./notes", () => ({ appendNoteToContact: vi.fn(async () => {}) }));
+const humanTouch = vi.hoisted(() => ({ checkHumanTouch: vi.fn(async () => ({ status: "none" })), DEFAULT_HUMAN_HANDS_OFF_DAYS: 7 }));
+vi.mock("./human-touch", () => humanTouch);
 
 const db = vi.hoisted(() => ({ query: vi.fn() }));
 vi.mock("../../shared/db", () => db);
@@ -82,6 +84,7 @@ const LEAD = {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  humanTouch.checkHumanTouch.mockResolvedValue({ status: "none" });
   readFileSyncMock.mockReturnValue(CLIENT_CONFIG);
   ghl.getGhlConfig.mockResolvedValue({ locationId: "loc-1", apiKey: "key-1" });
   ghl.getLocationTimezone.mockResolvedValue("America/St_Johns");
@@ -463,5 +466,46 @@ describe("irisHandleInboundSms — sees the whole thread, including the automati
     } finally {
       vi.useRealTimers();
     }
+  });
+});
+
+/**
+ * Mark, 2026-10-10: when a teammate (Mark, Jacob, any agent) has texted a
+ * lead, Iris stays out of that text conversation.
+ */
+describe("irisHandleInboundSms — stays out when a teammate has texted the lead", () => {
+  const ROW = { client_id: "3-percent-east-coast", contact_id: "contact-1", lead: LEAD, status: "pending" };
+
+  it("sends no reply, calls no model, and still reports the text as handled so Ember doesn't answer it either", async () => {
+    db.query.mockResolvedValueOnce([ROW]);
+    humanTouch.checkHumanTouch.mockResolvedValue({ status: "human", at: "2026-10-09T15:00:00.000Z", userId: "user-mark" });
+
+    const handled = await irisHandleInboundSms("contact-1", "Thanks, call me tomorrow", { wait: async () => {} });
+
+    expect(handled).toBe(true);
+    expect(chatWithTools).not.toHaveBeenCalled();
+    expect(ghl.sendSMS).not.toHaveBeenCalled();
+    expect(classifyInboundText).not.toHaveBeenCalled();
+  });
+
+  it("also stays quiet when it can't verify the thread — never risks talking over a person", async () => {
+    db.query.mockResolvedValueOnce([ROW]);
+    humanTouch.checkHumanTouch.mockResolvedValue({ status: "unknown" });
+
+    const handled = await irisHandleInboundSms("contact-1", "hello", { wait: async () => {} });
+
+    expect(handled).toBe(true);
+    expect(ghl.sendSMS).not.toHaveBeenCalled();
+  });
+
+  it("uses the client's own window when one is configured", async () => {
+    readFileSyncMock.mockReturnValue(JSON.stringify({ ...JSON.parse(CLIENT_CONFIG), iris: { ...JSON.parse(CLIENT_CONFIG).iris, humanHandsOff: { days: 3 } } }));
+    db.query.mockResolvedValueOnce([ROW]);
+    vi.mocked(loadHistory).mockResolvedValueOnce([]);
+    vi.mocked(chatWithTools).mockResolvedValueOnce(endTurn("ok"));
+
+    await irisHandleInboundSms("contact-1", "hello", { wait: async () => {} });
+
+    expect(humanTouch.checkHumanTouch).toHaveBeenCalledWith("contact-1", "loc-1", "key-1", 3);
   });
 });
