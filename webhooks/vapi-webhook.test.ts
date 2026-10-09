@@ -966,6 +966,17 @@ describe("maybeReopenPendingCall — unanswered sweep calls", () => {
     expect(slack.sendMessage).not.toHaveBeenCalled();
   });
 
+  it("does not text a second time when a second round of calls goes unanswered, but still holds the row open for a reply", async () => {
+    db.query.mockResolvedValue([{ ...ROW, attempts_made: 2 }]);
+
+    await maybeReopenPendingCall("3-percent-east-coast", "contact-1", "customer-did-not-answer");
+
+    expect(ghl.sendSMS).not.toHaveBeenCalled();
+    expect(dialPending.holdForTextReply).toHaveBeenCalledWith(77);
+    const posts = slack.sendMessage.mock.calls.map((c: any[]) => c[1].text as string);
+    expect(posts.some((t) => t.includes("second attempt either"))).toBe(true);
+  });
+
   it("does nothing once the row has moved on from 'placed'", async () => {
     db.query.mockResolvedValue([{ ...ROW, status: "pending" }]);
 
