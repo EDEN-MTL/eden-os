@@ -3,7 +3,13 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 const configMod = vi.hoisted(() => ({ loadEmberConfig: vi.fn(), loadEmberOutcomeStages: vi.fn() }));
 vi.mock("./config", async (orig) => ({ ...(await orig<any>()), ...configMod }));
 
-const store = vi.hoisted(() => ({ listDue: vi.fn(async () => []) }));
+const store = vi.hoisted(() => ({
+  listDue: vi.fn(async () => []),
+  getHealth: vi.fn(async () => ({ state: "ok", reason: null, pausedUntil: null, cooldowns: 0, lastTripAt: null })),
+  setHealth: vi.fn(async () => {}),
+  optOutsLastDay: vi.fn(async () => ({ stops: 0, sends: 0 })),
+  failedSendsForTouch: vi.fn(async () => 0),
+}));
 vi.mock("./store", () => store);
 
 const outreachMod = vi.hoisted(() => ({
@@ -11,8 +17,9 @@ const outreachMod = vi.hoisted(() => ({
 }));
 vi.mock("./outreach", async (orig) => ({ ...(await orig<any>()), ...outreachMod }));
 
-const depsMod = vi.hoisted(() => ({ buildOutreachDeps: vi.fn(async () => ({})), resolveStageNames: vi.fn(async () => ({})) }));
+const depsMod = vi.hoisted(() => ({ buildOutreachDeps: vi.fn(async () => ({ alert: vi.fn(async () => {}) })), resolveStageNames: vi.fn(async () => ({})) }));
 vi.mock("./deps", () => depsMod);
+vi.mock("./alerts", async (orig) => ({ ...(await orig<any>()), slackAlert: () => vi.fn(async () => {}) }));
 
 import { EmberConfigError } from "./config";
 import { EmberDisabledError, sendPendingForClient } from "./send";
@@ -61,5 +68,30 @@ describe("sendPendingForClient", () => {
     expect(second).toEqual({ ran: false, reason: "a send run is already in progress" });
     release();
     await first;
+  });
+
+  it("does nothing while Ember has paused itself", async () => {
+    configMod.loadEmberConfig.mockReturnValue(config());
+    store.getHealth.mockResolvedValueOnce({ state: "stopped", reason: "Invalid from number", pausedUntil: null, cooldowns: 0, lastTripAt: null });
+    const result = await sendPendingForClient("c", { now: NOW });
+    expect(result).toEqual({ ran: false, paused: true, reason: "Ember is stopped: Invalid from number" });
+    expect(store.listDue).not.toHaveBeenCalled();
+  });
+
+  it("stops itself before sending when too many leads asked to stop today", async () => {
+    configMod.loadEmberConfig.mockReturnValue(config());
+    store.optOutsLastDay.mockResolvedValueOnce({ stops: 4, sends: 10 });
+    const result = await sendPendingForClient("c", { now: NOW });
+    expect(result).toEqual(expect.objectContaining({ ran: false, paused: true }));
+    expect(store.setHealth).toHaveBeenCalledWith("c", expect.objectContaining({ state: "stopped" }));
+    expect(store.listDue).not.toHaveBeenCalled();
+  });
+
+  it("pauses itself after a run where the sending number was refused", async () => {
+    configMod.loadEmberConfig.mockReturnValue(config());
+    store.listDue.mockResolvedValueOnce([lead()] as any);
+    outreachMod.sendBatch.mockResolvedValueOnce({ attempted: 1, sent: 0, skipped: [], failed: [{ leadId: 1, sent: false, error: "Invalid from number" }], capReached: false } as any);
+    await sendPendingForClient("c", { now: NOW });
+    expect(store.setHealth).toHaveBeenCalledWith("c", expect.objectContaining({ state: "stopped" }));
   });
 });

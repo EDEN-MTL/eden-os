@@ -1,6 +1,10 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 const store = vi.hoisted(() => ({
+  getHealth: vi.fn(async () => ({ state: "ok", reason: null, pausedUntil: null, cooldowns: 0, lastTripAt: null })),
+  setHealth: vi.fn(async () => {}),
+  optOutsLastDay: vi.fn(async () => ({ stops: 0, sends: 0 })),
+  failedSendsForTouch: vi.fn(async () => 0),
   listOpenLeadsByContactId: vi.fn(async () => [] as any[]),
   getLeadByOpportunityId: vi.fn(async () => null as any),
   transitionStatus: vi.fn(async () => true),
@@ -56,6 +60,16 @@ describe("with ember.enabled on", () => {
     expect(replyDeps.buildReplyContext).toHaveBeenCalled();
     expect(outreachMod.handleReply).toHaveBeenCalledWith(expect.objectContaining({ id: 1 }), "yes still looking", { marker: "ctx" });
     expect(store.updateLead).toHaveBeenCalledWith(1, { lastInboundSeenAt: expect.any(String) });
+  });
+
+  it("while Ember has stopped itself, a reply goes to a person instead of being answered", async () => {
+    enabled();
+    store.getHealth.mockResolvedValueOnce({ state: "stopped", reason: "opt-out spike", pausedUntil: null, cooldowns: 0, lastTripAt: null });
+    store.listOpenLeadsByContactId.mockResolvedValueOnce([lead()]);
+    expect(await emberHandleInboundMessage("c1", "yes still looking")).toBe(true);
+    expect(outreachMod.handleReply).not.toHaveBeenCalled();
+    expect(store.updateLead).toHaveBeenCalledWith(1, expect.objectContaining({ status: "replied" }));
+    expect(alert).toHaveBeenCalledWith(expect.stringContaining("replied while Ember is stopped"));
   });
 
   it("a lead whose Iris call is already queued is still answered by Ember", async () => {

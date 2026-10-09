@@ -18,7 +18,7 @@ import type { OutcomeStageMap } from "../forge/ads/attribution";
 import { CourtesyTemplates, EmberConfig, renderTemplate, scriptKindFor } from "./config";
 import { AlertFn, formatReactivationAlert, markExited, markReactivated } from "./alerts";
 import { detectChange } from "./scan";
-import { logSend, sendsToday, updateLead } from "./store";
+import { failedSendsForTouch, logSend, sendsToday, updateLead } from "./store";
 import { GhlOpportunityLite, NurtureChannel, NurtureLead } from "./types";
 import { NotInterestedCategory, StatusDecision } from "./status";
 import { moveToNotInterested, MoveStageFn } from "./notinterested";
@@ -388,9 +388,20 @@ export async function sendTouch(lead: NurtureLead, deps: OutreachDeps, ctx: Touc
     // problem look like a dead lead list. The row is left due, so the next
     // run retries it.
     await logSend({ clientId: lead.clientId, leadId: lead.id, touchIndex, channel, messageContent: logged, error: msg });
+    // A number that keeps failing (landline, disconnected, carrier-blocked)
+    // would otherwise be retried every run forever. Third strike: park the
+    // lead and tell a person, instead of hammering it (Mark, 2026-10-09).
+    const strikes = await failedSendsForTouch(lead.id, touchIndex).catch(() => 0);
+    if (strikes >= MAX_SEND_STRIKES) {
+      await updateLead(lead.id, { status: "paused", statusReason: `${strikes} failed sends — last error: ${msg.slice(0, 120)}`, nextTouchAt: null });
+      await deps.alert(`⚠️ Ember stopped retrying *${lead.contactName ?? lead.phone ?? lead.ghlContactId}* after ${strikes} failed sends (last error: "${msg.slice(0, 120)}"). The number may be wrong or a landline — fix it in GHL and resume lead #${lead.id}.`).catch(() => {});
+    }
     return { leadId: lead.id, sent: false, channel, error: msg };
   }
 }
+
+/** Failed sends of one touch before Ember gives up on that lead and asks a person. */
+export const MAX_SEND_STRIKES = 3;
 
 export interface BatchResult {
   attempted: number;

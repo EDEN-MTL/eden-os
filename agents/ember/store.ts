@@ -446,3 +446,55 @@ export async function upsertIrisHandoff(
     [clientId, contactId, JSON.stringify(lead), callAfter === "never" ? "infinity" : callAfter, smsScheduled]
   );
 }
+
+// ─── Self-pause health (agents/ember/health.ts) ───
+
+export interface HealthRow {
+  state: "ok" | "cooling" | "stopped";
+  reason: string | null;
+  pausedUntil: string | null;
+  cooldowns: number;
+  lastTripAt: string | null;
+}
+
+const HEALTHY: HealthRow = { state: "ok", reason: null, pausedUntil: null, cooldowns: 0, lastTripAt: null };
+
+export async function getHealth(clientId: string): Promise<HealthRow> {
+  const rows = await query<any>(`SELECT * FROM ember_health WHERE client_id = $1`, [clientId]);
+  const r = rows[0];
+  if (!r) return { ...HEALTHY };
+  const iso = (v: any) => (v ? new Date(v).toISOString() : null);
+  return { state: r.state, reason: r.reason, pausedUntil: iso(r.paused_until), cooldowns: Number(r.cooldowns ?? 0), lastTripAt: iso(r.last_trip_at) };
+}
+
+export async function setHealth(clientId: string, h: HealthRow): Promise<void> {
+  await query(
+    `INSERT INTO ember_health (client_id, state, reason, paused_until, cooldowns, last_trip_at, updated_at)
+     VALUES ($1,$2,$3,$4,$5,$6, now())
+     ON CONFLICT (client_id) DO UPDATE SET state = $2, reason = $3, paused_until = $4, cooldowns = $5, last_trip_at = $6, updated_at = now()`,
+    [clientId, h.state, h.reason, h.pausedUntil, h.cooldowns, h.lastTripAt]
+  );
+}
+
+/** Stop requests that came in as replies in the last day, against texts sent. */
+export async function optOutsLastDay(clientId: string): Promise<{ stops: number; sends: number }> {
+  const rows = await query<{ stops: string; sends: string }>(
+    `SELECT
+       (SELECT count(*) FROM ember_nurture_leads
+          WHERE client_id = $1 AND status = 'opted_out' AND status_reason LIKE 'Not Interested%'
+            AND updated_at > now() - interval '1 day') AS stops,
+       (SELECT count(*) FROM ember_send_log
+          WHERE client_id = $1 AND error IS NULL AND sent_at > now() - interval '1 day') AS sends`,
+    [clientId]
+  );
+  return { stops: Number(rows[0]?.stops ?? 0), sends: Number(rows[0]?.sends ?? 0) };
+}
+
+/** Failed sends of this touch to this lead, ever (each run retries a failed touch). */
+export async function failedSendsForTouch(leadId: number, touchIndex: number): Promise<number> {
+  const rows = await query<{ count: string }>(
+    `SELECT count(*) FROM ember_send_log WHERE lead_id = $1 AND touch_index = $2 AND error IS NOT NULL`,
+    [leadId, touchIndex]
+  );
+  return Number(rows[0]?.count ?? 0);
+}

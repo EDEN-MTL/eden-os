@@ -250,6 +250,9 @@ async function runTool(name: string, input: any, lead: NurtureLead, ctx: Convers
  * One reply turn: the lead's text in, Ember's reply out (sent after the
  * human-like pause). Returns the reply sent, or null if none was.
  */
+/** Ember replies in one conversation before it hands the lead to a person. */
+export const MAX_EMBER_REPLIES = 15;
+
 export async function emberConverse(
   lead: NurtureLead,
   text: string,
@@ -258,6 +261,15 @@ export async function emberConverse(
 ): Promise<string | null> {
   const key = conversationKey(lead.clientId, lead.ghlContactId);
   const history = await deps.loadHistory(key).catch(() => [] as ChatMessage[]);
+  // Qualifying takes 6-8 texts. Far past that, something's off — an
+  // auto-responder texting back, or a lead Ember can't satisfy — and more
+  // automated texts make it worse (Mark, 2026-10-09: pause and fix itself).
+  const repliesSoFar = history.filter((m) => m.role === "assistant").length;
+  if (repliesSoFar >= MAX_EMBER_REPLIES) {
+    await deps.updateLead(lead.id, { status: "replied", statusReason: `long conversation (${repliesSoFar} Ember replies) — handed to a person`, nextTouchAt: null });
+    await deps.alert(`💬 Ember has sent *${lead.contactName ?? lead.ghlContactId}* ${repliesSoFar} replies without wrapping up, so it stopped texting them. Latest from them: "${text.slice(0, 200)}" — please take it from here in GHL.`).catch(() => {});
+    return null;
+  }
   if (lead.status !== "conversing" && lead.status !== "handed_off") {
     await deps.updateLead(lead.id, { status: "conversing", statusReason: "texting with Ember", nextTouchAt: null });
   }

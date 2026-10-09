@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 vi.mock("../../shared/claude", () => ({ chatWithTools: vi.fn() }));
 
-import { buildEmberSmsPrompt, ConversationContext, ConversationDeps, emberConverse } from "./conversation";
+import { buildEmberSmsPrompt, ConversationContext, ConversationDeps, emberConverse, MAX_EMBER_REPLIES } from "./conversation";
 import { config, lead } from "./test-fixtures";
 
 const IRIS_CONFIG: any = {
@@ -70,6 +70,19 @@ describe("emberConverse — Ember texts the old lead itself", () => {
     expect(d.updateLead).toHaveBeenCalledWith(1, expect.objectContaining({ status: "conversing" }));
     expect(d.appendHistory).toHaveBeenCalledWith("sms:eden-sub-account-one:c1", "user", "yes still looking");
     expect(d.appendHistory).toHaveBeenCalledWith("sms:eden-sub-account-one:c1", "assistant", reply);
+  });
+
+  it("hands a conversation that's run far too long to a person instead of texting again", async () => {
+    const d = deps(text("should never be sent"));
+    const long = Array.from({ length: MAX_EMBER_REPLIES }, (_, i) => [
+      { role: "user" as const, content: `msg ${i}` },
+      { role: "assistant" as const, content: `reply ${i}` },
+    ]).flat();
+    d.loadHistory = vi.fn(async () => long);
+    expect(await emberConverse(lead(), "auto-reply: I'm away", ctx(), d)).toBeNull();
+    expect(d.sent).toEqual([]);
+    expect(d.updateLead).toHaveBeenCalledWith(1, expect.objectContaining({ status: "replied" }));
+    expect(d.alert).toHaveBeenCalledWith(expect.stringContaining("stopped texting them"));
   });
 
   it("a qualified lead who says 'now' gets Iris's live-transfer call queued — scored by code, not the model", async () => {

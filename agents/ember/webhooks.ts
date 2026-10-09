@@ -19,6 +19,7 @@ import { handleReply } from "./outreach";
 import { detectChange } from "./scan";
 import { getLeadByOpportunityId, listOpenLeadsByContactId, updateLead } from "./store";
 import { buildReplyContext } from "./reply-deps";
+import { checkHealth } from "./health";
 import { NurtureLead } from "./types";
 import { readFileSync } from "fs";
 import { join } from "path";
@@ -56,6 +57,18 @@ export async function emberHandleInboundMessage(contactId: string, text: string,
     const config = enabledConfig(lead);
     if (!config) continue;
     await updateLead(lead.id, { lastInboundSeenAt: new Date().toISOString() });
+    // While Ember has stopped itself (health.ts), nothing automated goes
+    // out — but a lead who replied must not be left on read. A person gets
+    // the message instead. (A short "cooling" pause still answers: those
+    // are send-side hiccups, and a reply is what we've been waiting for.)
+    const alert = slackAlert(config.alertChannel);
+    const gate = await checkHealth(lead.clientId, alert, receivedAt);
+    if (!gate.ok && gate.state === "stopped") {
+      await updateLead(lead.id, { status: "replied", statusReason: `replied while Ember was stopped — needs a person`, repliedAt: receivedAt.toISOString(), nextTouchAt: null });
+      await alert(`📩 *${lead.contactName ?? lead.phone ?? lead.ghlContactId}* replied while Ember is stopped: "${text.slice(0, 200)}" — please answer them in GHL.`).catch(() => {});
+      handled = true;
+      continue;
+    }
     const replyCtx = await buildReplyContext(lead, config, { receivedAt, clientName: clientName(lead.clientId) });
     const sentiment = await handleReply(lead, text, replyCtx);
     console.log(`[EMB] reply from ${lead.contactName ?? lead.ghlContactId}: ${sentiment}`);

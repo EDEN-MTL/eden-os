@@ -3,7 +3,8 @@ import { BaseAgent, ToolContext } from "../base-agent";
 import { EmberConfigError, listEmberClientIds, loadEmberConfig } from "./config";
 import { runEmberScanForClient } from "./scan";
 import { EmberDisabledError, sendPendingForClient } from "./send";
-import { getLead, getStats, listLeads, updateLead } from "./store";
+import { getHealth, getLead, getStats, listLeads, updateLead } from "./store";
+import { resumeHealth } from "./health";
 import { NurtureStatus } from "./types";
 
 const CLIENT_ID_PROP = {
@@ -54,6 +55,18 @@ const TOOLS: ToolDef[] = [
     name: "ember_send_now",
     description:
       "Sends every nurture touch that is due right now, under the daily cap, inside the client's local send window. Real texts/emails to real people — cannot be undone. Refuses outright while ember.enabled is false in the client config; that switch, not this tool, is the safety gate. Being asked to do this in this conversation is the approval.",
+    input_schema: { type: "object", properties: { clientId: CLIENT_ID_PROP } },
+  },
+  {
+    name: "ember_health",
+    description:
+      "Whether Ember has paused or stopped ITSELF for a client (agents/ember/health.ts) and why — separate from ember.enabled. Use when asked if Ember is running, why texts stopped, or before resuming.",
+    input_schema: { type: "object", properties: { clientId: CLIENT_ID_PROP } },
+  },
+  {
+    name: "ember_resume_sending",
+    description:
+      "Clears Ember's own pause/stop for a client after a teammate has checked the problem it reported in Slack. Sends and replies resume at the next scheduled run. Does nothing to ember.enabled. Only do this when a teammate says the issue is fixed or asks to resume.",
     input_schema: { type: "object", properties: { clientId: CLIENT_ID_PROP } },
   },
   {
@@ -206,6 +219,18 @@ plainly. Respond concisely, like a teammate texting a quick update.`;
           }
           throw error;
         }
+      }
+
+      case "ember_health": {
+        const clientId = resolveClientId(input);
+        return JSON.stringify({ clientId, ...(await getHealth(clientId)) });
+      }
+
+      case "ember_resume_sending": {
+        const clientId = resolveClientId(input);
+        const before = await getHealth(clientId);
+        const after = await resumeHealth(clientId);
+        return JSON.stringify({ clientId, was: before.state, wasReason: before.reason, now: after.state });
       }
 
       case "ember_pause_lead": {
