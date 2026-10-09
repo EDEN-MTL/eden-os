@@ -1,6 +1,10 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 const store = vi.hoisted(() => ({
+  getHealth: vi.fn(async () => ({ state: "ok", reason: null, pausedUntil: null, cooldowns: 0, lastTripAt: null })),
+  setHealth: vi.fn(async () => {}),
+  optOutsLastDay: vi.fn(async () => ({ stops: 0, sends: 0 })),
+  failedSendsForTouch: vi.fn(async () => 0),
   getLead: vi.fn(),
   getStats: vi.fn(async () => ({ byStatus: { nurturing: 2 }, dueNow: 1 })),
   listLeads: vi.fn(async () => []),

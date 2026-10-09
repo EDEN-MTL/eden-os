@@ -654,6 +654,23 @@ CREATE TABLE IF NOT EXISTS ember_send_log (
 CREATE INDEX IF NOT EXISTS idx_ember_send_day ON ember_send_log(client_id, sent_at DESC);
 CREATE INDEX IF NOT EXISTS idx_ember_send_lead ON ember_send_log(lead_id, touch_index);
 
+-- Ember's self-pause switch, one row per client (agents/ember/health.ts).
+-- Mark, 2026-10-09: "if there is something wrong, Ember should pause and
+-- fix itself." ok = running; cooling = paused until paused_until for a
+-- problem that usually clears on its own (GHL/AI hiccup), then resumes by
+-- itself; stopped = needs a person (account/number error, an opt-out
+-- spike, or a third cool-off in a day) and stays paused until resumed.
+-- No row = ok. Separate from ember.enabled, which only a human flips.
+CREATE TABLE IF NOT EXISTS ember_health (
+    client_id TEXT PRIMARY KEY,
+    state TEXT NOT NULL DEFAULT 'ok',
+    reason TEXT,
+    paused_until TIMESTAMPTZ,
+    cooldowns INTEGER NOT NULL DEFAULT 0,
+    last_trip_at TIMESTAMPTZ,
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
 -- Temporary diagnostic, 2026-09-25: the real GHL "Customer Replied" webhook
 -- payload for 3-percent-east-coast doesn't match what parseInboundMessage
 -- expects (agents/quarry/inbound.ts) — it's a flat, label-keyed dump of the

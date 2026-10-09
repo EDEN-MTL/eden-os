@@ -1,6 +1,10 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 const store = vi.hoisted(() => ({
+  getHealth: vi.fn(async () => ({ state: "ok", reason: null, pausedUntil: null, cooldowns: 0, lastTripAt: null })),
+  setHealth: vi.fn(async () => {}),
+  optOutsLastDay: vi.fn(async () => ({ stops: 0, sends: 0 })),
+  failedSendsForTouch: vi.fn(async () => 0),
   logSend: vi.fn(async () => {}),
   sendsToday: vi.fn(async () => 0),
   updateLead: vi.fn(async () => {}),
@@ -179,6 +183,14 @@ describe("sendTouch", () => {
     expect(outcome.error).toContain("boom");
     expect(store.logSend).toHaveBeenCalledWith(expect.objectContaining({ error: "GHL API Error 500: boom" }));
     expect(store.updateLead).not.toHaveBeenCalled();
+  });
+
+  it("gives up on a lead after the third failed send of the same touch, and tells a person", async () => {
+    store.failedSendsForTouch.mockResolvedValueOnce(3);
+    const d = deps({ sendSMS: vi.fn(async () => { throw new Error("not a mobile number"); }) });
+    await sendTouch(lead(), d, ctx());
+    expect(store.updateLead).toHaveBeenCalledWith(1, expect.objectContaining({ status: "paused", nextTouchAt: null }));
+    expect(d.alert).toHaveBeenCalledWith(expect.stringContaining("stopped retrying"));
   });
 });
 
