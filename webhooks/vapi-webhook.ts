@@ -9,6 +9,7 @@ import { reopenForNextAttempt, reopenAfterMissedCallback, scheduleExplicitCallba
 import { extractFirstName } from "../agents/iris/scripts";
 import { buildKeyToId, readField } from "../agents/scout/intake";
 import { appendNoteToContact } from "../agents/iris/notes";
+import { checkHumanTouch, DEFAULT_HUMAN_HANDS_OFF_DAYS } from "../agents/iris/human-touch";
 import { clampToLegalCallingWindow, formatLocal } from "../agents/iris/cadence";
 import { handleInboundCall } from "../agents/iris/inbound";
 import { classifyMissedCallback } from "../agents/iris/call-signals";
@@ -559,6 +560,13 @@ async function handleUnansweredSweepCall(
     return;
   }
   const outcome = await textMissedSweepCall(clientId, contactId, pending.lead?.name, pending.lead?.intent);
+  if (outcome === "skipped") {
+    await sendMessage("iris", {
+      channel: CALL_LOG_CHANNEL,
+      text: `🤝 Not texting *${pending.lead?.name ?? contactId}* after the unanswered call — a teammate has texted them recently, so they're handling the conversation.`,
+    }).catch(() => {});
+    return;
+  }
   if (outcome !== "failed") {
     // Mark, 2026-10-07: the call-log channel is how these calls are monitored,
     // so the follow-up text shows up there too, not only the call itself.
@@ -579,7 +587,8 @@ export function buildSweepMissedCallText(leadName: string | null | undefined, br
 /** How long to wait, after GHL accepts a text, before checking whether it was actually delivered. Tests set this to zeros. */
 export const smsConfirmation = { delaysMs: [4000, 6000] };
 
-export type TextOutcome = "delivered" | "sent" | "failed";
+/** "skipped" = a teammate has texted this lead recently, so Iris sent nothing (Mark, 2026-10-10). */
+export type TextOutcome = "delivered" | "sent" | "failed" | "skipped";
 
 /**
  * Sends one of Iris's own proactive texts and finds out what really happened.
@@ -593,7 +602,16 @@ export type TextOutcome = "delivered" | "sent" | "failed";
 export async function sendIrisText(clientId: string, contactId: string, leadName: string | null | undefined, text: string): Promise<TextOutcome> {
   const ghlConfig = await getGhlConfig(clientId);
   if (!ghlConfig) return "failed";
-  const fromNumber = loadIrisConfig(clientId)?.smsFromNumber;
+  const irisConfig = loadIrisConfig(clientId);
+  const fromNumber = irisConfig?.smsFromNumber;
+
+  // Never text a lead a teammate is already texting — and if the thread can't
+  // be read, don't risk it.
+  const humanTouch = await checkHumanTouch(contactId, ghlConfig.locationId, ghlConfig.apiKey, irisConfig?.humanHandsOffDays ?? DEFAULT_HUMAN_HANDS_OFF_DAYS);
+  if (humanTouch.status !== "none") {
+    console.log(`[VAPI] Not texting contact ${contactId} — ${humanTouch.status === "human" ? `a teammate texted them ${humanTouch.at}` : "couldn't verify no teammate is texting them"}.`);
+    return "skipped";
+  }
 
   let failure: string | null = null;
   let status: TextOutcome = "sent";

@@ -30,6 +30,7 @@ import { placeCall, CallingDisabledError } from "./calling";
 import { decideNextAttempt, nextAttemptTime, nextFirstSlotTime, clampToLegalCallingWindow } from "./cadence";
 import { transferNumberForIntent, callbackCalendarForIntent } from "./qualification";
 import { classifyInboundText, lastInboundText } from "./text-signals";
+import { checkHumanTouch, DEFAULT_HUMAN_HANDS_OFF_DAYS } from "./human-touch";
 import { hasActiveSmsConversation } from "./sms";
 import { getGhlConfig, getLocationTimezone, addContactTags } from "../../shared/ghl";
 
@@ -386,6 +387,17 @@ async function resolveOne(row: PendingCallRow): Promise<void> {
   // comment for why. Best-effort: any failure here (no GHL config, the
   // fetch itself failing) just falls through to the normal dial, same
   // fail-toward-"proceed as before" philosophy as the rest of this file.
+  // Off unless the client turns it on (humanHandsOff.blocksCalls): a teammate's
+  // text normally stops Iris TEXTING that lead, not calling them.
+  if (ghlConfig && config.humanTextBlocksCalls) {
+    const humanTouch = await checkHumanTouch(row.contact_id, ghlConfig.locationId, ghlConfig.apiKey, config.humanHandsOffDays ?? DEFAULT_HUMAN_HANDS_OFF_DAYS);
+    if (humanTouch.status === "human") {
+      await finish(row.id, "skipped", "a teammate texted this lead recently — Iris stays out");
+      return;
+    }
+    if (humanTouch.status === "unknown") return; // can't verify — leave it due and try again next run
+  }
+
   if (ghlConfig) {
     const inbound = await lastInboundText(row.contact_id, ghlConfig.locationId, ghlConfig.apiKey);
     const signal = await classifyInboundText(inbound?.text ?? "", new Date(), timezone, inbound?.precedingOutbound ?? null);
