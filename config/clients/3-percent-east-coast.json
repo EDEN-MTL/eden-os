@@ -7,6 +7,21 @@
     "region": "NL",
     "country": "CA",
     "currency": "CAD",
+    "serviceArea": {
+      "_note": "Mark, 2026-10-09: Iris ended a call with a seller in Paradise ('Paradise isn't in our service area'). The area is St. John's AND the surrounding region, not just the city limits. core = never decline; nearby = carry on and let an agent confirm; outside = examples that are clearly out. Edit these lists to move the boundary.",
+      "core": [
+        "St. John's", "Saint John's", "Mount Pearl", "Paradise", "Conception Bay South", "CBS", "Manuels", "Topsail", "Kelligrews", "Foxtrap", "Chamberlains", "Long Pond", "Upper Gullies", "Seal Cove",
+        "Torbay", "Portugal Cove", "St. Philip's", "Logy Bay", "Middle Cove", "Outer Cove", "Flatrock", "Pouch Cove", "Bauline", "Petty Harbour", "Maddox Cove",
+        "Goulds", "Kilbride", "Shea Heights", "Airport Heights", "Pleasantville", "Rabbittown", "Georgestown", "Quidi Vidi", "Cowan Heights", "Kenmount Terrace", "Southlands", "Blackmarsh", "Virginia Park", "Waterford Valley"
+      ],
+      "nearby": [
+        "Holyrood", "Harbour Main", "Chapel's Cove", "Conception Harbour", "Colliers", "Brigus", "Cupids", "Bay Roberts", "Spaniard's Bay", "Harbour Grace", "Carbonear",
+        "Bay Bulls", "Witless Bay", "Tors Cove", "Mobile", "Ferryland", "Cape Broyle", "Bell Island", "Whitbourne", "Placentia"
+      ],
+      "outside": [
+        "Corner Brook", "Gander", "Grand Falls-Windsor", "Clarenville", "Marystown", "Stephenville", "Labrador City", "Happy Valley-Goose Bay", "Halifax", "Moncton", "Toronto", "Ottawa", "Calgary"
+      ]
+    },
     "_comment": "St. John's, Newfoundland — NOT South Florida. Earlier versions of this system inherited 'South Florida' from a placeholder in the original design brief and repeated it in every agent prompt; it was wrong. The Meta ad account bills in CAD, which is consistent with this."
   },
   "ghl": {

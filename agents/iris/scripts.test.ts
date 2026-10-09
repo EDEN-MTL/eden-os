@@ -460,7 +460,7 @@ describe("buildLeadQualificationPrompt", () => {
   it("uses the city and brand it's given rather than a hardcoded one", () => {
     const prompt = buildLeadQualificationPrompt(IRIS_CONFIG, BLANK_LEAD, "Matama Floors", "Montreal", false, true, false);
     expect(prompt).toContain("Matama Floors");
-    expect(prompt).toContain("Montreal only");
+    expect(prompt).toContain("Montreal and the area around it");
   });
 
   it("never claims to be human, pulling the real approved wording (with the right brand) rather than inventing new lines", () => {
@@ -1416,14 +1416,14 @@ describe("buildSmsQualificationPrompt — sellers", () => {
   it("judges the service area by the home being sold, so a seller relocating away is never told we only serve the city", () => {
     const prompt = buildSmsQualificationPrompt(IRIS_CONFIG, sellerLead, "3 Percent East Coast", "St. John's");
 
-    expect(prompt).toMatch(/Where the HOME THEY'RE SELLING is/);
-    expect(prompt).toMatch(/relocating away but selling a home in St\. John's is a perfectly normal seller lead/);
+    expect(prompt).toMatch(/the HOME THEY'RE SELLING decides this/);
+    expect(prompt).toMatch(/relocating away but selling a home in St\. John's or the surrounding area is a perfectly normal seller lead/);
   });
 
   it("keeps the buyer rule — the area they want to BUY in — for a buyer", () => {
     const prompt = buildSmsQualificationPrompt(IRIS_CONFIG, { ...BLANK_LEAD, intent: "buyer" as const }, "3 Percent East Coast", "St. John's");
 
-    expect(prompt).toContain("If the area they want to BUY in is outside St. John's entirely");
+    expect(prompt).toContain("For a buyer, it's the area they want to BUY in.");
     expect(prompt).not.toMatch(/HOME THEY'RE SELLING/);
   });
 
@@ -1439,5 +1439,42 @@ describe("buildSmsQualificationPrompt — sellers", () => {
     expect(prompt).toContain("Lead: Looking to relocate to west coast");
     expect(prompt).toMatch(/answer to the "Us" line just before it/);
     expect(prompt).toMatch(/say Iris will call/);
+  });
+});
+
+/**
+ * Mark, 2026-10-09: Iris ended a call with a seller in Paradise ("Paradise
+ * isn't in our service area") — Paradise is part of the St. John's metro area.
+ */
+describe("service area in the prompts", () => {
+  const AREA = {
+    core: ["St. John's", "Mount Pearl", "Paradise", "Conception Bay South"],
+    nearby: ["Holyrood", "Bay Roberts"],
+    outside: ["Corner Brook", "Gander"],
+  };
+  const config = { ...IRIS_CONFIG, serviceArea: AREA };
+
+  it("tells the voice prompt that Paradise is in area, and never to end a call over a suburb", () => {
+    const prompt = buildLeadQualificationPrompt(config, { ...BLANK_LEAD, intent: "seller" as const }, "3 Percent East Coast", "St. John's", true, true, false);
+
+    expect(prompt).toMatch(/IN AREA \(never decline[^)]*\): St\. John's; Mount Pearl; Paradise/);
+    expect(prompt).toContain("NEARBY (carry on exactly as normal");
+    expect(prompt).toMatch(/CLEARLY OUTSIDE[^\n]*Corner Brook; Gander/);
+    expect(prompt).toMatch(/never end the call or say "I don't want to waste your time" over a location unless it is CLEARLY outside/);
+    expect(prompt).not.toContain("The service area is St. John's only");
+  });
+
+  it("tells the text prompt the same geography, and to ask rather than assume when unsure", () => {
+    const prompt = buildSmsQualificationPrompt(config, { ...BLANK_LEAD, intent: "seller" as const }, "3 Percent East Coast", "St. John's");
+
+    expect(prompt).toContain("Mount Pearl; Paradise");
+    expect(prompt).toMatch(/do NOT assume it's outside: ask once "Is that close to St\. John's\?"/);
+  });
+
+  it("still has a safe rule for a client with no geography configured", () => {
+    const prompt = buildSmsQualificationPrompt(IRIS_CONFIG, { ...BLANK_LEAD, intent: "buyer" as const }, "X", "Halifax");
+
+    expect(prompt).toContain("never assume it's outside");
+    expect(prompt).not.toContain("IN AREA");
   });
 });
