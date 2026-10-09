@@ -486,6 +486,7 @@ export function loadIrisConfig(clientId: string): IrisConfig | null {
       outreachCadence: raw.iris.outreachCadence,
       smsCallHandoff: raw.iris.sms?.callHandoff === true,
       smsFromNumber: raw.iris.sms?.fromNumber || undefined,
+      serviceArea: raw.market?.serviceArea?.core ? raw.market.serviceArea : undefined,
       humanHandsOffDays: typeof raw.iris.humanHandsOff?.days === "number" ? raw.iris.humanHandsOff.days : undefined,
       humanTextBlocksCalls: raw.iris.humanHandsOff?.blocksCalls === true,
       liveTransferSlack: raw.iris.liveTransferSlack?.channel

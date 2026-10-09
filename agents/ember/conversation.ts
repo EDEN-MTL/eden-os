@@ -19,6 +19,7 @@
  * Clear "no"s never reach this module — status.ts / outreach.ts handle them
  * (Not Interested + one courtesy reply) before a model turn runs.
  */
+import { serviceAreaRule } from "../iris/service-area";
 import { ChatMessage, chatWithTools, ToolDef } from "../../shared/claude";
 import { appendHistory, loadHistory } from "../../shared/conversation-memory";
 import { IrisConfig, qualify, QualificationAnswers } from "../iris/qualification";
@@ -150,7 +151,7 @@ ${ctx.irisConfig.questions.map((q) => `- ${q}`).join("\n")}
 - Not pre-approved yet: "${EDGE_CASE_RESPONSES.notPreApproved[0]}"
 - Interested but not now: use pause_for_now, then a short warm sign-off.
 - A question you can't answer (prices, specific homes, legal/financial advice): "${EDGE_CASE_RESPONSES.dontKnowAnswer}", and request_human_followup.
-- Outside ${ctx.city}: "${EDGE_CASE_RESPONSES.outOfServiceArea(ctx.city)[0]}"
+- ${serviceAreaRule(ctx.city, ctx.irisConfig.serviceArea, EDGE_CASE_RESPONSES.outOfServiceArea(ctx.city)[0])}
 
 ## Ending
 Once the questions are answered (or they've declined some):

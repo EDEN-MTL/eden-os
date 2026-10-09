@@ -9,6 +9,7 @@
  * governs stages/scheduling (see cadence.ts) rather than what Iris says.
  */
 import { CallIntent, IrisConfig } from "./qualification";
+import { serviceAreaRule } from "./service-area";
 import { NormalisedLead } from "../scout/intake";
 import { Financing } from "../scout/isa-notes";
 
@@ -1632,8 +1633,8 @@ ${callbackRequestSection}
 - Respect an existing agent relationship — don't push:
   buyer: "${EDGE_CASE_RESPONSES.buyerHasAgent[0]}"
   seller: "${EDGE_CASE_RESPONSES.sellerHasAgentOrListed[0]}"
-- The service area is ${city} only — if asked about elsewhere:
-  "${EDGE_CASE_RESPONSES.outOfServiceArea(city)[0]}"
+- ${serviceAreaRule(city, config.serviceArea, EDGE_CASE_RESPONSES.outOfServiceArea(city)[0])}
+  On a CALL, never end the call or say "I don't want to waste your time" over a location unless it is CLEARLY outside; a suburb or nearby community is always fine. If they name a place, treat it as part of the lead's details and move on to the next question.
 - If the lead goes quiet, follow up at most twice, then stop:
   "${EDGE_CASE_RESPONSES.leadStoppedResponding[0]}" then
   "${EDGE_CASE_RESPONSES.leadStoppedRespondingFinal}"
@@ -1812,10 +1813,11 @@ ${questionsToAsk.map((q) => `- ${q}`).join("\n")}
 - If they ask whether you're a real person: "${realPersonLine}"
 - If they ask about renting rather than buying/selling: "${EDGE_CASE_RESPONSES.rentalRequest[0]}"
 - If they ask something you genuinely don't know or that needs real estate advice: "${EDGE_CASE_RESPONSES.dontKnowAnswer}"
-- ${
+- ${serviceAreaRule(city, config.serviceArea, EDGE_CASE_RESPONSES.outOfServiceArea(city)[0])}
+  ${
     lead.intent === "seller" || lead.intent === "downsize"
-      ? `Where the HOME THEY'RE SELLING is decides the service area, not where they're headed next: only if that property is outside ${city} entirely, say "${EDGE_CASE_RESPONSES.outOfServiceArea(city)[0]}". A seller who is relocating away but selling a home in ${city} is a perfectly normal seller lead — never tell them we only serve ${city}; just carry on (a move out of town is a reason for selling, not a reason to turn them away).`
-      : `If the area they want to BUY in is outside ${city} entirely: "${EDGE_CASE_RESPONSES.outOfServiceArea(city)[0]}"`
+      ? `For a seller, the HOME THEY'RE SELLING decides this, not where they're headed next: a seller relocating away but selling a home in ${city} or the surrounding area is a perfectly normal seller lead — never tell them we only serve ${city}; just carry on (a move out of town is a reason for selling, not a reason to turn them away).`
+      : `For a buyer, it's the area they want to BUY in.`
   }
 
 ${endingBlock}

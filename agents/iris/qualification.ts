@@ -7,6 +7,7 @@
  * tested without placing a call or spending money — same split as
  * `agents/scout/intake.ts` vs `agents/scout/index.ts`.
  */
+import { ServiceAreaConfig } from "./service-area";
 import { NormalisedLead, scoreLead } from "../scout/intake";
 import { Financing } from "../scout/isa-notes";
 
@@ -136,6 +137,8 @@ export interface IrisConfig {
    * told. Mark, 2026-10-07.
    */
   smsFromNumber?: string;
+  /** What counts as in/near/outside the service area (market.serviceArea) — see service-area.ts. */
+  serviceArea?: ServiceAreaConfig;
   /** How many days after a teammate's text Iris stays out of that lead's text conversation (default 7). */
   humanHandsOffDays?: number;
   /** When true, a recent teammate text also stops Iris CALLING that lead. Off by default — texting only. */
