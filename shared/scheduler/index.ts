@@ -18,6 +18,8 @@ import { getMetaConfig, MetaClient } from "../meta";
 import { syncMetaPerformance } from "../../agents/forge/ads/sync";
 import * as ruleEngine from "../../agents/forge/ads/engine";
 import * as ruleQueue from "../../agents/forge/ads/queue";
+import { getCampaignHealth } from "../../agents/forge/ads/health";
+import { formatHealthDigest } from "../../agents/forge/ads/health-digest";
 import { computeWeeklyTotals, formatAllClientsReport, WeeklyTotals } from "../../agents/lens/report";
 import { runDialPendingCalls } from "../../agents/iris/dial-pending";
 import { sendMessage } from "../slack";
@@ -153,6 +155,43 @@ export async function runRuleEvaluation(): Promise<void> {
 }
 
 /**
+ * Forge's morning health check, posted to Eden's internal ops channel, never
+ * to a client's (same rule as the Lens weekly report).
+ *
+ * Opt-in per client: only clients whose config has a forge.health block get
+ * one. The playbook's buyer/seller funnels and spend-relative kill lines are
+ * built for realtor lead gen; running them on a client nobody calibrated
+ * them for would post confident verdicts on the wrong yardstick.
+ *
+ * Skips a client with nothing delivering in the window rather than posting
+ * an empty report every morning for a paused account.
+ */
+export async function runDailyForgeHealthReport(): Promise<void> {
+  const opsChannel = process.env.LENS_OPS_CHANNEL;
+  if (!opsChannel) {
+    console.warn("[SCHEDULER] LENS_OPS_CHANNEL not set, skipping daily Forge health report");
+    return;
+  }
+
+  for (const clientId of await listMetaClientIds()) {
+    const cfg = loadClientJson(clientId);
+    if (!cfg?.forge?.health) continue;
+    try {
+      const metaConfig = await getMetaConfig(clientId);
+      const report = await getCampaignHealth(clientId, metaConfig ? new MetaClient(metaConfig) : null);
+      if (report.entities.length === 0) {
+        console.log(`[SCHEDULER] Forge health ${clientId}: nothing delivering, no report sent`);
+        continue;
+      }
+      await sendMessage("forge", { channel: opsChannel, text: formatHealthDigest(cfg.clientName || clientId, report) });
+      console.log(`[SCHEDULER] Forge health report sent for ${clientId} (${report.entities.length} entities)`);
+    } catch (e) {
+      console.error(`[SCHEDULER] Forge health report failed for ${clientId}:`, e instanceof Error ? e.message : e);
+    }
+  }
+}
+
+/**
  * Ember only runs for clients with ember.enabled on — the scan as well as
  * sends, since the scan can post reactivation alerts. A client with the
  * block present but disabled is skipped silently every hour.
@@ -211,6 +250,9 @@ export function startScheduler(): void {
   // reads them.
   cron.schedule("5 * * * *", runRuleEvaluation, { timezone: TIMEZONE });
   cron.schedule("0 8 * * 1", runWeeklyLensReport, { timezone: TIMEZONE });
+  // 08:15 daily: after the 08:00 Meta sync has written fresh numbers, before
+  // the team's working day. Same channel as the 08:00 Monday Lens report.
+  cron.schedule("15 8 * * *", runDailyForgeHealthReport, { timezone: TIMEZONE });
   // Every minute, not hourly — this is resolving a 5-minute wait
   // (agents/iris/index.ts's CALL_DELAY_MINUTES), so it needs to actually
   // catch rows close to when they become due, not up to an hour late.
@@ -227,7 +269,7 @@ export function startScheduler(): void {
   // half an hour. Cheap — two GHL reads per lead Ember has texted.
   cron.schedule("*/2 * * * *", runEmberReplyPoll, { timezone: TIMEZONE });
   console.log(
-    "[SCHEDULER] hourly Meta sync, rule evaluation (5 past), weekly Lens report (Mon 08:00), per-minute Iris dial queue, " +
+    "[SCHEDULER] hourly Meta sync, rule evaluation (5 past), weekly Lens report (Mon 08:00), daily Forge health report (08:15), per-minute Iris dial queue, " +
       "and Ember scan (20 past) / sends (10 & 40 past) / reply poll (every 2 min), enabled clients only, scheduled"
   );
 }
