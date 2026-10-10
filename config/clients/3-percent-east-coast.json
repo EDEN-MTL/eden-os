@@ -66,14 +66,30 @@
     "_comment": "All values CAD. Grounded in real data pulled 2026-08-24 over a 30-day window: $1,131.37 total spend, $37.71/day actual, 3,203 clicks, $0.35 blended CPC. Client's own Meta daily budget is $50 ($30 buyers / $20 sellers).",
     "currency": "CAD",
     "cplThreshold": 35,
-    "cplThresholdNote": "UNVALIDATED. Zero leads carry ad attribution yet, so real CPL is unknown — at a 3% click-to-lead rate it would be ~$12, at 1% ~$35. Revisit once attribution produces the first 20-30 leads.",
+    "cplThresholdNote": "UNVALIDATED. Zero leads carry ad attribution yet, so real CPL is unknown — at a 3% click-to-lead rate it would be ~$12, at 1% ~$35. Revisit once attribution produces the first 20-30 leads. UPDATE 2026-10-09: CPL now falls back to Meta's own lead count when GHL attribution is missing (agents/forge/ads/metrics.ts). Over the 30 days to 2026-10-07 that reads $1,494 spend / 23 leads = ~$65 CPL, so this $35 cap flags nearly everything until Jacob confirms the real target.",
     "roasTarget": 3.5,
     "roasEnabled": false,
     "roasNote": "Rule DISABLED until revenue data is trustworthy. Only 4 of 149 leads carry a non-zero deal value. A rule that can never fire is worse than no rule — it looks like coverage that doesn't exist. Re-enable once outcomeStages above are confirmed and deal values are being recorded consistently.",
     "dailyBudgetCap": 75,
     "dailyBudgetCapNote": "Was 500 — ten times the client's actual $50/day budget, so it was no guardrail at all. 75 allows 50% headroom to scale while still catching a runaway.",
     "fatigueThreshold": 3.0,
-    "fatigueThresholdNote": "Was 0.7, which is mathematically impossible to stay under: frequency is impressions/reach, so any running ad is >= 1. All 63 ad sets exceeded it, meaning it would have flagged everything as fatigued forever. Their actual range is 1.48 avg / 1.88 max, so 3.0 sits above normal operation but still catches genuine fatigue."
+    "fatigueThresholdNote": "Was 0.7, which is mathematically impossible to stay under: frequency is impressions/reach, so any running ad is >= 1. All 63 ad sets exceeded it, meaning it would have flagged everything as fatigued forever. Their actual range is 1.48 avg / 1.88 max, so 3.0 sits above normal operation but still catches genuine fatigue.",
+    "health": {
+      "_comment": "Campaign health-check playbook (agents/forge/ads/health.ts, Forge's get_campaign_health tool). ALL values are generic small-budget media-buying defaults, NOT Jacob's SOP yet — replace once his numbers arrive. targetCpl falls back to cplThreshold, fatigueFrequency to fatigueThreshold.",
+      "funnels": [
+        { "name": "buyer", "match": "buyer", "targetCpl": 35 },
+        { "name": "seller", "match": "seller", "targetCpl": 35 }
+      ],
+      "funnelsNote": "Matched as a case-insensitive substring of the campaign name ('Aug 2026 | Buyer Campaign | EDEN'), falling back to the entity's own name. Both start at the account-wide $35 cap; seller leads are usually worth more and cost more, so expect Jacob to set them apart.",
+      "killSpendMultiple": 2.5,
+      "killCplMultiple": 1.75,
+      "scaleMinLeads": 3,
+      "scaleCplMultiple": 0.8,
+      "scaleStepPercent": 20,
+      "minActiveDays": 3,
+      "lookbackDays": 14,
+      "lookbackNote": "14 not 7: at $50/day split over 3-4 ad sets, each gets under one lead a day (23 leads in 30 days account-wide), so 7 days rarely holds enough leads to separate a bad ad from an unlucky week."
+    }
   },
   "iris": {
     "inboundPhoneNumberId": "9e60ef71-73b4-4124-b59b-b7f7c829e8bc",
