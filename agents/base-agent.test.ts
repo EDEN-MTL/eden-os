@@ -360,6 +360,7 @@ describe("BaseAgent.handleMessage — Slack attachment resolution", () => {
     expect(spy).toHaveBeenCalledWith(expect.any(String), "hello", { senderName: null }, undefined, {
       channelId: "C123",
       threadTs: undefined,
+      userId: "U123",
     });
     expect(downloadFile).not.toHaveBeenCalled();
   });
@@ -376,7 +377,7 @@ describe("BaseAgent.handleMessage — Slack attachment resolution", () => {
       data: Buffer.from("fake-png-bytes"),
       mediaType: "image/png",
       filename: "ad.png",
-    }, { channelId: "C123", threadTs: undefined });
+    }, { channelId: "C123", threadTs: undefined, userId: "U123" });
   });
 
   it("skips an unsupported file type without even attempting a download", async () => {
@@ -389,6 +390,7 @@ describe("BaseAgent.handleMessage — Slack attachment resolution", () => {
     expect(spy).toHaveBeenCalledWith(expect.any(String), "hello", { senderName: null }, undefined, {
       channelId: "C123",
       threadTs: undefined,
+      userId: "U123",
     });
   });
 
@@ -405,6 +407,7 @@ describe("BaseAgent.handleMessage — Slack attachment resolution", () => {
     expect(spy).toHaveBeenCalledWith(expect.any(String), "hello", { senderName: null }, undefined, {
       channelId: "C123",
       threadTs: undefined,
+      userId: "U123",
     });
     expect(sendMessage).toHaveBeenCalled();
   });

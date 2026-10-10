@@ -134,6 +134,11 @@
       "blocksCalls": false,
       "note": "Mark, 2026-10-10: when a teammate (Mark, Jacob, any 3% agent) has texted a lead from GHL in the last N days, Iris stays out of that text conversation — no auto-replies, no texts of her own. blocksCalls=false: calls are unaffected (Mark has asked Iris to call leads he texted by hand); set true to stop Iris calling them too."
     },
+    "slackCommands": {
+      "allowedUserIds": ["U07H26WUGP5", "U06SA9782HW"],
+      "confirmTtlMinutes": 10,
+      "note": "Mark, 2026-10-10: only Mark (U07H26WUGP5) and Jacob (U06SA9782HW) may tell Iris to call or stop a lead in Slack. Every request waits for a plain 'yes' from the same person in the same place before anything happens."
+    },
     "sms": {
       "fromNumber": "+17097013598",
       "fromNumberNote": "Mark, 2026-10-07: GHL reuses whichever number last texted a lead, and older leads were last texted from +17097021163, which is no longer available in the account — every send to them failed ('Invalid from number'). Iris's own proactive texts name the main 3% number explicitly. Same number Iris calls out from."

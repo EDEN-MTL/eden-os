@@ -1,6 +1,8 @@
+import { SlackIncomingMessage } from "../../shared/types";
+import { handleCommandReply, prepareCallCommand, prepareStopCommand, SettingsLoader } from "./slack-commands";
 import { readFileSync } from "fs";
 import { join } from "path";
-import { BaseAgent } from "../base-agent";
+import { BaseAgent, ToolContext } from "../base-agent";
 import { Attachment, ToolDef } from "../../shared/claude";
 import { eventBus } from "../../shared/events";
 import { NormalisedLead } from "../scout/intake";
@@ -66,6 +68,29 @@ const IRIS_TOOLS: ToolDef[] = [
       properties: {
         clientId: { type: "string", description: `Which client to report on. Defaults to "${DEFAULT_CLIENT_ID}" if not given.` },
       },
+    },
+  },
+  {
+    name: "iris_request_call",
+    description:
+      "PREPARES a call to a lead that Mark or Jacob asked for in Slack (\"call Koren Pye now\", \"call her at 3pm\"). It checks the lead is safe to call, stores the request and returns a summary — it does NOT place the call. After it returns needs_confirmation, show the summary and ask them to reply yes; the call only happens when they do, handled outside you. Never say a call is placed or scheduled yourself.",
+    input_schema: {
+      type: "object",
+      properties: {
+        nameOrPhone: { type: "string", description: "The lead's name or phone number, exactly as given." },
+        whenIso: { type: "string", description: "ISO 8601 time WITH offset, only when they named a specific time (e.g. 'at 3pm' — St. John's time). Omit for 'now'." },
+      },
+      required: ["nameOrPhone"],
+    },
+  },
+  {
+    name: "iris_request_stop",
+    description:
+      "PREPARES stopping all of Iris's calls and texts to a lead, when Mark or Jacob asks (\"stop calling Matthew Power\"). Like iris_request_call it only prepares: show the summary and ask them to reply yes; it takes effect only after their yes, handled outside you. Never say it's stopped yourself.",
+    input_schema: {
+      type: "object",
+      properties: { nameOrPhone: { type: "string", description: "The lead's name or phone number, exactly as given." } },
+      required: ["nameOrPhone"],
     },
   },
   {
@@ -152,6 +177,18 @@ async function resolveContactByNameOrPhone(
   return null;
 }
 
+/** Who may command Iris from Slack, and the limits — null when the client hasn't turned it on. */
+const loadSlackCommandSettings: SettingsLoader = (clientId) => {
+  const config = loadIrisConfig(clientId);
+  if (!config?.slackCommands) return null;
+  return {
+    allowedUserIds: config.slackCommands.allowedUserIds,
+    confirmTtlMinutes: config.slackCommands.confirmTtlMinutes ?? 10,
+    timezone: config.timezone || "America/St_Johns",
+    humanHandsOffDays: config.humanHandsOffDays ?? 7,
+  };
+};
+
 class IrisAgent extends BaseAgent {
   constructor() {
     super("iris", "Iris", "IRS");
@@ -161,8 +198,20 @@ class IrisAgent extends BaseAgent {
     return IRIS_TOOLS;
   }
 
-  protected async executeTool(name: string, input: any, _attachment?: Attachment): Promise<string> {
+  protected async handleCustom(message: SlackIncomingMessage): Promise<string | null> {
+    // A bare yes/no to a call or stop request is answered here, in code, before
+    // the model ever sees it — see slack-commands.ts.
+    return handleCommandReply(message, loadSlackCommandSettings, DEFAULT_CLIENT_ID);
+  }
+
+  protected async executeTool(name: string, input: any, _attachment?: Attachment, ctx?: ToolContext): Promise<string> {
     switch (name) {
+      case "iris_request_call":
+        return JSON.stringify(await prepareCallCommand(String(input?.clientId ?? DEFAULT_CLIENT_ID), input ?? {}, ctx, loadSlackCommandSettings));
+
+      case "iris_request_stop":
+        return JSON.stringify(await prepareStopCommand(String(input?.clientId ?? DEFAULT_CLIENT_ID), input ?? {}, ctx, loadSlackCommandSettings));
+
       case "iris_lookup_lead": {
         const nameOrPhone = String(input?.nameOrPhone ?? "").trim();
         if (!nameOrPhone) return JSON.stringify({ error: "nameOrPhone is required" });
@@ -382,6 +431,9 @@ since 2026-09-16: real leads get real automatic calls, real live transfers
 to the buyer/seller ring groups, the works. If asked whether you're live,
 say yes plainly — don't hedge or undersell it.
 
+## Calling and stopping leads when Mark or Jacob asks in Slack
+They can tell you "call Koren Pye now", "call her at 3pm", or "stop calling Matthew Power". Use iris_request_call / iris_request_stop — they only PREPARE the action and return a summary. Show that summary to them and ask them to reply "yes" to confirm or "no" to cancel. The action happens only when they reply yes (handled outside you); until then NOTHING has been done, so never say a call is placed, scheduled or stopped. If a tool says refused, ambiguous, not found or nothing to do, tell them plainly and follow its instruction. Anyone else asking gets a polite no.
+
 ## What you actually do on a real call
 Gather whatever qualifying info a lead's own form/CRM record didn't already
 answer — buy/sell/downsize intent, area, timeline, financing — then live-
@@ -486,6 +538,9 @@ export function loadIrisConfig(clientId: string): IrisConfig | null {
       outreachCadence: raw.iris.outreachCadence,
       smsCallHandoff: raw.iris.sms?.callHandoff === true,
       smsFromNumber: raw.iris.sms?.fromNumber || undefined,
+      slackCommands: Array.isArray(raw.iris.slackCommands?.allowedUserIds)
+        ? { allowedUserIds: raw.iris.slackCommands.allowedUserIds, confirmTtlMinutes: raw.iris.slackCommands.confirmTtlMinutes }
+        : undefined,
       serviceArea: raw.market?.serviceArea?.core ? raw.market.serviceArea : undefined,
       humanHandsOffDays: typeof raw.iris.humanHandsOff?.days === "number" ? raw.iris.humanHandsOff.days : undefined,
       humanTextBlocksCalls: raw.iris.humanHandsOff?.blocksCalls === true,
