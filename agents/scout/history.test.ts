@@ -122,8 +122,8 @@ describe("classifyLeadHistory", () => {
     expect(classifyLeadHistory({ self: lead, now: NOW }, CONFIG).reasons).toContainEqual({ kind: "appointment", count: 2 });
   });
 
-  it("counts ISA notes an agent wrote as a reason ALONGSIDE something stronger, but never Iris's own status lines", () => {
-    const human = subject({ dateAdded: daysAgo(20), assignedTo: STEPHANIE, isaNotes: "ISA NOTES : Buyer: Justin — first-time home buyer<br/>Timeline: 1–4 months" });
+  it("counts ISA notes an agent wrote, but never Iris's own status lines", () => {
+    const human = subject({ dateAdded: daysAgo(20), isaNotes: "ISA NOTES : Buyer: Justin — first-time home buyer<br/>Timeline: 1–4 months" });
     expect(classifyLeadHistory({ self: human, now: NOW }, CONFIG).reasons).toContainEqual({ kind: "human_notes" });
 
     const irisOnly = subject({
@@ -131,44 +131,6 @@ describe("classifyLeadHistory", () => {
       isaNotes: "Iris call Thursday, September 24 at 5:47 PM — ❌ No answer (`customer-did-not-answer`). Duration: 30s.\n\nIris: lead asked to be called back — scheduled for Thursday, October 1 at 6:54 PM.",
     });
     expect(classifyLeadHistory({ self: irisOnly, now: NOW }, CONFIG).returning).toBe(false);
-  });
-
-  /**
-   * Koren Pye, 2026-10-10: a Feb lead with old ISA notes and a card assigned
-   * to a user who has since been deleted. Jacob: "that lead was not previously
-   * assigned to an agent. So Iris should call them."
-   */
-  it("does NOT flag a lead whose only history is old ISA notes — nobody owns them, Iris should call", () => {
-    const koren = subject({ dateAdded: daysAgo(224), isaNotes: "ISA NOTES: Buyer — wants a new build, 3 bed" }, [opp({ createdAt: daysAgo(224) })]);
-    const out = classifyLeadHistory({ self: koren, now: NOW }, CONFIG);
-
-    expect(out.returning).toBe(false);
-    expect(out.preExisting).toBe(true); // an existing contact resubmitting — to be called as a new lead
-  });
-
-  it("ignores an assignment to a user who no longer exists (a deleted login is not an agent)", () => {
-    const deleted = "0bl2mebGKSbtIX4OrQuH";
-    const koren = subject({ dateAdded: daysAgo(224), isaNotes: "ISA NOTES: Buyer — wants a new build" }, [opp({ createdAt: daysAgo(224), assignedTo: deleted })]);
-
-    const out = classifyLeadHistory({ self: koren, now: NOW, activeUserIds: [STEPHANIE, "someone-else"] }, CONFIG);
-
-    expect(out.returning).toBe(false);
-    expect(out.assignedUserId).toBeNull();
-  });
-
-  it("still counts an assignment to a current user", () => {
-    const lead = subject({ dateAdded: daysAgo(30), assignedTo: STEPHANIE });
-
-    const out = classifyLeadHistory({ self: lead, now: NOW, activeUserIds: [STEPHANIE] }, CONFIG);
-
-    expect(out.returning).toBe(true);
-    expect(out.assignedUserId).toBe(STEPHANIE);
-  });
-
-  it("counts every assignment when the user list couldn't be read — the cautious direction", () => {
-    const lead = subject({ dateAdded: daysAgo(30), assignedTo: "whoever" });
-
-    expect(classifyLeadHistory({ self: lead, now: NOW, activeUserIds: null }, CONFIG).returning).toBe(true);
   });
 
   it("ignores the 'replied' tag — answering the text automation is engagement, not contact", () => {

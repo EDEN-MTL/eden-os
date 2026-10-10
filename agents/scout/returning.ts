@@ -111,15 +111,6 @@ export async function assessLeadHistory(contactId: string, clientId: string, con
 
     const self = await subjectFor({ ...contact, id: contactId }, locationId, apiKey, config, keyToId);
 
-    // Who is a real, current user — a deleted user's id lingering on a card is
-    // not an agent (Koren Pye, 2026-10-10). null = couldn't read the list.
-    const activeUserIds = await listLocationUsers(locationId, apiKey)
-      .then((users) => users.map((u) => u.id))
-      .catch((error) => {
-        console.warn(`[SCT] Could not read the user list to validate assignments for ${contactId}:`, error instanceof Error ? error.message : error);
-        return null;
-      });
-
     // Same person under a DIFFERENT contact id — only matters when a
     // client's GHL doesn't dedupe on phone/email. listContactsPaginated is
     // the lookup that works (shared/ghl's searchContacts 400s).
@@ -141,7 +132,7 @@ export async function assessLeadHistory(contactId: string, clientId: string, con
     }
 
     return {
-      history: classifyLeadHistory({ self, duplicates, now, activeUserIds }, historyConfigFor(config)),
+      history: classifyLeadHistory({ self, duplicates, now }, historyConfigFor(config)),
       contactAssignedTo: contact.assignedTo ?? null,
     };
   } catch (error) {

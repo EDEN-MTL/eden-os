@@ -156,18 +156,6 @@ eventBus.subscribe("lead.captured", async (event) => {
       await notifyReturningLead(clientId, lead, assessed, config);
       return;
     }
-
-    // Jacob, 2026-10-10 (Koren Pye): an existing contact who submits the form
-    // again with NO real history — no live agent assigned, no appointment, no
-    // worked stage, no touch tag — is a lead to call. Old ISA notes or an old
-    // card would make isFirstTouch read "already worked" and Iris would skip
-    // her silently, so this submission is flagged and Iris opens a call for it
-    // without that gate (see agents/iris/index.ts's lead.enriched handler).
-    if (assessed.history.preExisting && !lead.firstTouch) {
-      console.log(`[SCT] ${lead.name || contactId} is an existing contact resubmitting with no agent history — treating as a new lead to call.`);
-      eventBus.publish("lead.enriched", "scout", clientId, { ...(lead as unknown as Record<string, any>), firstTouch: true, resubmission: true });
-      return;
-    }
   }
 
   eventBus.publish("lead.enriched", "scout", clientId, lead as unknown as Record<string, any>);

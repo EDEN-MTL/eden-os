@@ -564,12 +564,7 @@ eventBus.subscribe("lead.enriched", async (event) => {
     console.log(`[IRS] ${lead.contactId} has no confirmed name on file — not calling until one exists.`);
     return;
   }
-  // Scout flags an existing contact who resubmitted the form with no real agent
-  // history (Jacob, 2026-10-10, Koren Pye). Such a lead may carry old ISA notes
-  // or an old card that make firstTouch read "worked", so the gate is bypassed
-  // for them — the queue row is explicit instead, gated on `qualified`.
-  const resubmission = (event.data as Record<string, unknown>).resubmission === true;
-  if (!lead.firstTouch && !resubmission) {
+  if (!lead.firstTouch) {
     console.log(`[IRS] ${lead.name || lead.contactId} already worked — not opening a new sequence.`);
     return;
   }
@@ -592,26 +587,12 @@ eventBus.subscribe("lead.enriched", async (event) => {
     const timeZone = config.timezone || "America/St_Johns";
     const candidate = new Date(Date.now() + CALL_DELAY_MINUTES * 60 * 1000);
     const callAfter = isWithinLegalCallingWindow(candidate, timeZone) ? candidate : nextFirstSlotTime(config.outreachCadence, timeZone);
-    if (resubmission) {
-      // An earlier round's row (placed/skipped) must not block this fresh
-      // submission, but a sequence still pending is left alone.
-      await query(
-        `INSERT INTO iris_pending_calls (client_id, contact_id, lead, call_after, is_explicit_callback, resolution_reason)
-         VALUES ($1, $2, $3, $4, true, 'resubmitted the form')
-         ON CONFLICT (client_id, contact_id) DO UPDATE
-           SET lead = EXCLUDED.lead, call_after = EXCLUDED.call_after, status = 'pending', is_explicit_callback = true,
-               source = NULL, attempts_made = 0, callback_misses = 0, resolution_reason = 'resubmitted the form', resolved_at = NULL
-           WHERE iris_pending_calls.status <> 'pending'`,
-        [event.clientId, lead.contactId, JSON.stringify(lead), callAfter]
-      );
-    } else {
-      await query(
-        `INSERT INTO iris_pending_calls (client_id, contact_id, lead, call_after)
-         VALUES ($1, $2, $3, $4)
-         ON CONFLICT (client_id, contact_id) DO NOTHING`,
-        [event.clientId, lead.contactId, JSON.stringify(lead), callAfter]
-      );
-    }
+    await query(
+      `INSERT INTO iris_pending_calls (client_id, contact_id, lead, call_after)
+       VALUES ($1, $2, $3, $4)
+       ON CONFLICT (client_id, contact_id) DO NOTHING`,
+      [event.clientId, lead.contactId, JSON.stringify(lead), callAfter]
+    );
     console.log(
       `[IRS] Queued a dial for ${lead.name || lead.contactId} (${lead.phone}) at ${callAfter.toISOString()} ` +
         `— waiting for the GHL SMS automation to send first, and for a legal calling hour.`
