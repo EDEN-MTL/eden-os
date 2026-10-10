@@ -53,9 +53,51 @@ describe("buildPlaybook", () => {
     expect(buildPlaybook(null)).toBeNull();
   });
 
-  it("drops malformed funnels instead of letting one with no target judge everything at $0", () => {
-    const p = buildPlaybook({ cplThreshold: 35, health: { funnels: [{ name: "buyer", match: "buyer" }, { name: "seller", match: "seller", targetCpl: 50 }] } })!;
+  it("drops malformed funnels instead of letting one with no match string catch everything", () => {
+    const p = buildPlaybook({ cplThreshold: 35, health: { funnels: [{ name: "buyer", match: "" }, { name: "seller", match: "seller", targetCpl: 50 }] } })!;
     expect(p.funnels.map((f) => f.name)).toEqual(["seller"]);
+  });
+});
+
+describe("buildPlaybook calibration", () => {
+  const campaign = (name: string, spend: number, leads: number) =>
+    makeRow({ entity_id: name, entity_name: name, spend, lead_count: leads, cpl: leads ? spend / leads : null });
+  const baseline = [
+    campaign("Aug 2026 | Buyer Campaign | EDEN", 1648, 29),
+    campaign("Aug 2026 | Seller Campaign | EDEN", 1178, 15),
+    campaign("[04/03/2024] Promoting https://www.homesbyhickey.ca", 500, 0),
+  ];
+  const cfg = { cplThreshold: 110, health: { funnels: [{ name: "buyer", match: "buyer" }, { name: "seller", match: "seller" }] } };
+
+  it("sets each funnel's target to its own blended CPL over the baseline", () => {
+    const p = buildPlaybook(cfg, baseline)!;
+    expect(p.funnels).toEqual([
+      { name: "buyer", match: "buyer", targetCpl: 1648 / 29, targetSource: "auto", basis: { days: 60, spend: 1648, leads: 29 } },
+      { name: "seller", match: "seller", targetCpl: 1178 / 15, targetSource: "auto", basis: { days: 60, spend: 1178, leads: 15 } },
+    ]);
+  });
+
+  it("leaves never-lead-gen campaigns (boosted posts) out of the account target", () => {
+    const p = buildPlaybook(cfg, baseline)!;
+    expect(p.targetCpl).toBeCloseTo((1648 + 1178) / 44);
+    expect(p.targetSource).toBe("auto");
+  });
+
+  it("lets a hand-set funnel target win over calibration", () => {
+    const p = buildPlaybook({ ...cfg, health: { funnels: [{ name: "seller", match: "seller", targetCpl: 90 }] } }, baseline)!;
+    expect(p.funnels[0]).toMatchObject({ targetCpl: 90, targetSource: "config" });
+  });
+
+  it("borrows the account target for a funnel with too few leads to calibrate", () => {
+    const thin = [campaign("Buyer Campaign", 1000, 20), campaign("Seller Campaign", 300, 4)];
+    const p = buildPlaybook(cfg, thin)!;
+    expect(p.funnels[1]).toMatchObject({ name: "seller", targetCpl: 1300 / 24, targetSource: "auto" });
+  });
+
+  it("falls back to cplThreshold with no usable history at all", () => {
+    const p = buildPlaybook(cfg, [campaign("Buyer Campaign", 100, 2)])!;
+    expect(p).toMatchObject({ targetCpl: 110, targetSource: "fallback" });
+    expect(p.funnels[0]).toMatchObject({ targetCpl: 110, targetSource: "fallback" });
   });
 });
 
@@ -82,6 +124,13 @@ describe("assessEntity", () => {
 
   it("only watches the same zero-lead spend when it's still short of the kill line", () => {
     expect(assessEntity("ad", makeRow({ spend: 140 }), playbook, seller).verdict).toBe("watch");
+  });
+
+  it("warns when an over-target entity is within 20% of the kill line", () => {
+    // 1 lead on 140 = 140 CPL ≥ 1.75 × 60; kill line 150
+    const h = assessEntity("adset", makeRow({ spend: 140, lead_count: 1 }), playbook, seller);
+    expect(h.verdict).toBe("watch");
+    expect(h.reasons.join(" ")).toMatch(/Close to the kill line: \$10\.00 more/);
   });
 
   it("uses the buyer target for a buyer ad, so the same spend is already a kill there", () => {
@@ -177,6 +226,14 @@ describe("buildHealthReport", () => {
   it("counts each daily budget once, at the level that holds it", () => {
     const report = buildHealthReport("3-percent-east-coast", playbook, rows, live, 14);
     expect(report.dailyBudget).toEqual({ current: 20, cap: 75 });
+  });
+
+  it("ties each funnel's target to its budget: leads per week and days to the kill line", () => {
+    const report = buildHealthReport("3-percent-east-coast", playbook, rows, live, 14);
+    const seller = report.funnels.find((f) => f.funnel === "seller")!;
+    // target 60, budget 20/day
+    expect(seller).toMatchObject({ targetCpl: 60, killNoLeadSpend: 150, killCpl: 105, scaleCpl: 48, dailyBudget: 20, expectedLeadsPerWeek: (20 * 7) / 60, killLineDaysOfBudget: 7.5 });
+    expect(report.funnels.find((f) => f.funnel === "buyer")!.dailyBudget).toBeNull();
   });
 
   it("totals from campaign rows only, so nothing is counted three times", () => {

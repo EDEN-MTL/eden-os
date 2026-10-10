@@ -33,11 +33,31 @@ export interface FunnelTarget {
   /** Case-insensitive substring of the campaign (or entity) name. */
   match: string;
   targetCpl: number;
+  targetSource: TargetSource;
+  /** What an "auto" target was computed from. */
+  basis?: TargetBasis;
+}
+
+/**
+ * Where a target came from:
+ *  - auto: the account's own CPL over baselineDays (the default — "efficient"
+ *    means beating what this account already does, not a number from outside it)
+ *  - config: someone set targetCpl by hand (e.g. from Jacob's SOP); always wins
+ *  - fallback: not enough history to calibrate, so the forge.cplThreshold alert cap
+ */
+export type TargetSource = "auto" | "config" | "fallback";
+
+export interface TargetBasis {
+  days: number;
+  spend: number;
+  leads: number;
 }
 
 export interface HealthPlaybook {
   /** Target CPL for anything that matches no funnel. */
   targetCpl: number;
+  targetSource: TargetSource;
+  targetBasis?: TargetBasis;
   funnels: FunnelTarget[];
   /** Kill once spend reaches this many target CPLs with no leads (or with CPL far over target). */
   killSpendMultiple: number;
@@ -52,11 +72,17 @@ export interface HealthPlaybook {
   /** Delivered days needed before judging anything short of a fast burn. */
   minActiveDays: number;
   lookbackDays: number;
+  /** History used to calibrate auto targets. */
+  baselineDays: number;
+  /** Fewer leads than this in the baseline and a CPL is too noisy to be a target. */
+  minBaselineLeads: number;
   /** Ceiling for total daily spend across delivering campaigns; scaling past it is flagged, not suggested. */
   dailyBudgetCap: number | null;
 }
 
-export const DEFAULT_PLAYBOOK: Omit<HealthPlaybook, "targetCpl" | "funnels" | "dailyBudgetCap"> = {
+type Tunables = Omit<HealthPlaybook, "targetCpl" | "targetSource" | "targetBasis" | "funnels" | "dailyBudgetCap">;
+
+export const DEFAULT_PLAYBOOK: Tunables = {
   killSpendMultiple: 2.5,
   killCplMultiple: 1.75,
   scaleMinLeads: 3,
@@ -67,23 +93,16 @@ export const DEFAULT_PLAYBOOK: Omit<HealthPlaybook, "targetCpl" | "funnels" | "d
   // 14, not 7: at under one lead/day per ad set, a 7-day window rarely holds
   // enough leads to separate a bad ad from an unlucky week.
   lookbackDays: 14,
+  // 60: long enough to hold 10+ leads per funnel on a $50/day realtor account
+  // (3-percent-east-coast 2026-10-09: buyers 29 leads, sellers 15), short
+  // enough that a creative or offer change from two months ago doesn't anchor it.
+  baselineDays: 60,
+  minBaselineLeads: 10,
 };
 
-/** Pure so it's directly unit-testable. Returns null when there's no CPL target to judge against at all. */
-export function buildPlaybook(forgeConfig: any): HealthPlaybook | null {
+export function readTunables(forgeConfig: any): Tunables {
   const health = forgeConfig?.health ?? {};
-  const targetCpl = num(health.targetCpl) ?? num(forgeConfig?.cplThreshold);
-  if (targetCpl === null) return null;
-
-  const funnels: FunnelTarget[] = Array.isArray(health.funnels)
-    ? health.funnels.filter(
-        (f: any) => typeof f?.name === "string" && typeof f?.match === "string" && num(f?.targetCpl) !== null
-      )
-    : [];
-
   return {
-    targetCpl,
-    funnels,
     killSpendMultiple: num(health.killSpendMultiple) ?? DEFAULT_PLAYBOOK.killSpendMultiple,
     killCplMultiple: num(health.killCplMultiple) ?? DEFAULT_PLAYBOOK.killCplMultiple,
     scaleMinLeads: num(health.scaleMinLeads) ?? DEFAULT_PLAYBOOK.scaleMinLeads,
@@ -92,6 +111,67 @@ export function buildPlaybook(forgeConfig: any): HealthPlaybook | null {
     fatigueFrequency: num(health.fatigueFrequency) ?? num(forgeConfig?.fatigueThreshold) ?? DEFAULT_PLAYBOOK.fatigueFrequency,
     minActiveDays: num(health.minActiveDays) ?? DEFAULT_PLAYBOOK.minActiveDays,
     lookbackDays: num(health.lookbackDays) ?? DEFAULT_PLAYBOOK.lookbackDays,
+    baselineDays: num(health.baselineDays) ?? DEFAULT_PLAYBOOK.baselineDays,
+    minBaselineLeads: num(health.minBaselineLeads) ?? DEFAULT_PLAYBOOK.minBaselineLeads,
+  };
+}
+
+function cplFrom(rows: EntityMetrics[], days: number, minLeads: number): { cpl: number; basis: TargetBasis } | null {
+  const spend = rows.reduce((s, r) => s + r.spend, 0);
+  const leads = rows.reduce((s, r) => s + r.lead_count, 0);
+  if (leads < minLeads || leads === 0) return null;
+  return { cpl: spend / leads, basis: { days, spend, leads } };
+}
+
+/**
+ * Pure so it's directly unit-testable. `baselineRows` are campaign-level
+ * metrics over `baselineDays`; without them (or with too little history)
+ * targets come from config alone. Returns null when there's no target from
+ * any source.
+ */
+export function buildPlaybook(forgeConfig: any, baselineRows: EntityMetrics[] = []): HealthPlaybook | null {
+  const health = forgeConfig?.health ?? {};
+  const tunables = readTunables(forgeConfig);
+  const { baselineDays: days, minBaselineLeads: minLeads } = tunables;
+
+  // Account-wide target. Only campaigns that produced at least one lead count
+  // toward it: 3-percent-east-coast has years of boosted posts and page-like
+  // campaigns that were never lead-gen, and their spend would inflate it.
+  let targetCpl: number | null = num(health.targetCpl);
+  let targetSource: TargetSource = "config";
+  let targetBasis: TargetBasis | undefined;
+  if (targetCpl === null) {
+    const auto = cplFrom(baselineRows.filter((r) => r.lead_count > 0), days, minLeads);
+    if (auto) {
+      targetCpl = auto.cpl;
+      targetSource = "auto";
+      targetBasis = auto.basis;
+    } else {
+      targetCpl = num(forgeConfig?.cplThreshold);
+      targetSource = "fallback";
+    }
+  }
+  if (targetCpl === null) return null;
+
+  const funnels: FunnelTarget[] = (Array.isArray(health.funnels) ? health.funnels : [])
+    .filter((f: any) => typeof f?.name === "string" && typeof f?.match === "string" && f.match.length > 0)
+    .map((f: any): FunnelTarget => {
+      const configured = num(f.targetCpl);
+      if (configured !== null) return { name: f.name, match: f.match, targetCpl: configured, targetSource: "config" };
+      const match = f.match.toLowerCase();
+      const auto = cplFrom(baselineRows.filter((r) => r.entity_name?.toLowerCase().includes(match)), days, minLeads);
+      if (auto) return { name: f.name, match: f.match, targetCpl: auto.cpl, targetSource: "auto", basis: auto.basis };
+      // Too little funnel history: borrow the account target rather than
+      // judging a thin funnel against its own noisy handful of leads.
+      return { name: f.name, match: f.match, targetCpl: targetCpl!, targetSource, ...(targetBasis ? { basis: targetBasis } : {}) };
+    });
+
+  return {
+    targetCpl,
+    targetSource,
+    ...(targetBasis ? { targetBasis } : {}),
+    funnels,
+    ...tunables,
     dailyBudgetCap: num(forgeConfig?.dailyBudgetCap),
   };
 }
@@ -208,6 +288,12 @@ export function assessEntity(
         ? `0 leads on ${money(row.spend)}, short of the ${money(killSpend)} kill line. Give it until then.`
         : `CPL ${money(cpl!)} is over the ${money(targetCpl)} target but not yet a kill (${money(row.spend)} spent, ${leads} lead(s)).`
     );
+    // Without this, an ad set $2 short of the line reads exactly like one
+    // that just started (seen live: $140 against a $142 line).
+    const worstCase = leads === 0 || (cpl !== null && cpl >= targetCpl * playbook.killCplMultiple);
+    if (worstCase && row.spend >= killSpend * 0.8) {
+      reasons.push(`Close to the kill line: ${money(killSpend - row.spend)} more spend without improvement makes it a kill.`);
+    }
   }
 
   if (live.learning?.status === "LEARNING") {
@@ -269,6 +355,9 @@ function recommend(scope: RuleScope, verdict: HealthVerdict, playbook: HealthPla
       return "Leave it alone until it has enough spend and days to judge.";
   }
 }
+
+/** Funnel label for anything matching no configured funnel. */
+const OTHER_FUNNEL = "account";
 
 const VERDICT_ORDER: HealthVerdict[] = ["kill", "refresh_creative", "scale", "watch", "healthy", "too_early"];
 
@@ -336,10 +425,37 @@ export async function fetchLiveState(client: MetaClient): Promise<Map<string, Li
   return out;
 }
 
+/**
+ * The numbers each verdict is judged against, spelled out per funnel and tied
+ * to the money actually behind it — so "kill at $143 with no leads" can be
+ * read as "about 5 days of this funnel's whole budget", not an abstract figure.
+ */
+export interface FunnelSummary {
+  funnel: string;
+  targetCpl: number;
+  targetSource: TargetSource;
+  basis?: TargetBasis;
+  /** Spend with zero leads at which an ad/ad set is a kill. */
+  killNoLeadSpend: number;
+  /** CPL at which it's a kill once killNoLeadSpend has been spent. */
+  killCpl: number;
+  /** CPL at or under which (with scaleMinLeads leads) it's a scale. */
+  scaleCpl: number;
+  scaleMinLeads: number;
+  scaleStepPercent: number;
+  /** Current daily budget on this funnel's delivering campaigns/ad sets, if known. */
+  dailyBudget: number | null;
+  /** At target CPL and the current budget. */
+  expectedLeadsPerWeek: number | null;
+  /** How many days of this funnel's whole budget the no-lead kill line represents. */
+  killLineDaysOfBudget: number | null;
+}
+
 export interface CampaignHealthReport {
   clientId: string;
   lookbackDays: number;
   playbook: HealthPlaybook;
+  funnels: FunnelSummary[];
   totals: { spend: number; leads: number; cpl: number | null; leadSource: EntityMetrics["lead_source"] };
   /** Sum of daily budgets on delivering, still-active campaigns/ad sets, vs the config cap. */
   dailyBudget: { current: number | null; cap: number | null };
@@ -363,6 +479,7 @@ export function buildHealthReport(
   const entities: EntityHealth[] = [];
   let budgetSum = 0;
   let budgetKnown = false;
+  const budgetByFunnel = new Map<string, number>();
 
   for (const scope of ["campaign", "adset", "ad"] as RuleScope[]) {
     for (const row of rowsByScope[scope]) {
@@ -376,6 +493,8 @@ export function buildHealthReport(
       if (state?.dailyBudget && (scope === "campaign" || (scope === "adset" && !state.campaignHoldsBudget))) {
         budgetSum += state.dailyBudget;
         budgetKnown = true;
+        const funnel = resolveFunnel(playbook, state.campaignName, row.entity_name).funnel ?? OTHER_FUNNEL;
+        budgetByFunnel.set(funnel, (budgetByFunnel.get(funnel) ?? 0) + state.dailyBudget);
       }
     }
   }
@@ -393,10 +512,34 @@ export function buildHealthReport(
   const counts = Object.fromEntries(VERDICT_ORDER.map((v) => [v, 0])) as Record<HealthVerdict, number>;
   for (const e of entities) counts[e.verdict]++;
 
+  const summarize = (funnel: string, targetCpl: number, targetSource: TargetSource, basis?: TargetBasis): FunnelSummary => {
+    const dailyBudget = budgetByFunnel.get(funnel) ?? null;
+    const killNoLeadSpend = targetCpl * playbook.killSpendMultiple;
+    return {
+      funnel,
+      targetCpl,
+      targetSource,
+      ...(basis ? { basis } : {}),
+      killNoLeadSpend,
+      killCpl: targetCpl * playbook.killCplMultiple,
+      scaleCpl: targetCpl * playbook.scaleCplMultiple,
+      scaleMinLeads: playbook.scaleMinLeads,
+      scaleStepPercent: playbook.scaleStepPercent,
+      dailyBudget,
+      expectedLeadsPerWeek: dailyBudget ? (dailyBudget * 7) / targetCpl : null,
+      killLineDaysOfBudget: dailyBudget ? killNoLeadSpend / dailyBudget : null,
+    };
+  };
+  const funnels = playbook.funnels.map((f) => summarize(f.name, f.targetCpl, f.targetSource, f.basis));
+  if (playbook.funnels.length === 0 || budgetByFunnel.has(OTHER_FUNNEL)) {
+    funnels.push(summarize(OTHER_FUNNEL, playbook.targetCpl, playbook.targetSource, playbook.targetBasis));
+  }
+
   return {
     clientId,
     lookbackDays,
     playbook,
+    funnels,
     totals: { spend, leads, cpl: leads ? spend / leads : null, leadSource },
     dailyBudget: { current: budgetKnown ? budgetSum : null, cap: playbook.dailyBudgetCap },
     counts,
@@ -405,10 +548,12 @@ export function buildHealthReport(
 }
 
 export async function getCampaignHealth(clientId: string, client: MetaClient | null, lookbackDays?: number): Promise<CampaignHealthReport> {
-  const playbook = buildPlaybook(loadForgeConfig(clientId));
+  const forgeConfig = loadForgeConfig(clientId);
+  const baselineRows = await computeMetrics("campaign", readTunables(forgeConfig).baselineDays, clientId);
+  const playbook = buildPlaybook(forgeConfig, baselineRows);
   if (!playbook) {
     throw new Error(
-      `No CPL target configured for client "${clientId}" (forge.health.targetCpl or forge.cplThreshold in config/clients/${clientId}.json). Can't judge health without one.`
+      `No CPL target for client "${clientId}": not enough lead history to calibrate one, and no forge.cplThreshold in config/clients/${clientId}.json to fall back on.`
     );
   }
   const days = lookbackDays ?? playbook.lookbackDays;
