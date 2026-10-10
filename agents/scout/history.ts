@@ -73,6 +73,13 @@ export interface LeadHistory {
   firstSeen: string | null;
   /** Which contact carried the history — the lead's own id, or a duplicate record of the same person. */
   historyContactId: string | null;
+  /**
+   * The lead's own contact existed well before this submission (older than
+   * returningMinAgeMinutes). With no real history on top of that it's a lead
+   * who has simply come back — to be treated as new and called (Jacob,
+   * 2026-10-10, Koren Pye), not as a brand-new contact and not as one an agent owns.
+   */
+  preExisting: boolean;
 }
 
 /**
@@ -90,7 +97,12 @@ function humanNotes(isaNotes: string | null | undefined): string {
     .join("\n");
 }
 
-function evidenceFor(subject: HistorySubject, config: HistoryConfig, now: Date): { reasons: HistoryReason[]; assignedUserId: string | null } | null {
+function evidenceFor(
+  subject: HistorySubject,
+  config: HistoryConfig,
+  now: Date,
+  activeUserIds: Set<string> | null
+): { reasons: HistoryReason[]; assignedUserId: string | null } | null {
   const { contact, opportunities, appointmentCount } = subject;
 
   // A contact created moments ago is new no matter what's on it — a client's
@@ -113,6 +125,12 @@ function evidenceFor(subject: HistorySubject, config: HistoryConfig, now: Date):
   for (const opp of opportunities) {
     if (opp.assignedTo && !assignedUserId) assignedUserId = opp.assignedTo;
   }
+  // An assignment only means something if that user still exists. Koren Pye's
+  // card was assigned to a user who has since been deleted (gone from the
+  // location's user list, not on the roster) — not an agent, so not history.
+  // activeUserIds === null means the user list couldn't be read: count every
+  // assignment, the cautious direction (it keeps Iris from calling).
+  if (assignedUserId && activeUserIds && !activeUserIds.has(assignedUserId)) assignedUserId = null;
   if (assignedUserId) reasons.push({ kind: "assigned", userId: assignedUserId });
 
   for (const opp of older) {
@@ -127,18 +145,29 @@ function evidenceFor(subject: HistorySubject, config: HistoryConfig, now: Date):
   if (humanNotes(contact.isaNotes) !== "") reasons.push({ kind: "human_notes" });
   if (appointmentCount > 0) reasons.push({ kind: "appointment", count: appointmentCount });
 
-  return reasons.length > 0 ? { reasons, assignedUserId } : null;
+  // Old ISA notes alone are not enough: an ISA may have worked this lead long
+  // ago, but with no assigned agent, no appointment, no worked stage and no
+  // touch tag nobody owns them now, and Iris should call. Notes still show in
+  // the alert when something stronger is also there.
+  const hasStrongReason = reasons.some((r) => r.kind !== "human_notes");
+  return hasStrongReason ? { reasons, assignedUserId } : null;
 }
 
-export function classifyLeadHistory(input: { self: HistorySubject; duplicates?: HistorySubject[]; now: Date }, config: HistoryConfig): LeadHistory {
+export function classifyLeadHistory(
+  input: { self: HistorySubject; duplicates?: HistorySubject[]; now: Date; activeUserIds?: string[] | null },
+  config: HistoryConfig
+): LeadHistory {
   const subjects = [input.self, ...(input.duplicates || [])];
+  const activeUserIds = input.activeUserIds ? new Set(input.activeUserIds) : null;
+  const addedMs = input.self.contact.dateAdded ? new Date(input.self.contact.dateAdded).getTime() : NaN;
+  const preExisting = !Number.isNaN(addedMs) && (input.now.getTime() - addedMs) / 60_000 >= config.returningMinAgeMinutes;
   const reasons: HistoryReason[] = [];
   let assignedUserId: string | null = null;
   let firstSeen: string | null = null;
   let historyContactId: string | null = null;
 
   for (const subject of subjects) {
-    const found = evidenceFor(subject, config, input.now);
+    const found = evidenceFor(subject, config, input.now, activeUserIds);
     if (!found) continue;
     reasons.push(...found.reasons);
     if (!assignedUserId) assignedUserId = found.assignedUserId;
@@ -147,5 +176,5 @@ export function classifyLeadHistory(input: { self: HistorySubject; duplicates?: 
     if (added && (!firstSeen || new Date(added).getTime() < new Date(firstSeen).getTime())) firstSeen = added;
   }
 
-  return { returning: reasons.length > 0, reasons, assignedUserId, firstSeen, historyContactId };
+  return { returning: reasons.length > 0, reasons, assignedUserId, firstSeen, historyContactId, preExisting };
 }
