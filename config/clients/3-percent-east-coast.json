@@ -134,6 +134,11 @@
       "blocksCalls": false,
       "note": "Mark, 2026-10-10: when a teammate (Mark, Jacob, any 3% agent) has texted a lead from GHL in the last N days, Iris stays out of that text conversation — no auto-replies, no texts of her own. blocksCalls=false: calls are unaffected (Mark has asked Iris to call leads he texted by hand); set true to stop Iris calling them too."
     },
+    "slackCommands": {
+      "allowedUserIds": ["U07H26WUGP5", "U06SA9782HW"],
+      "confirmTtlMinutes": 10,
+      "note": "Mark, 2026-10-10: only Mark (U07H26WUGP5) and Jacob (U06SA9782HW) may tell Iris to call or stop a lead in Slack. Every request waits for a plain 'yes' from the same person in the same place before anything happens."
+    },
     "sms": {
       "fromNumber": "+17097013598",
       "fromNumberNote": "Mark, 2026-10-07: GHL reuses whichever number last texted a lead, and older leads were last texted from +17097021163, which is no longer available in the account — every send to them failed ('Invalid from number'). Iris's own proactive texts name the main 3% number explicitly. Same number Iris calls out from."
@@ -328,7 +333,15 @@
     "returningLeadTag": "returning lead",
     "returningLeadSlackChannel": "C0BRPC7FUMU",
     "returningLeadSlackChannelNote": "Mark, 2026-10-05: returning-lead alerts go to #newleads, posted by Scout (Scout is a member). #newleads is a PRIVATE channel, so this is its channel id — Slack only resolves a channel by name for public channels.",
-    "returningMinAgeMinutes": 60
+    "returningMinAgeMinutes": 60,
+    "legacyUserIds": {
+      "_note": "Mark, 2026-10-11: old user codes still on leads -> the agent's current user id (current ids match teams[]). Verified against live data: tX9W... on 67 contacts / 39 cards, 0bl2... on 53 cards, 2fb9... on 10 cards. Matching ignores l/I/1 and O/0 mix-ups, so a code copied by eye still resolves.",
+      "tX9WeRoJ6eWbDsqZVLs3": "1A5sJpqYGI2IvSYpS5s3",
+      "0bl2mebGKSbtIX4OrQuH": "XnTRNyagVeoyvpqDAHda",
+      "2fb9rtFbUBh1isqrxnoY": "FxhXD7440LRChvWfotmD",
+      "Xt65A0Ply0wZJN8zGmUc": "99ZRGYPQoZG6pdBj3Bpz",
+      "pSWiUg0VluySWOQmZFhi": "FtUDZ9FJqayyTS9SYanf"
+    }
   },
   "ember": {
     "_comment": "Mark, 2026-10-09: 3%'s Ember config, copied from the test account (eden-sub-account-one) where it was proven. enabled stays false until Jacob approves the SMS/AI cost and confirms CASL consent, and the first texts are previewed (scripts/ember-dry-run.ts 3-percent-east-coast --messages).",

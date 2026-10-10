@@ -137,6 +137,8 @@ export interface IrisConfig {
    * told. Mark, 2026-10-07.
    */
   smsFromNumber?: string;
+  /** Who may tell Iris to call or stop a lead from Slack, and how long a request waits for its "yes". */
+  slackCommands?: { allowedUserIds: string[]; confirmTtlMinutes?: number };
   /** What counts as in/near/outside the service area (market.serviceArea) — see service-area.ts. */
   serviceArea?: ServiceAreaConfig;
   /** How many days after a teammate's text Iris stays out of that lead's text conversation (default 7). */

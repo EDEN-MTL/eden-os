@@ -715,3 +715,24 @@ CREATE TABLE IF NOT EXISTS live_transfer_posts (
     posted_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 CREATE INDEX IF NOT EXISTS idx_live_transfer_posts_contact ON live_transfer_posts(client_id, contact_id, posted_at);
+
+-- Calls/stops asked of Iris in Slack ("call Koren Pye now"). A command is only
+-- PREPARED when asked (status 'pending'); it runs only when the same person
+-- replies yes in the same place within the time limit — see
+-- agents/iris/slack-commands.ts. Every one is kept as an audit trail.
+CREATE TABLE IF NOT EXISTS iris_slack_commands (
+    id BIGSERIAL PRIMARY KEY,
+    client_id TEXT NOT NULL,
+    requested_by TEXT NOT NULL,        -- Slack user id
+    channel_id TEXT NOT NULL,
+    thread_ts TEXT,
+    kind TEXT NOT NULL,                -- call | stop
+    contact_id TEXT NOT NULL,
+    contact_name TEXT NOT NULL,
+    call_at TIMESTAMPTZ,               -- for kind = call
+    summary TEXT NOT NULL,             -- exactly what was shown to the requester
+    status TEXT NOT NULL DEFAULT 'pending',  -- pending | executed | cancelled | expired
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    resolved_at TIMESTAMPTZ
+);
+CREATE INDEX IF NOT EXISTS idx_iris_slack_commands_pending ON iris_slack_commands(requested_by, channel_id, status, created_at);

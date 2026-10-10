@@ -39,6 +39,7 @@ export function historyConfigFor(config: ScoutConfig): HistoryConfig {
     touchedTags: config.touchedTags || [],
     historyStageIds: config.historyStageIds && config.historyStageIds.length > 0 ? config.historyStageIds : config.touchedStageIds || [],
     returningMinAgeMinutes: config.returningMinAgeMinutes ?? DEFAULT_MIN_AGE_MINUTES,
+    legacyUserIds: config.legacyUserIds,
   };
 }
 
@@ -232,11 +233,14 @@ export async function notifyReturningLead(
   }
 
   const reasonText = describeReasons(history.reasons, stageNames, userNames);
-  const agentName = history.assignedUserId ? userNames.get(history.assignedUserId) ?? "their assigned agent" : null;
+  // An assigned id that isn't any current user (and isn't a known old code)
+  // can't be texted or assigned to — say so rather than claim an agent was told.
+  const unrecognisedAssignee = !!history.assignedUserId && userNames.size > 0 && !userNames.has(history.assignedUserId);
+  const agentName = history.assignedUserId && !unrecognisedAssignee ? userNames.get(history.assignedUserId) ?? "their assigned agent" : null;
   const tag = config.returningLeadTag || DEFAULT_RETURNING_TAG;
   const firstSeen = history.firstSeen ? new Date(history.firstSeen).toISOString().slice(0, 10) : null;
 
-  if (ghlConfig && history.assignedUserId) {
+  if (ghlConfig && history.assignedUserId && !unrecognisedAssignee) {
     const { locationId, apiKey } = ghlConfig;
 
     // The workflow texts the contact's ASSIGNED user — make sure the lead's
@@ -286,6 +290,8 @@ export async function notifyReturningLead(
       `History: ${reasonText.join("; ") || "on record"}\n` +
       (agentName
         ? `Assigned to *${agentName}* — tagged \`${tag}\` so their GHL text goes out. Iris will NOT call.`
-        : `⚠️ No assigned agent on record — a human needs to decide who follows up. Iris will NOT call.`)
+        : unrecognisedAssignee
+          ? `⚠️ Assigned to a user code I don't recognise (\`${history.assignedUserId}\`) — nobody was texted. Tell me which agent this is and I'll add it. Iris will NOT call.`
+          : `⚠️ No assigned agent on record — a human needs to decide who follows up. Iris will NOT call.`)
   ).catch((error) => console.error("[SCT] Failed to post the returning-lead alert to Slack:", error instanceof Error ? error.message : error));
 }

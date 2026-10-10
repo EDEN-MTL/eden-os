@@ -17,6 +17,8 @@ const MAX_TOOL_TURNS = 6;
 export interface ToolContext {
   channelId: string;
   threadTs?: string;
+  /** The Slack user who sent this message — for tools that must know WHO is asking (Iris's call/stop commands). */
+  userId?: string;
 }
 
 /**
@@ -136,6 +138,7 @@ export abstract class BaseAgent {
       const response = await this.generateReply(historyKey, message.text, { senderName }, attachment, {
         channelId: message.channelId,
         threadTs: message.threadTs,
+        userId: message.userId,
       });
       await this.respond(message, response);
     } catch (error) {
