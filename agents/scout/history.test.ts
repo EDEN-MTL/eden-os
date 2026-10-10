@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { classifyLeadHistory, HistoryConfig, HistoryOpportunity, HistorySubject, resolveAssignee } from "./history";
+import { classifyLeadHistory, HistoryConfig, HistoryOpportunity, HistorySubject } from "./history";
 
 /**
  * Fixtures modeled on REAL 3% Realty data pulled 2026-10-04 — real stage
@@ -162,45 +162,5 @@ describe("classifyLeadHistory", () => {
     const lead = subject({ dateAdded: null, assignedTo: STEPHANIE });
 
     expect(classifyLeadHistory({ self: lead, now: NOW }, CONFIG).returning).toBe(false);
-  });
-});
-
-/**
- * Mark, 2026-10-11: 102 of 289 cards in 3%'s pipeline carry an OLD user code for
- * Genna Hickey, Charlene Harnum or Stephanie McGrath — the same people under an
- * earlier user record. Koren Pye's card carried Genna's old code, which read as
- * "not an agent" and left Genna with no alert.
- */
-describe("legacy user codes", () => {
-  const GENNA_OLD = "0bl2mebGKSbtIX4OrQuH";
-  const GENNA_NOW = "XnTRNyagVeoyvpqDAHda";
-  const LEGACY = { [GENNA_OLD]: GENNA_NOW, tX9WeRoJ6eWbDsqZVLs3: "1A5sJpqYGI2IvSYpS5s3" };
-  const WITH_LEGACY: HistoryConfig = { ...CONFIG, legacyUserIds: LEGACY };
-
-  it("reads Koren Pye — an old lead whose CARD carries Genna's old code — as returning, owned by Genna's current id", () => {
-    const koren = subject({ dateAdded: daysAgo(224) }, [opp({ createdAt: daysAgo(224), assignedTo: GENNA_OLD })]);
-
-    const out = classifyLeadHistory({ self: koren, now: NOW }, WITH_LEGACY);
-
-    expect(out.returning).toBe(true);
-    expect(out.assignedUserId).toBe(GENNA_NOW);
-    expect(out.reasons).toContainEqual({ kind: "assigned", userId: GENNA_NOW });
-  });
-
-  it("translates an old code on the contact itself too", () => {
-    const lead = subject({ dateAdded: daysAgo(40), assignedTo: "tX9WeRoJ6eWbDsqZVLs3" });
-
-    expect(classifyLeadHistory({ self: lead, now: NOW }, WITH_LEGACY).assignedUserId).toBe("1A5sJpqYGI2IvSYpS5s3");
-  });
-
-  it("leaves a current user's id, and an id it has never heard of, exactly as they are", () => {
-    expect(resolveAssignee(STEPHANIE, LEGACY)).toBe(STEPHANIE);
-    expect(resolveAssignee("someUnknownCode123", LEGACY)).toBe("someUnknownCode123");
-    expect(resolveAssignee(GENNA_OLD, undefined)).toBe(GENNA_OLD);
-  });
-
-  it("still matches a code that was copied by eye with l/I/1 or O/0 mixed up", () => {
-    expect(resolveAssignee("Obl2mebGKSbtlX4OrQuH", LEGACY)).toBe(GENNA_NOW);
-    expect(resolveAssignee("0BL2MEBGKSBTIX4ORQUH", LEGACY)).toBe(GENNA_NOW);
   });
 });

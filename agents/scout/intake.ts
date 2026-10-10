@@ -64,14 +64,6 @@ export interface ScoutConfig {
   returningLeadSlackChannel?: string;
   /** A contact younger than this is brand new regardless of what's on it. Default 60. */
   returningMinAgeMinutes?: number;
-  /**
-   * Old GHL user codes still sitting on leads, mapped to the agent's CURRENT
-   * user id. Mark, 2026-10-11: 102 of 289 cards in 3%'s pipeline carry an
-   * older code for Genna Hickey, Charlene Harnum or Stephanie McGrath — the
-   * same people, an earlier user record. Without this they read as "not an
-   * active user" and the returning-lead text has nobody to go to.
-   */
-  legacyUserIds?: Record<string, string>;
   calendars: { buyer: string; seller: string };
   fields: ScoutFieldMap;
 }

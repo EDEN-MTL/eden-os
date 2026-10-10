@@ -199,31 +199,6 @@ describe("notifyReturningLead", () => {
     expect(ghl.updateContact).toHaveBeenCalledWith("contact-glen", { assignedTo: STEPHANIE }, "loc-1", "key-1");
   });
 
-  it("assigns the contact to the agent's CURRENT id when the lead only carried their old code, so the GHL text has someone to go to", async () => {
-    db.query.mockResolvedValue([{ id: "1" }]);
-    const GENNA_NOW = "XnTRNyagVeoyvpqDAHda";
-    ghl.listLocationUsers.mockResolvedValue([{ id: GENNA_NOW, name: "Genna Hickey" }]);
-
-    // history.assignedUserId is already translated; the contact itself still has nothing (Koren Pye's case)
-    await notifyReturningLead("3-percent-east-coast", LEAD, assessed(GENNA_NOW, null), CONFIG);
-
-    expect(ghl.updateContact).toHaveBeenCalledWith("contact-glen", { assignedTo: GENNA_NOW }, "loc-1", "key-1");
-    expect((slack.sendMessage.mock.calls[0] as unknown as [string, { text: string }])[1].text).toContain("Genna Hickey");
-  });
-
-  it("an assigned id that is no current user and no known old code: tags nobody, assigns nobody, and the alert says to tell us who it is", async () => {
-    db.query.mockResolvedValue([{ id: "1" }]);
-
-    await notifyReturningLead("3-percent-east-coast", LEAD, assessed("deadCode999"), CONFIG);
-
-    expect(ghl.updateContact).not.toHaveBeenCalled();
-    expect(ghl.addContactTags).not.toHaveBeenCalled();
-    const text = (slack.sendMessage.mock.calls[0] as unknown as [string, { text: string }])[1].text;
-    expect(text).toContain("deadCode999");
-    expect(text).toMatch(/nobody was texted/);
-    expect(text).toContain("Iris will NOT call");
-  });
-
   it("does not touch the assignment when the record already carries the right agent", async () => {
     db.query.mockResolvedValue([{ id: "1" }]);
 
