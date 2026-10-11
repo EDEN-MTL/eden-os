@@ -193,6 +193,36 @@ describe("hitCallScreener", () => {
     expect(hitCallScreener({})).toBe(false);
     expect(hitCallScreener({ messages: [] })).toBe(false);
   });
+
+  // Iris now answers a screener with just "Iris." and waits (2026-10-10), so a
+  // screener that then connects the lead is a REAL conversation.
+  it("is NOT a screener-only call when a real person speaks after the screener's prompts", () => {
+    const connected = {
+      messages: [
+        { role: "user", message: "If you record your name and reason for calling, I'll see if this person is available." },
+        { role: "user", message: "Thanks, Iris. Please stay on the line." },
+        { role: "user", message: "Hello?" },
+        { role: "user", message: "Yeah, this is Koren." },
+      ],
+    };
+    expect(hitCallScreener(connected)).toBe(false);
+  });
+
+  it("is still a screener-only call when only the machine ever spoke — even through its 'not available' close", () => {
+    const neverConnected = {
+      messages: [
+        { role: "user", message: "If you record your name and reason for calling, I'll see if this person is available." },
+        { role: "user", message: "Thanks, Corinne. Please stay on the line." },
+        { role: "user", message: "Sorry, this person isn't available. Please leave a message after the tone." },
+      ],
+    };
+    expect(hitCallScreener(neverConnected)).toBe(true);
+  });
+
+  it("recognises other screener wordings, like Google's", () => {
+    expect(hitCallScreener({ messages: [{ role: "user", message: "Hi, the person you're calling is using a call screening service." }] })).toBe(true);
+    expect(hitCallScreener({ messages: [{ role: "user", message: "Google is screening this call." }] })).toBe(true);
+  });
 });
 
 /**
