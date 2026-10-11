@@ -98,13 +98,49 @@ const TRANSFER_ABANDONED_REASONS = new Set(["customer-ended-call-before-warm-tra
  * way TRANSFER_ABANDONED_REASONS grew, if a differently-worded screener
  * shows up on a future real call.
  */
-const CALL_SCREENER_PHRASES = [/record(?:ing)? your name and reason for calling/i];
+const CALL_SCREENER_PHRASES = [
+  /record(?:ing)? your name and reason for calling/i,
+  /see if (this person|he|she|they)(?: is|'s| are|'re) available/i,
+  /(?:is|are) screening (?:this|your|their) calls?/i,
+  /google is screening/i,
+  /call[- ]screening (?:service|assistant)/i,
+];
 
+/**
+ * Lines that are still the machine talking after it has asked for a name —
+ * "stay on the line", "please hold", "not available, leave a message". A
+ * later customer line that is NOT one of these is a real person joining.
+ * Added 2026-10-10 when Iris began answering a screener with just "Iris."
+ * and waiting (agents/iris/scripts.ts, "How you open the call"): a screener
+ * that then connects the lead is a genuine conversation, so a screener
+ * phrase alone must no longer mark the whole call unanswered.
+ */
+const MACHINE_FOLLOW_UPS = [
+  ...CALL_SCREENER_PHRASES,
+  /stay on the line/i,
+  /please (hold|wait)/i,
+  /one moment/i,
+  /(?:is|isn't|is not|not) available/i,
+  /leave a message/i,
+  /after the (tone|beep)/i,
+  /connecting (you|your call)/i,
+  /thanks?,? \w+\.?\s*$/i,
+];
+
+/**
+ * True when the call hit a screening service and NO real person ever joined
+ * after it. If the customer's own words appear after the screener phrases —
+ * anything that isn't the machine talking — the lead (or someone) came on
+ * the line, and it is not a screener-only call.
+ */
 export function hitCallScreener(message: Record<string, any>): boolean {
-  const msgs: any[] = message?.messages ?? [];
-  return msgs.some(
-    (m) => m?.role === "user" && typeof m?.message === "string" && CALL_SCREENER_PHRASES.some((re) => re.test(m.message))
-  );
+  const userLines: string[] = ((message?.messages ?? []) as any[])
+    .filter((m) => m?.role === "user" && typeof m?.message === "string" && m.message.trim() !== "")
+    .map((m) => m.message as string);
+  const first = userLines.findIndex((line) => CALL_SCREENER_PHRASES.some((re) => re.test(line)));
+  if (first === -1) return false;
+  const realPersonJoined = userLines.slice(first + 1).some((line) => !MACHINE_FOLLOW_UPS.some((re) => re.test(line)));
+  return !realPersonJoined;
 }
 
 /**

@@ -670,13 +670,27 @@ describe("buildLeadQualificationPrompt", () => {
      * The prompt's job now is just to tell the model this already
      * happened, so it never repeats or paraphrases it.
      */
-    it("tells Iris her opening line is already spoken for her automatically, and never to repeat it", () => {
+    it("tells Iris NOTHING is spoken for her — the opening line is hers to say, exactly, once a real person has spoken", () => {
       const prompt = buildLeadQualificationPrompt(IRIS_CONFIG, { ...BLANK_LEAD, name: "Justin" }, "3 Percent East Coast", "St. John's", false, true, false);
-      expect(prompt).toMatch(/Your opening line is spoken FOR you, automatically, the instant/i);
+      expect(prompt).toMatch(/NOTHING is spoken for you/);
       expect(prompt).toContain('"Hi, this is Iris with 3 Percent East Coast. Am I speaking with Justin?"');
-      expect(prompt).toMatch(/mechanical platform behavior, not something you generate or choose to/i);
-      expect(prompt).toMatch(/NEVER say it again, never/i);
-      expect(prompt).toMatch(/never say a bare "Hi" of/i);
+      expect(prompt).toMatch(/say your opening line EXACTLY,\s+word for word, with nothing before or after it/i);
+      expect(prompt).toMatch(/NEVER repeat it afterwards/i);
+      expect(prompt).toMatch(/never\s+add a bare "Hi" of your own/i);
+    });
+
+    it("quotes the full opening line — never the reason for the call or 'how are you' — for a named lead and for an unknown one, whatever the intent", () => {
+      const quoted = (lead: typeof BLANK_LEAD) => {
+        const prompt = buildLeadQualificationPrompt(IRIS_CONFIG, lead, "3 Percent East Coast", "St. John's", false, true, false);
+        return prompt.match(/say your opening line EXACTLY,[\s\S]*?\n\s+"([^"]+)"/)?.[1] ?? "";
+      };
+      expect(quoted({ ...BLANK_LEAD, name: "Sam Lee" })).toBe("Hi, this is Iris with 3 Percent East Coast. Am I speaking with Sam?");
+      expect(quoted({ ...BLANK_LEAD, name: null })).toBe("Hi, this is Iris with 3 Percent East Coast. Who do I have the pleasure of speaking with?");
+      for (const intent of ["buyer", "seller"] as const) {
+        const line = quoted({ ...BLANK_LEAD, name: "Sam Lee", intent, leadSource: "facebook" });
+        expect(line).not.toMatch(/calling about/i);
+        expect(line).not.toMatch(/how are you/i);
+      }
     });
 
     it("gives Iris a clear branch for how to react to the lead's response to the already-spoken identify question", () => {
@@ -1156,12 +1170,43 @@ describe("buildLeadQualificationPrompt", () => {
    * follow-up instruction: the instant she recognizes a screener, she
    * should just hang up — no more back-and-forth, no goodbye, no message.
    */
-  it("tells Iris to recognize an automated call-screening service and hang up immediately, silently", () => {
+  it("tells Iris to answer a call-screening service with ONLY \"Iris.\" and then wait (Mark's spec, 2026-10-10)", () => {
+    const prompt = buildLeadQualificationPrompt(IRIS_CONFIG, { ...BLANK_LEAD, name: "Corin" }, "3 Percent East Coast", "St. John's", false, true, false);
+    expect(prompt).toMatch(/If you record your name and reason for calling, I'll see if this\s+person is available/i);
+    expect(prompt).toMatch(/say ONLY: "Iris\."/);
+    expect(prompt).toMatch(/not the company, not the lead's name, not the reason for\s+calling, not a greeting/i);
+    expect(prompt).toMatch(/Even when it asks for your name AND\s+your reason for calling, say only "Iris\."/i);
+    expect(prompt).toMatch(/Then STOP speaking and listen/);
+  });
+
+  it("holds the introduction until a real person speaks, and stays silent for hold announcements, menus and unclear sounds", () => {
+    const prompt = buildLeadQualificationPrompt(IRIS_CONFIG, { ...BLANK_LEAD, name: "Corin" }, "3 Percent East Coast", "St. John's", false, true, false);
+    expect(prompt).toMatch(/Please hold while we connect your call/);
+    expect(prompt).toMatch(/→ SAY NOTHING\./);
+    expect(prompt).toMatch(/Never launch your introduction\s+into a machine/i);
+    expect(prompt).toMatch(/a REAL PERSON may join once the system\s+connects/i);
+    expect(prompt).toMatch(/Another machine voice is not a person: stay\s+silent/i);
+    expect(prompt).toMatch(/Anything unclear → say nothing yet and listen/i);
+  });
+
+  it("never loops on the screener: 'Iris.' at most twice, and a screener that never connects ends through the normal no-answer handling", () => {
     const prompt = buildLeadQualificationPrompt(IRIS_CONFIG, BLANK_LEAD, "3 Percent East Coast", "St. John's", false, true, false);
-    expect(prompt).toMatch(/automated call-screening\/gatekeeper service/i);
-    expect(prompt).toMatch(/record your name and reason for calling/i);
-    expect(prompt).toMatch(/invoke endCall immediately and\s+silently/i);
-    expect(prompt).toMatch(/no goodbye line/i);
+    expect(prompt).toMatch(/never more than twice in total/i);
+    expect(prompt).toMatch(/If it never connects, do not keep talking/i);
+    expect(prompt).toMatch(/A call a machine answered\s+is NOT a conversation/i);
+  });
+
+  it("keeps the no-message voicemail policy: a voicemail greeting, mailbox full, or a screener's 'leave a message' close gets a silent endCall", () => {
+    const prompt = buildLeadQualificationPrompt(IRIS_CONFIG, BLANK_LEAD, "3 Percent East Coast", "St. John's", false, true, false);
+    expect(prompt).toMatch(/Please leave a message after the tone/);
+    expect(prompt).toMatch(/no message is ever left: invoke endCall\s+immediately and silently/i);
+    expect(prompt).toMatch(/Never qualify, ask questions or try to book with a recording/i);
+  });
+
+  it("no longer tells Iris to hang up on a call-screening service", () => {
+    const prompt = buildLeadQualificationPrompt(IRIS_CONFIG, BLANK_LEAD, "3 Percent East Coast", "St. John's", false, true, false);
+    expect(prompt).not.toMatch(/call-screening\/gatekeeper service, not the actual lead[\s\S]{0,80}hang up immediately/i);
+    expect(prompt).toMatch(/An interactive call-screening service is NOT a reason to hang up/);
   });
 
   /**

@@ -46,14 +46,11 @@ describe("buildCallPayload", () => {
    * "Hi!" firstMessage was the exact bug. Fixed by making firstMessage the
    * full canonical opening line (buildCallOpeningLine) instead.
    */
-  it("uses the full canonical opening line as firstMessage, not a bare greeting", () => {
+  it("sends NO firstMessage on a normal outbound call, and waits for the other side to speak — so the model can tell a screener from a person", () => {
     const payload = buildCallPayload(BASE_PARAMS, VAPI_CONFIG);
-    expect(payload.assistant.firstMessage).toBe("Hi, this is Iris with 3 Percent East Coast. Am I speaking with Sam?");
-  });
 
-  it("falls back to the generic identify question when no lead name is known", () => {
-    const payload = buildCallPayload({ ...BASE_PARAMS, firstName: "there" }, VAPI_CONFIG);
-    expect(payload.assistant.firstMessage).toBe("Hi, this is Iris with 3 Percent East Coast. Who do I have the pleasure of speaking with?");
+    expect(payload.assistant.firstMessage).toBeUndefined();
+    expect(payload.assistant.firstMessageMode).toBe("assistant-waits-for-user");
   });
 
   /**
@@ -121,15 +118,6 @@ describe("buildCallPayload", () => {
     });
     // The giveup hook must only ever be reachable AFTER the nudge hook.
     expect(hooks![1].options!.timeoutSeconds).toBeGreaterThan(hooks![0].options!.timeoutSeconds);
-  });
-
-  it("never mentions the calling-about reason or 'how are you' in the opening line, regardless of intent", () => {
-    const unknownIntent = buildCallPayload(BASE_PARAMS, VAPI_CONFIG);
-    const knownIntent = buildCallPayload({ ...BASE_PARAMS, intent: "seller", leadSource: "facebook" }, VAPI_CONFIG);
-    for (const payload of [unknownIntent, knownIntent]) {
-      expect(payload.assistant.firstMessage).not.toMatch(/calling about/i);
-      expect(payload.assistant.firstMessage).not.toMatch(/how are you/i);
-    }
   });
 
   it("carries the system prompt through as the model's only system message", () => {

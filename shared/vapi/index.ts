@@ -9,7 +9,8 @@
 const VAPI_BASE_URL = "https://api.vapi.ai";
 
 export interface VapiAssistantConfig {
-  firstMessage: string;
+  /** Omitted on a normal outbound call: Vapi then waits for the other side to speak and the model answers (see agents/iris/calling.ts). */
+  firstMessage?: string;
   /**
    * Confirmed against Vapi's own OpenAPI schema, 2026-09-06: default is
    * "assistant-speaks-first" (what this had been using — Iris says

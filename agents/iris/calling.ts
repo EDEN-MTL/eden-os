@@ -177,15 +177,20 @@ export function buildCallPayload(
   params: PlaceCallParams,
   vapiConfig: ReturnType<typeof getVapiEnvConfig>
 ): CreateCallPayload {
-  // The full opening turn — greeting, self-intro, and the identify
-  // question, as ONE line. Root cause found live, 2026-09-16: under
-  // firstMessageMode "assistant-waits-for-user", Vapi speaks firstMessage
-  // VERBATIM the instant the other party speaks, before the model gets a
-  // turn — a bare "Hi!" here was the exact bare "Hi." every real call kept
-  // showing, mechanically, regardless of what the system prompt said.
-  // Everything else (how are you, the reason for the call) still happens
-  // as its own later turn, driven by the system prompt.
-  const firstMessage = buildCallOpeningLine(params.firstName, params.brandName, params.origin);
+  // NO firstMessage on a normal outbound call (Mark, 2026-10-10). Under
+  // firstMessageMode "assistant-waits-for-user" Vapi speaks firstMessage
+  // VERBATIM the instant the other side makes any sound — which is how
+  // Iris's full greeting ("...Am I speaking with Corinne?") played straight
+  // into a call-screening service (Koren Pye, twice) instead of a person.
+  // Per Vapi's docs an empty/omitted firstMessage makes the assistant wait
+  // for the other party to speak and have the MODEL respond, so the first
+  // turn can depend on what was actually heard: the exact opening line for a
+  // real person, only "Iris." for a screener that asks for a name, silence
+  // for hold messages. That opening line is now written into the system
+  // prompt (scripts.ts, "How you open the call") instead. The bare "Hi."
+  // bug of 2026-09-16 came from a short literal firstMessage; the prompt now
+  // quotes the full line and forbids any shorter or longer version. The
+  // transfer assistant and inbound calls are unchanged.
 
   const tools: VapiTool[] = [];
 
@@ -809,7 +814,6 @@ export function buildCallPayload(
     phoneNumberId: vapiConfig.phoneNumberId,
     customer: { number: params.phone },
     assistant: {
-      firstMessage,
       firstMessageMode: "assistant-waits-for-user",
       // Mark's live feedback, 2026-09-06: if the lead stays silent, Iris
       // shouldn't wait forever — firstMessage alone never fires under
