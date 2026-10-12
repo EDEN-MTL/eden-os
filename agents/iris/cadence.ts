@@ -164,6 +164,26 @@ export function isWithinLegalCallingWindow(candidate: Date, timeZone: string): b
 }
 
 /**
+ * Mark, 2026-10-12 (Canadian Thanksgiving): "Iris must not call today."
+ * If `now` falls on one of `noCallDates` (YYYY-MM-DD, in the client's own
+ * timezone), returns the first slot hour (10am) of the next day that isn't
+ * also listed; null when calling is allowed today.
+ */
+export function nextOpenCallDay(noCallDates: string[] | undefined, timeZone: string, now: Date = new Date(), hour = 10): Date | null {
+  if (!noCallDates || noCallDates.length === 0) return null;
+  const key = (d: Date) =>
+    `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+  const local = new Date(now.toLocaleString("en-US", { timeZone }));
+  if (!noCallDates.includes(key(local))) return null;
+  const day = new Date(local);
+  for (let i = 0; i < 366; i++) {
+    day.setDate(day.getDate() + 1);
+    if (!noCallDates.includes(key(day))) break;
+  }
+  return zonedHourToUtc(day.getFullYear(), day.getMonth(), day.getDate(), hour, timeZone);
+}
+
+/**
  * Wall-clock time for a given attempt, in the client's timezone. Attempt 1
  * always returns null — it's the immediate ~5-minute-after-intake dial
  * (agents/iris/index.ts's CALL_DELAY_MINUTES), not a fixed clock slot, so

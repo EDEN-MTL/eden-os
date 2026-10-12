@@ -98,6 +98,8 @@
   "iris": {
     "inboundPhoneNumberId": "9e60ef71-73b4-4124-b59b-b7f7c829e8bc",
     "inboundPhoneNumberIdNote": "Vapi's phone-number id for +17097013598 — confirmed live via GET /phone-number/{id}, 2026-09-29. This is the SAME number Iris calls out from; GHL's own location has no separate tracked line for this client. Lets agents/iris/inbound.ts resolve which client an inbound assistant-request belongs to without hardcoding it.",
+    "noCallDates": ["2026-10-12"],
+    "noCallDatesNote": "Mark, 2026-10-12: Canadian Thanksgiving — Iris places no calls. Dates are local to this client's timezone; due calls roll to the next open day at 10am. Add future holidays here.",
     "timezone": "America/St_Johns",
     "timezoneNote": "Added 2026-09-16 before going live: this field was missing, so Iris was relying on dial-pending.ts's hardcoded 'America/St_Johns' default, which only happened to be correct because this was the sole client Iris ran against when that default was written. dial-pending.ts already fetches GHL's own live location timezone as the primary source (real data for this client, unlike eden-sub-account-one's known-wrong 'Pacific/Honolulu' snapshot) and only falls back to this field if that live fetch fails — this is the safety net for that fallback, made explicit per this repo's own rule against hardcoding client specifics in agent code.",
     "qualificationQuestions": [

@@ -18,6 +18,7 @@ vi.mock("./cadence", () => ({
   decideNextAttempt: vi.fn(),
   nextAttemptTime: vi.fn(),
   clampToLegalCallingWindow: vi.fn((d: Date) => d),
+  nextOpenCallDay: vi.fn(() => null),
 }));
 
 vi.mock("./qualification", () => ({ transferNumberForIntent: vi.fn(() => undefined), callbackCalendarForIntent: vi.fn(() => undefined) }));
