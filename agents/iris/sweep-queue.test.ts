@@ -4,9 +4,11 @@ const db = vi.hoisted(() => ({ query: vi.fn(async () => []) }));
 vi.mock("../../shared/db", () => db);
 const scout = vi.hoisted(() => ({ recheckFirstTouch: vi.fn(), refreshLead: vi.fn() }));
 vi.mock("../scout", () => scout);
-vi.mock("./index", () => ({ loadIrisConfig: vi.fn(), loadClientBranding: vi.fn() }));
+const idx = vi.hoisted(() => ({ loadIrisConfig: vi.fn(), loadClientBranding: vi.fn() }));
+vi.mock("./index", () => idx);
 vi.mock("./scripts", () => ({ buildLeadQualificationPrompt: vi.fn(), extractFirstName: vi.fn() }));
-vi.mock("./calling", () => ({ placeCall: vi.fn(), CallingDisabledError: class extends Error {} }));
+const calling = vi.hoisted(() => ({ placeCall: vi.fn() }));
+vi.mock("./calling", () => ({ ...calling, CallingDisabledError: class extends Error {} }));
 vi.mock("./qualification", () => ({ transferNumberForIntent: vi.fn(), callbackCalendarForIntent: vi.fn() }));
 vi.mock("./text-signals", () => ({ classifyInboundText: vi.fn(), lastInboundText: vi.fn() }));
 vi.mock("./sms", () => ({ hasActiveSmsConversation: vi.fn() }));
@@ -79,5 +81,28 @@ describe("runDialPendingCalls — sweep rows go out one at a time", () => {
     expect(db.query).toHaveBeenCalledTimes(2); // nothing else — no UPDATE, no refresh
     expect(scout.refreshLead).not.toHaveBeenCalled();
     expect(String(db.query.mock.calls[1][0])).toMatch(/status = 'initiated'/);
+  });
+});
+
+describe("runDialPendingCalls — no-call days", () => {
+  afterEach(() => vi.useRealTimers());
+
+  it("moves a due call to the next open day at 10am instead of dialing, without using up an attempt", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-10-12T15:10:00.000Z")); // Mon Oct 12, 12:40 NL
+    idx.loadIrisConfig.mockReturnValue({ timezone: "America/St_Johns", noCallDates: ["2026-10-12"] });
+    idx.loadClientBranding.mockReturnValue({ brandName: "3% Realty", city: "St. John's" });
+    db.query.mockResolvedValueOnce([
+      { id: 5, client_id: "3-percent-east-coast", contact_id: "c1", lead: {}, attempts_made: 1, created_at: new Date(), is_explicit_callback: false, source: null, sms_scheduled: false },
+    ] as never);
+
+    await runDialPendingCalls();
+
+    expect(calling.placeCall).not.toHaveBeenCalled();
+    expect(scout.refreshLead).not.toHaveBeenCalled();
+    const [sql, params] = db.query.mock.calls[1] as unknown as [string, unknown[]];
+    expect(sql).toMatch(/UPDATE iris_pending_calls SET call_after/);
+    expect(sql).not.toMatch(/attempts_made/);
+    expect(params).toEqual([5, new Date("2026-10-13T12:30:00.000Z")]);
   });
 });

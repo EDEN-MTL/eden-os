@@ -544,6 +544,7 @@ export function loadIrisConfig(clientId: string): IrisConfig | null {
       serviceArea: raw.market?.serviceArea?.core ? raw.market.serviceArea : undefined,
       humanHandsOffDays: typeof raw.iris.humanHandsOff?.days === "number" ? raw.iris.humanHandsOff.days : undefined,
       humanTextBlocksCalls: raw.iris.humanHandsOff?.blocksCalls === true,
+      noCallDates: Array.isArray(raw.iris.noCallDates) ? raw.iris.noCallDates.filter((d: unknown) => typeof d === "string") : undefined,
       liveTransferSlack: raw.iris.liveTransferSlack?.channel
         ? { channel: raw.iris.liveTransferSlack.channel, clientLabel: raw.iris.liveTransferSlack.clientLabel || raw.clientName }
         : undefined,

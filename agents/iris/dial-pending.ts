@@ -27,7 +27,7 @@ import { NormalisedLead } from "../scout/intake";
 import { loadIrisConfig, loadClientBranding } from "./index";
 import { buildLeadQualificationPrompt, extractFirstName } from "./scripts";
 import { placeCall, CallingDisabledError } from "./calling";
-import { decideNextAttempt, nextAttemptTime, nextFirstSlotTime, clampToLegalCallingWindow } from "./cadence";
+import { decideNextAttempt, nextAttemptTime, nextFirstSlotTime, clampToLegalCallingWindow, nextOpenCallDay } from "./cadence";
 import { transferNumberForIntent, callbackCalendarForIntent } from "./qualification";
 import { classifyInboundText, lastInboundText } from "./text-signals";
 import { checkHumanTouch, DEFAULT_HUMAN_HANDS_OFF_DAYS } from "./human-touch";
@@ -294,6 +294,15 @@ async function resolveOne(row: PendingCallRow): Promise<void> {
   const branding = loadClientBranding(row.client_id);
   if (!config || !branding) {
     await finish(row.id, "failed", "no iris config or client branding for this client");
+    return;
+  }
+
+  // Holidays (iris.noCallDates): no calls today, whatever the row's source —
+  // roll it to the next open day at the first slot. Not an attempt, so
+  // attempts_made stays put.
+  const openDay = nextOpenCallDay(config.noCallDates, config.timezone || CLIENT_TIMEZONE);
+  if (openDay) {
+    await query(`UPDATE iris_pending_calls SET call_after = $2, resolution_reason = 'no-call day — moved to next open day' WHERE id = $1`, [row.id, openDay]);
     return;
   }
 
