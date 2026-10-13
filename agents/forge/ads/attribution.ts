@@ -33,7 +33,7 @@
  * since it doesn't depend on any per-client setup at all, and falling back
  * to (b) only for the fields it doesn't cover.
  */
-import { getCustomFieldDefs, listContactsPaginated, listOpportunitiesPaginated, listPipelines } from "../../../shared/ghl";
+import { getContact, getCustomFieldDefs, listContactsPaginated, listOpportunitiesPaginated, listPipelines } from "../../../shared/ghl";
 import { query } from "../../../shared/db";
 import { loadOutcomeStages } from "./client-config";
 
@@ -187,6 +187,50 @@ export function derivePipelineActive(
  * pipelines that aren't the actual sales pipeline Meta leads flow into.
  * Leave unset to consider every pipeline.
  */
+/**
+ * The contact LIST endpoint never returns attribution: verified 2026-10-14 on
+ * 3-percent-east-coast, 0 of 20 listed contacts carried attributionSource,
+ * while GET /contacts/{id} on the same leads returned the full Facebook Lead
+ * Ads record (campaignId, adSetId, adId) on every one. Reading the list alone
+ * is why all 246 synced leads had no ad attached, so every CPL and ROAS read
+ * as "no attribution" (same trap as CLAUDE.md's customFields gotcha).
+ *
+ * So each contact is read in full — but only when it changed. A contact whose
+ * dateUpdated matches the full record stored last sync reuses that record,
+ * which keeps an hourly sync to a handful of requests after the first run.
+ */
+type StoredContacts = Map<string, any>;
+
+async function loadStoredFullContacts(clientId: string): Promise<StoredContacts> {
+  const rows = await query<{ ghl_contact_id: string; contact: any }>(
+    `SELECT ghl_contact_id, raw->'contact' AS contact FROM ad_leads
+     WHERE client_id = $1 AND (raw->>'fullRecord')::boolean IS TRUE`,
+    [clientId]
+  );
+  return new Map(rows.map((r) => [r.ghl_contact_id, r.contact]));
+}
+
+export async function resolveFullContact(
+  listed: any,
+  stored: StoredContacts,
+  locationId: string,
+  apiKey?: string
+): Promise<{ contact: any; full: boolean; refetched: boolean }> {
+  const previous = stored.get(listed.id);
+  if (previous && listed.dateUpdated && previous.dateUpdated === listed.dateUpdated) {
+    return { contact: previous, full: true, refetched: false };
+  }
+  try {
+    const resp = await getContact(listed.id, locationId, apiKey);
+    return { contact: resp?.contact ?? resp, full: true, refetched: true };
+  } catch (e) {
+    // One unreadable contact shouldn't stop the sync; it keeps whatever the
+    // list gave and is retried in full next run (fullRecord stays false).
+    console.warn(`[FORGE] Full read failed for contact ${listed.id}, using list data:`, e instanceof Error ? e.message : e);
+    return { contact: previous ?? listed, full: Boolean(previous), refetched: false };
+  }
+}
+
 export async function syncLeads(
   locationId: string,
   fieldMap: FieldMap,
@@ -248,10 +292,15 @@ export async function syncLeads(
     }
   }
 
+  const stored = await loadStoredFullContacts(clientId);
+
   let count = 0;
   let skipped = 0;
-  for await (const contact of listContactsPaginated(locationId, { apiKey })) {
-    if (!contact.id) continue;
+  let fetched = 0;
+  for await (const listed of listContactsPaginated(locationId, { apiKey })) {
+    if (!listed.id) continue;
+    const { contact, full, refetched } = await resolveFullContact(listed, stored, locationId, apiKey);
+    if (refetched) fetched++;
     const attribution = extractAttribution(contact, idLookup);
 
     const metaCampaignId = attribution.meta_campaign_id || attribution.utm_campaign;
@@ -300,14 +349,14 @@ export async function syncLeads(
         metaCampaignId, metaAdsetId, metaAdId,
         pipelineStage, opp.monetaryValue ?? null, won,
         contact.dateAdded || new Date().toISOString(),
-        JSON.stringify({ contact, opportunity: opp }),
+        JSON.stringify({ contact, opportunity: opp, fullRecord: full }),
       ]
     );
     count++;
   }
   console.log(
-    `[FORGE] Synced ${count} GHL leads for ${clientId}` +
-      (skipped ? ` (skipped ${skipped} unrelated contacts on this location).` : ".")
+    `[FORGE] Synced ${count} GHL leads for ${clientId} (${fetched} full records fetched)` +
+      (skipped ? `, skipped ${skipped} unrelated contacts on this location.` : ".")
   );
   return count;
 }
