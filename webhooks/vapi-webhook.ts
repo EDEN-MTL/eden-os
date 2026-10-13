@@ -13,6 +13,7 @@ import { checkHumanTouch, DEFAULT_HUMAN_HANDS_OFF_DAYS } from "../agents/iris/hu
 import { clampToLegalCallingWindow, formatLocal } from "../agents/iris/cadence";
 import { handleInboundCall } from "../agents/iris/inbound";
 import { classifyMissedCallback } from "../agents/iris/call-signals";
+import { isaNoteBullets } from "./appointment-post";
 
 /**
  * Every Iris call — real or test — gets posted here so the team can watch
@@ -788,10 +789,7 @@ export interface LiveTransferPost {
  */
 export function formatLiveTransferPost(post: LiveTransferPost): string {
   const kind = post.intent === "seller" || post.intent === "downsize" || post.intent === "upgrading" ? "Seller" : "Buyer";
-  const bullets = (post.notes ?? "")
-    .split(/\n| \| /)
-    .map((line) => line.trim())
-    .filter((line) => line && !/^Iris( call|:)/.test(line));
+  const bullets = isaNoteBullets(post.notes);
   const lines = [`${kind} Live Transfer for ${post.clientLabel} with ${post.agentName ?? "an agent (not confirmed on the call)"}`, `Name: ${post.leadName}`];
   if (bullets.length > 0) lines.push("", `ISA NOTES: ${bullets.map((b) => `- ${b}`).join("\n")}`);
   return lines.join("\n");

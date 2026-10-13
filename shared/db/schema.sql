@@ -716,6 +716,18 @@ CREATE TABLE IF NOT EXISTS live_transfer_posts (
 );
 CREATE INDEX IF NOT EXISTS idx_live_transfer_posts_contact ON live_transfer_posts(client_id, contact_id, posted_at);
 
+-- One row per appointment Iris has posted to the live-transfers Slack channel.
+-- A booking can reach her twice (her own book_appointment tool, then the GHL
+-- appointment automation's webhook step); only the first may post.
+CREATE TABLE IF NOT EXISTS appointment_posts (
+    id BIGSERIAL PRIMARY KEY,
+    client_id TEXT NOT NULL,
+    appointment_id TEXT NOT NULL,
+    contact_id TEXT NOT NULL,
+    posted_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    UNIQUE (client_id, appointment_id)
+);
+
 -- Calls/stops asked of Iris in Slack ("call Koren Pye now"). A command is only
 -- PREPARED when asked (status 'pending'); it runs only when the same person
 -- replies yes in the same place within the time limit — see
