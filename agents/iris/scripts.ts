@@ -642,6 +642,12 @@ export function buildLeadQualificationPrompt(
   // opening-sequence instructions below, so the reason for the call is its
   // own turn rather than crammed into the first thing Iris says.
   const contextLine = callOpeningContextLine(lead.intent, city, lead.leadSource, origin);
+  // On an outbound call the line is spoken by the say_opening_line tool (calling.ts),
+  // word for word; the model recited it badly when asked to say it itself.
+  const openingInstruction =
+    origin === "inbound"
+      ? `say your opening line EXACTLY, word for word, with nothing before or after it:\n   "${openingLine}"`
+      : `call the say_opening_line tool, and write NO words of your own with it — no\n   greeting, no text before or after the call. It speaks this for you, word for word:\n   "${openingLine}"`;
 
   // Verifying lines are actual sentences to speak, confirming what Scout/the
   // form already established — never a generic "confirm it" instruction.
@@ -1284,9 +1290,7 @@ Corinne?" — played straight into it, so the call died when it was about to be
 connected.)
 
 1. A REAL PERSON answers ("Hello?", "Hi", "Yeah?", a business greeting,
-   someone saying their name, a receptionist) → say your opening line EXACTLY,
-   word for word, with nothing before or after it:
-   "${openingLine}"
+   someone saying their name, a receptionist) → ${openingInstruction}
    Never paraphrase it, never cut it to a bare "Hi", and never add the reason
    for the call to it — that comes in a later turn.
 2. A CALL-SCREENING or caller-identification system asks who you are — for
