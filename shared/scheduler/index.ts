@@ -15,7 +15,8 @@ import { readFileSync } from "fs";
 import { join } from "path";
 import { query } from "../db";
 import { getMetaConfig, MetaClient } from "../meta";
-import { syncMetaPerformance } from "../../agents/forge/ads/sync";
+import { getGhlConfig } from "../ghl";
+import { syncGhl, syncMetaPerformance } from "../../agents/forge/ads/sync";
 import * as ruleEngine from "../../agents/forge/ads/engine";
 import * as ruleQueue from "../../agents/forge/ads/queue";
 import { getCampaignHealth } from "../../agents/forge/ads/health";
@@ -56,6 +57,31 @@ export async function runMetaSync(): Promise<void> {
       console.log(`[SCHEDULER] synced ${n} rows for ${clientId}`);
     } catch (e) {
       console.error(`[SCHEDULER] Meta sync failed for ${clientId}:`, e instanceof Error ? e.message : e);
+    }
+  }
+}
+
+/**
+ * Pulls GHL leads into ad_leads with their Meta campaign/ad set/ad attached,
+ * which is what lets CPL, ROAS and the Lens report count leads GHL can trace
+ * to an ad (and their outcomes), not just Meta's own lead count.
+ *
+ * This existed (syncGhl / runFullSync) but nothing ever called it: found
+ * 2026-10-14 that ad_leads hadn't been written since a manual run on
+ * 2026-08-24, so every lead since then was invisible to Forge and Lens.
+ *
+ * Only for clients with both a Meta account and a GHL config, since a lead is
+ * only useful here if there are ads to attribute it to.
+ */
+export async function runLeadSync(): Promise<void> {
+  for (const clientId of await listMetaClientIds()) {
+    try {
+      const ghl = await getGhlConfig(clientId);
+      if (!ghl) continue;
+      const n = await syncGhl(ghl.locationId, clientId, ghl.attributionPipelineName, ghl.apiKey);
+      console.log(`[SCHEDULER] GHL lead sync ${clientId}: ${n} leads`);
+    } catch (e) {
+      console.error(`[SCHEDULER] GHL lead sync failed for ${clientId}:`, e instanceof Error ? e.message : e);
     }
   }
 }
@@ -249,6 +275,9 @@ export function startScheduler(): void {
   // to finish writing fresh numbers for every client before the engine
   // reads them.
   cron.schedule("5 * * * *", runRuleEvaluation, { timezone: TIMEZONE });
+  // :50, so fresh lead attribution is in before the next :05 rule run and the
+  // 08:15 health report. Clear of Ember's :40 sends and :20 scan.
+  cron.schedule("50 * * * *", runLeadSync, { timezone: TIMEZONE });
   cron.schedule("0 8 * * 1", runWeeklyLensReport, { timezone: TIMEZONE });
   // 08:15 daily: after the 08:00 Meta sync has written fresh numbers, before
   // the team's working day. Same channel as the 08:00 Monday Lens report.
@@ -269,7 +298,7 @@ export function startScheduler(): void {
   // half an hour. Cheap — two GHL reads per lead Ember has texted.
   cron.schedule("*/2 * * * *", runEmberReplyPoll, { timezone: TIMEZONE });
   console.log(
-    "[SCHEDULER] hourly Meta sync, rule evaluation (5 past), weekly Lens report (Mon 08:00), daily Forge health report (08:15), per-minute Iris dial queue, " +
+    "[SCHEDULER] hourly Meta sync, rule evaluation (5 past), GHL lead sync (50 past), weekly Lens report (Mon 08:00), daily Forge health report (08:15), per-minute Iris dial queue, " +
       "and Ember scan (20 past) / sends (10 & 40 past) / reply poll (every 2 min), enabled clients only, scheduled"
   );
 }
