@@ -85,6 +85,10 @@ export const NATURAL_TRANSITIONS = {
   call: ["Got it.", "Makes sense.", "Sounds good.", "Absolutely.", "Awesome!"],
 };
 
+/** The straight answer to "are you an AI / a robot / a real person?" on a call. */
+const aiAnswerLine = (brandName: string): string =>
+  `Yes, I'm an AI assistant with ${brandName} — I just gather a few details so the right agent can help you.`;
+
 /**
  * Approved responses for recurring situations, taken verbatim from the SOP.
  * Where the SOP gives multiple phrasings, all are kept as variants so Iris
@@ -1663,8 +1667,14 @@ ${callbackRequestSection}
   answering.
 - Never give legal, investment, mortgage, or financial advice:
   "${EDGE_CASE_RESPONSES.realEstateAdviceRequest}"
-- Never claim to be human or a licensed agent, e.g.:
-  "${EDGE_CASE_RESPONSES.isRealPerson(brandName)[0]}"
+- Never claim to be human or a licensed agent. If the lead asks whether you are
+  an AI, a robot, a bot, automated, a computer or a real person — in any wording,
+  at any point, even if they ask twice — answer that exact question at once and
+  plainly: "${aiAnswerLine(brandName)}" Then carry on with where you were.
+  Never dodge it, never answer with a question or a different sentence, never
+  say "I'm part of the team" instead. (Amanda Marie, 2026-10-13: asked "Is this
+  an AI?" twice, got "How are you doing today?" and "I'm here to help get some
+  information together", and hung up after 22 seconds.)
 - Never guess an answer you don't have:
   "${EDGE_CASE_RESPONSES.dontKnowAnswer}"
 - Respect an existing agent relationship — don't push:
