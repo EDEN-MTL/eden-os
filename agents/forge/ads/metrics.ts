@@ -72,8 +72,18 @@ function deriveMetrics(row: PerfRow, lead: LeadRow | undefined): EntityMetrics {
   // null, and the "CPL above threshold" rule had never once fired while real
   // CPL sat near $65 against a $35 cap. Falling back to Meta's own count means
   // a missing attribution link degrades to "Meta's number", not "no number".
-  const leadSource: EntityMetrics["lead_source"] = crmLeads > 0 ? "crm" : metaLeads > 0 ? "meta" : "none";
-  const leadCount = crmLeads > 0 ? crmLeads : metaLeads;
+  //
+  // And once attribution did work (2026-10-13), GHL turned out to count
+  // FEWER leads than Meta for the same ads and dates (3% over 14 days: 6 vs
+  // 10). GHL merges a repeat submitter into one existing contact (whose
+  // dateAdded stays the original one) and not every form submission becomes
+  // a contact. Both are counting form submissions, so the higher number is
+  // the more complete one; taking GHL's lower count made every ad look
+  // pricier than it is. GHL's job here is which ad a lead came from and what
+  // happened to it, not the headcount.
+  const leadSource: EntityMetrics["lead_source"] =
+    crmLeads > 0 && crmLeads >= metaLeads ? "crm" : metaLeads > 0 ? "meta" : "none";
+  const leadCount = Math.max(crmLeads, metaLeads);
 
   return {
     entity_id: row.entity_id,
@@ -102,6 +112,13 @@ function deriveMetrics(row: PerfRow, lead: LeadRow | undefined): EntityMetrics {
 /**
  * One row per entity at `scope` level, with performance from Meta and
  * lead/revenue counts joined in from GHL via the attribution linker.
+ *
+ * Leads are counted over the SAME window as spend (by the lead's GHL
+ * dateAdded). Before 2026-10-13 they weren't date-filtered at all, which
+ * nobody noticed while no lead carried an ad id; the first real attribution
+ * sync then put every lead an ad set had EVER produced against 14 days of
+ * spend, reading 3-percent-east-coast's static buyer ad set at $10/lead
+ * (19 leads) when Meta counted 2 in that window.
  */
 export async function computeMetrics(
   scope: RuleScope,
@@ -129,8 +146,9 @@ export async function computeMetrics(
       `SELECT COUNT(*) AS lead_count,
               SUM(CASE WHEN won THEN 1 ELSE 0 END) AS won_count,
               SUM(CASE WHEN won THEN deal_value ELSE 0 END) AS revenue
-       FROM ad_leads WHERE client_id = $1 AND ${leadCol} = $2`,
-      [clientId, row.entity_id]
+       FROM ad_leads WHERE client_id = $1 AND ${leadCol} = $2
+         AND created_at >= (CURRENT_DATE - $3::int)`,
+      [clientId, row.entity_id, lookbackDays]
     );
     results.push(deriveMetrics(row, lead));
   }
@@ -164,8 +182,9 @@ export async function computeAdMetricsForAdset(
       `SELECT COUNT(*) AS lead_count,
               SUM(CASE WHEN won THEN 1 ELSE 0 END) AS won_count,
               SUM(CASE WHEN won THEN deal_value ELSE 0 END) AS revenue
-       FROM ad_leads WHERE client_id = $1 AND meta_ad_id = $2`,
-      [clientId, row.entity_id]
+       FROM ad_leads WHERE client_id = $1 AND meta_ad_id = $2
+         AND created_at >= (CURRENT_DATE - $3::int)`,
+      [clientId, row.entity_id, lookbackDays]
     );
     results.push(deriveMetrics(row, lead));
   }
