@@ -1182,11 +1182,14 @@ describe("buildLeadQualificationPrompt", () => {
   it("holds the introduction until a real person speaks, and stays silent for hold announcements, menus and unclear sounds", () => {
     const prompt = buildLeadQualificationPrompt(IRIS_CONFIG, { ...BLANK_LEAD, name: "Corin" }, "3 Percent East Coast", "St. John's", false, true, false);
     expect(prompt).toMatch(/Please hold while we connect your call/);
-    expect(prompt).toMatch(/→ SAY NOTHING\./);
+    expect(prompt).toMatch(/→ SAY NOTHING:\s*\n\s*reply with exactly \[silent\]/);
     expect(prompt).toMatch(/Never launch your introduction\s+into a machine/i);
     expect(prompt).toMatch(/a REAL PERSON may join once the system\s+connects/i);
-    expect(prompt).toMatch(/Another machine voice is not a person: stay\s+silent/i);
-    expect(prompt).toMatch(/Anything unclear → say nothing yet and listen/i);
+    expect(prompt).toMatch(/Another machine voice is not a person: reply\s+\[silent\]/i);
+    expect(prompt).toMatch(/Anything unclear → \[silent\] and listen/i);
+    // The model's words are spoken aloud: silence must be the marker, never a sentence about it.
+    expect(prompt).toMatch(/EVERYTHING YOU WRITE IS READ ALOUD/);
+    expect(prompt).toMatch(/never a sentence ABOUT being silent/);
   });
 
   it("never loops on the screener: 'Iris.' at most twice, and a screener that never connects ends through the normal no-answer handling", () => {

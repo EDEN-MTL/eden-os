@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { bookingConfirmationLines, rescheduleConfirmationLines, buildCallPayload, PlaceCallParams } from "./calling";
-import { IDLE_NUDGE_VARIATIONS } from "./scripts";
+import { IDLE_NUDGE_PROMPT, SILENT_MARKER } from "./scripts";
+import { SPEECH_REPLACEMENTS } from "./calling";
 
 /**
  * Only buildCallPayload is tested here — it's the pure part. placeCall()
@@ -90,7 +91,7 @@ describe("buildCallPayload", () => {
     const hooks = payload.assistant.hooks;
     expect(hooks?.[0]).toEqual({
       on: "customer.speech.timeout",
-      do: [{ type: "say", exact: IDLE_NUDGE_VARIATIONS }],
+      do: [{ type: "say", prompt: IDLE_NUDGE_PROMPT }],
       options: { timeoutSeconds: 15, triggerMaxCount: 3, triggerResetMode: "never" },
     });
   });
@@ -118,6 +119,31 @@ describe("buildCallPayload", () => {
     });
     // The giveup hook must only ever be reachable AFTER the nudge hook.
     expect(hooks![1].options!.timeoutSeconds).toBeGreaterThan(hooks![0].options!.timeoutSeconds);
+  });
+
+  /**
+   * Mark, 2026-10-14: Koren Pye's call (2026-10-12) had Iris speak "I'll stay
+   * silent and wait for a real person to join." into a call screener, then a
+   * fixed idle line ("can you still hear me okay?") into its silent hold.
+   * Silence is now a marker stripped before the voice; the idle check-in is
+   * model-judged and told to stay silent on a hold.
+   */
+  it("strips the silence marker and narration about staying silent before the voice speaks it", () => {
+    const payload = buildCallPayload(BASE_PARAMS, VAPI_CONFIG);
+    expect(payload.assistant.voice.chunkPlan?.formatPlan?.replacements).toEqual(SPEECH_REPLACEMENTS);
+    const spoken = (text: string) => SPEECH_REPLACEMENTS.reduce((t, r) => t.replace(new RegExp(r.regex, "gi"), r.value), text).trim();
+    expect(spoken(SILENT_MARKER)).toBe("");
+    expect(spoken("I'll stay silent and wait for a real person to join.")).toBe("");
+    expect(spoken("Hi, this is Iris with 3 percent East Coast. Am I speaking with Koren?")).toBe(
+      "Hi, this is Iris with 3 percent East Coast. Am I speaking with Koren?"
+    );
+    expect(spoken("I'll wait for the right time to call back.")).toBe("I'll wait for the right time to call back.");
+  });
+
+  it("makes the idle check-in say nothing while a screener, hold or menu is on the line", () => {
+    expect(IDLE_NUDGE_PROMPT).toContain(SILENT_MARKER);
+    expect(IDLE_NUDGE_PROMPT).toMatch(/call screener, a hold message, a phone menu/);
+    expect(IDLE_NUDGE_PROMPT).toMatch(/are you still there/);
   });
 
   it("carries the system prompt through as the model's only system message", () => {
