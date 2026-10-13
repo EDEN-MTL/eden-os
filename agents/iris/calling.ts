@@ -23,7 +23,7 @@ import { createCall, getVapiEnvConfig, CreateCallPayload, VapiAssistantConfig, V
 import { query } from "../../shared/db";
 import { isCallingEnabled } from "./calling-settings";
 import { CallIntent } from "./qualification";
-import { AGENT_UNAVAILABLE_LINE, buildCallOpeningLine, CallOrigin, expandBudgetShorthand, IDLE_NUDGE_VARIATIONS } from "./scripts";
+import { AGENT_UNAVAILABLE_LINE, buildCallOpeningLine, CallOrigin, expandBudgetShorthand, IDLE_NUDGE_PROMPT, SILENT_MARKER } from "./scripts";
 
 export class CallingDisabledError extends Error {}
 
@@ -827,7 +827,7 @@ export function buildCallPayload(
       // customer silence ANYWHERE in the call. Widening the number alone
       // has diminishing returns (a real person can easily pause 15-20s+
       // mid-thought answering an open-ended question), so as of
-      // 2026-09-21 the actual fix is WHAT gets said (IDLE_NUDGE_VARIATIONS,
+      // 2026-09-21 the actual fix is WHAT gets said (IDLE_NUDGE_PROMPT,
       // scripts.ts), not just when — see that constant's own doc comment.
       //
       // triggerResetMode fixed "onUserSpeech" → "never", 2026-09-15:
@@ -849,7 +849,7 @@ export function buildCallPayload(
       hooks: [
         {
           on: "customer.speech.timeout",
-          do: [{ type: "say", exact: IDLE_NUDGE_VARIATIONS }],
+          do: [{ type: "say", prompt: IDLE_NUDGE_PROMPT }],
           options: { timeoutSeconds: 15, triggerMaxCount: 3, triggerResetMode: "never" },
         },
         // Mark's spec, 2026-09-22: if the lead still hasn't responded even
@@ -888,6 +888,12 @@ export function buildCallPayload(
       voice: {
         provider: vapiConfig.voiceProvider,
         voiceId: vapiConfig.voiceId,
+        // Nothing the model writes may reach the caller as speech unless it is
+        // meant to. The prompt tells it to write SILENT_MARKER when it should
+        // say nothing; this removes that marker, plus the narration it used to
+        // write instead ("I'll stay silent and wait for a real person to join",
+        // Koren Pye's call, 2026-10-12), so a slip can't be heard by a screener.
+        chunkPlan: { formatPlan: { replacements: SPEECH_REPLACEMENTS } },
       },
       // Confirmed against Vapi's own OpenAPI schema (api.vapi.ai/api-json),
       // 2026-09-05 — both fields live directly on `assistant`, not nested
@@ -956,6 +962,19 @@ export function buildCallPayload(
 export function buildInboundAssistantConfig(params: PlaceCallParams, vapiConfig: ReturnType<typeof getVapiEnvConfig>): VapiAssistantConfig {
   return buildCallPayload(params, vapiConfig).assistant;
 }
+
+const escapeRegex = (text: string): string => text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+/**
+ * Strips the silence marker and any sentence about being silent/waiting from
+ * what the voice speaks. Each regex is deliberately narrow so real speech is
+ * never touched.
+ */
+export const SPEECH_REPLACEMENTS = [
+  escapeRegex(SILENT_MARKER),
+  "\\bI(?:'|’)?(?:ll| will| am|'m|’m) (?:stay(?:ing)?|remain(?:ing)?|keep(?:ing)?) (?:silent|quiet)[^.!?]*[.!?]?",
+  "\\bI(?:'|’)?(?:ll| will|'m|’m| am) (?:wait|waiting) (?:for|until) (?:a|the) (?:real|live|actual) (?:person|human)[^.!?]*[.!?]?",
+].map((regex) => ({ type: "regex" as const, regex, value: "", options: [{ type: "ignore-case" as const, enabled: true }] }));
 
 /**
  * Places a real call and logs it. Throws CallingDisabledError before

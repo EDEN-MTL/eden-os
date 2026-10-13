@@ -1298,10 +1298,10 @@ connected.)
    check if they're available", "Please stay on the line", "Thank you, one
    moment", "Please hold while we connect your call", "Your call is important
    to us"), or a phone menu / automated receptionist ("Press one for sales",
-   "Please state the name of the person you'd like to reach") → SAY NOTHING.
-   Reply with nothing at all and keep listening. Never launch your introduction
-   into a machine, never ask "are you still there?" yourself, and never invent
-   keypad presses.
+   "Please state the name of the person you'd like to reach") → SAY NOTHING:
+   reply with exactly ${SILENT_MARKER} and nothing else, and keep listening.
+   Never launch your introduction into a machine, never ask "are you still
+   there?" or "can you hear me?" yourself, and never invent keypad presses.
 4. A voicemail or answering machine — "Please leave a message after the tone",
    "The person you're calling is unavailable", "Your call has been forwarded to
    voicemail", a recorded personal greeting followed by a beep, "The mailbox is
@@ -1309,12 +1309,18 @@ connected.)
    tone" → this is a machine and no message is ever left: invoke endCall
    immediately and silently (nothing spoken, no goodbye), the same no-message
    policy as always. Never qualify, ask questions or try to book with a recording.
-5. Anything unclear → say nothing yet and listen for more evidence.
+5. Anything unclear → ${SILENT_MARKER} and listen for more evidence.
+
+EVERYTHING YOU WRITE IS READ ALOUD by a phone voice, word for word. So when you
+should say nothing, write ${SILENT_MARKER} — never a sentence ABOUT being silent
+or waiting ("I'll stay silent", "I'll wait for a real person", "Understood"),
+never an explanation, never a thought. Narrating what you're doing is the one
+thing that can never appear on the call.
 
 After you have said only "Iris.", a REAL PERSON may join once the system
 connects ("Hello?", "Hi", "Yes?", "This is Koren") → NOW say your opening line
-from rule 1, exactly as written. Another machine voice is not a person: stay
-silent. If the system asks you to identify yourself again after you already
+from rule 1, exactly as written. Another machine voice is not a person: reply
+${SILENT_MARKER}. If the system asks you to identify yourself again after you already
 did, say "Iris." once more — but never more than twice in total, and never fill
 silence by repeating it. If it never connects, do not keep talking: the call
 ends on its own through the normal no-answer handling. A call a machine answered
@@ -1703,6 +1709,24 @@ export const IDLE_NUDGE_VARIATIONS = [
   "Sorry about that — are you still there?",
   "Just checking, are you still there?",
 ];
+
+/**
+ * Everything the model writes is read aloud by the voice, and a model can't
+ * "say nothing" — told to stay silent it narrated it instead (live, Koren Pye,
+ * 2026-10-12: "I'll stay silent and wait for a real person to join."). So
+ * silence is a marker the model writes and calling.ts strips before the voice
+ * ever sees it (voice.chunkPlan.formatPlan.replacements).
+ */
+export const SILENT_MARKER = "[silent]";
+
+/**
+ * The idle check-in, model-judged rather than a fixed line. A fixed "can you
+ * still hear me?" fired into a call screener's silent hold (same Koren call);
+ * the hook can't tell a hold from a quiet lead, the model can.
+ */
+export const IDLE_NUDGE_PROMPT =
+  `The line has gone quiet for a few seconds. If you are still waiting on a call screener, a hold message, a phone menu or any other recording — or no real person has spoken to you yet — reply with exactly ${SILENT_MARKER} and nothing else. ` +
+  `Only if you are mid-conversation with a real person, say ONE short, natural check-in in your own words, for example: ${IDLE_NUDGE_VARIATIONS.map((v) => `"${v}"`).join(", ")}. Vary it if you already checked in earlier.`;
 
 /**
  * Text-channel qualification prompt — agents/iris/sms.ts, Mark's confirmed

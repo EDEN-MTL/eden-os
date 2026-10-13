@@ -46,7 +46,7 @@ export interface VapiAssistantConfig {
      * customerSpokeAtAll for why the resulting endedReason needs special
      * handling in end-of-call classification.
      */
-    do: ({ type: "say"; exact: string | string[] } | { type: "tool"; tool: { type: "endCall" } })[];
+    do: ({ type: "say"; exact: string | string[] } | { type: "say"; prompt: string } | { type: "tool"; tool: { type: "endCall" } })[];
     options?: { timeoutSeconds: number; triggerMaxCount?: number; triggerResetMode?: "onUserSpeech" | "never" };
   }[];
   model: {
@@ -71,6 +71,8 @@ export interface VapiAssistantConfig {
   voice: {
     provider: string;
     voiceId: string;
+    /** Text rewrites applied to each chunk of model output just before it is spoken (Vapi chunkPlan.formatPlan). */
+    chunkPlan?: { formatPlan?: { replacements?: { type: "regex"; regex: string; value: string; options?: { type: "ignore-case"; enabled: boolean }[] }[] } };
   };
   /**
    * Confirmed against Vapi's own OpenAPI schema (api.vapi.ai/api-json),
