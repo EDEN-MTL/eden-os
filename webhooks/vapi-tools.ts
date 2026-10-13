@@ -6,6 +6,7 @@ import { loadIrisConfig } from "../agents/iris";
 import { scheduleExplicitCallback } from "../agents/iris/dial-pending";
 import { clampToLegalCallingWindow, isWithinLegalCallingWindow, formatLocal } from "../agents/iris/cadence";
 import { SILENT_MARKER } from "../agents/iris/scripts";
+import { postAppointmentToSlack } from "./appointment-post";
 
 /**
  * Server-side handler for the schedule_callback function tool Vapi calls
@@ -563,6 +564,8 @@ async function handleBookAppointment(
   // entirely, especially in a test account where the same handful of
   // contacts get re-dialed and re-booked repeatedly.
   const appointmentId = created?.id;
+  // Tell the team in Slack (best-effort — never holds up the lead's confirmation).
+  void postAppointmentToSlack(clientId, contactId, { appointmentId, bookedBy: "Iris (live call)" });
   return {
     success: true,
     result: appointmentId
