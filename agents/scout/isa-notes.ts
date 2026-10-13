@@ -88,3 +88,20 @@ export function parseIsaNotes(note: string | null | undefined): IsaNotes {
     firstTimeBuyer: ftb === null ? null : /^(yes|y|true)\b/i.test(ftb) ? true : /^(no|n|false)\b/i.test(ftb) ? false : null,
   };
 }
+
+/**
+ * Iris writes its own status lines into the same notes field a human ISA
+ * uses ("Iris call Thursday... — No answer", "Iris scheduled a callback...",
+ * "Iris: lead asked to be called back..."). Those prove Iris tried, not that
+ * an agent did anything, so they never count as someone having worked the lead.
+ * (Counting them as notes made Iris's own "No answer" line block every retry of
+ * the lead it had just failed to reach — Amanda Marie, 2026-10-11.)
+ */
+export function humanNotes(isaNotes: string | null | undefined): string {
+  if (!isaNotes) return "";
+  return String(isaNotes)
+    .split(/\n|<br\s*\/?>/i)
+    .map((line) => line.replace(/^ISA NOTES\s*:\s*/i, "").trim())
+    .filter((line) => line !== "" && !/^iris\b/i.test(line))
+    .join("\n");
+}

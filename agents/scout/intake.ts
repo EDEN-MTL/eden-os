@@ -7,7 +7,7 @@
  * than throwing, so leads quietly score as if the answer were "no".
  */
 
-import { Financing, parseIsaNotes } from "./isa-notes";
+import { Financing, humanNotes, parseIsaNotes } from "./isa-notes";
 
 /**
  * A field can be a single key or a list tried in priority order.
@@ -306,8 +306,11 @@ export function isFirstTouch(input: {
   if (list.length === 0) return false;
   if (tags.map((t) => String(t).trim().toLowerCase()).some((t) => list.includes(t))) return false;
 
-  // Notes exist only because someone had a conversation worth writing down.
-  if (isaNotes && String(isaNotes).trim() !== "") return false;
+  // Notes exist only because someone had a conversation worth writing down —
+  // but not Iris's own call-status lines ("Iris call … No answer"): those are
+  // written after every unanswered attempt, and counting them stopped Iris
+  // retrying the very lead it had just missed.
+  if (humanNotes(isaNotes) !== "") return false;
 
   // A live-transferred or appointment-booked opportunity is done even if
   // the matching tag never got applied — see currentStageId's doc comment.
