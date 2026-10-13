@@ -393,22 +393,37 @@ export async function attributionReport(since: string, until: string, clientId =
   // array rather than a per-row function call.
   const activeStages = (loadOutcomeStages(clientId)?.activeStages || []).map((s) => s.trim().toLowerCase());
 
+  // Spend and leads are aggregated separately, then joined once per ad.
+  // Joining leads straight onto the per-day snapshot rows (as this did until
+  // 2026-10-13) repeated each lead once per day the ad ran, so won_count,
+  // revenue and pipeline_value were multiplied by the number of days, and
+  // leads weren't limited to the report's dates at all. Invisible while no
+  // lead carried an ad id; wrong the moment the attribution sync worked.
   const rows = await query<any>(
-    `SELECT
-       p.ad_id, p.ad_name, p.adset_id, p.adset_name, p.campaign_id, p.campaign_name,
-       SUM(p.spend) AS spend,
-       SUM(p.impressions) AS impressions,
-       SUM(p.clicks) AS clicks,
-       COUNT(DISTINCT l.id) AS lead_count,
-       SUM(CASE WHEN l.won THEN 1 ELSE 0 END) AS won_count,
-       SUM(CASE WHEN l.won THEN l.deal_value ELSE 0 END) AS revenue,
-       COUNT(DISTINCT CASE WHEN l.won IS NULL AND lower(trim(l.pipeline_stage)) = ANY($4) THEN l.id END) AS active_count,
-       SUM(CASE WHEN l.won IS NULL AND lower(trim(l.pipeline_stage)) = ANY($4) THEN l.deal_value ELSE 0 END) AS pipeline_value
-     FROM meta_performance_snapshots p
-     LEFT JOIN ad_leads l ON l.meta_ad_id = p.ad_id AND l.client_id = p.client_id
-     WHERE p.client_id = $1 AND p.level = 'ad' AND p.date_start >= $2 AND p.date_stop <= $3
-     GROUP BY p.ad_id, p.ad_name, p.adset_id, p.adset_name, p.campaign_id, p.campaign_name
-     ORDER BY spend DESC`,
+    `WITH spend AS (
+       SELECT ad_id, ad_name, adset_id, adset_name, campaign_id, campaign_name,
+              SUM(spend) AS spend, SUM(impressions) AS impressions, SUM(clicks) AS clicks
+       FROM meta_performance_snapshots
+       WHERE client_id = $1 AND level = 'ad' AND date_start >= $2 AND date_stop <= $3
+       GROUP BY ad_id, ad_name, adset_id, adset_name, campaign_id, campaign_name
+     ),
+     leads AS (
+       SELECT meta_ad_id,
+              COUNT(*) AS lead_count,
+              SUM(CASE WHEN won THEN 1 ELSE 0 END) AS won_count,
+              SUM(CASE WHEN won THEN deal_value ELSE 0 END) AS revenue,
+              COUNT(CASE WHEN won IS NULL AND lower(trim(pipeline_stage)) = ANY($4) THEN 1 END) AS active_count,
+              SUM(CASE WHEN won IS NULL AND lower(trim(pipeline_stage)) = ANY($4) THEN deal_value ELSE 0 END) AS pipeline_value
+       FROM ad_leads
+       WHERE client_id = $1 AND meta_ad_id IS NOT NULL
+         AND created_at >= $2::date AND created_at < ($3::date + 1)
+       GROUP BY meta_ad_id
+     )
+     SELECT s.*, COALESCE(l.lead_count, 0) AS lead_count, COALESCE(l.won_count, 0) AS won_count,
+            COALESCE(l.revenue, 0) AS revenue, COALESCE(l.active_count, 0) AS active_count,
+            COALESCE(l.pipeline_value, 0) AS pipeline_value
+     FROM spend s LEFT JOIN leads l ON l.meta_ad_id = s.ad_id
+     ORDER BY s.spend DESC`,
     [clientId, since, until, activeStages]
   );
 

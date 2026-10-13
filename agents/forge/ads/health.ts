@@ -242,7 +242,7 @@ export function assessEntity(
   const reasons: string[] = [];
   let verdict: HealthVerdict;
 
-  if (row.lead_source === "meta") {
+  if (row.lead_source === "meta" && row.crm_lead_count === 0) {
     reasons.push("Leads are Meta's own count; none are attributed in GHL yet, so lead quality and won deals are unknown.");
   }
 
@@ -503,7 +503,10 @@ export function buildHealthReport(
   const campaignRows = rowsByScope.campaign;
   const spend = campaignRows.reduce((s, r) => s + r.spend, 0);
   const leads = campaignRows.reduce((s, r) => s + r.lead_count, 0);
-  const leadSource = campaignRows.some((r) => r.lead_source === "crm")
+  // "crm" as soon as GHL has any of these leads linked to an ad, even where
+  // Meta's higher count is the one used; the caveat it drives is "no lead
+  // quality data at all", which is no longer true then.
+  const leadSource = campaignRows.some((r) => r.crm_lead_count > 0)
     ? "crm"
     : campaignRows.some((r) => r.lead_source === "meta")
       ? "meta"

@@ -53,14 +53,36 @@ describe("computeMetrics", () => {
     });
   });
 
-  it("prefers the CRM count whenever it has any, since that's what links a lead to a won deal", async () => {
+  it("uses the higher of GHL's and Meta's counts, since GHL merges repeat submitters and misses some", async () => {
     queryMock
       .mockResolvedValueOnce([{ entity_id: "ad_1", entity_name: "x", spend: "100", impressions: "1000", clicks: "10", frequency: "1", meta_leads: "5" }])
       .mockResolvedValueOnce([{ lead_count: "2", won_count: "0", revenue: null }]);
 
     const [row] = await computeMetrics("ad", 7, "eden");
 
-    expect(row).toMatchObject({ lead_count: 2, crm_lead_count: 2, meta_lead_count: 5, lead_source: "crm", cpl: 50 });
+    expect(row).toMatchObject({ lead_count: 5, crm_lead_count: 2, meta_lead_count: 5, lead_source: "meta", cpl: 20 });
+  });
+
+  it("reports the CRM as the source when it counts at least as many as Meta", async () => {
+    queryMock
+      .mockResolvedValueOnce([{ entity_id: "ad_1", entity_name: "x", spend: "90", impressions: "1000", clicks: "10", frequency: "1", meta_leads: "2" }])
+      .mockResolvedValueOnce([{ lead_count: "3", won_count: "1", revenue: "500" }]);
+
+    const [row] = await computeMetrics("ad", 7, "eden");
+
+    expect(row).toMatchObject({ lead_count: 3, lead_source: "crm", cpl: 30 });
+  });
+
+  it("counts only leads from the same window as the spend, not every lead the ad set ever produced", async () => {
+    queryMock
+      .mockResolvedValueOnce([{ entity_id: "as_1", entity_name: "x", spend: "100", impressions: "1000", clicks: "10", frequency: "1" }])
+      .mockResolvedValueOnce([{ lead_count: "2", won_count: "0", revenue: null }]);
+
+    await computeMetrics("adset", 14, "3-percent-east-coast");
+
+    const [sql, params] = queryMock.mock.calls.at(-1)!;
+    expect(sql).toMatch(/FROM ad_leads[\s\S]*created_at >= \(CURRENT_DATE - \$3::int\)/);
+    expect(params).toEqual(["3-percent-east-coast", "as_1", 14]);
   });
 
   it("reads Meta leads from the `lead` action only, so instant-form leads aren't counted twice", async () => {
