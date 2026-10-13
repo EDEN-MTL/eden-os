@@ -77,10 +77,10 @@
     "health": {
       "_comment": "Campaign health-check playbook (agents/forge/ads/health.ts, Forge's get_campaign_health tool). Targets are AUTO-CALIBRATED: each funnel's target CPL is its own blended CPL over the last baselineDays (Mark, 2026-10-10: no external target exists; 'efficient' means beating what this account already does). Add \"targetCpl\" to a funnel only to override that by hand. The multipliers below are generic small-budget media-buying practice.",
       "funnels": [
-        { "name": "buyer", "match": "buyer" },
-        { "name": "seller", "match": "seller" }
+        { "name": "buyer", "match": "buyer", "targetCpl": 45 },
+        { "name": "seller", "match": "seller", "targetCpl": 60 }
       ],
-      "funnelsNote": "Matched as a case-insensitive substring of the campaign name ('Aug 2026 | Buyer Campaign | EDEN'), falling back to the entity's own name. Calibrated 2026-10-10 over 60 days: buyers $1,648 / 29 leads = ~$57, sellers $1,178 / 15 leads = ~$79. Kept separate because seller leads cost more and are worth more (a listing).",
+      "funnelsNote": "Matched as a case-insensitive substring of the campaign name ('Aug 2026 | Buyer Campaign | EDEN'), falling back to the entity's own name. Calibrated 2026-10-10 over 60 days: buyers $1,648 / 29 leads = ~$57, sellers $1,178 / 15 leads = ~$79. Kept separate because seller leads cost more and are worth more (a listing). 2026-10-13: Mark set GOAL targets of $45 buyers / $60 sellers (CAD) to push cost per lead down; the 60-day averages had become buyers ~$61, sellers ~$71, and the best buyer ads were running $35-43. A hand-set targetCpl overrides the auto average; delete it to go back to auto.",
       "baselineDays": 60,
       "minBaselineLeads": 10,
       "baselineNote": "60 days holds 10+ leads per funnel at $50/day; fewer than 10 leads and a funnel borrows the account-wide target instead of its own noisy number.",

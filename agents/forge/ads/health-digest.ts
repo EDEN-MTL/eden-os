@@ -27,11 +27,11 @@ function targetLine(f: FunnelSummary): string {
     f.targetSource === "auto" && f.basis
       ? `their ${f.basis.days}-day average, ${f.basis.leads} leads`
       : f.targetSource === "config"
-        ? "set by hand"
+        ? "goal"
         : "not enough history yet, using the alert cap";
   const budget =
     f.dailyBudget !== null && f.expectedLeadsPerWeek !== null
-      ? ` · ${money(f.dailyBudget)}/day ≈ ${f.expectedLeadsPerWeek.toFixed(1)} leads/week`
+      ? ` · ${money(f.dailyBudget)}/day ≈ ${f.expectedLeadsPerWeek.toFixed(1)} leads/week${f.targetSource === "config" ? " if it hits the goal" : ""}`
       : "";
   return (
     `• *${funnelLabel(f.funnel)}:* ${money(f.targetCpl)}/lead (${basis})${budget}\n` +
