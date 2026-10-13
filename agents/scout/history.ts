@@ -20,6 +20,8 @@
  * no tags, no human notes) is deliberately treated as new — Mark's call.
  */
 
+import { humanNotes } from "./isa-notes";
+
 export type HistoryReason =
   | { kind: "assigned"; userId: string }
   | { kind: "worked_stage"; stageId: string }
@@ -73,21 +75,6 @@ export interface LeadHistory {
   firstSeen: string | null;
   /** Which contact carried the history — the lead's own id, or a duplicate record of the same person. */
   historyContactId: string | null;
-}
-
-/**
- * Iris writes its own status lines into the same notes field a human ISA
- * uses ("Iris call Thursday... — No answer", "Iris scheduled a callback...",
- * "Iris: lead asked to be called back..."). Those prove Iris tried, not that
- * an agent did anything, so they never count as human history.
- */
-function humanNotes(isaNotes: string | null | undefined): string {
-  if (!isaNotes) return "";
-  return String(isaNotes)
-    .split(/\n|<br\s*\/?>/i)
-    .map((line) => line.replace(/^ISA NOTES\s*:\s*/i, "").trim())
-    .filter((line) => line !== "" && !/^iris\b/i.test(line))
-    .join("\n");
 }
 
 function evidenceFor(subject: HistorySubject, config: HistoryConfig, now: Date): { reasons: HistoryReason[]; assignedUserId: string | null } | null {

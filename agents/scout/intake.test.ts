@@ -395,6 +395,23 @@ describe("field priority", () => {
 describe("isFirstTouch", () => {
   const touchedTags = ["appt booked", "appointment", "live transferred", "live transfered"];
 
+  /**
+   * Amanda Marie, 2026-10-11: Iris's unanswered 10:00 call wrote "Iris call … No
+   * answer" into the ISA notes, and the retry five minutes later read that as
+   * "someone already worked this lead" and gave up. Iris's own status lines
+   * prove Iris tried, nothing more.
+   */
+  it("does not treat Iris's own call-status lines in the ISA notes as the lead being worked", () => {
+    const isaNotes = "Iris call Sunday, October 11 at 10:00 AM — ❌ No answer (`customer-did-not-answer`). Duration: 11s.";
+    expect(isFirstTouch({ tags: ["buyer lead"], touchedTags, isaNotes })).toBe(true);
+    expect(isFirstTouch({ tags: ["buyer lead"], touchedTags, isaNotes: `ISA NOTES: ${isaNotes}<br>Iris call Monday — No answer.` })).toBe(true);
+  });
+
+  it("still treats a teammate's note, even beside Iris's lines, as the lead being worked", () => {
+    const isaNotes = "Iris call Sunday, October 11 at 10:00 AM — No answer.\nJacob spoke with her, wants a showing Friday";
+    expect(isFirstTouch({ tags: ["buyer lead"], touchedTags, isaNotes })).toBe(false);
+  });
+
   it("is true only for a lead nothing has engaged yet", () => {
     expect(isFirstTouch({ tags: ["buyer lead"], touchedTags })).toBe(true);
     expect(isFirstTouch({ tags: ["buyer lead", "new construction"], touchedTags })).toBe(true);
