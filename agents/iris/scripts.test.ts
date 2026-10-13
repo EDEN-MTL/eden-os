@@ -463,9 +463,12 @@ describe("buildLeadQualificationPrompt", () => {
     expect(prompt).toContain("Montreal and the area around it");
   });
 
-  it("never claims to be human, pulling the real approved wording (with the right brand) rather than inventing new lines", () => {
+  it("never claims to be human, and answers 'are you an AI?' plainly instead of dodging it", () => {
     const prompt = buildLeadQualificationPrompt(IRIS_CONFIG, BLANK_LEAD, "3 Percent East Coast", "St. John's", false, true, false);
-    expect(prompt).toContain(EDGE_CASE_RESPONSES.isRealPerson("3 Percent East Coast")[0]);
+    expect(prompt).toContain("Yes, I'm an AI assistant with 3 Percent East Coast");
+    expect(prompt).toMatch(/even if they ask twice/);
+    expect(prompt).toMatch(/Never dodge it/);
+    expect(prompt).not.toContain(EDGE_CASE_RESPONSES.isRealPerson("3 Percent East Coast")[0]);
     expect(prompt).toContain(EDGE_CASE_RESPONSES.dontKnowAnswer);
   });
 
