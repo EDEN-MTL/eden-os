@@ -677,7 +677,7 @@ describe("buildLeadQualificationPrompt", () => {
       const prompt = buildLeadQualificationPrompt(IRIS_CONFIG, { ...BLANK_LEAD, name: "Justin" }, "3 Percent East Coast", "St. John's", false, true, false);
       expect(prompt).toMatch(/NOTHING is spoken for you/);
       expect(prompt).toContain('"Hi, this is Iris with 3 Percent East Coast. Am I speaking with Justin?"');
-      expect(prompt).toMatch(/say your opening line EXACTLY,\s+word for word, with nothing before or after it/i);
+      expect(prompt).toMatch(/call the say_opening_line tool, and write NO words of your own/i);
       expect(prompt).toMatch(/NEVER repeat it afterwards/i);
       expect(prompt).toMatch(/never\s+add a bare "Hi" of your own/i);
     });
@@ -685,7 +685,7 @@ describe("buildLeadQualificationPrompt", () => {
     it("quotes the full opening line — never the reason for the call or 'how are you' — for a named lead and for an unknown one, whatever the intent", () => {
       const quoted = (lead: typeof BLANK_LEAD) => {
         const prompt = buildLeadQualificationPrompt(IRIS_CONFIG, lead, "3 Percent East Coast", "St. John's", false, true, false);
-        return prompt.match(/say your opening line EXACTLY,[\s\S]*?\n\s+"([^"]+)"/)?.[1] ?? "";
+        return prompt.match(/say_opening_line tool,[\s\S]*?\n\s+"([^"]+)"/)?.[1] ?? "";
       };
       expect(quoted({ ...BLANK_LEAD, name: "Sam Lee" })).toBe("Hi, this is Iris with 3 Percent East Coast. Am I speaking with Sam?");
       expect(quoted({ ...BLANK_LEAD, name: null })).toBe("Hi, this is Iris with 3 Percent East Coast. Who do I have the pleasure of speaking with?");

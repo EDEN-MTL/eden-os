@@ -224,6 +224,30 @@ export function buildCallPayload(
       server: { url: `${vapiConfig.serverUrl}/tools/update-lead-name?${nameQs}`, secret: vapiConfig.webhookSecret },
     });
 
+    // The opening line, spoken by VAPI itself word for word. Written into the
+    // prompt for the model to recite, it came out garbled on a real call
+    // ("I speaking with Amanda?" for "Am I speaking with Amanda?", Oct 13).
+    // A firstMessage can't be used — it plays the instant ANY sound is heard,
+    // call screeners included — so the model decides WHEN (a real person has
+    // spoken) by calling this tool, and the request-start message below is
+    // what actually gets said, exactly as written. Not offered on inbound
+    // calls, whose greeting is a firstMessage.
+    if (params.origin !== "inbound") {
+      tools.push({
+        type: "function",
+        function: {
+          name: "say_opening_line",
+          description:
+            "Speaks your opening line to the person on the phone, word for word. Call it ONCE, only when a " +
+            "real person has spoken to you (never for a call screener, recording, hold message or menu). " +
+            "Write no words of your own with it.",
+          parameters: { type: "object", properties: {} },
+        },
+        server: { url: `${vapiConfig.serverUrl}/tools/say-opening-line?${nameQs}`, secret: vapiConfig.webhookSecret },
+        messages: [{ type: "request-start", content: buildCallOpeningLine(params.firstName, params.brandName, params.origin ?? "form"), blocking: true }],
+      });
+    }
+
     // Mark's spec, 2026-09-12: a live transfer previously left the ISA
     // notes field untouched — the receiving agent had no summary at all
     // unless a callback happened instead. Iris (not the transfer
