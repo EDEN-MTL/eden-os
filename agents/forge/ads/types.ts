@@ -34,7 +34,7 @@ export interface EntityMetrics {
   impressions: number;
   clicks: number;
   frequency: number | null;
-  /** Best available lead count: the CRM's when it has any, else Meta's own. See lead_source. */
+  /** The higher of the CRM's and Meta's counts for the same window. See lead_source and deriveMetrics. */
   lead_count: number;
   /** Leads in GHL attributed to this entity. */
   crm_lead_count: number;
