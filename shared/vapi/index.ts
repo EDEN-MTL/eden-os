@@ -238,8 +238,6 @@ export interface VapiToolMessage {
   role?: "assistant" | "system";
   content?: string;
   endCallAfterSpokenEnabled?: boolean;
-  /** request-start only: wait until this message has been spoken before the tool call goes out. */
-  blocking?: boolean;
 }
 
 export interface VapiFunctionTool {
