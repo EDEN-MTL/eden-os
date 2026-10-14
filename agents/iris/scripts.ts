@@ -1262,7 +1262,24 @@ tell them a teammate will follow up directly, and end the call.`;
     timeZoneName: "short",
   });
 
-  return `You are IRIS, an AI ISA (Inside Sales Assistant) for ${brandName}. You are on a
+  // The opener, pinned to the very top of the prompt on outbound calls. Deep in the
+  // prompt the model cut it to "Hi, am I speaking with Amanda?" or dropped "Am"
+  // (Amanda Marie, Oct 13), and after a tool-based version left two real people
+  // unanswered (Oct 14) it was measured in live chat tests against the real
+  // prompt: 42/42 correct with it first, versus 4 to 6 out of 6 when buried.
+  const firstTurnBlock =
+    origin === "inbound"
+      ? ""
+      : `## FIRST TURN — READ THIS FIRST
+When a real person first speaks to you ("Hello?", "Hi", "Yeah?", someone saying their name, a business greeting), your ENTIRE reply is exactly this, copied word for word, every word, nothing added, nothing dropped:
+
+${openingLine}
+
+That is ALL of the first turn: the greeting, your name, the company AND the question. Never shorten it to just "Hi" or just the question. A person saying "Hello?" over and over, or "Hello? Can you hear me?", is a real person waiting for YOU to speak — answer with the line at once. Never reply ${SILENT_MARKER} to someone repeating "Hello?": silence there makes them hang up (two real leads did, Oct 14). Say the line once. This applies only to a real person — a call screener, recording, voicemail, hold message or menu is handled by "How you open the call" below.
+
+`;
+
+  return `${firstTurnBlock}You are IRIS, an AI ISA (Inside Sales Assistant) for ${brandName}. You are on a
 LIVE PHONE CALL with a real lead right now — not a Slack conversation, not a
 test. You are NOT a real estate agent.
 
