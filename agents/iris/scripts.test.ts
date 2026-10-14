@@ -1201,6 +1201,17 @@ describe("buildLeadQualificationPrompt", () => {
     expect(prompt).toMatch(/never "Goodbye"/);
   });
 
+  it("pins the opening line at the very top of an outbound prompt, and not on an inbound one", () => {
+    const outbound = buildLeadQualificationPrompt(IRIS_CONFIG, { ...BLANK_LEAD, name: "Amanda" }, "3 Percent East Coast", "St. John's", false, true, false);
+    expect(outbound.startsWith("## FIRST TURN — READ THIS FIRST")).toBe(true);
+    expect(outbound).toContain("Hi, this is Iris with 3 Percent East Coast. Am I speaking with Amanda?");
+    expect(outbound).toMatch(/Never shorten it to just "Hi" or just the question/);
+    expect(outbound).toMatch(/applies only to a real person/);
+    expect(outbound).toMatch(/Never reply \[silent\] to someone repeating "Hello\?"/);
+    const inbound = buildLeadQualificationPrompt(IRIS_CONFIG, { ...BLANK_LEAD, name: "Amanda" }, "3 Percent East Coast", "St. John's", false, true, false, "inbound");
+    expect(inbound.startsWith("## FIRST TURN")).toBe(false);
+  });
+
   it("never loops on the screener: 'Iris.' at most twice, and a screener that never connects ends through the normal no-answer handling", () => {
     const prompt = buildLeadQualificationPrompt(IRIS_CONFIG, BLANK_LEAD, "3 Percent East Coast", "St. John's", false, true, false);
     expect(prompt).toMatch(/never more than twice in total/i);
