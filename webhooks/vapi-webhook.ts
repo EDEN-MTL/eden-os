@@ -6,13 +6,14 @@ import { sendMessage, uploadFile } from "../shared/slack";
 import { appendHistory } from "../shared/conversation-memory";
 import { loadIrisConfig, loadClientBranding } from "../agents/iris";
 import { reopenForNextAttempt, reopenAfterMissedCallback, scheduleExplicitCallback, holdForTextReply, SWEEP_SOURCE } from "../agents/iris/dial-pending";
-import { extractFirstName } from "../agents/iris/scripts";
+import { extractFirstName, buildCallOpeningLine } from "../agents/iris/scripts";
 import { buildKeyToId, readField } from "../agents/scout/intake";
 import { appendNoteToContact } from "../agents/iris/notes";
 import { checkHumanTouch, DEFAULT_HUMAN_HANDS_OFF_DAYS } from "../agents/iris/human-touch";
 import { clampToLegalCallingWindow, formatLocal } from "../agents/iris/cadence";
 import { handleInboundCall } from "../agents/iris/inbound";
 import { classifyMissedCallback } from "../agents/iris/call-signals";
+import { reviewCall } from "../agents/iris/call-review";
 import { isaNoteBullets } from "./appointment-post";
 
 /**
@@ -301,7 +302,7 @@ export async function attachRecording(message: Record<string, any>, channel: str
  * anything stale — falls back to the raw phone number when there's no
  * contactId at all (a manual test call) or the lookup fails.
  */
-export async function postCallLogToSlack(clientId: string, contactId: string | null, message: Record<string, any>, endedReason: string | null): Promise<void> {
+export async function postCallLogToSlack(clientId: string, contactId: string | null, message: Record<string, any>, endedReason: string | null, posted?: { channel?: string; ts?: string }): Promise<void> {
   try {
     const phone = message?.call?.customer?.number ?? "unknown number";
     let who = phone;
@@ -339,6 +340,11 @@ export async function postCallLogToSlack(clientId: string, contactId: string | n
         console.error("[VAPI] Failed to seed call-log thread history:", error instanceof Error ? error.message : error);
       });
       await attachRecording(message, result.channel, result.ts);
+    }
+    // Handed back so the call review can reply in this post's thread.
+    if (posted) {
+      posted.channel = result?.channel;
+      posted.ts = result?.ts;
     }
   } catch (error) {
     console.error("[VAPI] Failed to post call log to Slack:", error instanceof Error ? error.message : error);
@@ -432,7 +438,8 @@ async function handleEndOfCallReport(message: Record<string, any>): Promise<void
   console.log(`[VAPI] Call ${callId} ended (${endedReason ?? "unknown reason"}).`);
 
   const row = rows[0];
-  if (row) await postCallLogToSlack(row.client_id, row.contact_id, message, endedReason);
+  const logPost: { channel?: string; ts?: string } = {};
+  if (row) await postCallLogToSlack(row.client_id, row.contact_id, message, endedReason, logPost);
   // Mark, 2026-10-06: a successful live transfer already left Iris's own short
   // summary in the notes field — the extra "Live transfer completed ..."
   // status line only made the text sent to the agent longer and costlier.
@@ -460,6 +467,77 @@ async function handleEndOfCallReport(message: Record<string, any>): Promise<void
       // call itself missed.
       await maybeHonorMissedCallback(row.client_id, row.contact_id, transcript);
     }
+  }
+
+  if (row) await postCallReview(row.client_id, row.contact_id, row.triggered_by, message, endedReason, logPost.ts, logPost.channel);
+}
+
+/**
+ * Mark, 2026-10-14: Iris reviews every finished call herself and posts the
+ * verdict, so nobody has to open each transcript. Clean calls get a short
+ * thread reply under the call-log post; a call that needs a look gets its own
+ * top-level post so it isn't buried. Runs last, after the retry logic, so it
+ * can also tell whether a retry actually got lined up. Best-effort: never
+ * affects the call's handling.
+ */
+export async function postCallReview(
+  clientId: string,
+  contactId: string | null,
+  triggeredBy: string,
+  message: Record<string, any>,
+  endedReason: string | null,
+  logPostTs?: string | null,
+  logPostChannel?: string | null
+): Promise<void> {
+  try {
+    const lines = ((message?.messages ?? []) as any[])
+      .filter((m) => typeof m?.message === "string" && m.message.trim() !== "" && ["user", "bot", "assistant"].includes(m?.role))
+      .map((m) => ({ role: m.role as string, message: m.message as string }));
+    const machineOnly = hitCallScreener(message) || hitVoicemailGreeting(message);
+
+    let who = message?.call?.customer?.number ?? "unknown number";
+    let expectedOpener: string | null = null;
+    let retryExpected = false;
+    let retryLinedUp: boolean | undefined;
+    if (contactId) {
+      const ghlConfig = await getGhlConfig(clientId).catch(() => null);
+      if (ghlConfig) {
+        const resp = await getContact(contactId, ghlConfig.locationId, ghlConfig.apiKey).catch(() => null);
+        const contact = resp?.contact ?? resp;
+        const name = [contact?.firstName, contact?.lastName].filter(Boolean).join(" ").trim();
+        if (name) who = name;
+        const branding = loadClientBranding(clientId);
+        if (branding && name) expectedOpener = buildCallOpeningLine(extractFirstName(name), branding.brandName);
+      }
+      if (triggeredBy === "automatic" && !genuinelyAnswered(endedReason, message) && endedReason !== TRANSFER_SUCCEEDED_REASON) {
+        retryExpected = true;
+        const row = await query<{ status: string; attempts_made: number }>(
+          `SELECT status, attempts_made FROM iris_pending_calls WHERE client_id = $1 AND contact_id = $2`,
+          [clientId, contactId]
+        );
+        // A lead whose whole cadence is spent legitimately has no retry left.
+        retryLinedUp = !row[0] || row[0].status === "pending" || row[0].attempts_made >= 8;
+      }
+    }
+
+    const review = reviewCall({
+      lines,
+      endedReason,
+      durationSeconds: message?.durationSeconds ?? null,
+      machineOnly,
+      expectedOpener,
+      retryExpected,
+      retryLinedUp,
+    });
+
+    if (review.verdict === "attention") {
+      await sendMessage("iris", { channel: CALL_LOG_CHANNEL, text: `🔎 *Call review — ${who}*\n${review.summary}` });
+    } else {
+      // A short reply under that call's own log post (top-level if the post's ts is unknown).
+      await sendMessage("iris", { channel: logPostChannel ?? CALL_LOG_CHANNEL, text: `🔎 ${review.summary}`, threadTs: logPostTs ?? undefined });
+    }
+  } catch (error) {
+    console.error("[VAPI] Failed to review the call:", error instanceof Error ? error.message : error);
   }
 }
 

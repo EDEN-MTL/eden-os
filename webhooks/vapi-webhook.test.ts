@@ -48,6 +48,7 @@ import {
   genuinelyAnswered,
   hitCallScreener,
   hitVoicemailGreeting,
+  postCallReview,
   maybeHonorMissedCallback,
   maybeReopenPendingCall,
   buildSweepMissedCallText,
@@ -1222,5 +1223,54 @@ describe("hitVoicemailGreeting", () => {
   it("makes a voicemail-greeting hang-up count as NOT answered, so the retry is scheduled, and says so in the log", () => {
     expect(genuinelyAnswered("assistant-ended-call", angela)).toBe(false);
     expect(describeOutcome("assistant-ended-call", angela)).toMatch(/Voicemail greeting, no message left — will retry/);
+  });
+});
+
+describe("postCallReview — Iris reviews every finished call herself", () => {
+  const cleanMachine = {
+    call: { customer: { number: "+17097700724" } },
+    durationSeconds: 11,
+    messages: [{ role: "user", message: "Please leave a message after the tone." }],
+  };
+
+  beforeEach(() => {
+    ghl.getGhlConfig.mockResolvedValue({ locationId: "loc-1", apiKey: "key-1" });
+    ghl.getContact.mockResolvedValue({ contact: { firstName: "Angela", lastName: "Marie" } });
+    iris.loadClientBranding.mockReturnValue({ brandName: "3 Percent East Coast", city: "St. John's" });
+  });
+
+  it("replies in the call's own thread when nothing is off", async () => {
+    db.query.mockResolvedValueOnce([{ status: "pending", attempts_made: 2 }] as never);
+
+    await postCallReview("3-percent-east-coast", "c1", "automatic", cleanMachine, "customer-did-not-answer", "1791.1", "C123");
+
+    expect(slack.sendMessage).toHaveBeenCalledTimes(1);
+    expect(slack.sendMessage).toHaveBeenCalledWith("iris", expect.objectContaining({ channel: "C123", threadTs: "1791.1", text: expect.stringContaining("nothing off") }));
+  });
+
+  it("posts a visible top-level note when something needs a look, naming the lead", async () => {
+    const spoken = { ...cleanMachine, messages: [...cleanMachine.messages, { role: "bot", message: "Goodbye." }] };
+    db.query.mockResolvedValueOnce([{ status: "pending", attempts_made: 2 }] as never);
+
+    await postCallReview("3-percent-east-coast", "c1", "automatic", spoken, "assistant-ended-call", "1791.1", "C123");
+
+    const [, payload] = slack.sendMessage.mock.calls[0] as unknown as [string, { channel: string; threadTs?: string; text: string }];
+    expect(payload.threadTs).toBeUndefined();
+    expect(payload.text).toContain("Call review — Angela Marie");
+    expect(payload.text).toContain("Goodbye");
+  });
+
+  it("flags a missed call that has no retry lined up", async () => {
+    db.query.mockResolvedValueOnce([{ status: "placed", attempts_made: 1 }] as never);
+
+    await postCallReview("3-percent-east-coast", "c1", "automatic", cleanMachine, "customer-did-not-answer", "1791.1", "C123");
+
+    expect((slack.sendMessage.mock.calls[0] as unknown as [string, { text: string }])[1].text).toContain("No retry is lined up");
+  });
+
+  it("never throws, even when Slack or GHL fail", async () => {
+    ghl.getContact.mockRejectedValue(new Error("down"));
+    slack.sendMessage.mockRejectedValue(new Error("Slack down"));
+    await expect(postCallReview("3-percent-east-coast", "c1", "automatic", cleanMachine, "voicemail")).resolves.toBeUndefined();
   });
 });
