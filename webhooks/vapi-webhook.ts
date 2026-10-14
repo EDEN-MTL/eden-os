@@ -145,6 +145,36 @@ export function hitCallScreener(message: Record<string, any>): boolean {
 }
 
 /**
+ * A voicemail greeting heard on the line. Vapi's own voicemail detection often
+ * catches these (endedReason "voicemail" / "customer-did-not-answer"), but not
+ * always: Angela Marie's call (2026-10-14) heard "Call has been forwarded to
+ * voice mail. The person you're trying to reach is not available.", Iris hung
+ * up, and Vapi reported "assistant-ended-call" — which counts as a real
+ * conversation, so no retry was ever scheduled. Same shape as hitCallScreener:
+ * a greeting with nobody real after it.
+ */
+const VOICEMAIL_PHRASES = [
+  /forwarded to (?:voice ?mail|an? (?:automated|voice))/i,
+  /(?:voice ?mail|mailbox) (?:is|has been)? ?(?:full|not set up|unavailable)/i,
+  /(?:you(?:'ve| have) reached|this is) the (?:voice ?mail|mailbox)/i,
+  /at the (?:tone|beep)/i,
+  /after the (?:tone|beep)/i,
+  /record your message/i,
+  /leave (?:a|your) message/i,
+  /(?:person|party|number|customer) you(?:'re| are) (?:trying to reach|calling) is (?:not available|unavailable)/i,
+];
+
+export function hitVoicemailGreeting(message: Record<string, any>): boolean {
+  const userLines: string[] = ((message?.messages ?? []) as any[])
+    .filter((m) => m?.role === "user" && typeof m?.message === "string" && m.message.trim() !== "")
+    .map((m) => m.message as string);
+  const first = userLines.findIndex((line) => VOICEMAIL_PHRASES.some((re) => re.test(line)));
+  if (first === -1) return false;
+  const realPersonJoined = userLines.slice(first + 1).some((line) => !MACHINE_FOLLOW_UPS.some((re) => re.test(line)) && !VOICEMAIL_PHRASES.some((re) => re.test(line)));
+  return !realPersonJoined;
+}
+
+/**
  * Fails toward RETRYING on anything ambiguous now (an unrecognized or
  * missing endedReason) — inverted from the old direction along with the
  * allowlist above. The cost of wrongly retrying a lead who was actually
@@ -186,7 +216,7 @@ export function customerSpokeAtAll(message: Record<string, any>): boolean {
  */
 export function genuinelyAnswered(endedReason: string | null, message: Record<string, any>): boolean {
   if (!wasAnswered(endedReason)) return false;
-  if (hitCallScreener(message)) return false;
+  if (hitCallScreener(message) || hitVoicemailGreeting(message)) return false;
   if (endedReason === "assistant-ended-call") return customerSpokeAtAll(message);
   return true;
 }
@@ -216,6 +246,7 @@ export function describeOutcome(endedReason: string | null, message: Record<stri
   if (endedReason === TRANSFER_SUCCEEDED_REASON) return "✅ Live transfer completed";
   if (endedReason === "voicemail") return "📵 Left voicemail";
   if (hitCallScreener(message)) return "🤖 Hit a call-screening service, not the actual lead — will retry";
+  if (hitVoicemailGreeting(message)) return "📵 Voicemail greeting, no message left — will retry";
   if (endedReason === "assistant-ended-call" && !customerSpokeAtAll(message)) return "🔇 No response (gave up after the idle nudge)";
   if (TRANSFER_ABANDONED_REASONS.has(endedReason ?? "")) return "⚠️ Disconnected right before transfer connected — needs a manual callback";
   if (wasAnswered(endedReason)) return "💬 Answered (no transfer)";
