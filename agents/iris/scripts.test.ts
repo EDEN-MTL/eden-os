@@ -727,7 +727,27 @@ describe("buildLeadQualificationPrompt", () => {
       const prompt = buildLeadQualificationPrompt(IRIS_CONFIG, { ...BLANK_LEAD, intent: "buyer" }, "3 Percent East Coast", "St. John's", false, true, false);
       expect(prompt).toContain("Perfect. We'll connect you with one of our buyer agents to send over some available home options.");
       expect(prompt).toContain("I'm just the assistant, so let me connect you with one of our buyer agents — they'll have access to send over some real listings.");
-      expect(prompt).toMatch(/pick ONE of these\s*\n\(never repeat the same one call after call\)/i);
+      expect(prompt).toMatch(/pick ONE of these \(never repeat the same one\s*\ncall after call\)/i);
+    });
+
+    /**
+     * Angela Marie, 2026-10-14: a qualified seller heard a transfer line that was a
+     * statement, said nothing, and hung up. Every variant now ends in a question.
+     */
+    it("ends every transfer line with a short question, and keeps 'connect you with' for the transferCall gate", () => {
+      for (const lines of [LIVE_TRANSFER_LINES.buyer, LIVE_TRANSFER_LINES.seller, LIVE_TRANSFER_LINES.general]) {
+        for (const line of lines) {
+          expect(line.trim().endsWith("?")).toBe(true);
+          expect(line).toContain("connect you with");
+        }
+      }
+      const prompt = buildLeadQualificationPrompt(IRIS_CONFIG, { ...BLANK_LEAD, intent: "seller" }, "3 Percent East Coast", "St. John's", false, true, false);
+      expect(prompt).toContain("Sounds good. I'll connect you with one of our seller agents now. Is that okay?");
+      expect(prompt).toMatch(/Each ends with a short question on purpose/);
+      expect(prompt).not.toMatch(/don't ask permission/);
+      // A "no" / "not right now" goes to booking an appointment or a callback, never a transfer.
+      expect(prompt).toMatch(/Unavailable right now, or a "no" \/ "not right now" to the question/);
+      expect(prompt).toMatch(/booking an appointment on the calendar when you can/);
     });
 
     /**

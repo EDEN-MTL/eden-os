@@ -174,8 +174,8 @@ export const EDGE_CASE_RESPONSES = {
 
 /**
  * Live transfer is ALWAYS the first priority for a qualified lead (see
- * qualification.ts's decideOutcome) — presented confidently, never as a
- * question. Downsize/upgrading intents use whichever transfer line matches
+ * qualification.ts's decideOutcome) — presented confidently, closing with a
+ * short "Is that okay?" so the lead has something to answer. Downsize/upgrading intents use whichever transfer line matches
  * the transaction that has to happen first, same mapping as
  * calendarForIntent in qualification.ts.
  */
@@ -193,19 +193,23 @@ export const LIVE_TRANSFER_LINES = {
   // script every call. Every variant keeps the phrase "connect you with"
   // — calling.ts's transferCall rejectionPlan structurally checks for that
   // exact substring in Iris's prior turn before allowing the tool call.
+  // Every line now ENDS WITH A SHORT QUESTION (Mark, 2026-10-14). As bare
+  // statements they gave a quiet lead nothing to answer: Angela Marie, a fully
+  // qualified seller, heard "I'll connect you with one of our seller agents
+  // now", said nothing and hung up before the 15-second check-in could fire.
   buyer: [
-    "Perfect. We'll connect you with one of our buyer agents to send over some available home options.",
-    "I'm just the assistant, so let me connect you with one of our buyer agents — they'll have access to send over some real listings.",
-    "Perfect. We'll connect you with one of our buyer agents who can send over some available home options and go over what might be a good fit.",
+    "Perfect. We'll connect you with one of our buyer agents to send over some available home options. Is that okay?",
+    "I'm just the assistant, so let me connect you with one of our buyer agents — they'll have access to send over some real listings. Does that sound good?",
+    "Perfect. We'll connect you with one of our buyer agents who can send over some available home options and go over what might be a good fit. Is that okay?",
   ],
   seller: [
-    "Sounds good. I'll connect you with one of our seller agents now.",
-    "I'm just the assistant, so let me connect you with one of our seller agents — they'll be able to walk you through next steps.",
-    "Perfect. We'll connect you with one of our seller agents who can go over your property and the best next steps.",
+    "Sounds good. I'll connect you with one of our seller agents now. Is that okay?",
+    "I'm just the assistant, so let me connect you with one of our seller agents — they'll be able to walk you through next steps. Does that sound good?",
+    "Perfect. We'll connect you with one of our seller agents who can go over your property and the best next steps. Is that okay?",
   ],
   general: [
-    "Perfect. I'll connect you with one of our agents now.",
-    "I'm just the assistant, so let me connect you with one of our agents.",
+    "Perfect. I'll connect you with one of our agents now. Is that okay?",
+    "I'm just the assistant, so let me connect you with one of our agents. Does that sound good?",
   ],
 };
 
@@ -1022,14 +1026,16 @@ still mid-answer on the very last question. Never offer the transfer until
 the lead has completely finished answering the last thing you asked them —
 if there's any doubt whether they're done talking, wait and let them
 finish, don't cut in with the transfer line. Once everything is actually
-gathered, present it confidently, don't ask permission — pick ONE of these
-(never repeat the same one call after call), then STOP and wait:
+gathered, present it confidently — pick ONE of these (never repeat the same one
+call after call). Each ends with a short question on purpose, so the lead has
+something to answer; say it WHOLE, question included, then STOP and wait for
+their answer:
 ${liveTransferLineForIntent(lead.intent).map((l) => `- "${l}"`).join("\n")}
 
 Listen to what they say next:
 - Agreement ("okay", "sure", "yeah") → say one of these (pick a different one than last time), so they know what's actually happening, THEN invoke the transferCall tool. Never invoke it silently without saying this first, and never invoke it before they've responded:
 ${TRANSFER_ATTEMPT_LINES.map((l) => `  - "${l}"`).join("\n")}
-- Unavailable right now ("I'm at work", "can you call me later", "I can't talk", "I'm busy right now", "I'm driving", "I'm in a meeting", "can we talk some other time?") → do NOT invoke transferCall at all, don't ask them to wait for the agent anyway. Acknowledge naturally and move straight to the scheduling fallback below instead.
+- Unavailable right now, or a "no" / "not right now" to the question ("I'm at work", "can you call me later", "I can't talk", "I'm busy right now", "I'm driving", "I'm in a meeting", "can we talk some other time?") → do NOT invoke transferCall at all, don't ask them to wait for the agent anyway. Acknowledge naturally and move straight to the scheduling fallback below instead — booking an appointment on the calendar when you can (a real time they pick), otherwise a callback; offer whichever the fallback below gives you, and ask what day and time suits them.
 - Silence (they say nothing at all right after you present the transfer — not agreement, not stating they're unavailable, just quiet) → do NOT invoke transferCall and do NOT assume either agreement or unavailability. Silence is NEVER consent to transfer — treat it as a HARD RULE, not a judgment call. Mark's spec, 2026-09-11 (section 24.9): this specifically might mean they missed what you just said (distracted, phone muted for a second, stepped away) rather than that they're ignoring you or done with the call, so it gets its own two-round check before it's treated as ordinary silence elsewhere in the call:
   - ROUND 1: re-check with a short confirmation, not a repeat of the full presentation — pick ONE, don't reuse the same one call after call:
 ${TRANSFER_REINFORM_LINES.map((l) => `    - "${l}"`).join("\n")}
