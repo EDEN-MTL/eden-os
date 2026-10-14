@@ -1,5 +1,6 @@
 import { SlackIncomingMessage } from "../../shared/types";
 import { handleCommandReply, prepareCallCommand, prepareStopCommand, SettingsLoader } from "./slack-commands";
+import { upcomingCalls, recentLeads, leadOverview } from "./slack-reports";
 import { readFileSync } from "fs";
 import { join } from "path";
 import { BaseAgent, ToolContext } from "../base-agent";
@@ -96,12 +97,50 @@ const IRIS_TOOLS: ToolDef[] = [
   {
     name: "iris_calls_today",
     description:
-      "Every call Iris placed or answered today (the client's own local calendar day, not UTC), in chronological order — who, what time, which direction (outbound/inbound), and the outcome. Use this for \"what calls did you make today\" / \"which leads did you call today\" / \"any calls today\" — never reconstruct this from memory or #iris-call-logs scrollback; call the tool.",
+      "Every call Iris placed or answered on one local calendar day (the client's own day, not UTC; today unless daysAgo is given), in chronological order — who, what time, which direction (outbound/inbound), and the outcome. Use this for \"what calls did you make today\" / \"which leads did you call yesterday\" / \"any calls today\" — never reconstruct this from memory or #iris-call-logs scrollback; call the tool.",
     input_schema: {
       type: "object",
       properties: {
+        daysAgo: { type: "number", description: "0 = today (default), 1 = yesterday, 2 = the day before, and so on." },
         clientId: { type: "string", description: `Which client to report on. Defaults to "${DEFAULT_CLIENT_ID}" if not given.` },
       },
+    },
+  },
+  {
+    name: "iris_upcoming_calls",
+    description:
+      "Who Iris is going to call next, BY NAME, with the time (client-local), why (regular sequence / callback / sweep / Ember) and how many attempts so far — plus the leads she's waiting on a text reply from (no call time). Use this for \"who's on your list to call later\", \"who are you calling today/tomorrow\", \"what's lined up\", \"when is X's next call\". Never answer such a question with counts only — call this and give the names.",
+    input_schema: {
+      type: "object",
+      properties: {
+        hoursAhead: { type: "number", description: "How far ahead to list, in hours. Default 72." },
+        clientId: { type: "string", description: `Defaults to "${DEFAULT_CLIENT_ID}" if not given.` },
+      },
+    },
+  },
+  {
+    name: "iris_recent_leads",
+    description:
+      "The newest leads that came into Iris's queue, newest first — name, buy/sell, when captured, and where each stands. Use for \"what leads came in today / this week\", \"show me the last few leads\". For just the single newest lead use iris_newest_lead.",
+    input_schema: {
+      type: "object",
+      properties: {
+        limit: { type: "number", description: "How many (default 10, max 25)." },
+        clientId: { type: "string", description: `Defaults to "${DEFAULT_CLIENT_ID}" if not given.` },
+      },
+    },
+  },
+  {
+    name: "iris_lead_overview",
+    description:
+      "Everything Iris knows about ONE named lead in one go: GHL tags, assigned agent, where they sit in Iris's queue and why, recent calls and outcomes, whether a teammate has texted them (which keeps Iris out of the text thread), appointments, and the last few texts both ways. Use this for \"why isn't Iris calling X\", \"what's the status of X\", \"has anyone reached X\", \"what's going on with X\" — it explains the situation; iris_lookup_lead is the lighter call-history-only version.",
+    input_schema: {
+      type: "object",
+      properties: {
+        nameOrPhone: { type: "string", description: "The lead's name or phone number, exactly as given." },
+        clientId: { type: "string", description: `Defaults to "${DEFAULT_CLIENT_ID}" if not given.` },
+      },
+      required: ["nameOrPhone"],
     },
   },
 ];
@@ -332,6 +371,33 @@ class IrisAgent extends BaseAgent {
         });
       }
 
+      case "iris_upcoming_calls": {
+        const clientId = String(input?.clientId ?? DEFAULT_CLIENT_ID);
+        const hours = Number(input?.hoursAhead);
+        return JSON.stringify(await upcomingCalls(clientId, await resolveTimezone(clientId), Number.isFinite(hours) && hours > 0 ? hours : 72));
+      }
+
+      case "iris_recent_leads": {
+        const clientId = String(input?.clientId ?? DEFAULT_CLIENT_ID);
+        const limit = Number(input?.limit);
+        return JSON.stringify(await recentLeads(clientId, await resolveTimezone(clientId), Number.isFinite(limit) && limit > 0 ? limit : 10));
+      }
+
+      case "iris_lead_overview": {
+        const nameOrPhone = String(input?.nameOrPhone ?? "").trim();
+        if (!nameOrPhone) return JSON.stringify({ error: "nameOrPhone is required" });
+        const clientId = String(input?.clientId ?? DEFAULT_CLIENT_ID);
+        const ghlConfig = await getGhlConfig(clientId);
+        if (!ghlConfig) return JSON.stringify({ error: `No GHL config for client "${clientId}"` });
+        const contact = await resolveContactByNameOrPhone(ghlConfig, nameOrPhone);
+        if (!contact) return JSON.stringify({ found: false, searchedFor: nameOrPhone });
+        const config = loadIrisConfig(clientId);
+        return JSON.stringify({
+          found: true,
+          ...(await leadOverview(clientId, contact.id, await resolveTimezone(clientId), ghlConfig, config?.humanHandsOffDays)),
+        });
+      }
+
       case "iris_calls_today": {
         const clientId = String(input?.clientId ?? DEFAULT_CLIENT_ID);
         const timezone = await resolveTimezone(clientId);
@@ -343,9 +409,10 @@ class IrisAgent extends BaseAgent {
         // Mark asked "can you specify those leads you called today?" and
         // Iris had no tool for this at all — only a single-lead lookup and
         // overall pipeline counts, neither of which lists a day's calls.
+        const daysAgo = Math.max(0, Math.floor(Number(input?.daysAgo ?? 0)) || 0);
         const inZone = new Date(new Date().toLocaleString("en-US", { timeZone: timezone }));
-        const startOfDay = zonedHourToUtc(inZone.getFullYear(), inZone.getMonth(), inZone.getDate(), 0, timezone);
-        const startOfTomorrow = zonedHourToUtc(inZone.getFullYear(), inZone.getMonth(), inZone.getDate() + 1, 0, timezone);
+        const startOfDay = zonedHourToUtc(inZone.getFullYear(), inZone.getMonth(), inZone.getDate() - daysAgo, 0, timezone);
+        const startOfTomorrow = zonedHourToUtc(inZone.getFullYear(), inZone.getMonth(), inZone.getDate() - daysAgo + 1, 0, timezone);
 
         const rows = await query<{ contact_id: string | null; phone: string; status: string; ended_reason: string | null; created_at: Date; triggered_by: string }>(
           `SELECT contact_id, phone, status, ended_reason, created_at, triggered_by FROM iris_call_log
@@ -433,6 +500,16 @@ say yes plainly — don't hedge or undersell it.
 
 ## Calling and stopping leads when Mark or Jacob asks in Slack
 They can tell you "call Koren Pye now", "call her at 3pm", or "stop calling Matthew Power". Use iris_request_call / iris_request_stop — they only PREPARE the action and return a summary. Show that summary to them and ask them to reply "yes" to confirm or "no" to cancel. The action happens only when they reply yes (handled outside you); until then NOTHING has been done, so never say a call is placed, scheduled or stopped. If a tool says refused, ambiguous, not found or nothing to do, tell them plainly and follow its instruction. Anyone else asking gets a polite no.
+
+## Answering questions in Slack
+You have real tools — use them, never answer from memory or guesswork. Pick the one that fits:
+- "Who's on your list to call later / today / tomorrow?" → iris_upcoming_calls. Give the NAMES with their times and why, never just counts.
+- "What calls did you make today / yesterday?" → iris_calls_today (daysAgo for earlier days).
+- "What leads came in?" → iris_recent_leads (or iris_newest_lead for just the latest).
+- "Why aren't you calling X? / what's going on with X? / has anyone reached X?" → iris_lead_overview, then explain it plainly: queue status, last calls, any teammate text, appointment, tags.
+- "What happened on X's call?" → iris_call_transcript (read what was said, don't infer from the outcome code).
+- Overall numbers → iris_pipeline_stats.
+If you're asked for something none of these can tell you, say what you CAN look up instead of just saying you can't. Keep answers short and in plain words, lead with the answer, and use a short list when there are several names.
 
 ## What you actually do on a real call
 Gather whatever qualifying info a lead's own form/CRM record didn't already
