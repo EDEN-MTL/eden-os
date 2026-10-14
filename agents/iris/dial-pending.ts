@@ -479,7 +479,12 @@ async function resolveOne(row: PendingCallRow): Promise<void> {
     // can't accidentally trip this.
     // sms_scheduled calls skip this: the recent text IS the lead saying
     // "yes, call me now" — pausing would stall the exact call they asked for.
-    if (inbound?.dateAdded && !row.sms_scheduled) {
+    // So do explicit callbacks (a time the lead asked for, or one Mark/Jacob set):
+    // the lead texting AFTER asking for a call doesn't cancel it. Jesse Noseworthy,
+    // 2026-10-14: asked for a call tomorrow morning ("available till around 1ish"),
+    // then kept texting Iris — the pause would have held his 9 AM call until
+    // 24 hours after his last text, past his window.
+    if (inbound?.dateAdded && !row.sms_scheduled && !row.is_explicit_callback) {
       const hoursSinceLastText = (Date.now() - new Date(inbound.dateAdded).getTime()) / (60 * 60 * 1000);
       if (hoursSinceLastText <= SMS_ACTIVE_COLD_OFF_HOURS && (await hasActiveSmsConversation(row.client_id, row.contact_id))) {
         await query(
