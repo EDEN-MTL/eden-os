@@ -85,7 +85,13 @@ export function reviewCall(input: CallReviewInput): CallReview {
     }
   }
 
-  // 5. A call that should be retried but isn’t.
+  // 5. A real person spoke and Iris never said a word.
+  if (!input.machineOnly && bot.length === 0) {
+    const heard = lines.find((l) => l.role === "user");
+    if (heard) flags.push(`Someone spoke (${quote(heard.message)}) and Iris never said a word`);
+  }
+
+  // 6. A call that should be retried but isn’t.
   if (input.retryExpected && input.retryLinedUp === false) flags.push("No retry is lined up for this lead");
 
   // Notes (not failures).
