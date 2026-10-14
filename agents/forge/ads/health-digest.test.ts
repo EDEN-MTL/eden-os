@@ -105,6 +105,12 @@ describe("formatHealthDigest", () => {
     );
   });
 
+  it("labels a hand-set target as a goal, and its leads per week as conditional on hitting it", () => {
+    const goal = { ...sellerFunnel, targetCpl: 60, targetSource: "config" as const, basis: undefined, expectedLeadsPerWeek: 2.33 };
+    const text = formatHealthDigest("3%", report([entity({})], { funnels: [goal] }));
+    expect(text).toContain("• *Sellers:* $60/lead (goal) · $20/day ≈ 2.3 leads/week if it hits the goal");
+  });
+
   it("flags a missing live-status read so paused items aren't mistaken for running ones", () => {
     const text = formatHealthDigest("3%", report([entity({})], { liveStateError: "rate limited" }));
     expect(text).toContain("Couldn't read live status from Meta (rate limited)");
