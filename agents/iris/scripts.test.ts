@@ -745,6 +745,9 @@ describe("buildLeadQualificationPrompt", () => {
       expect(prompt).toContain("Sounds good. I'll connect you with one of our seller agents now. Is that okay?");
       expect(prompt).toMatch(/Each ends with a short question on purpose/);
       expect(prompt).not.toMatch(/don't ask permission/);
+      // A "no" / "not right now" goes to booking an appointment or a callback, never a transfer.
+      expect(prompt).toMatch(/Unavailable right now, or a "no" \/ "not right now" to the question/);
+      expect(prompt).toMatch(/booking an appointment on the calendar when you can/);
     });
 
     /**
