@@ -294,3 +294,20 @@ describe("resolveOne — a time the lead asked for by text (Jesse Noseworthy, 20
     expect(calling.placeCall).not.toHaveBeenCalled();
   });
 });
+
+describe("resolveOne — an explicit callback is not paused by the lead texting afterwards (Jesse Noseworthy, 2026-10-14)", () => {
+  it("still places the call when the lead texted recently and a text exchange is active", async () => {
+    db.query.mockImplementation(async (sql: string) => {
+      if (sql.includes("WHERE status = 'pending' AND call_after <= now()")) return [{ ...DUE_ROW, is_explicit_callback: true }];
+      return [];
+    });
+    textSignals.lastInboundText.mockResolvedValue({ text: "That is 100% something I need to do.", precedingOutbound: null, dateAdded: new Date(Date.now() - 15 * 60 * 60 * 1000).toISOString() });
+    smsModule.hasActiveSmsConversation.mockResolvedValue(true);
+    calling.placeCall.mockResolvedValue({ id: "call-1" });
+
+    await runDialPendingCalls();
+
+    expect(calling.placeCall).toHaveBeenCalledTimes(1);
+    expect(db.query.mock.calls.find((c) => String(c[0]).includes("texting with lead — call paused"))).toBeUndefined();
+  });
+});
