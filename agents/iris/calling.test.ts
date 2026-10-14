@@ -138,6 +138,10 @@ describe("buildCallPayload", () => {
       "Hi, this is Iris with 3 percent East Coast. Am I speaking with Koren?"
     );
     expect(spoken("I'll wait for the right time to call back.")).toBe("I'll wait for the right time to call back.");
+    // A turn that is only "Goodbye." (said into screeners and voicemail greetings) is dropped; a real goodbye inside a sentence is not.
+    expect(spoken("Goodbye.")).toBe("");
+    expect(spoken("Bye!")).toBe("");
+    expect(spoken("Thanks so much for your time, have a great day. Goodbye.")).toBe("Thanks so much for your time, have a great day. Goodbye.");
   });
 
   it("makes the idle check-in say nothing while a screener, hold or menu is on the line", () => {

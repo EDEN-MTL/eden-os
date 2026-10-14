@@ -1197,7 +1197,7 @@ describe("buildLeadQualificationPrompt", () => {
 
   it("tells Iris the only text allowed with a machine's silent endCall is the silence marker, never 'Goodbye'", () => {
     const prompt = buildLeadQualificationPrompt(IRIS_CONFIG, BLANK_LEAD, "3 Percent East Coast", "St. John's", false, true, false);
-    expect(prompt).toMatch(/The only text you may write with that endCall is\s+\[silent\]/);
+    expect(prompt).toMatch(/The only text\s+you may write with that endCall is \[silent\]/);
     expect(prompt).toMatch(/never "Goodbye"/);
   });
 
@@ -1211,8 +1211,21 @@ describe("buildLeadQualificationPrompt", () => {
   it("keeps the no-message voicemail policy: a voicemail greeting, mailbox full, or a screener's 'leave a message' close gets a silent endCall", () => {
     const prompt = buildLeadQualificationPrompt(IRIS_CONFIG, BLANK_LEAD, "3 Percent East Coast", "St. John's", false, true, false);
     expect(prompt).toMatch(/Please leave a message after the tone/);
-    expect(prompt).toMatch(/no message is ever left: invoke endCall\s+immediately and silently/i);
-    expect(prompt).toMatch(/Never qualify, ask questions or try to book with a recording/i);
+    expect(prompt).toMatch(/no\s+message is ever left: invoke endCall\s+immediately and silently/i);
+    expect(prompt).toMatch(/Never qualify, ask questions or try to book with\s+a recording/i);
+  });
+
+  /**
+   * Angela Marie, 2026-10-14: hung up 0.4 s after the carrier's "forwarded to
+   * voice mail / not available" line, before the tone or the person's own
+   * greeting; a "hello" came right after.
+   */
+  it("does not hang up on the carrier's opening 'forwarded to voice mail / not available' line alone — waits for the record prompt or a real person", () => {
+    const prompt = buildLeadQualificationPrompt(IRIS_CONFIG, BLANK_LEAD, "3 Percent East Coast", "St. John's", false, true, false);
+    expect(prompt).toMatch(/whose greeting has ENDED/);
+    expect(prompt).toMatch(/NOT YET, though, for the carrier's opening line alone/);
+    expect(prompt).toMatch(/do NOT hang up on that line by itself/);
+    expect(prompt).toMatch(/If a real person says hello instead, treat it as rule 1/);
   });
 
   it("no longer tells Iris to hang up on a call-screening service", () => {

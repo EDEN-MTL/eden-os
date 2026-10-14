@@ -47,6 +47,7 @@ import {
   formatDuration,
   genuinelyAnswered,
   hitCallScreener,
+  hitVoicemailGreeting,
   maybeHonorMissedCallback,
   maybeReopenPendingCall,
   buildSweepMissedCallText,
@@ -1189,5 +1190,37 @@ describe("sendIrisText — stays out when a teammate has texted the lead", () =>
     await maybeReopenPendingCall("3-percent-east-coast", "contact-1", "customer-did-not-answer");
 
     expect(ghl.sendSMS).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * Angela Marie, 2026-10-14: a voicemail greeting, Iris hung up, Vapi reported
+ * "assistant-ended-call" — which counts as a real conversation — so she was
+ * never retried and Slack said "Answered".
+ */
+describe("hitVoicemailGreeting", () => {
+  const angela = {
+    messages: [
+      { role: "user", message: "Call has been forwarded to voice mail. The person you're trying to reach is not available." },
+      { role: "bot", message: "Goodbye." },
+    ],
+  };
+
+  it("recognises a voicemail greeting with nobody real after it", () => {
+    expect(hitVoicemailGreeting(angela)).toBe(true);
+    expect(hitVoicemailGreeting({ messages: [{ role: "user", message: "Please leave a message after the tone." }] })).toBe(true);
+  });
+
+  it("is not a voicemail when a real person speaks after the greeting", () => {
+    expect(hitVoicemailGreeting({ messages: [...angela.messages, { role: "user", message: "Hello? Sorry, who's this?" }] })).toBe(false);
+  });
+
+  it("ignores ordinary conversation", () => {
+    expect(hitVoicemailGreeting({ messages: [{ role: "user", message: "Hello? Yes, this is Amanda." }] })).toBe(false);
+  });
+
+  it("makes a voicemail-greeting hang-up count as NOT answered, so the retry is scheduled, and says so in the log", () => {
+    expect(genuinelyAnswered("assistant-ended-call", angela)).toBe(false);
+    expect(describeOutcome("assistant-ended-call", angela)).toMatch(/Voicemail greeting, no message left — will retry/);
   });
 });
