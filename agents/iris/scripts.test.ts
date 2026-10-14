@@ -1195,6 +1195,12 @@ describe("buildLeadQualificationPrompt", () => {
     expect(prompt).toMatch(/never a sentence ABOUT being silent/);
   });
 
+  it("tells Iris the only text allowed with a machine's silent endCall is the silence marker, never 'Goodbye'", () => {
+    const prompt = buildLeadQualificationPrompt(IRIS_CONFIG, BLANK_LEAD, "3 Percent East Coast", "St. John's", false, true, false);
+    expect(prompt).toMatch(/The only text you may write with that endCall is\s+\[silent\]/);
+    expect(prompt).toMatch(/never "Goodbye"/);
+  });
+
   it("never loops on the screener: 'Iris.' at most twice, and a screener that never connects ends through the normal no-answer handling", () => {
     const prompt = buildLeadQualificationPrompt(IRIS_CONFIG, BLANK_LEAD, "3 Percent East Coast", "St. John's", false, true, false);
     expect(prompt).toMatch(/never more than twice in total/i);

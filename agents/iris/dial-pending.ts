@@ -44,6 +44,9 @@ import { getGhlConfig, getLocationTimezone, addContactTags } from "../../shared/
  * lead who never gets called at all.
  */
 const SMS_ACTIVE_COLD_OFF_HOURS = 24;
+/** Texts from the lead older than this are history, not an instruction — see resolveOne's text-signal check. */
+const STALE_INBOUND_TEXT_DAYS = 14;
+
 /** How soon to look again once a call is paused for active texting — not a real cadence attempt, so attempts_made is never bumped for this. */
 const SMS_PAUSE_RECHECK_MINUTES = 60;
 /** Mark's spec, 2026-10-01: call ~5 minutes after a clear text consent to being called, not immediately — same reasoning as scheduleTransferCall's own TRANSFER_CALL_MIN_DELAY_MINUTES (agents/iris/sms.ts). */
@@ -408,7 +411,14 @@ async function resolveOne(row: PendingCallRow): Promise<void> {
   }
 
   if (ghlConfig) {
-    const inbound = await lastInboundText(row.contact_id, ghlConfig.locationId, ghlConfig.apiKey);
+    // Only a RECENT text can say "don't call" or "call at 6". Angela Marie,
+    // 2026-10-13: a July reply about pausing a new-build search was read as an
+    // opt-out, closing her queue and tagging her "do not call" the day she
+    // submitted a fresh form. (A real STOP is already caught by GHL's own
+    // do-not-contact flag.)
+    const latestInbound = await lastInboundText(row.contact_id, ghlConfig.locationId, ghlConfig.apiKey);
+    const inboundAgeDays = latestInbound?.dateAdded ? (Date.now() - new Date(latestInbound.dateAdded).getTime()) / 86_400_000 : 0;
+    const inbound = latestInbound && inboundAgeDays <= STALE_INBOUND_TEXT_DAYS ? latestInbound : null;
     const signal = await classifyInboundText(inbound?.text ?? "", new Date(), timezone, inbound?.precedingOutbound ?? null);
 
     if (signal.type === "opt_out") {
