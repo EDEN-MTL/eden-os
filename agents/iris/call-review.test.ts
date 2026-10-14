@@ -60,6 +60,12 @@ describe("reviewCall — the real failures it exists to catch", () => {
 });
 
 describe("reviewCall — calls that went right", () => {
+  it("Stella Max Clements and Alyson Simms, Oct 14: real people said hello and Iris never spoke", () => {
+    const r = reviewCall({ ...base, endedReason: "customer-ended-call", durationSeconds: 23, expectedOpener: OPENER, lines: [u("Hello? Hello? Hello? Hello?")] });
+    expect(r.verdict).toBe("attention");
+    expect(r.flags[0]).toMatch(/Someone spoke.*Iris never said a word/);
+  });
+
   it("a screener answered with just 'Iris.' is fine", () => {
     const r = reviewCall({ ...base, machineOnly: true, lines: [u("Record your name and reason for calling."), b("Iris."), u("Thanks. Please stay on the line.")] });
     expect(r.verdict).toBe("ok");

@@ -419,7 +419,12 @@ async function resolveOne(row: PendingCallRow): Promise<void> {
     const latestInbound = await lastInboundText(row.contact_id, ghlConfig.locationId, ghlConfig.apiKey);
     const inboundAgeDays = latestInbound?.dateAdded ? (Date.now() - new Date(latestInbound.dateAdded).getTime()) / 86_400_000 : 0;
     const inbound = latestInbound && inboundAgeDays <= STALE_INBOUND_TEXT_DAYS ? latestInbound : null;
-    const signal = await classifyInboundText(inbound?.text ?? "", new Date(), timezone, inbound?.precedingOutbound ?? null);
+    // "Call me at noon" means the next noon AFTER THEY TEXTED, so read it as of
+    // the text's own time. Read as of now, at noon it meant tomorrow's noon, and
+    // every attempt pushed the call a day further out (Jesse Noseworthy,
+    // 2026-10-14: asked for noon, was never called, and was moved to Thursday).
+    const textTime = inbound?.dateAdded ? new Date(inbound.dateAdded) : new Date();
+    const signal = await classifyInboundText(inbound?.text ?? "", Number.isNaN(textTime.getTime()) ? new Date() : textTime, timezone, inbound?.precedingOutbound ?? null);
 
     if (signal.type === "opt_out") {
       await finish(row.id, "skipped", "lead opted out via text — cadence stopped");
@@ -429,7 +434,9 @@ async function resolveOne(row: PendingCallRow): Promise<void> {
       return;
     }
 
-    if (signal.type === "schedule_for") {
+    // Only when that time is still ahead. Once it has arrived, it is time to call —
+    // not to reschedule yet again.
+    if (signal.type === "schedule_for" && signal.when.getTime() > Date.now() + 2 * 60_000) {
       await query(
         `UPDATE iris_pending_calls
          SET call_after = $2, status = 'pending', is_explicit_callback = true, callback_misses = 0,

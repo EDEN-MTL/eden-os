@@ -268,3 +268,29 @@ describe("resolveOne — only a recent text counts as an instruction (Angela Mar
     expect((textSignals.classifyInboundText.mock.calls[0] as unknown as [string])[0]).toBe("please stop calling");
   });
 });
+
+describe("resolveOne — a time the lead asked for by text (Jesse Noseworthy, 2026-10-14)", () => {
+  it("reads the request as of when they texted, and calls when that time has arrived instead of pushing it out again", async () => {
+    const textedAt = new Date(Date.now() - 20 * 60 * 60 * 1000);
+    textSignals.lastInboundText.mockResolvedValue({ text: "call me at noon", precedingOutbound: null, dateAdded: textedAt.toISOString() });
+    textSignals.classifyInboundText.mockResolvedValue({ type: "schedule_for", when: new Date(Date.now() - 60_000) });
+    smsModule.hasActiveSmsConversation.mockResolvedValue(false);
+    calling.placeCall.mockResolvedValue({ id: "call-1" });
+
+    await runDialPendingCalls();
+
+    expect((textSignals.classifyInboundText.mock.calls[0] as unknown as [string, Date])[1].getTime()).toBe(textedAt.getTime());
+    expect(db.query.mock.calls.find((c) => String(c[0]).includes("lead requested this time via text"))).toBeUndefined();
+    expect(calling.placeCall).toHaveBeenCalledTimes(1);
+  });
+
+  it("still moves the call when the requested time is genuinely still ahead", async () => {
+    textSignals.lastInboundText.mockResolvedValue({ text: "call me at 6", precedingOutbound: null, dateAdded: new Date(Date.now() - 60_000).toISOString() });
+    textSignals.classifyInboundText.mockResolvedValue({ type: "schedule_for", when: new Date(Date.now() + 3 * 3_600_000) });
+
+    await runDialPendingCalls();
+
+    expect(db.query.mock.calls.find((c) => String(c[0]).includes("lead requested this time via text"))).toBeDefined();
+    expect(calling.placeCall).not.toHaveBeenCalled();
+  });
+});

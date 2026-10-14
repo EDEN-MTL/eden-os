@@ -150,28 +150,6 @@ describe("buildCallPayload", () => {
     expect(IDLE_NUDGE_PROMPT).toMatch(/are you still there/);
   });
 
-  /**
-   * Mark, 2026-10-14: the model garbled the opener on a real call ("I speaking
-   * with Amanda?"). Vapi now speaks it from the tool's request-start message.
-   */
-  it("speaks the opening line word for word through a say_opening_line tool, not a firstMessage", () => {
-    const payload = buildCallPayload({ ...BASE_PARAMS, contactId: "c1", firstName: "Amanda", brandName: "3 Percent East Coast" }, VAPI_CONFIG);
-    expect(payload.assistant.firstMessage).toBeUndefined();
-    const tool = payload.assistant.model.tools?.find((t) => t.type === "function" && t.function.name === "say_opening_line");
-    expect(tool).toBeDefined();
-    if (tool?.type !== "function") throw new Error("not a function tool");
-    expect(tool.messages).toEqual([
-      { type: "request-start", content: "Hi, this is Iris with 3 Percent East Coast. Am I speaking with Amanda?", blocking: true },
-    ]);
-    expect(tool.server.url).toContain("/tools/say-opening-line");
-  });
-
-  it("does not offer say_opening_line on an inbound call, whose greeting is a firstMessage", () => {
-    const payload = buildCallPayload({ ...BASE_PARAMS, contactId: "c1", origin: "inbound" }, VAPI_CONFIG);
-    const names = payload.assistant.model.tools?.filter((t) => t.type === "function").map((t) => (t.type === "function" ? t.function.name : ""));
-    expect(names).not.toContain("say_opening_line");
-  });
-
   it("carries the system prompt through as the model's only system message", () => {
     const payload = buildCallPayload(BASE_PARAMS, VAPI_CONFIG);
     expect(payload.assistant.model.messages).toEqual([{ role: "system", content: "test system prompt" }]);
@@ -640,7 +618,7 @@ describe("buildCallPayload", () => {
     it("is added only when serverUrl AND contactId are both present", () => {
       const payload = buildCallPayload(withContactId, VAPI_CONFIG);
       const names = payload.assistant.model.tools?.filter((t) => t.type === "function").map((t) => (t.type === "function" ? t.function.name : ""));
-      expect(names).toEqual(["update_lead_name", "say_opening_line", "save_isa_notes", "schedule_callback"]);
+      expect(names).toEqual(["update_lead_name", "save_isa_notes", "schedule_callback"]);
     });
 
     it("is omitted when serverUrl is unset, even with contactId given", () => {
@@ -701,13 +679,13 @@ describe("buildCallPayload", () => {
     it("replaces schedule_callback with all three tools when a calendarId is given", () => {
       const payload = buildCallPayload(withCalendar, VAPI_CONFIG);
       const names = payload.assistant.model.tools?.filter((t) => t.type === "function").map((t) => (t.type === "function" ? t.function.name : ""));
-      expect(names).toEqual(["update_lead_name", "say_opening_line", "save_isa_notes", "check_availability", "book_appointment", "reschedule_appointment"]);
+      expect(names).toEqual(["update_lead_name", "save_isa_notes", "check_availability", "book_appointment", "reschedule_appointment"]);
     });
 
     it("is omitted (falls back to schedule_callback) when no calendarId is given", () => {
       const payload = buildCallPayload({ ...BASE_PARAMS, contactId: "contact-1" }, VAPI_CONFIG);
       const names = payload.assistant.model.tools?.filter((t) => t.type === "function").map((t) => (t.type === "function" ? t.function.name : ""));
-      expect(names).toEqual(["update_lead_name", "say_opening_line", "save_isa_notes", "schedule_callback"]);
+      expect(names).toEqual(["update_lead_name", "save_isa_notes", "schedule_callback"]);
     });
 
     it("bakes clientId, contactId, calendarId, and a buyer/seller intent into all three tools' server URLs", () => {

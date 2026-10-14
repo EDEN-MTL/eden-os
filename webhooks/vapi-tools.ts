@@ -5,7 +5,6 @@ import { buildKeyToId } from "../agents/scout/intake";
 import { loadIrisConfig } from "../agents/iris";
 import { scheduleExplicitCallback } from "../agents/iris/dial-pending";
 import { clampToLegalCallingWindow, isWithinLegalCallingWindow, formatLocal } from "../agents/iris/cadence";
-import { SILENT_MARKER } from "../agents/iris/scripts";
 import { postAppointmentToSlack } from "./appointment-post";
 
 /**
@@ -944,13 +943,6 @@ export function createVapiToolsRouter(): Router {
   router.post(
     "/update-lead-name",
     createToolHandler(async (query, call) => handleUpdateLeadName(query.clientId, query.contactId, parseToolArguments(call).correctedName))
-  );
-
-  // The words themselves are spoken by Vapi from the tool's request-start
-  // message (calling.ts); this only tells the model what to do next.
-  router.post(
-    "/say-opening-line",
-    createToolHandler(async () => `The opening line has just been spoken to them. Reply with exactly ${SILENT_MARKER} and wait for their answer.`)
   );
 
   router.post(
