@@ -236,3 +236,35 @@ describe("resolveOne — Ember handoffs and text-agreed calls (Mark, 2026-09-24)
     expect(vi.mocked(buildLeadQualificationPrompt).mock.calls.at(-1)?.[7]).toBe("form");
   });
 });
+
+describe("resolveOne — only a recent text counts as an instruction (Angela Marie, 2026-10-13)", () => {
+  it("ignores a months-old inbound text instead of classifying it, so an old reply can't close a fresh lead's queue", async () => {
+    textSignals.lastInboundText.mockResolvedValue({
+      text: "I'm putting a pause on considering building for the time being",
+      precedingOutbound: null,
+      dateAdded: new Date(Date.now() - 75 * 24 * 60 * 60 * 1000).toISOString(),
+    });
+    smsModule.hasActiveSmsConversation.mockResolvedValue(false);
+    calling.placeCall.mockResolvedValue({ id: "call-1" });
+
+    await runDialPendingCalls();
+
+    expect(textSignals.classifyInboundText).toHaveBeenCalledTimes(1);
+    expect((textSignals.classifyInboundText.mock.calls[0] as unknown as [string])[0]).toBe("");
+    expect(db.query.mock.calls.find((c) => String(c[0]).includes("lead opted out"))).toBeUndefined();
+  });
+
+  it("still classifies a recent text", async () => {
+    textSignals.lastInboundText.mockResolvedValue({
+      text: "please stop calling",
+      precedingOutbound: null,
+      dateAdded: new Date(Date.now() - 2 * 24 * 60 * 60 * 1000).toISOString(),
+    });
+    smsModule.hasActiveSmsConversation.mockResolvedValue(false);
+    calling.placeCall.mockResolvedValue({ id: "call-1" });
+
+    await runDialPendingCalls();
+
+    expect((textSignals.classifyInboundText.mock.calls[0] as unknown as [string])[0]).toBe("please stop calling");
+  });
+});
