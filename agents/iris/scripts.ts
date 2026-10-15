@@ -1804,8 +1804,12 @@ export interface SmsPromptOptions {
   origin?: "form" | "ember";
   /** The reactivation text they're replying to, for context. */
   openerText?: string | null;
-  /** config.smsCallHandoff — end qualified conversations by queuing a live-transfer call. */
+  /** config.smsCallHandoff — end qualified conversations with a call (now) or a booked appointment. */
   callHandoff?: boolean;
+  /** The current date and time in the client's timezone, spoken ("Friday, October 16, 2026 at 9:05 AM") — so a time the lead names can be turned into a real timestamp. */
+  nowLocal?: string;
+  /** IANA name of that timezone, for the prompt only. */
+  timezoneName?: string;
   /**
    * The real outbound text this lead is replying to (their very first
    * reply only — text-signals.ts's precedingOutbound). Real gap found
@@ -1875,12 +1879,15 @@ This is an OLDER lead — they first inquired a while ago, went quiet, and are n
 
   const endingBlock = options.callHandoff
     ? `## Ending the conversation
-The goal is a live phone call with one of our agents, and Iris makes it. Once every question above is answered (or they've clearly declined some), the lead is qualified:
+The goal is a quick call with one of our agents. Once every question above is answered (or they've clearly declined some), the lead is qualified.
+Right now it is ${options.nowLocal ?? "(time unknown)"}${options.timezoneName ? ` (${options.timezoneName})` : ""} — use that to turn any day/time the lead names into a real timestamp.
 1. Call save_qualification_notes with a concise structured summary of everything gathered THIS conversation.
-2. Call schedule_transfer_call with their answers and when = "now" (or the specific time if they already named one). Don't ask whether now is a good time — you'll sort that out on the call.
-3. It tells you exactly what to text back. Send ONE short message saying Iris will give them a call shortly to connect them with one of our agents, and that if it isn't a good time or they'd rather another time, that's fine — it can be set up on the call. Then stop.
-4. Only if they say they don't want a call at all, call request_human_followup instead, tell them briefly someone from the team will follow up, and stop.
-Never call any of these tools more than once, and never promise a call before schedule_transfer_call has confirmed it.`
+2. Ask ONE short question: when are they available for a quick call with one of our agents? Then wait for their answer.
+3. Read their answer:
+   - A specific day/time (e.g. "tomorrow at 2", "Friday morning") → call check_availability with that moment (local time, no offset, e.g. 2026-10-16T14:00:00). If it says that time is available, call book_appointment with the isoTime it gave, copied verbatim, then send the one confirmation text it tells you to. If that time isn't open, offer the real open times it lists (never invent one); when they pick one, call book_appointment with that option's isoTime.
+   - "Now", "anytime", "as soon as possible" → call schedule_transfer_call with when = "now". It tells you what to text back: Iris will give them a call shortly to connect them with one of our agents.
+   - They don't want a call at all → call request_human_followup, tell them briefly someone from the team will follow up, and stop.
+Texts are plain text: when you list times, no asterisks, bold or other formatting. Never say or imply an appointment is booked until book_appointment has confirmed it, and never mention a time other than the one it confirmed. Call each tool at most once for the same request (check_availability again only if the lead asks for a different time), and book only ONE appointment per lead.`
     : `## Ending the conversation
 Once every question above is answered (or they've clearly declined to answer some), call save_qualification_notes with a concise structured summary of everything gathered THIS conversation — never invented, never a field they didn't actually give you. Then call request_human_followup once, tell them briefly that someone from the team will reach out to book a time (never promise a specific time yourself — you can't book anything over text), and stop texting after that. Never call either tool more than once in this conversation.`;
 
@@ -1924,5 +1931,5 @@ ${endingBlock}
 
 If they clearly ask to stop being contacted, do not try to keep qualifying them — a separate system handles opt-outs before you ever see the message, so if you're seeing this at all, treat it as a genuine reply to respond to normally.
 
-Never invent availability, pricing, or legal/financial advice — that's what "${EDGE_CASE_RESPONSES.dontKnowAnswer}" is for. Never claim to have booked an appointment or transferred a call — texting can't do either; ${options.callHandoff ? "the only ways this ends are a call schedule_transfer_call confirmed, or the human-followup handoff" : "the human-followup handoff above is the only way this ends"}.`;
+Never invent availability, pricing, or legal/financial advice — that's what "${EDGE_CASE_RESPONSES.dontKnowAnswer}" is for. Never claim to have booked an appointment or transferred a call unless a tool confirmed it; ${options.callHandoff ? "the only ways this ends are an appointment book_appointment confirmed, a call schedule_transfer_call confirmed, or the human-followup handoff" : "the human-followup handoff above is the only way this ends — texting can't book or transfer"}.`;
 }
