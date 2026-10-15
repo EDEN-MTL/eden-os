@@ -59,6 +59,42 @@ describe("reviewCall — the real failures it exists to catch", () => {
   });
 });
 
+describe("reviewCall — a promised transfer that never happened", () => {
+  const angelaLines = [
+    u("Hello?"),
+    b("Hi, this is Iris with 3 Percent East Coast. Am I speaking with Angela?"),
+    u("Yes."),
+    b("Right. Got it. You're just selling for now. That makes sense. Sounds good. I'll connect you with 1 of our seller agents now. They'll be able to walk you through the next steps."),
+  ];
+
+  it("Angela Marie, Oct 14: told she'd be connected, hung up in silence, no transfer", () => {
+    const r = reviewCall({ ...base, endedReason: "customer-ended-call", durationSeconds: 125, lines: angelaLines });
+    expect(r.verdict).toBe("attention");
+    expect(r.flags.some((f) => /told the lead she’d connect them with an agent, but no transfer happened.*customer-ended-call/.test(f))).toBe(true);
+  });
+
+  it("is fine when the transfer actually connected", () => {
+    const r = reviewCall({ ...base, endedReason: "assistant-forwarded-call", transferSucceeded: true, lines: angelaLines });
+    expect(r.flags.some((f) => /no transfer happened/.test(f))).toBe(false);
+  });
+
+  it("is fine when the lead said no and Iris booked a time instead", () => {
+    const r = reviewCall({
+      ...base,
+      lines: [
+        u("Hello?"),
+        b("Hi, this is Iris with 3 Percent East Coast. Am I speaking with Angela?"),
+        b("Sounds good. I'll connect you with one of our seller agents now. Is that okay?"),
+        u("Not right now."),
+        b("No problem. What day and time works?"),
+        u("Tomorrow at 10."),
+        b("You're all set for tomorrow at 10 AM. An agent will call you then."),
+      ],
+    });
+    expect(r.flags.some((f) => /no transfer happened/.test(f))).toBe(false);
+  });
+});
+
 describe("reviewCall — calls that went right", () => {
   it("Stella Max Clements and Alyson Simms, Oct 14: real people said hello and Iris never spoke", () => {
     const r = reviewCall({ ...base, endedReason: "customer-ended-call", durationSeconds: 23, expectedOpener: OPENER, lines: [u("Hello? Hello? Hello? Hello?")] });

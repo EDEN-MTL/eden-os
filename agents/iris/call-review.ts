@@ -22,6 +22,8 @@ export interface CallReviewInput {
   machineOnly: boolean;
   /** The opening line Iris is supposed to say to a real person, if known. */
   expectedOpener?: string | null;
+  /** True when Vapi reports the live transfer actually connected. */
+  transferSucceeded?: boolean;
   /** For a call that should have been retried: whether a retry is actually lined up. */
   retryExpected?: boolean;
   retryLinedUp?: boolean;
@@ -45,6 +47,8 @@ const AI_QUESTION = /\b(?:are|is|am)\b.{0,25}\b(?:ai|a\.i\.|artificial|robot|bot
 const AI_ANSWER = /\b(?:ai|a\.i\.|artificial|virtual assistant|automated)\b/i;
 const NARRATION = /(?:stay(?:ing)?|remain(?:ing)?|keep(?:ing)?) (?:silent|quiet)|wait(?:ing)? for (?:a|the) (?:real|live|actual) (?:person|human)|\[silent\]/i;
 const IRIS_ONLY = /^\s*iris[.,!]?\s*$/i;
+/** After a declined transfer, a booked time or a callback is a proper ending — not a dropped lead. */
+const BOOKED_OR_CALLBACK = /you(?:'re| are) all set|(?:i(?:'ve| have)|we(?:'ve| have)) (?:booked|scheduled|noted)|booked for|scheduled (?:a|for|your)|callback (?:for|is|scheduled|booked)|call you back|a teammate will follow up/i;
 
 const quote = (text: string): string => `“${text.trim().slice(0, 80)}”`;
 
@@ -91,7 +95,21 @@ export function reviewCall(input: CallReviewInput): CallReview {
     if (heard) flags.push(`Someone spoke (${quote(heard.message)}) and Iris never said a word`);
   }
 
-  // 6. A call that should be retried but isn’t.
+  // 6. She said she'd connect the lead with an agent and then nothing happened. Angela
+  // Marie, 2026-10-14: a fully qualified seller heard the transfer line, stayed quiet and
+  // hung up — no transfer, no booking, and nobody was told.
+  const promisedAt = bot.findIndex((l) => /connect you with/i.test(l.message));
+  if (promisedAt !== -1 && !input.transferSucceeded) {
+    const after = bot.slice(promisedAt + 1);
+    const bookedOrCalledBack = after.some((l) => BOOKED_OR_CALLBACK.test(l.message));
+    if (!bookedOrCalledBack) {
+      flags.push(
+        `Iris told the lead she’d connect them with an agent, but no transfer happened (call ended: ${input.endedReason ?? "unknown"}). A person should follow up with this lead today.`
+      );
+    }
+  }
+
+  // 7. A call that should be retried but isn’t.
   if (input.retryExpected && input.retryLinedUp === false) flags.push("No retry is lined up for this lead");
 
   // Notes (not failures).
