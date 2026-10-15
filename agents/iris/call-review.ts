@@ -134,3 +134,34 @@ export function reviewCall(input: CallReviewInput): CallReview {
 
   return { verdict, flags, summary };
 }
+
+
+/**
+ * Which finished calls are worth a direct message. Mark, 2026-10-14: "I don't
+ * want to check Koren and Jesse's calls when they finish — this should be
+ * automatic." So Iris tells him herself: whenever a real person was reached,
+ * whenever the review found something off, and for every call to a lead a person
+ * asked her to call (a callback the lead requested, or one lined up by hand) —
+ * but not for the routine voicemails of the normal sequence.
+ */
+export function shouldAlertTeam(input: { reachedPerson: boolean; flagged: boolean; watched: boolean }): boolean {
+  return input.reachedPerson || input.flagged || input.watched;
+}
+
+export interface CallAlertInput {
+  who: string;
+  /** Client-local time the call ended, already formatted. */
+  whenLocal: string;
+  /** describeOutcome's one-liner, e.g. "📵 Voicemail greeting, no message left — will retry". */
+  outcome: string;
+  duration: string;
+  review: CallReview;
+  /** What happens next for this lead, already worded ("calls again Friday, October 16 at 10:00 AM"). */
+  nextStep: string;
+}
+
+export function formatCallAlert(a: CallAlertInput): string {
+  const lines = [`📞 *${a.who}* — ${a.whenLocal} (${a.duration})`, a.outcome, `Next: ${a.nextStep}`];
+  if (a.review.verdict === "attention") lines.push("", a.review.summary);
+  return lines.join("\n");
+}

@@ -1274,3 +1274,65 @@ describe("postCallReview — Iris reviews every finished call herself", () => {
     await expect(postCallReview("3-percent-east-coast", "c1", "automatic", cleanMachine, "voicemail")).resolves.toBeUndefined();
   });
 });
+
+describe("postCallReview — Iris messages Mark directly after a call that matters", () => {
+  const voicemail = { call: { customer: { number: "+17097308996" } }, durationSeconds: 11, messages: [{ role: "user", message: "Please leave a message after the tone." }] };
+  const conversation = {
+    call: { customer: { number: "+17097700724" } },
+    durationSeconds: 125,
+    messages: [{ role: "user", message: "Hello?" }, { role: "bot", message: "Hi, this is Iris with 3 Percent East Coast. Am I speaking with Angela?" }, { role: "user", message: "Yes." }],
+  };
+
+  beforeEach(() => {
+    slack.sendMessage.mockReset();
+    slack.sendMessage.mockResolvedValue({ ts: "1", channel: "C1" });
+    db.query.mockReset();
+    ghl.getGhlConfig.mockResolvedValue({ locationId: "loc-1", apiKey: "key-1" });
+    ghl.getContact.mockResolvedValue({ contact: { firstName: "Koren", lastName: "Pye" } });
+    iris.loadClientBranding.mockReturnValue({ brandName: "3 Percent East Coast", city: "St. John's" });
+    iris.loadIrisConfig.mockReturnValue({ timezone: "America/St_Johns", callAlerts: { userIds: ["U_MARK"] } });
+  });
+
+  const dms = () => slack.sendMessage.mock.calls.filter((c) => (c[1] as { channel: string }).channel === "U_MARK");
+
+  it("DMs about a call to a lead someone asked Iris to call, even when it was only a voicemail, with what happens next", async () => {
+    db.query.mockResolvedValueOnce([{ status: "pending", attempts_made: 6, call_after: new Date("2026-10-16T12:30:00Z"), is_explicit_callback: true, source: null }] as never);
+
+    await postCallReview("3-percent-east-coast", "c1", "automatic", voicemail, "customer-did-not-answer", "1791.1", "C123");
+
+    expect(dms()).toHaveLength(1);
+    const text = (dms()[0][1] as { text: string }).text;
+    expect(text).toContain("Koren Pye");
+    expect(text).toContain("Next: Iris calls again");
+  });
+
+  it("DMs when a real person was reached", async () => {
+    db.query.mockResolvedValueOnce([{ status: "placed", attempts_made: 1, call_after: new Date(), is_explicit_callback: false, source: null }] as never);
+    await postCallReview("3-percent-east-coast", "c1", "automatic", conversation, "customer-ended-call");
+    expect(dms()).toHaveLength(1);
+  });
+
+  it("stays quiet for a routine voicemail on the normal sequence", async () => {
+    db.query.mockResolvedValueOnce([{ status: "pending", attempts_made: 2, call_after: new Date(Date.now() + 3_600_000), is_explicit_callback: false, source: null }] as never);
+    await postCallReview("3-percent-east-coast", "c1", "automatic", voicemail, "customer-did-not-answer");
+    expect(dms()).toHaveLength(0);
+  });
+
+  it("stays quiet for a sweep voicemail", async () => {
+    db.query.mockResolvedValueOnce([{ status: "pending", attempts_made: 2, call_after: "infinity", is_explicit_callback: true, source: "sweep" }] as never);
+    await postCallReview("3-percent-east-coast", "c1", "automatic", voicemail, "customer-did-not-answer");
+    expect(dms()).toHaveLength(0);
+  });
+
+  it("does nothing when the client has no call alerts configured, and never throws if the DM fails", async () => {
+    iris.loadIrisConfig.mockReturnValue({ timezone: "America/St_Johns" });
+    db.query.mockResolvedValueOnce([{ status: "pending", attempts_made: 6, call_after: new Date(), is_explicit_callback: true, source: null }] as never);
+    await postCallReview("3-percent-east-coast", "c1", "automatic", voicemail, "customer-did-not-answer");
+    expect(dms()).toHaveLength(0);
+
+    iris.loadIrisConfig.mockReturnValue({ timezone: "America/St_Johns", callAlerts: { userIds: ["U_MARK"] } });
+    db.query.mockResolvedValueOnce([{ status: "pending", attempts_made: 6, call_after: new Date(), is_explicit_callback: true, source: null }] as never);
+    slack.sendMessage.mockRejectedValue(new Error("Slack down"));
+    await expect(postCallReview("3-percent-east-coast", "c1", "automatic", voicemail, "customer-did-not-answer")).resolves.toBeUndefined();
+  });
+});

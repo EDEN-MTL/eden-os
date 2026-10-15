@@ -13,7 +13,7 @@ import { checkHumanTouch, DEFAULT_HUMAN_HANDS_OFF_DAYS } from "../agents/iris/hu
 import { clampToLegalCallingWindow, formatLocal } from "../agents/iris/cadence";
 import { handleInboundCall } from "../agents/iris/inbound";
 import { classifyMissedCallback } from "../agents/iris/call-signals";
-import { reviewCall } from "../agents/iris/call-review";
+import { reviewCall, shouldAlertTeam, formatCallAlert } from "../agents/iris/call-review";
 import { isaNoteBullets } from "./appointment-post";
 
 /**
@@ -499,6 +499,7 @@ export async function postCallReview(
     let expectedOpener: string | null = null;
     let retryExpected = false;
     let retryLinedUp: boolean | undefined;
+    let queueRow: { status: string; attempts_made: number; call_after: Date | string; is_explicit_callback: boolean; source: string | null } | undefined;
     if (contactId) {
       const ghlConfig = await getGhlConfig(clientId).catch(() => null);
       if (ghlConfig) {
@@ -509,14 +510,15 @@ export async function postCallReview(
         const branding = loadClientBranding(clientId);
         if (branding && name) expectedOpener = buildCallOpeningLine(extractFirstName(name), branding.brandName);
       }
+      const rows = await query<{ status: string; attempts_made: number; call_after: Date | string; is_explicit_callback: boolean; source: string | null }>(
+        `SELECT status, attempts_made, call_after, is_explicit_callback, source FROM iris_pending_calls WHERE client_id = $1 AND contact_id = $2`,
+        [clientId, contactId]
+      );
+      queueRow = rows[0];
       if (triggeredBy === "automatic" && !genuinelyAnswered(endedReason, message) && endedReason !== TRANSFER_SUCCEEDED_REASON) {
         retryExpected = true;
-        const row = await query<{ status: string; attempts_made: number }>(
-          `SELECT status, attempts_made FROM iris_pending_calls WHERE client_id = $1 AND contact_id = $2`,
-          [clientId, contactId]
-        );
         // A lead whose whole cadence is spent legitimately has no retry left.
-        retryLinedUp = !row[0] || row[0].status === "pending" || row[0].attempts_made >= 8;
+        retryLinedUp = !queueRow || queueRow.status === "pending" || queueRow.attempts_made >= 8;
       }
     }
 
@@ -537,8 +539,64 @@ export async function postCallReview(
       // A short reply under that call's own log post (top-level if the post's ts is unknown).
       await sendMessage("iris", { channel: logPostChannel ?? CALL_LOG_CHANNEL, text: `🔎 ${review.summary}`, threadTs: logPostTs ?? undefined });
     }
+
+    await alertTeamAboutCall(clientId, contactId, who, message, endedReason, machineOnly, review, queueRow);
   } catch (error) {
     console.error("[VAPI] Failed to review the call:", error instanceof Error ? error.message : error);
+  }
+}
+
+/**
+ * Messages the configured people directly (iris.callAlerts) when a call is worth
+ * their attention, so nobody has to open #iris-call-logs to find out how a
+ * watched lead's call went. Best-effort, like the review itself.
+ */
+async function alertTeamAboutCall(
+  clientId: string,
+  contactId: string | null,
+  who: string,
+  message: Record<string, any>,
+  endedReason: string | null,
+  machineOnly: boolean,
+  review: ReturnType<typeof reviewCall>,
+  queueRow: { status: string; call_after: Date | string; is_explicit_callback: boolean; source: string | null } | undefined
+): Promise<void> {
+  try {
+    const config = loadIrisConfig(clientId);
+    const recipients = config?.callAlerts?.userIds;
+    if (!contactId || !config || !recipients || recipients.length === 0) return;
+
+    const reachedPerson = !machineOnly && genuinelyAnswered(endedReason, message);
+    // A lead someone asked Iris to call (requested callback, or lined up by hand) — not a sweep or Ember row.
+    const watched = !!queueRow?.is_explicit_callback && queueRow.source !== "sweep" && queueRow.source !== "ember";
+    if (!shouldAlertTeam({ reachedPerson, flagged: review.verdict === "attention", watched })) return;
+
+    const timezone = config.timezone || "America/St_Johns";
+    let nextStep = "nothing scheduled";
+    if (endedReason === TRANSFER_SUCCEEDED_REASON) {
+      nextStep = "transferred to an agent";
+    } else if (queueRow?.status === "pending") {
+      const ms = typeof queueRow.call_after === "string" ? (/inf/i.test(queueRow.call_after) ? Infinity : Date.parse(queueRow.call_after)) : queueRow.call_after.getTime();
+      nextStep = Number.isFinite(ms) ? `Iris calls again ${formatLocal(new Date(ms).toISOString(), timezone)}` : "waiting for the lead's text reply (no call time)";
+    } else if (reachedPerson) {
+      nextStep = "no further Iris call — someone on the team should follow up if it wasn't booked or transferred";
+    }
+
+    const text = formatCallAlert({
+      who,
+      whenLocal: formatLocal(new Date().toISOString(), timezone),
+      outcome: describeOutcome(endedReason, message),
+      duration: formatDuration(message?.durationSeconds),
+      review,
+      nextStep,
+    });
+    for (const userId of recipients) {
+      await sendMessage("iris", { channel: userId, text }).catch((error) => {
+        console.error(`[VAPI] Failed to DM the call alert to ${userId}:`, error instanceof Error ? error.message : error);
+      });
+    }
+  } catch (error) {
+    console.error("[VAPI] Failed to alert the team about a call:", error instanceof Error ? error.message : error);
   }
 }
 
