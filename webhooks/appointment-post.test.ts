@@ -123,3 +123,38 @@ describe("postAppointmentToSlack", () => {
     expect(slack.sendMessage).not.toHaveBeenCalled();
   });
 });
+
+describe("links on the booked-appointment post", () => {
+  const setup = () => {
+    iris.loadIrisConfig.mockReturnValue({
+      timezone: "America/St_Johns",
+      callbackNotesFieldKey: "isa_notes",
+      vapiCallUrlTemplate: "https://dashboard.vapi.ai/logs?callId={callId}&datePreset=last7d",
+      liveTransferSlack: { channel: "C1", clientLabel: "3% Realty East Coast" },
+    });
+    ghl.getGhlConfig.mockResolvedValue({ locationId: "L1", apiKey: "K" });
+    ghl.getContactAppointments.mockResolvedValue([{ id: "a1", appointmentStatus: "confirmed", dateAdded: "2026-10-14 20:00:35", startTime: "2026-10-15 11:00:00", assignedUserId: "u1" }]);
+    ghl.getContact.mockResolvedValue({ contact: { firstName: "Jesse", lastName: "Noseworthy", tags: ["buyer lead"], customFields: [] } });
+    ghl.getCustomFieldDefs.mockResolvedValue([]);
+    ghl.listLocationUsers.mockResolvedValue([{ id: "u1", name: "Chantelle English" }]);
+    db.query.mockReset();
+    db.query.mockResolvedValue([] as never);
+    db.query.mockResolvedValueOnce([{ id: "1" }] as never);
+  };
+
+  it("an appointment Iris booked on a call links the exact Vapi call and the GHL contact", async () => {
+    setup();
+    await postAppointmentToSlack("3-percent-east-coast", "c1", { appointmentId: "a1", bookedBy: "Iris (live call)", callId: "call-7" });
+    const text = (slack.sendMessage.mock.calls[0][1] as { text: string }).text;
+    expect(text).toContain("<https://dashboard.vapi.ai/logs?callId=call-7&datePreset=last7d|Vapi call>");
+    expect(text).toContain("<https://app.gohighlevel.com/v2/location/L1/contacts/detail/c1|GHL contact>");
+  });
+
+  it("a booking someone made by hand has no call, so only the GHL contact link", async () => {
+    setup();
+    await postAppointmentToSlack("3-percent-east-coast", "c1", { appointmentId: "a1" });
+    const text = (slack.sendMessage.mock.calls[0][1] as { text: string }).text;
+    expect(text).not.toContain("Vapi call");
+    expect(text).toContain("GHL contact");
+  });
+});

@@ -477,7 +477,8 @@ async function handleBookAppointment(
   intent: string,
   isoTime: unknown,
   leadSummary: string,
-  conversationNotes: unknown
+  conversationNotes: unknown,
+  callId?: string
 ): Promise<{ result: string; success: boolean }> {
   if (typeof isoTime !== "string" || !isoTime) {
     return {
@@ -564,7 +565,7 @@ async function handleBookAppointment(
   // contacts get re-dialed and re-booked repeatedly.
   const appointmentId = created?.id;
   // Tell the team in Slack (best-effort — never holds up the lead's confirmation).
-  void postAppointmentToSlack(clientId, contactId, { appointmentId, bookedBy: "Iris (live call)" });
+  void postAppointmentToSlack(clientId, contactId, { appointmentId, bookedBy: "Iris (live call)", callId });
   return {
     success: true,
     result: appointmentId
@@ -863,7 +864,7 @@ function createToolHandler(handler: (query: Record<string, string>, call: ToolCa
  * real multi-call batch would need — Vapi still gets each call's own
  * result text either way, this only changes the outer status code.
  */
-function createBookAppointmentHandler(handler: (query: Record<string, string>, call: ToolCall) => Promise<{ result: string; success: boolean }>) {
+function createBookAppointmentHandler(handler: (query: Record<string, string>, call: ToolCall, callId?: string) => Promise<{ result: string; success: boolean }>) {
   return async (req: Request, res: Response) => {
     const secret = process.env.VAPI_WEBHOOK_SECRET;
     if (secret && !verifyVapiSecret(secret, req)) {
@@ -876,7 +877,7 @@ function createBookAppointmentHandler(handler: (query: Record<string, string>, c
       const query = req.query as Record<string, string>;
       const outcomes = await Promise.all(
         toolCalls.map(async (call) => {
-          const { result, success } = await handler(query, call);
+          const { result, success } = await handler(query, call, req.body?.message?.call?.id);
           return { toolCallId: call.id, result, success };
         })
       );
@@ -904,7 +905,7 @@ export function createVapiToolsRouter(): Router {
 
   router.post(
     "/book-appointment",
-    createBookAppointmentHandler(async (query, call) =>
+    createBookAppointmentHandler(async (query, call, callId) =>
       handleBookAppointment(
         query.clientId,
         query.contactId,
@@ -912,7 +913,8 @@ export function createVapiToolsRouter(): Router {
         query.intent,
         parseToolArguments(call).isoTime,
         query.leadSummary,
-        parseToolArguments(call).conversationNotes
+        parseToolArguments(call).conversationNotes,
+        callId
       )
     )
   );
