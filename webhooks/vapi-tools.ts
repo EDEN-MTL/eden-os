@@ -386,7 +386,7 @@ async function fetchLiveSlots(
  * tool in two makes "this tool call succeeded" and "a real booking was
  * made" the same fact).
  */
-async function handleCheckAvailability(clientId: string, calendarId: string, requestedTime: unknown): Promise<string> {
+export async function handleCheckAvailability(clientId: string, calendarId: string, requestedTime: unknown): Promise<string> {
   // Addressed to the MODEL, not the lead — confirmed live, 2026-09-06: a
   // real call had Iris repeatedly telling the lead "I'm having trouble
   // with the time format" on a loop, even after they clearly reconfirmed
@@ -470,7 +470,7 @@ async function handleCheckAvailability(clientId: string, calendarId: string, req
  * booking that didn't actually happen. Only a genuine `success: true`
  * ever reaches that guarantee.
  */
-async function handleBookAppointment(
+export async function handleBookAppointment(
   clientId: string,
   contactId: string,
   calendarId: string,
@@ -478,7 +478,8 @@ async function handleBookAppointment(
   isoTime: unknown,
   leadSummary: string,
   conversationNotes: unknown,
-  callId?: string
+  callId?: string,
+  bookedBy: string = "Iris (live call)"
 ): Promise<{ result: string; success: boolean }> {
   if (typeof isoTime !== "string" || !isoTime) {
     return {
@@ -530,7 +531,7 @@ async function handleBookAppointment(
   // note, since it's free text from the model rather than a structured
   // fact eden-os already tracked.
   const notes = [
-    "Booked automatically by Iris during a live call.",
+    /text/i.test(bookedBy) ? "Booked automatically by Iris over text." : "Booked automatically by Iris during a live call.",
     leadSummary || null,
     typeof conversationNotes === "string" && conversationNotes.trim() ? conversationNotes.trim() : null,
   ]
@@ -565,7 +566,7 @@ async function handleBookAppointment(
   // contacts get re-dialed and re-booked repeatedly.
   const appointmentId = created?.id;
   // Tell the team in Slack (best-effort — never holds up the lead's confirmation).
-  void postAppointmentToSlack(clientId, contactId, { appointmentId, bookedBy: "Iris (live call)", callId });
+  void postAppointmentToSlack(clientId, contactId, { appointmentId, bookedBy, callId });
   return {
     success: true,
     result: appointmentId

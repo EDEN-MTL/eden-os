@@ -20,7 +20,7 @@ import { buildSmsQualificationPrompt } from "./scripts";
 import { classifyInboundText, lastInboundText, recentTexts } from "./text-signals";
 import { appendNoteToContact } from "./notes";
 import { checkHumanTouch, DEFAULT_HUMAN_HANDS_OFF_DAYS } from "./human-touch";
-import { IrisConfig, qualify, QualificationAnswers } from "./qualification";
+import { IrisConfig, qualify, QualificationAnswers, callbackCalendarForIntent, CallIntent } from "./qualification";
 import { clampToLegalCallingWindow, formatLocal } from "./cadence";
 import { chatWithTools, ChatMessage, ToolDef } from "../../shared/claude";
 import { loadHistory, appendHistory } from "../../shared/conversation-memory";
@@ -177,6 +177,44 @@ export const SCHEDULE_TRANSFER_CALL_TOOL: ToolDef = {
   },
 };
 
+/**
+ * Booking by text (Mark, 2026-10-15): once a lead is prequalified, Iris asks when they're
+ * free for a quick call with an agent and, if they name a time, books it on the real
+ * calendar — the same live-calendar check and booking a phone call uses. Offered with the
+ * call handoff (config.smsCallHandoff).
+ */
+export const CHECK_AVAILABILITY_SMS_TOOL: ToolDef = {
+  name: "check_availability",
+  description:
+    "Checks the real calendar for the time the lead asked for. Read-only — it never books anything. Returns whether that exact time is open, or the real open times nearest it. Call it whenever the lead names a day/time for the call, BEFORE book_appointment.",
+  input_schema: {
+    type: "object",
+    properties: {
+      intent: { type: "string", enum: ["buyer", "seller", "downsize", "upgrading"], description: "Which calendar: seller/downsize use the seller calendar, buyer/upgrading the buyer one." },
+      requestedTime: {
+        type: "string",
+        description: 'The moment the lead named, in THEIR local time, as an ISO 8601 timestamp WITHOUT a timezone offset (e.g. "2026-10-16T14:00:00"), worked out from the current date and time given at the top of your instructions.',
+      },
+    },
+    required: ["intent", "requestedTime"],
+  },
+};
+
+export const BOOK_APPOINTMENT_SMS_TOOL: ToolDef = {
+  name: "book_appointment",
+  description:
+    "Books the call as a real calendar appointment. Only after check_availability returned that exact time as available (or one of its real open times the lead picked) — pass its isoTime VERBATIM, never one you worked out yourself. Returns whether it was really booked.",
+  input_schema: {
+    type: "object",
+    properties: {
+      intent: { type: "string", enum: ["buyer", "seller", "downsize", "upgrading"] },
+      isoTime: { type: "string", description: "The exact isoTime value check_availability gave you, copied verbatim." },
+      notes: { type: "string", description: "One short line summarising what you gathered (type of home, area, timeline, budget) so the agent has it. Only facts the lead actually gave." },
+    },
+    required: ["intent", "isoTime"],
+  },
+};
+
 /** Earliest a "now" call goes out — long enough for the confirmation text to land first. */
 const TRANSFER_CALL_MIN_DELAY_MINUTES = 2;
 const TRANSFER_CALL_MAX_DAYS_OUT = 7;
@@ -287,6 +325,26 @@ async function executeSmsTool(
     });
 
     return "Handed off to the team. Tell the lead briefly that someone will reach out to book a time — never promise a specific time yourself — then stop.";
+  }
+
+  if (name === "check_availability" || name === "book_appointment") {
+    if (!config.smsCallHandoff) throw new Error(`${name} is not enabled for this client`);
+    const intent: CallIntent = ["buyer", "seller", "downsize", "upgrading"].includes(input?.intent) ? input.intent : "unknown";
+    const calendarId = callbackCalendarForIntent(config, intent);
+    if (!calendarId) return "There's no calendar set up for this kind of lead — don't try to book. Call request_human_followup so a teammate books a time.";
+    // Loaded on demand: the booking logic lives with the phone tools (webhooks/vapi-tools.ts), which import this agent.
+    const tools = await import("../../webhooks/vapi-tools");
+
+    if (name === "check_availability") return tools.handleCheckAvailability(clientId, calendarId, input?.requestedTime);
+
+    const leadNotes = typeof input?.notes === "string" ? input.notes.trim() : "";
+    const outcome = await tools.handleBookAppointment(clientId, contactId, calendarId, intent, input?.isoTime, leadNotes, undefined, undefined, "Iris (by text)");
+    if (!outcome.success) return outcome.result.replace(/Do not tell the lead there's a technical issue\.?/g, "");
+    // The lead is booked: stop any call Iris had lined up for them, and tell the team.
+    await finishIrisLead(clientId, contactId, "qualified and booked by text — appointment made");
+    await addContactTags(contactId, ["iris sms qualified"], ghlConfig.locationId, ghlConfig.apiKey).catch(() => {});
+    const when = outcome.result.match(/^Booked for (.+?)\. /)?.[1] ?? "the time you agreed";
+    return `Booked for ${when} — it's a real appointment now. Send ONE short text confirming it ("You're all set for ${when} — one of our agents will give you a call then.") and stop. Never mention a different time.`;
   }
 
   throw new Error(`Unknown SMS tool: ${name}`);
@@ -434,7 +492,12 @@ async function handleInboundSms(contactId: string, text: string, options: Inboun
   // callback-time aside comes up mid-conversation — there, falling through
   // to the normal loop is correct, since the model has full context to
   // handle it naturally.
-  if (signal.type === "schedule_for") await recordTextCallback(clientId, contactId, signal.when, timezone);
+  // Mid-conversation, with booking on, a named time is the lead answering "when are you free for a
+  // quick call?" — the model books it as a real appointment. Queuing an Iris callback as well would
+  // put two things on the calendar for one request. The first reply to the initial outreach text
+  // (history empty) keeps the old callback behavior.
+  const bookingHandlesTimes = config.smsCallHandoff === true && history.length > 0;
+  if (signal.type === "schedule_for" && !bookingHandlesTimes) await recordTextCallback(clientId, contactId, signal.when, timezone);
 
   if (signal.type === "schedule_for" && history.length === 0) {
     const reply = "Sounds good — Iris will give you a call then. Talk soon!";
@@ -475,8 +538,10 @@ async function handleInboundSms(contactId: string, text: string, options: Inboun
     origin: "form",
     callHandoff: config.smsCallHandoff,
     initialOutreachText,
+    nowLocal: new Date().toLocaleString("en-US", { timeZone: timezone, weekday: "long", year: "numeric", month: "long", day: "numeric", hour: "numeric", minute: "2-digit" }),
+    timezoneName: timezone,
   });
-  const tools = config.smsCallHandoff ? [...SMS_TOOLS, SCHEDULE_TRANSFER_CALL_TOOL] : SMS_TOOLS;
+  const tools = config.smsCallHandoff ? [...SMS_TOOLS, SCHEDULE_TRANSFER_CALL_TOOL, CHECK_AVAILABILITY_SMS_TOOL, BOOK_APPOINTMENT_SMS_TOOL] : SMS_TOOLS;
 
   let working: ChatMessage[] = [...history, { role: "user", content: text }];
   let finalText = "";
