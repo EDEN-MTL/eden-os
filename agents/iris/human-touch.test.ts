@@ -31,6 +31,21 @@ describe("checkHumanTouch", () => {
     expect(await checkHumanTouch("c", "loc", "key", 7, NOW)).toEqual({ status: "none" });
   });
 
+  /**
+   * Angela Marie, 2026-10-13: her contact had an assigned agent, so GHL stamped that agent's
+   * user id on the intake automation's text ("you'll receive a call from our AI assistant,
+   * IRIS") — and the check read it as the agent having texted her.
+   */
+  it("does not count an automation text even when GHL stamped the assigned agent's user id on it", async () => {
+    thread([sms({ source: "workflow", userId: "user-charlene" })]);
+    expect(await checkHumanTouch("c", "loc", "key", 7, NOW)).toEqual({ status: "none" });
+  });
+
+  it("still counts a person's own text that sits next to automation texts", async () => {
+    thread([sms({ source: "workflow", userId: "user-charlene", dateAdded: "2026-10-09T15:00:00.000Z" }), sms({ source: "app", userId: "user-charlene", dateAdded: "2026-10-08T15:00:00.000Z" })]);
+    expect(await checkHumanTouch("c", "loc", "key", 7, NOW)).toEqual({ status: "human", at: "2026-10-08T15:00:00.000Z", userId: "user-charlene" });
+  });
+
   it("does not count a human text that never sent — nobody actually reached the lead", async () => {
     thread([sms({ userId: "user-mark", status: "failed" })]);
     expect(await checkHumanTouch("c", "loc", "key", 7, NOW)).toEqual({ status: "none" });
