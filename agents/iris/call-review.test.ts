@@ -142,3 +142,37 @@ describe("reviewCall — calls that went right", () => {
     expect(reviewCall({ ...base, lines: [] }).verdict).toBe("ok");
   });
 });
+
+describe("shouldAlertTeam / formatCallAlert — Mark is told, he doesn't go looking", () => {
+  it("alerts when a person was reached, when something is flagged, or for a lead someone asked Iris to call; not for a routine voicemail", async () => {
+    const { shouldAlertTeam } = await import("./call-review");
+    expect(shouldAlertTeam({ reachedPerson: true, flagged: false, watched: false })).toBe(true);
+    expect(shouldAlertTeam({ reachedPerson: false, flagged: true, watched: false })).toBe(true);
+    expect(shouldAlertTeam({ reachedPerson: false, flagged: false, watched: true })).toBe(true);
+    expect(shouldAlertTeam({ reachedPerson: false, flagged: false, watched: false })).toBe(false);
+  });
+
+  it("writes a short message: who, when, outcome, what happens next, and the review only when it found something", async () => {
+    const { formatCallAlert } = await import("./call-review");
+    const clean = formatCallAlert({
+      who: "Koren Pye",
+      whenLocal: "Thursday, October 15 at 10:00 AM",
+      outcome: "📵 Voicemail greeting, no message left — will retry",
+      duration: "11s",
+      review: reviewCall({ ...base, machineOnly: true, lines: [u("Please leave a message after the tone.")] }),
+      nextStep: "Iris calls again Friday, October 16 at 10:00 AM",
+    });
+    expect(clean).toBe(
+      "📞 *Koren Pye* — Thursday, October 15 at 10:00 AM (11s)\n📵 Voicemail greeting, no message left — will retry\nNext: Iris calls again Friday, October 16 at 10:00 AM"
+    );
+    const flagged = formatCallAlert({
+      who: "Angela Marie",
+      whenLocal: "x",
+      outcome: "💬 Answered (no transfer)",
+      duration: "2m 5s",
+      review: reviewCall({ ...base, endedReason: "customer-ended-call", lines: [u("Hello?"), b("I'll connect you with one of our agents now.")] }),
+      nextStep: "nothing scheduled",
+    });
+    expect(flagged).toContain("⚠️ *Needs a look:*");
+  });
+});
