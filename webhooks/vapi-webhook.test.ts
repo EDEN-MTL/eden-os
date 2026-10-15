@@ -1363,28 +1363,3 @@ describe("direct links in the call-log post", () => {
     expect(text).toContain("GHL contact");
   });
 });
-
-describe("transcript under the call-log post", () => {
-  beforeEach(() => {
-    slack.sendMessage.mockReset();
-    slack.sendMessage.mockResolvedValue({ ts: "99.1", channel: "C1" });
-    ghl.getGhlConfig.mockResolvedValue({ locationId: "L1", apiKey: "key-1" });
-    ghl.getContact.mockResolvedValue({ contact: { firstName: "Angela", lastName: "Marie" } });
-    iris.loadIrisConfig.mockReturnValue({ timezone: "America/St_Johns" });
-  });
-
-  it("posts what was said as a reply in that call's thread", async () => {
-    const message = {
-      call: { id: "call-7", customer: { number: "+17097700724" } },
-      durationSeconds: 30,
-      messages: [{ role: "user", message: "Hello?" }, { role: "bot", message: "Hi, this is Iris with 3 Percent East Coast. Am I speaking with Angela?" }],
-    };
-    await postCallLogToSlack("3-percent-east-coast", "contact-1", message, "customer-ended-call");
-
-    const reply = slack.sendMessage.mock.calls.map((c) => c[1] as { text: string; threadTs?: string }).find((m) => m.text.startsWith("📝 *Transcript*"));
-    expect(reply).toBeDefined();
-    expect(reply?.threadTs).toBe("99.1");
-    expect(reply?.text).toContain("*Lead:* Hello?");
-    expect(reply?.text).toContain("*Iris:* Hi, this is Iris");
-  });
-});

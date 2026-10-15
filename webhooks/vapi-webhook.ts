@@ -13,7 +13,7 @@ import { checkHumanTouch, DEFAULT_HUMAN_HANDS_OFF_DAYS } from "../agents/iris/hu
 import { clampToLegalCallingWindow, formatLocal } from "../agents/iris/cadence";
 import { handleInboundCall } from "../agents/iris/inbound";
 import { classifyMissedCallback } from "../agents/iris/call-signals";
-import { reviewCall, shouldAlertTeam, formatCallAlert, formatTranscriptMessages } from "../agents/iris/call-review";
+import { reviewCall, shouldAlertTeam, formatCallAlert } from "../agents/iris/call-review";
 import { linkLineFor } from "../agents/iris/links";
 import { isaNoteBullets } from "./appointment-post";
 
@@ -301,24 +301,6 @@ async function linkSuffix(clientId: string, contactId: string): Promise<string> 
 }
 
 /**
- * Puts what was said under the call-log post, in the thread next to the recording,
- * so nobody has to open Vapi (and log in) to read a call. Best-effort: a failure
- * here never affects the post itself.
- */
-export async function attachTranscript(message: Record<string, any>, channel: string, threadTs: string): Promise<void> {
-  try {
-    const lines = ((message?.messages ?? []) as any[])
-      .filter((m) => typeof m?.message === "string" && m.message.trim() !== "" && ["user", "bot", "assistant"].includes(m?.role))
-      .map((m) => ({ role: m.role as string, message: m.message as string }));
-    for (const text of formatTranscriptMessages(lines)) {
-      await sendMessage("iris", { channel, text, threadTs });
-    }
-  } catch (error) {
-    console.error("[VAPI] Failed to attach the transcript to Slack:", error instanceof Error ? error.message : error);
-  }
-}
-
-/**
  * Posts every finished Iris call to #iris-call-logs — real or test, any
  * outcome — so the team has an ongoing eye on Iris's calls without
  * checking our own DB. Best-effort: a Slack failure here should never
@@ -367,7 +349,6 @@ export async function postCallLogToSlack(clientId: string, contactId: string | n
         console.error("[VAPI] Failed to seed call-log thread history:", error instanceof Error ? error.message : error);
       });
       await attachRecording(message, result.channel, result.ts);
-      await attachTranscript(message, result.channel, result.ts);
     }
     // Handed back so the call review can reply in this post's thread.
     if (posted) {
