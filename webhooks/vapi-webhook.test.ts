@@ -1336,3 +1336,30 @@ describe("postCallReview — Iris messages Mark directly after a call that matte
     await expect(postCallReview("3-percent-east-coast", "c1", "automatic", voicemail, "customer-did-not-answer")).resolves.toBeUndefined();
   });
 });
+
+describe("direct links in the call-log post", () => {
+  beforeEach(() => {
+    slack.sendMessage.mockReset();
+    slack.sendMessage.mockResolvedValue({ ts: "1", channel: "C1" });
+    ghl.getGhlConfig.mockResolvedValue({ locationId: "L1", apiKey: "key-1" });
+    ghl.getContact.mockResolvedValue({ contact: { firstName: "Koren", lastName: "Pye" } });
+  });
+
+  it("links the GHL contact and, when the client has the Vapi link setting, the exact Vapi call", async () => {
+    iris.loadIrisConfig.mockReturnValue({ timezone: "America/St_Johns", vapiCallUrlTemplate: "https://dashboard.vapi.ai/calls/{callId}" });
+    await postCallLogToSlack("3-percent-east-coast", "contact-1", { call: { id: "call-7", customer: { number: "+17097308996" } }, durationSeconds: 11 }, "voicemail");
+
+    const text = (slack.sendMessage.mock.calls[0][1] as { text: string }).text;
+    expect(text).toContain("<https://dashboard.vapi.ai/calls/call-7|Vapi call>");
+    expect(text).toContain("<https://app.gohighlevel.com/v2/location/L1/contacts/detail/contact-1|GHL contact>");
+  });
+
+  it("still posts, with just the GHL link, when the Vapi link isn't set up", async () => {
+    iris.loadIrisConfig.mockReturnValue({ timezone: "America/St_Johns" });
+    await postCallLogToSlack("3-percent-east-coast", "contact-1", { call: { id: "call-7", customer: { number: "+17097308996" } }, durationSeconds: 11 }, "voicemail");
+
+    const text = (slack.sendMessage.mock.calls[0][1] as { text: string }).text;
+    expect(text).not.toContain("Vapi call");
+    expect(text).toContain("GHL contact");
+  });
+});

@@ -147,6 +147,8 @@ export interface IrisConfig {
   humanTextBlocksCalls?: boolean;
   /** Local dates (YYYY-MM-DD, client timezone) Iris places no calls — holidays. Due calls roll to the next open day. */
   noCallDates?: string[];
+  /** Address of one call on Vapi's dashboard, with {callId} where the call's id goes. See links.ts. */
+  vapiCallUrlTemplate?: string;
   /** Slack user ids Iris messages directly after a call that matters (a person reached, something off, or a lead someone asked her to call). */
   callAlerts?: { userIds: string[] };
   /** Where Iris posts each completed live transfer (a private channel, so its ID), and the client name used in that post. */

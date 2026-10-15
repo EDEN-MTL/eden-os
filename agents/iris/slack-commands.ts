@@ -22,6 +22,7 @@ import { ToolContext } from "../base-agent";
 import { clampToLegalCallingWindow, formatLocal } from "./cadence";
 import { scheduleExplicitCallback } from "./dial-pending";
 import { checkHumanTouch, DEFAULT_HUMAN_HANDS_OFF_DAYS } from "./human-touch";
+import { linkLineFor } from "./links";
 
 const DEFAULT_TTL_MINUTES = 10;
 const MAX_DAYS_OUT = 7;
@@ -278,7 +279,7 @@ export async function handleCommandReply(message: SlackIncomingMessage, loadSett
       return `I couldn't read ${cmd.contact_name}'s record just now, so I did NOT queue the call. Try again in a minute.`;
     }
     await resolve("executed");
-    await audit(`📣 <@${message.userId}> asked me to call *${cmd.contact_name}* — queued for ${formatLocal(when.toISOString(), settings.timezone)}.`);
+    await audit(`📣 <@${message.userId}> asked me to call *${cmd.contact_name}* — queued for ${formatLocal(when.toISOString(), settings.timezone)}.${await linkSuffix(clientId, cmd.contact_id)}`);
     return `Done — I've queued the call to ${cmd.contact_name} for ${formatLocal(when.toISOString(), settings.timezone)}. It'll show up in #iris-call-logs when it's placed.`;
   }
 
@@ -288,7 +289,7 @@ export async function handleCommandReply(message: SlackIncomingMessage, loadSett
     [clientId, cmd.contact_id, `stopped in Slack by ${message.userId}`]
   );
   await resolve("executed");
-  await audit(`📣 <@${message.userId}> asked me to stop calling and texting *${cmd.contact_name}* — done.`);
+  await audit(`📣 <@${message.userId}> asked me to stop calling and texting *${cmd.contact_name}* — done.${await linkSuffix(clientId, cmd.contact_id)}`);
   return `Done — I've stopped. Nothing further will go out to ${cmd.contact_name}.`;
 }
 
@@ -296,4 +297,10 @@ async function audit(text: string): Promise<void> {
   await sendMessage("iris", { channel: CALL_LOG_CHANNEL, text }).catch((error) => {
     console.error("[IRS] Failed to post the Slack-command audit line:", error instanceof Error ? error.message : error);
   });
+}
+
+/** "\n🔗 …" — the GHL contact, so the thread is one click away — or "" when no link can be built. */
+async function linkSuffix(clientId: string, contactId: string): Promise<string> {
+  const line = await linkLineFor(clientId, contactId);
+  return line ? `\n${line}` : "";
 }

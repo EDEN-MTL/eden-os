@@ -14,6 +14,7 @@ import { clampToLegalCallingWindow, formatLocal } from "../agents/iris/cadence";
 import { handleInboundCall } from "../agents/iris/inbound";
 import { classifyMissedCallback } from "../agents/iris/call-signals";
 import { reviewCall, shouldAlertTeam, formatCallAlert } from "../agents/iris/call-review";
+import { linkLineFor } from "../agents/iris/links";
 import { isaNoteBullets } from "./appointment-post";
 
 /**
@@ -293,6 +294,12 @@ export async function attachRecording(message: Record<string, any>, channel: str
   }
 }
 
+/** "\n🔗 …" for text-related updates (the GHL contact), or "" when no link can be built. */
+async function linkSuffix(clientId: string, contactId: string): Promise<string> {
+  const line = await linkLineFor(clientId, contactId);
+  return line ? `\n${line}` : "";
+}
+
 /**
  * Posts every finished Iris call to #iris-call-logs — real or test, any
  * outcome — so the team has an ongoing eye on Iris's calls without
@@ -320,10 +327,12 @@ export async function postCallLogToSlack(clientId: string, contactId: string | n
       }
     }
 
+    const links = await linkLineFor(clientId, contactId, message?.call?.id, loadIrisConfig(clientId)?.vapiCallUrlTemplate);
     const text =
       `📞 *${who}* — ${clientId}\n` +
       `${describeOutcome(endedReason, message)}\n` +
-      `Duration: ${formatDuration(message?.durationSeconds)}`;
+      `Duration: ${formatDuration(message?.durationSeconds)}` +
+      (links ? `\n${links}` : "");
 
     // Seeds this post into Iris's own conversation history, keyed by
     // Slack's real resolved channel id + this message's own ts — the
@@ -534,7 +543,8 @@ export async function postCallReview(
     });
 
     if (review.verdict === "attention") {
-      await sendMessage("iris", { channel: CALL_LOG_CHANNEL, text: `🔎 *Call review — ${who}*\n${review.summary}` });
+      const links = await linkLineFor(clientId, contactId, message?.call?.id, loadIrisConfig(clientId)?.vapiCallUrlTemplate);
+      await sendMessage("iris", { channel: CALL_LOG_CHANNEL, text: `🔎 *Call review — ${who}*\n${review.summary}${links ? `\n${links}` : ""}` });
     } else {
       // A short reply under that call's own log post (top-level if the post's ts is unknown).
       await sendMessage("iris", { channel: logPostChannel ?? CALL_LOG_CHANNEL, text: `🔎 ${review.summary}`, threadTs: logPostTs ?? undefined });
@@ -583,6 +593,7 @@ async function alertTeamAboutCall(
     }
 
     const text = formatCallAlert({
+      links: await linkLineFor(clientId, contactId, message?.call?.id, config.vapiCallUrlTemplate),
       who,
       whenLocal: formatLocal(new Date().toISOString(), timezone),
       outcome: describeOutcome(endedReason, message),
@@ -758,7 +769,7 @@ async function handleUnansweredSweepCall(
     console.log(`[VAPI] Sweep call to ${contactId} unanswered again (attempt ${pending.attempts_made}) — not texting a second time.`);
     await sendMessage("iris", {
       channel: CALL_LOG_CHANNEL,
-      text: `📵 *${pending.lead?.name ?? contactId}* didn't answer the second attempt either — no voicemail, no second text.`,
+      text: `📵 *${pending.lead?.name ?? contactId}* didn't answer the second attempt either — no voicemail, no second text.${await linkSuffix(clientId, contactId)}`,
     }).catch((error) => {
       console.error("[VAPI] Failed to post the second-round miss to Slack:", error instanceof Error ? error.message : error);
     });
@@ -768,7 +779,7 @@ async function handleUnansweredSweepCall(
   if (outcome === "skipped") {
     await sendMessage("iris", {
       channel: CALL_LOG_CHANNEL,
-      text: `🤝 Not texting *${pending.lead?.name ?? contactId}* after the unanswered call — a teammate has texted them recently, so they're handling the conversation.`,
+      text: `🤝 Not texting *${pending.lead?.name ?? contactId}* after the unanswered call — a teammate has texted them recently, so they're handling the conversation.${await linkSuffix(clientId, contactId)}`,
     }).catch(() => {});
     return;
   }
@@ -777,7 +788,7 @@ async function handleUnansweredSweepCall(
     // so the follow-up text shows up there too, not only the call itself.
     await sendMessage("iris", {
       channel: CALL_LOG_CHANNEL,
-      text: `📱 Texted *${pending.lead?.name ?? contactId}* after the unanswered call (no voicemail left) — ${outcome === "delivered" ? "delivered" : "sent"}, waiting for a reply.`,
+      text: `📱 Texted *${pending.lead?.name ?? contactId}* after the unanswered call (no voicemail left) — ${outcome === "delivered" ? "delivered" : "sent"}, waiting for a reply.${await linkSuffix(clientId, contactId)}`,
     }).catch((error) => {
       console.error("[VAPI] Failed to post the sweep follow-up text to Slack:", error instanceof Error ? error.message : error);
     });
@@ -846,7 +857,7 @@ export async function sendIrisText(clientId: string, contactId: string, leadName
     console.error(`[VAPI] Text to contact ${contactId} could not be delivered: ${failure}`);
     await sendMessage("iris", {
       channel: CALL_LOG_CHANNEL,
-      text: `⚠️ The follow-up text to *${leadName ?? contactId}* could NOT be delivered: ${failure}`,
+      text: `⚠️ The follow-up text to *${leadName ?? contactId}* could NOT be delivered: ${failure}${await linkSuffix(clientId, contactId)}`,
     }).catch(() => {});
     return "failed";
   }

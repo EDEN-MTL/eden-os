@@ -12,6 +12,7 @@
  * with no iris_pending_calls row at all, or one already resolved, is simply
  * not Iris's to answer, and the caller falls through.
  */
+import { linkLineFor } from "./links";
 import { query } from "../../shared/db";
 import { NormalisedLead, buildKeyToId } from "../scout/intake";
 import { loadIrisConfig, loadClientBranding } from "./index";
@@ -230,7 +231,7 @@ async function scheduleTransferCall(
   const localTime = when.toLocaleString("en-US", { timeZone: timezone, weekday: "short", hour: "numeric", minute: "2-digit" });
   await sendMessage(AGENT_ID, {
     channel: CALL_LOG_CHANNEL,
-    text: `📞 Iris qualified a lead over text (score ${result.score}) and will call them ${localTime} for a live transfer — contact ${contactId}.`,
+    text: `📞 Iris qualified a lead over text (score ${result.score}) and will call them ${localTime} for a live transfer — contact ${contactId}.${await linkSuffix(clientId, contactId)}`,
   }).catch((error) => {
     console.error(`[IRS-SMS] Failed to post transfer-call notice to Slack:`, error instanceof Error ? error.message : error);
   });
@@ -282,7 +283,7 @@ async function executeSmsTool(
     await finishIrisLead(clientId, contactId, "qualified via text — handed off for human follow-up");
     await sendMessage(AGENT_ID, {
       channel: CALL_LOG_CHANNEL,
-      text: `💬 Iris qualified a lead over text and needs a human to book them:\n${summary}`,
+      text: `💬 Iris qualified a lead over text and needs a human to book them:\n${summary}${await linkSuffix(clientId, contactId)}`,
     }).catch((error) => {
       console.error(`[IRS-SMS] Failed to post handoff to Slack:`, error instanceof Error ? error.message : error);
     });
@@ -538,4 +539,10 @@ async function handleInboundSms(contactId: string, text: string, options: Inboun
 export async function hasActiveSmsConversation(clientId: string, contactId: string): Promise<boolean> {
   const history = await loadHistory(AGENT_ID, historyKey(clientId, contactId), 1).catch(() => []);
   return history.length > 0;
+}
+
+/** "\n🔗 …" — the GHL contact, so the text thread is one click away — or "" when no link can be built. */
+async function linkSuffix(clientId: string, contactId: string): Promise<string> {
+  const line = await linkLineFor(clientId, contactId);
+  return line ? `\n${line}` : "";
 }

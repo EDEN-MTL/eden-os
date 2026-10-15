@@ -158,10 +158,13 @@ export interface CallAlertInput {
   review: CallReview;
   /** What happens next for this lead, already worded ("calls again Friday, October 16 at 10:00 AM"). */
   nextStep: string;
+  /** "🔗 Vapi call · GHL contact", already built; "" or missing when there are no links. */
+  links?: string;
 }
 
 export function formatCallAlert(a: CallAlertInput): string {
   const lines = [`📞 *${a.who}* — ${a.whenLocal} (${a.duration})`, a.outcome, `Next: ${a.nextStep}`];
   if (a.review.verdict === "attention") lines.push("", a.review.summary);
+  if (a.links) lines.push(a.links);
   return lines.join("\n");
 }
