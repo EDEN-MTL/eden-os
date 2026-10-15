@@ -525,6 +525,7 @@ export async function postCallReview(
       endedReason,
       durationSeconds: message?.durationSeconds ?? null,
       machineOnly,
+      transferSucceeded: endedReason === TRANSFER_SUCCEEDED_REASON,
       expectedOpener,
       retryExpected,
       retryLinedUp,
