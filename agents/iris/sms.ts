@@ -109,7 +109,7 @@ export interface InboundSmsOptions {
 
 const realWait = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
 
-const SMS_TOOLS: ToolDef[] = [
+export const SMS_TOOLS: ToolDef[] = [
   {
     name: "save_qualification_notes",
     description:
@@ -151,10 +151,10 @@ const SMS_TOOLS: ToolDef[] = [
  * model — so a lead is scored identically whether they answered on the
  * phone or by text.
  */
-const SCHEDULE_TRANSFER_CALL_TOOL: ToolDef = {
+export const SCHEDULE_TRANSFER_CALL_TOOL: ToolDef = {
   name: "schedule_transfer_call",
   description:
-    "Queues a phone call from Iris to this lead so they can be live-transferred to an agent. Call ONCE, after save_qualification_notes and after the lead has said when they can talk. Returns whether the call was scheduled and exactly what to text back.",
+    "Queues a phone call from Iris to this lead so they can be live-transferred to an agent. Call ONCE, right after save_qualification_notes, with when = \"now\" unless the lead already named a time. Returns exactly what to text back.",
   input_schema: {
     type: "object",
     properties: {
@@ -197,13 +197,11 @@ async function scheduleTransferCall(
     financing: ["cash", "pre-approved", "in-progress", "not-approved"].includes(input?.financing) ? input.financing : null,
   };
   const result = qualify(config, answers);
-  if (result.outcome !== "transfer") {
-    return (
-      `NOT scheduled — they aren't ready for an agent call yet (score ${result.score}, needs ${config.warmScoreThreshold}: ` +
-      `${result.scoreReasons.join(", ") || "not enough information"}). Do not promise a call. ` +
-      `Call request_human_followup instead and tell them someone from the team will follow up.`
-    );
-  }
+  // No score bar here. Whoever Iris took through every question by text is qualified, and
+  // she calls to connect them (Mark, 2026-10-15). Samir Benslimane answered everything
+  // — a seller, $450K, address given — but the numeric score (25, bar 40) would have
+  // refused the call and left him with a vague "someone will reach out". The score is
+  // still kept for the Slack note below.
 
   const now = Date.now();
   let when = new Date(now + TRANSFER_CALL_MIN_DELAY_MINUTES * 60_000);
@@ -238,8 +236,8 @@ async function scheduleTransferCall(
 
   const minutesOut = Math.round((when.getTime() - now) / 60_000);
   return minutesOut <= 10
-    ? "Scheduled — Iris will call them in the next few minutes. Tell them to expect a call shortly from our team, then stop."
-    : `Scheduled for ${localTime} (their local time). Confirm that time with them in one short text, then stop.`;
+    ? "Scheduled. Send ONE short text: Iris will give them a call shortly to connect them with one of our agents, and if it's not a good time or they'd rather another time, that's fine — it can be set up on the call. Then stop."
+    : `Scheduled for ${localTime} (their local time). Send ONE short text: Iris will call at ${localTime} to connect them with one of our agents, and if another time suits them better they can say so on the call. Then stop.`;
 }
 
 async function executeSmsTool(

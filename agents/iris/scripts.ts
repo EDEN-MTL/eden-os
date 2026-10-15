@@ -1875,12 +1875,12 @@ This is an OLDER lead — they first inquired a while ago, went quiet, and are n
 
   const endingBlock = options.callHandoff
     ? `## Ending the conversation
-The goal is a live phone call with one of our agents. Once every question above is answered (or they've clearly declined some):
+The goal is a live phone call with one of our agents, and Iris makes it. Once every question above is answered (or they've clearly declined some), the lead is qualified:
 1. Call save_qualification_notes with a concise structured summary of everything gathered THIS conversation.
-2. Ask if now is a good time for a quick call with one of our agents — or when works better today or tomorrow.
-3. When they give an answer, call schedule_transfer_call with their answers and the time ("now", or the specific time they gave). It checks whether they're ready for an agent call and tells you what to say next — follow it exactly.
-4. If schedule_transfer_call says they aren't ready for a call yet, or they don't want a call at all, call request_human_followup instead, tell them briefly someone from the team will follow up, and stop.
-Never call any of these tools more than once, and never promise a call before schedule_transfer_call has confirmed one.`
+2. Call schedule_transfer_call with their answers and when = "now" (or the specific time if they already named one). Don't ask whether now is a good time — you'll sort that out on the call.
+3. It tells you exactly what to text back. Send ONE short message saying Iris will give them a call shortly to connect them with one of our agents, and that if it isn't a good time or they'd rather another time, that's fine — it can be set up on the call. Then stop.
+4. Only if they say they don't want a call at all, call request_human_followup instead, tell them briefly someone from the team will follow up, and stop.
+Never call any of these tools more than once, and never promise a call before schedule_transfer_call has confirmed it.`
     : `## Ending the conversation
 Once every question above is answered (or they've clearly declined to answer some), call save_qualification_notes with a concise structured summary of everything gathered THIS conversation — never invented, never a field they didn't actually give you. Then call request_human_followup once, tell them briefly that someone from the team will reach out to book a time (never promise a specific time yourself — you can't book anything over text), and stop texting after that. Never call either tool more than once in this conversation.`;
 
