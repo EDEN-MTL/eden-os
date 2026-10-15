@@ -176,3 +176,28 @@ describe("shouldAlertTeam / formatCallAlert — Mark is told, he doesn't go look
     expect(flagged).toContain("⚠️ *Needs a look:*");
   });
 });
+
+describe("formatTranscriptMessages — read the call right under the post", () => {
+  it("labels who said what, in order, under one header", async () => {
+    const { formatTranscriptMessages } = await import("./call-review");
+    const out = formatTranscriptMessages([u("Hello?"), b("Hi, this is Iris with 3 Percent East Coast. Am I speaking with Amanda?"), u("Is this an AI?")]);
+    expect(out).toEqual([
+      "📝 *Transcript*\n*Lead:* Hello?\n*Iris:* Hi, this is Iris with 3 Percent East Coast. Am I speaking with Amanda?\n*Lead:* Is this an AI?",
+    ]);
+  });
+
+  it("posts nothing for a call with no spoken words", async () => {
+    const { formatTranscriptMessages } = await import("./call-review");
+    expect(formatTranscriptMessages([])).toEqual([]);
+    expect(formatTranscriptMessages([u("   ")])).toEqual([]);
+  });
+
+  it("splits a long call into Slack-sized pieces and says when the end was cut", async () => {
+    const { formatTranscriptMessages } = await import("./call-review");
+    const long = Array.from({ length: 400 }, (_, i) => (i % 2 ? b : u)(`Line number ${i} with some words to take up room in the thread, enough to fill a message.`));
+    const out = formatTranscriptMessages(long);
+    expect(out.length).toBe(4);
+    expect(out.every((m) => m.length <= 3000)).toBe(true);
+    expect(out[3]).toContain("the rest of this call is cut here");
+  });
+});

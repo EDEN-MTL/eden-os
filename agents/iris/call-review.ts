@@ -168,3 +168,42 @@ export function formatCallAlert(a: CallAlertInput): string {
   if (a.links) lines.push(a.links);
   return lines.join("\n");
 }
+
+const SLACK_MESSAGE_LIMIT = 2800;
+const MAX_TRANSCRIPT_MESSAGES = 4;
+
+/**
+ * The call's transcript as Slack-sized pieces, so what was said can be read right
+ * under the call-log post without opening Vapi or logging in anywhere. Speaker
+ * labels are "Lead" and "Iris"; machine/screener lines are labeled the same way
+ * (they come in as the other party). Splits on line boundaries; if a call is too
+ * long for MAX_TRANSCRIPT_MESSAGES pieces, the last one says it was cut.
+ */
+export function formatTranscriptMessages(lines: TranscriptLine[]): string[] {
+  const speaking = lines
+    .filter((l) => typeof l.message === "string" && l.message.trim() !== "")
+    .map((l) => `*${l.role === "user" ? "Lead" : "Iris"}:* ${l.message.trim().replace(/\s+/g, " ")}`);
+  if (speaking.length === 0) return [];
+
+  const header = "📝 *Transcript*";
+  const pieces: string[] = [];
+  let current = header;
+  let cut = false;
+  for (const line of speaking) {
+    const clipped = line.length > SLACK_MESSAGE_LIMIT ? `${line.slice(0, SLACK_MESSAGE_LIMIT - 20)}…` : line;
+    if ((current + "\n" + clipped).length > SLACK_MESSAGE_LIMIT) {
+      pieces.push(current);
+      if (pieces.length >= MAX_TRANSCRIPT_MESSAGES) {
+        cut = true;
+        current = "";
+        break;
+      }
+      current = clipped;
+    } else {
+      current += "\n" + clipped;
+    }
+  }
+  if (current) pieces.push(current);
+  if (cut) pieces[pieces.length - 1] += "\n_…the rest of this call is cut here — see the recording above._";
+  return pieces;
+}
