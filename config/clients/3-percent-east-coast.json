@@ -126,6 +126,8 @@
       "notesFieldKeyNote": "Same underlying field as scout.fields.isaNotes below, but named separately here as a single write target (not a read-priority list) — see IrisConfig.callbackNotesFieldKey.",
       "calendarNote": "3% REC - ISA Callback (Iris), id buxIQTE3TkpVpjrYBaRc, still exists in GHL (currently inactive) from the earlier calendar-booking design. Nothing in code reads it anymore — left as-is rather than deleted in case the calendar-booking approach comes back."
     },
+    "links": { "vapiCallUrl": "https://dashboard.vapi.ai/logs?callId={callId}&datePreset=last7d" },
+    "linksNote": "Mark, 2026-10-15: the address of one call on Vapi's dashboard, copied from a real link (opens the Logs page filtered to that call; click the row to open it). {callId} is replaced with the call's id. datePreset=last7d is what Vapi showed — a call older than 7 days won't appear under that filter. Needs a Vapi login, like the dashboard itself. GHL links go to the contact page.",
     "callAlerts": { "userIds": ["U07H26WUGP5"] },
     "callAlertsNote": "Mark, 2026-10-14: Iris DMs these Slack users after a call that matters — a real person reached, something the review flagged, or any call to a lead someone asked her to call (a requested callback or one lined up by hand). Not for routine voicemails. U07H26WUGP5 = Mark Christian Nuada.",
     "liveTransferSlack": {

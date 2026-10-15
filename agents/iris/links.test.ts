@@ -42,3 +42,15 @@ describe("direct links in Iris's Slack updates", () => {
     expect(await linkLineFor("c", null)).toBe("");
   });
 });
+
+describe("the real 3% config", () => {
+  it("has the Vapi call address Mark copied from the dashboard, with a {callId} slot", async () => {
+    const { readFileSync } = await import("fs");
+    const cfg = JSON.parse(readFileSync("config/clients/3-percent-east-coast.json", "utf-8"));
+    const template: string = cfg.iris.links.vapiCallUrl;
+    expect(template).toContain("{callId}");
+    expect(vapiCallUrl("01a13c57-fa25-722d-b654-af0bf6f6ae5c", template)).toBe(
+      "https://dashboard.vapi.ai/logs?callId=01a13c57-fa25-722d-b654-af0bf6f6ae5c&datePreset=last7d"
+    );
+  });
+});
