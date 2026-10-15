@@ -130,18 +130,33 @@ describe("text-qualification ending — call handoff", () => {
     expect(ghl.sendSMS).toHaveBeenCalledWith("contact-1", "Perfect — expect a call from us in a couple of minutes!", "loc-1", "key-1");
   });
 
-  it("refuses to queue a call for a lead who doesn't qualify — the model is told to hand to a human", async () => {
+  /**
+   * Samir Benslimane, 2026-10-15: took every question by text (seller, $450K, address given) but
+   * scored 25 against a bar of 40, so the call was refused and he got a vague "someone will
+   * reach out". Anyone Iris takes through the questions is qualified and gets the call.
+   */
+  it("queues the call even when the numeric score is low — a lead who answered everything is qualified", async () => {
     db.query.mockResolvedValueOnce(row());
     vi.mocked(chatWithTools)
-      .mockResolvedValueOnce(toolTurn(toolUseBlock("t1", "schedule_transfer_call", { intent: "buyer", timeline: "maybe next year", financing: "not-approved", when: "now" })))
-      .mockResolvedValueOnce(endTurn("No problem — someone from the team will follow up."));
+      .mockResolvedValueOnce(toolTurn(toolUseBlock("t1", "schedule_transfer_call", { intent: "seller", area: "Hussey Drive", propertyDetails: "house with apartments", timeline: null, budget: "$450000", financing: null, when: "now" })))
+      .mockResolvedValueOnce(endTurn("Thanks Samir — I'll give you a call shortly to connect you with one of our agents."));
 
-    await irisHandleInboundSms("contact-1", "sure", NO_WAIT);
+    await irisHandleInboundSms("contact-1", "Take care", NO_WAIT);
 
-    expect(db.query.mock.calls.find((c) => String(c[0]).includes("sms_scheduled = true"))).toBeUndefined();
+    expect(db.query.mock.calls.find((c) => String(c[0]).includes("sms_scheduled = true"))).toBeDefined();
     const toolResult = (vi.mocked(chatWithTools).mock.calls[1][1] as any[]).at(-1).content[0].content as string;
-    expect(toolResult).toMatch(/^NOT scheduled/);
-    expect(toolResult).toContain("request_human_followup");
+    expect(toolResult).toMatch(/^Scheduled/);
+    expect(toolResult).toContain("connect them with one of our agents");
+    expect(toolResult).toMatch(/not a good time or they'd rather another time/);
+  });
+
+  it("tells the model to send the 'I'll call to connect you' text, not to ask whether now suits", async () => {
+    db.query.mockResolvedValueOnce(row());
+    vi.mocked(chatWithTools).mockResolvedValueOnce(endTurn("What area?"));
+    await irisHandleInboundSms("contact-1", "hi", NO_WAIT);
+    expect(systemPrompt()).toContain("Don't ask whether now is a good time");
+    expect(systemPrompt()).toContain("Iris will give them a call shortly to connect them with one of our agents");
+    expect(systemPrompt()).toContain("it can be set up on the call");
   });
 
   it("rejects an unreadable time instead of guessing", async () => {

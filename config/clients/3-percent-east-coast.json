@@ -146,7 +146,9 @@
       "note": "Mark, 2026-10-10: only Mark (U07H26WUGP5) and Jacob (U06SA9782HW) may tell Iris to call or stop a lead in Slack. Every request waits for a plain 'yes' from the same person in the same place before anything happens."
     },
     "sms": {
-      "fromNumber": "+17097013598",
+      "callHandoff": true,
+    "callHandoffNote": "Mark, 2026-10-15: a lead Iris qualifies by text gets a call from Iris to connect them with an agent (not just 'someone will reach out'). On that call, a no or a preference for another time goes to booking. Samir Benslimane (Oct 15) was the case that prompted it.",
+    "fromNumber": "+17097013598",
       "fromNumberNote": "Mark, 2026-10-07: GHL reuses whichever number last texted a lead, and older leads were last texted from +17097021163, which is no longer available in the account — every send to them failed ('Invalid from number'). Iris's own proactive texts name the main 3% number explicitly. Same number Iris calls out from."
     },
     "outreachCadence": {
