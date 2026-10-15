@@ -4,6 +4,7 @@ import { sendMessage } from "../shared/slack";
 import { loadIrisConfig } from "../agents/iris";
 import { buildKeyToId, readField } from "../agents/scout/intake";
 import { formatLocal } from "../agents/iris/cadence";
+import { linkLineFor } from "../agents/iris/links";
 
 /**
  * Mark, 2026-10-14: Iris posts each newly booked appointment to the same
@@ -31,6 +32,8 @@ export interface AppointmentPost {
   when: string | null;
   bookedBy: string | null;
   notes: string | null;
+  /** "🔗 Vapi call · GHL contact", already built; "" or missing when there are no links. */
+  links?: string;
 }
 
 export function formatAppointmentPost(post: AppointmentPost): string {
@@ -40,6 +43,7 @@ export function formatAppointmentPost(post: AppointmentPost): string {
   if (post.when) lines.push(`When: ${post.when}`);
   if (post.bookedBy) lines.push(`Booked by: ${post.bookedBy}`);
   if (bullets.length > 0) lines.push("", `ISA NOTES: ${bullets.map((b) => `- ${b}`).join("\n")}`);
+  if (post.links) lines.push("", post.links);
   return lines.join("\n");
 }
 
@@ -75,7 +79,7 @@ export function formatAppointmentTime(startTime: string | null | undefined, time
 export async function postAppointmentToSlack(
   clientId: string,
   contactId: string,
-  options: { appointmentId?: string | null; bookedBy?: string | null } = {}
+  options: { appointmentId?: string | null; bookedBy?: string | null; callId?: string | null } = {}
 ): Promise<void> {
   let claimId: string | null = null;
   try {
@@ -135,6 +139,8 @@ export async function postAppointmentToSlack(
         when: formatAppointmentTime(appointment.startTime, config.timezone || "America/St_Johns"),
         bookedBy: options.bookedBy ?? null,
         notes,
+        // The contact page always; the exact Vapi call too when Iris booked it on a call.
+        links: await linkLineFor(clientId, contactId, options.callId, config.vapiCallUrlTemplate),
       }),
     });
   } catch (error) {

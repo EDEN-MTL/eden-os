@@ -1363,3 +1363,38 @@ describe("direct links in the call-log post", () => {
     expect(text).toContain("GHL contact");
   });
 });
+
+describe("links on the live-transfer post", () => {
+  beforeEach(() => {
+    slack.sendMessage.mockReset();
+    slack.sendMessage.mockResolvedValue({ ts: "1", channel: "C1" });
+    db.query.mockReset();
+    db.query.mockResolvedValue([] as never);
+    db.query.mockResolvedValueOnce([{ id: "1" }] as never); // dedupe claim
+    ghl.getGhlConfig.mockResolvedValue({ locationId: "L1", apiKey: "key-1" });
+    ghl.getContact.mockResolvedValue({ contact: { firstName: "Roxane", lastName: "White", assignedTo: "u1", tags: ["seller lead"], customFields: [] } });
+    ghl.getCustomFieldDefs.mockResolvedValue([]);
+    ghl.listLocationUsers.mockResolvedValue([{ id: "u1", name: "Brittany Penney" }]);
+    iris.loadIrisConfig.mockReturnValue({
+      timezone: "America/St_Johns",
+      callbackNotesFieldKey: "isa_notes",
+      vapiCallUrlTemplate: "https://dashboard.vapi.ai/logs?callId={callId}&datePreset=last7d",
+      liveTransferSlack: { channel: "C9", clientLabel: "3% Realty East Coast" },
+    });
+  });
+
+  it("a transfer Iris made links the exact Vapi call and the GHL contact", async () => {
+    await postLiveTransferToSlack("3-percent-east-coast", "c1", "call-9");
+    const text = (slack.sendMessage.mock.calls[0][1] as { text: string }).text;
+    expect(text).toContain("Seller Live Transfer for 3% Realty East Coast with Brittany Penney");
+    expect(text).toContain("<https://dashboard.vapi.ai/logs?callId=call-9&datePreset=last7d|Vapi call>");
+    expect(text).toContain("<https://app.gohighlevel.com/v2/location/L1/contacts/detail/c1|GHL contact>");
+  });
+
+  it("a transfer the team marked by hand has no call, so only the GHL contact link", async () => {
+    await postLiveTransferToSlack("3-percent-east-coast", "c1");
+    const text = (slack.sendMessage.mock.calls[0][1] as { text: string }).text;
+    expect(text).not.toContain("Vapi call");
+    expect(text).toContain("GHL contact");
+  });
+});

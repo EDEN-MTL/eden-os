@@ -458,7 +458,7 @@ async function handleEndOfCallReport(message: Record<string, any>): Promise<void
 
   if (endedReason === TRANSFER_SUCCEEDED_REASON && row?.contact_id) {
     await handleSuccessfulTransfer(row.client_id, row.contact_id);
-    await postLiveTransferToSlack(row.client_id, row.contact_id);
+    await postLiveTransferToSlack(row.client_id, row.contact_id, callId);
   }
 
   // Only the automatic dial-pending queue's own retry cadence gets
@@ -957,6 +957,8 @@ export interface LiveTransferPost {
   agentName: string | null;
   leadName: string;
   notes: string | null;
+  /** "🔗 Vapi call · GHL contact", already built; "" or missing when there are no links. */
+  links?: string;
 }
 
 /**
@@ -971,6 +973,7 @@ export function formatLiveTransferPost(post: LiveTransferPost): string {
   const bullets = isaNoteBullets(post.notes);
   const lines = [`${kind} Live Transfer for ${post.clientLabel} with ${post.agentName ?? "an agent (not confirmed on the call)"}`, `Name: ${post.leadName}`];
   if (bullets.length > 0) lines.push("", `ISA NOTES: ${bullets.map((b) => `- ${b}`).join("\n")}`);
+  if (post.links) lines.push("", post.links);
   return lines.join("\n");
 }
 
@@ -980,7 +983,7 @@ export function formatLiveTransferPost(post: LiveTransferPost): string {
  * own account. Runs after the transfer is already done, so it's best-effort:
  * any failure is logged and never affects the transfer or the tagging.
  */
-export async function postLiveTransferToSlack(clientId: string, contactId: string): Promise<void> {
+export async function postLiveTransferToSlack(clientId: string, contactId: string, callId?: string | null): Promise<void> {
   let claimId: string | null = null;
   try {
     const config = loadIrisConfig(clientId);
@@ -1026,7 +1029,8 @@ export async function postLiveTransferToSlack(clientId: string, contactId: strin
 
     await sendMessage("iris", {
       channel: target.channel,
-      text: formatLiveTransferPost({ intent, clientLabel: target.clientLabel, agentName, leadName, notes }),
+      // The contact page always; the exact Vapi call too when Iris did the transfer on a call (a hand-made one has no call).
+      text: formatLiveTransferPost({ intent, clientLabel: target.clientLabel, agentName, leadName, notes, links: await linkLineFor(clientId, contactId, callId, config.vapiCallUrlTemplate) }),
     });
   } catch (error) {
     console.error(`[VAPI] Failed to post the live transfer for ${contactId} to Slack:`, error instanceof Error ? error.message : error);
