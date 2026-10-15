@@ -12,7 +12,10 @@
  * alone is not enough: Iris's Oct 7 text to Tony Molloy carried Genna Hickey's
  * id. Confirmed against live messages (Mark's text to Colin Myers, a
  * teammate's text to Dawnie Kearney, and Iris's own texts to both). The
- * automations' texts have source "workflow" and no userId. A text that failed
+ * automations' texts have source "workflow" and no userId — except on a contact
+ * with an assigned agent, where GHL stamps that agent's userId on them as well
+ * (confirmed live on Angela Marie, 2026-10-13), so source "workflow" is excluded
+ * outright. A text that failed
  * to send doesn't count — nobody actually reached the lead.
  *
  * A person texting from their own phone, outside GHL, can't be seen here.
@@ -51,6 +54,11 @@ export async function checkHumanTouch(
         typeof m?.userId === "string" &&
         m.userId !== "" &&
         !m?.meta?.marketplace &&
+        // The intake/follow-up automations. On a contact that has an assigned agent GHL
+        // stamps that agent's userId on them too, which made Angela Marie's own
+        // "you'll receive a call from IRIS" automation text look like her agent had
+        // texted her (2026-10-13) — and would have kept Iris out of her text thread.
+        m?.source !== "workflow" &&
         m?.status !== "failed" &&
         typeof m?.dateAdded === "string" &&
         Date.parse(m.dateAdded) >= cutoff
