@@ -26,7 +26,7 @@ async function main() {
   if (queued.length > 0) {
     initSlackClients();
     await sendMessage("iris", {
-      channel: process.env.IRIS_CALL_LOG_CHANNEL || "iris-call-logs",
+      channel: process.env.IRIS_CALL_LOG_CHANNEL || "C0C40DN5P32",
       text:
         `📋 Cold-lead sweep lined up — ${queued.length} calls starting ${formatLocal(queued[0].callAfter.toISOString(), "America/St_Johns")}, one at a time ` +
         `(each starts after the previous one ends; no voicemail is left, and a lead who doesn't pick up gets one text — none if they were already texted):\n` +

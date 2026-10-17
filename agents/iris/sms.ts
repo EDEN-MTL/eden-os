@@ -40,7 +40,7 @@ const MAX_SMS_TOOL_TURNS = 6;
 // reasoning text-signals.ts already gives for its own local MIN_MINUTES_OUT
 // copy: both name the same real Slack channel, but there's no shared owner
 // worth introducing an import for.
-const CALL_LOG_CHANNEL = process.env.IRIS_CALL_LOG_CHANNEL || "iris-call-logs";
+import { CALL_LOG_CHANNEL } from "./channels";
 
 function historyKey(clientId: string, contactId: string): string {
   return `sms:${clientId}:${contactId}`;

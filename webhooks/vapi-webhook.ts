@@ -25,7 +25,7 @@ import { isaNoteBullets } from "./appointment-post";
  * this session can do remotely — still overridable via IRIS_CALL_LOG_CHANNEL
  * if that ever needs to change without a code deploy.
  */
-const CALL_LOG_CHANNEL = process.env.IRIS_CALL_LOG_CHANNEL || "iris-call-logs";
+import { CALL_LOG_CHANNEL } from "../agents/iris/channels";
 
 /**
  * Vapi's endedReason for a warm transfer that actually connected — the
