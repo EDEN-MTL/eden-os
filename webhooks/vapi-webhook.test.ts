@@ -1398,3 +1398,10 @@ describe("links on the live-transfer post", () => {
     expect(text).toContain("GHL contact");
   });
 });
+
+describe("hitVoicemailGreeting — greetings with their own wording", () => {
+  it("recognises Sabrina Legg's greeting (Oct 17), so a missed call there isn't mistaken for a person who never got an answer", () => {
+    const msg = { messages: [{ role: "user", message: "You have reached Sabrina Legg. After leaving a message, you can hang up or press pound for more options." }] };
+    expect(hitVoicemailGreeting(msg)).toBe(true);
+  });
+});

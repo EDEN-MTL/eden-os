@@ -1242,6 +1242,16 @@ Then pause and genuinely wait for their answer — don't keep talking.
   before ending the call (e.g. "Perfect${closingNameClause} — I'll give you
   a call back at 5 PM. Thanks!") — never a time you weren't actually given,
   and never a different time than the one they named.
+- If you offer, or they agree to, a SPAN rather than a clock time — "in a few
+  days," "next week," "give me a week," a lead who is "just looking right now"
+  and says check back sometime — that IS a time. Work it out and pass it as
+  callbackTime: "a few days" = 3 days from now at 10:00 AM their time, "next
+  week" = 7 days from now at 10:00 AM, "a couple of weeks" = 14 days from now at
+  10:00 AM. Never call schedule_callback with no time after you've named a span:
+  with no time the system calls back in about an hour, which is nothing like "a
+  few days" (Sabrina Marie, 2026-10-17: told "a callback in a few days", rung
+  again an hour later and texted "I missed you"). Say only the span you actually
+  scheduled.
 - If they do NOT give a specific time — just "later," "another time," or
   they go quiet/hang up right after asking — do NOT keep pressing for one
   and do NOT invent or guess a time yourself. Call schedule_callback with

@@ -163,6 +163,8 @@ const VOICEMAIL_PHRASES = [
   /after the (?:tone|beep)/i,
   /record your message/i,
   /leave (?:a|your) message/i,
+  /after leaving a message/i,
+  /press pound/i,
   /(?:person|party|number|customer) you(?:'re| are) (?:trying to reach|calling) is (?:not available|unavailable)/i,
 ];
 

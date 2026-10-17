@@ -713,10 +713,12 @@ export function buildCallPayload(
         description:
           "Records that this lead asked to be called back, and schedules a real follow-up call — it does " +
           "not book a calendar appointment. Call this as soon as the lead asks to be called back, whether " +
-          "or not they gave a specific time. If they gave one, pass it as callbackTime. If they did NOT " +
-          "give one (e.g. \"call me later\", \"I'm busy, try again another time\") — call this with NO " +
-          "callbackTime argument at all. Never invent or guess a time yourself; the system schedules a " +
-          "sensible default automatically when none is given.",
+          "or not they gave a specific time. If they gave one, pass it as callbackTime. A span you offered " +
+          "or they agreed to (\"in a few days\" = 3 days out at 10:00 AM, \"next week\" = 7 days out at " +
+          "10:00 AM) counts as a time: pass it. If they did NOT give one and you named none (e.g. \"call me " +
+          "later\", \"I'm busy, try again another time\") — call this with NO callbackTime argument at all; " +
+          "the system then calls back in about an hour. Never invent or guess a time the lead and you " +
+          "didn't talk about.",
         parameters: {
           type: "object",
           properties: {
