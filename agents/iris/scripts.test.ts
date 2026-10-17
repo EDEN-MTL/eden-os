@@ -1232,6 +1232,17 @@ describe("buildLeadQualificationPrompt", () => {
     expect(inbound.startsWith("## FIRST TURN")).toBe(false);
   });
 
+  /**
+   * Sabrina Marie, 2026-10-17: told "a callback in a few days", but with no time passed the
+   * system called back about an hour later and texted "I missed you".
+   */
+  it("treats a span like 'a few days' as a real time to schedule, never a no-time callback", () => {
+    const prompt = buildLeadQualificationPrompt(IRIS_CONFIG, BLANK_LEAD, "3 Percent East Coast", "St. John's", true, true, false);
+    expect(prompt).toMatch(/SPAN rather than a clock time/);
+    expect(prompt).toContain('"a few days" = 3 days from now at 10:00 AM their time');
+    expect(prompt).toMatch(/Never call schedule_callback with\s+no time after you've named a span/);
+  });
+
   it("never loops on the screener: 'Iris.' at most twice, and a screener that never connects ends through the normal no-answer handling", () => {
     const prompt = buildLeadQualificationPrompt(IRIS_CONFIG, BLANK_LEAD, "3 Percent East Coast", "St. John's", false, true, false);
     expect(prompt).toMatch(/never more than twice in total/i);
