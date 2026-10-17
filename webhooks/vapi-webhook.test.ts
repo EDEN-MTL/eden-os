@@ -38,6 +38,7 @@ vi.mock("../agents/iris/inbound", () => inbound);
 const callSignals = vi.hoisted(() => ({ classifyMissedCallback: vi.fn(async () => ({ type: "none" })) }));
 vi.mock("../agents/iris/call-signals", () => callSignals);
 
+import { CALL_LOG_CHANNEL } from "../agents/iris/channels";
 import {
   appendCallStatusNote,
   attachRecording,
@@ -419,7 +420,7 @@ describe("postCallLogToSlack", () => {
     expect(slack.sendMessage).toHaveBeenCalledWith(
       "iris",
       expect.objectContaining({
-        channel: "iris-call-logs",
+        channel: CALL_LOG_CHANNEL,
         text: expect.stringContaining("Bijeesh Varghese (+17097496049)"),
       })
     );
@@ -989,7 +990,7 @@ describe("maybeReopenPendingCall — unanswered sweep calls", () => {
     expect(dialPending.holdForTextReply).toHaveBeenCalledWith(77);
     expect(ghl.sendSMS).toHaveBeenCalledTimes(1);
     expect(ghl.sendSMS.mock.calls[0][1]).toContain("Stella");
-    expect(slack.sendMessage).toHaveBeenCalledWith("iris", expect.objectContaining({ channel: "iris-call-logs", text: expect.stringContaining("Texted *Stella Max Clements*") }));
+    expect(slack.sendMessage).toHaveBeenCalledWith("iris", expect.objectContaining({ channel: CALL_LOG_CHANNEL, text: expect.stringContaining("Texted *Stella Max Clements*") }));
     expect(dialPending.reopenForNextAttempt).not.toHaveBeenCalled();
     expect(dialPending.reopenAfterMissedCallback).not.toHaveBeenCalled();
   });

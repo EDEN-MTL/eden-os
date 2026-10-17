@@ -26,7 +26,7 @@ import { linkLineFor } from "./links";
 
 const DEFAULT_TTL_MINUTES = 10;
 const MAX_DAYS_OUT = 7;
-const CALL_LOG_CHANNEL = process.env.IRIS_CALL_LOG_CHANNEL || "iris-call-logs";
+import { CALL_LOG_CHANNEL } from "./channels";
 
 export interface CommandSettings {
   allowedUserIds: string[];
@@ -280,7 +280,7 @@ export async function handleCommandReply(message: SlackIncomingMessage, loadSett
     }
     await resolve("executed");
     await audit(`📣 <@${message.userId}> asked me to call *${cmd.contact_name}* — queued for ${formatLocal(when.toISOString(), settings.timezone)}.${await linkSuffix(clientId, cmd.contact_id)}`);
-    return `Done — I've queued the call to ${cmd.contact_name} for ${formatLocal(when.toISOString(), settings.timezone)}. It'll show up in #iris-call-logs when it's placed.`;
+    return `Done — I've queued the call to ${cmd.contact_name} for ${formatLocal(when.toISOString(), settings.timezone)}. It'll show up in #iris-calltext-logs when it's placed.`;
   }
 
   await query(
