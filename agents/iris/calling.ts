@@ -129,7 +129,7 @@ function buildLeadDetails(params: PlaceCallParams, audience: "buyer" | "seller")
   // client, since no client checked so far has a real area field at all.
   if (params.propertyInterest) details.push(`looking for a ${params.propertyInterest}`);
   if (params.bedrooms) details.push(`${params.bedrooms} bedrooms`);
-  if (params.budget) details.push(`around a ${expandBudgetShorthand(params.budget)} budget`);
+  if (params.budget) details.push(`a budget of around ${expandBudgetShorthand(params.budget)}`);
   if (params.timeline) details.push(`hoping to move within ${params.timeline}`);
   if (audience === "buyer" && params.financing) details.push(`financing: ${params.financing}`);
   if (params.workingWithRealtor !== null && params.workingWithRealtor !== undefined) {
@@ -895,7 +895,10 @@ export function buildCallPayload(
         // say nothing; this removes that marker, plus the narration it used to
         // write instead ("I'll stay silent and wait for a real person to join",
         // Koren Pye's call, 2026-10-12), so a slip can't be heard by a screener.
-        chunkPlan: { formatPlan: { replacements: SPEECH_REPLACEMENTS } },
+        // numberToDigitsCutoff: Vapi's default (2025) reads any number above it digit by digit,
+        // which turned a $299,000 budget into "2 9 9 0 0 0". Prices and street numbers are said
+        // as numbers up to ten million; phone numbers (ten digits) still read digit by digit.
+        chunkPlan: { formatPlan: { numberToDigitsCutoff: 10_000_000, replacements: SPEECH_REPLACEMENTS } },
       },
       // Confirmed against Vapi's own OpenAPI schema (api.vapi.ai/api-json),
       // 2026-09-05 — both fields live directly on `assistant`, not nested

@@ -572,11 +572,73 @@ export function extractFirstName(name: string | null | undefined): string {
   return stripped.split(" ")[0] || "there";
 }
 
+const SMALL = ["zero", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten", "eleven", "twelve", "thirteen", "fourteen", "fifteen", "sixteen", "seventeen", "eighteen", "nineteen"];
+const TENS_WORDS = ["", "", "twenty", "thirty", "forty", "fifty", "sixty", "seventy", "eighty", "ninety"];
+
+function underThousandInWords(n: number): string {
+  const hundreds = Math.floor(n / 100);
+  const rest = n % 100;
+  const parts: string[] = [];
+  if (hundreds) parts.push(`${SMALL[hundreds]} hundred`);
+  if (rest) parts.push(rest < 20 ? SMALL[rest] : `${TENS_WORDS[Math.floor(rest / 10)]}${rest % 10 ? `-${SMALL[rest % 10]}` : ""}`);
+  return parts.join(" ");
+}
+
+/** A whole number in words, up to the billions: 299000 -> "two hundred ninety-nine thousand". */
+export function integerInWords(n: number): string {
+  if (n === 0) return "zero";
+  const scales: [number, string][] = [[1e9, "billion"], [1e6, "million"], [1e3, "thousand"]];
+  const parts: string[] = [];
+  let rest = Math.floor(n);
+  for (const [size, name] of scales) {
+    if (rest >= size) {
+      parts.push(`${underThousandInWords(Math.floor(rest / size))} ${name}`);
+      rest %= size;
+    }
+  }
+  if (rest) parts.push(underThousandInWords(rest));
+  return parts.join(" ");
+}
+
+/** 3.5 -> "three and a half"; 2.25 -> "two point two five"; whole numbers as integerInWords. */
+function numberInWords(value: number): string {
+  if (Number.isInteger(value)) return integerInWords(value);
+  const whole = Math.floor(value);
+  const frac = Math.round((value - whole) * 100) / 100;
+  if (frac === 0.5) return `${whole === 0 ? "" : `${integerInWords(whole)} and `}a half`;
+  const digits = String(value).split(".")[1].split("").map((d) => SMALL[Number(d)]).join(" ");
+  return `${integerInWords(whole)} point ${digits}`;
+}
+
+const UNIT_SCALE: Record<string, number> = { k: 1e3, thousand: 1e3, m: 1e6, mil: 1e6, million: 1e6 };
+
+/**
+ * A budget as words a voice reads correctly: "$299K-$600K" -> "two hundred ninety-nine
+ * thousand to six hundred thousand dollars". Handed to the model this way (and used in the
+ * agent briefing) because anything left as digits reaches the voice as digits, and Vapi reads
+ * a long number one digit at a time — Noeleen Gray's budget came out as "2 9 9 2 5 euro
+ * dollars" (2026-10-18); before that "$299K" was read as "299 dollars thousand" (Sabrina
+ * Marie, Oct 17) and "$3.5M" as "3 dollars and 50 cents m" (Sep 14). Text with no figure in
+ * it ("flexible") is returned unchanged.
+ */
 export function expandBudgetShorthand(budget: string): string {
-  return budget.replace(/\$(\d+(?:\.\d+)?)\s*([MK])\b/gi, (_match, num: string, unit: string) => {
-    const word = unit.toUpperCase() === "M" ? "million" : "thousand";
-    return `$${num} ${word}`;
-  });
+  const lead = /^\s*>/.test(budget) ? "over " : /^\s*</.test(budget) ? "under " : "";
+  const figure = /(\d[\d,]*(?:\.\d+)?)\s*(million|thousand|mil|[mk])?\b/gi;
+  const found: { value: number; unit: string | null; index: number; end: number }[] = [];
+  for (const m of budget.matchAll(figure)) {
+    found.push({ value: Number(m[1].replace(/,/g, "")), unit: m[2] ? m[2].toLowerCase() : null, index: m.index!, end: m.index! + m[0].length });
+  }
+  if (found.length === 0) return budget;
+
+  // "400- 500k": the first figure borrows the second's unit.
+  for (let i = 0; i < found.length - 1; i++) {
+    if (!found[i].unit && found[i].value < 1000 && found[i + 1].unit) found[i].unit = found[i + 1].unit;
+  }
+
+  // With a unit, say the figure then the scale word ("three and a half million"); without one, the whole number.
+  const words = found.map((f) => (f.unit ? `${numberInWords(f.value)} ${UNIT_SCALE[f.unit] === 1e6 ? "million" : "thousand"}` : numberInWords(f.value)));
+  const joined = words.join(found.length > 1 ? " to " : "");
+  return `${lead}${joined}${/dollar|cad|\$/i.test(budget) || found.some((f) => f.unit || f.value >= 1000) ? " dollars" : ""}`;
 }
 
 function verifyBudgetLines(budget: string): string[] {
@@ -1543,6 +1605,12 @@ ${transferSection}
   date, month, year, or a timezone offset (like "GMT minus 2:30") — that
   reads like a database timestamp, not a sentence. Only give the exact
   date if the lead actually asks for it.
+- WRITE every amount in WORDS in your own replies — "two hundred ninety-nine
+  thousand dollars", never "299000", "$299K" or "$299,000" — because your text is
+  read aloud by a voice that reads a long string of digits one digit at a time
+  (a budget came out as "2 9 9 2 5 euro dollars"). Every price here is in
+  Canadian dollars: say "dollars" and never "euro" or any other currency. When the
+  lead tells you a figure, repeat it back in words too.
 - Say every number the way a person actually would, never digit by digit.
   A budget of 500k is "five hundred thousand" or "half a million," not
   "5, 0, 0, k." A price of $450,000 is "four hundred fifty thousand

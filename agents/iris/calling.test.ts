@@ -150,6 +150,11 @@ describe("buildCallPayload", () => {
     expect(IDLE_NUDGE_PROMPT).toMatch(/are you still there/);
   });
 
+  it("reads numbers as numbers — Vapi's digit-by-digit cutoff is raised past any price or street number", () => {
+    const payload = buildCallPayload(BASE_PARAMS, VAPI_CONFIG);
+    expect(payload.assistant.voice.chunkPlan?.formatPlan?.numberToDigitsCutoff).toBe(10_000_000);
+  });
+
   it("carries the system prompt through as the model's only system message", () => {
     const payload = buildCallPayload(BASE_PARAMS, VAPI_CONFIG);
     expect(payload.assistant.model.messages).toEqual([{ role: "system", content: "test system prompt" }]);
@@ -736,7 +741,7 @@ describe("buildCallPayload", () => {
       expect(summary).toContain("Jason");
       expect(summary).toContain("condo");
       expect(summary).toContain("2 bedrooms");
-      expect(summary).toContain("$500 thousand");
+      expect(summary).toContain("five hundred thousand dollars");
       expect(summary).toContain("3 months");
       expect(summary).toContain("not working with a realtor");
     });
