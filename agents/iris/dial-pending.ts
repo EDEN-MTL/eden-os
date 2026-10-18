@@ -27,7 +27,7 @@ import { NormalisedLead } from "../scout/intake";
 import { loadIrisConfig, loadClientBranding } from "./index";
 import { buildLeadQualificationPrompt, extractFirstName } from "./scripts";
 import { placeCall, CallingDisabledError } from "./calling";
-import { decideNextAttempt, nextAttemptTime, nextFirstSlotTime, clampToLegalCallingWindow, nextOpenCallDay } from "./cadence";
+import { decideNextAttempt, nextAttemptTime, nextFirstSlotTime, nextSlotAfter, clampToLegalCallingWindow, nextOpenCallDay } from "./cadence";
 import { transferNumberForIntent, callbackCalendarForIntent } from "./qualification";
 import { classifyInboundText, lastInboundText } from "./text-signals";
 import { checkHumanTouch, DEFAULT_HUMAN_HANDS_OFF_DAYS } from "./human-touch";
@@ -127,7 +127,20 @@ export async function reopenForNextAttempt(
   if (decision !== "attempt") return false;
 
   const timeZone = config.timezone || CLIENT_TIMEZONE;
-  let callAfter = nextAttemptTime(config.outreachCadence, attemptsMade + 1, createdAt, timeZone);
+
+  // Day 1 is the day of the FIRST CALL, not the day the lead arrived. Cody Kennie
+  // (2026-10-18) came in at 11:47 PM Saturday, so "day 1" was Saturday — and when his
+  // first call went out Sunday at 10am, Saturday's 2pm slot and Sunday's 10am slot had
+  // both already passed, so attempts 2 and 3 fired five minutes apart, back to back.
+  const first = await query<{ first_call: Date | null }>(
+    `SELECT min(l.created_at) AS first_call
+     FROM iris_call_log l JOIN iris_pending_calls p ON p.contact_id = l.contact_id AND p.client_id = l.client_id
+     WHERE p.id = $1 AND l.created_at >= p.created_at`,
+    [id]
+  ).catch(() => [] as { first_call: Date | null }[]);
+  const sequenceStart = first[0]?.first_call ?? createdAt;
+
+  let callAfter = nextAttemptTime(config.outreachCadence, attemptsMade + 1, sequenceStart, timeZone);
   if (!callAfter) return false;
   // Same clamp as the old eager-reschedule path — a lead that comes in
   // outside the 10am-2pm window can make the next slot's theoretical time
@@ -135,8 +148,10 @@ export async function reopenForNextAttempt(
   // 2026-09-11 — this fallback used to be a bare "+5 minutes from now"
   // with no time-of-day check at all, meaning a retry due at, say, 11pm
   // could fire immediately instead of waiting for a legal hour.
-  if (callAfter.getTime() <= Date.now()) {
-    callAfter = clampToLegalCallingWindow(new Date(Date.now() + 5 * 60 * 1000), timeZone);
+  // A slot that's already behind us isn't made up in minutes — it waits for the next real
+  // slot, at least an hour out, so a lead is never called twice in quick succession.
+  if (callAfter.getTime() <= Date.now() + 60 * 60 * 1000) {
+    callAfter = clampToLegalCallingWindow(nextSlotAfter(config.outreachCadence, timeZone, new Date(Date.now() + 60 * 60 * 1000)), timeZone);
   }
 
   await query(
