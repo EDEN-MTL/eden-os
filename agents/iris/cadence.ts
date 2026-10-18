@@ -235,6 +235,27 @@ export function nextFirstSlotTime(cadence: OutreachCadenceConfig, timeZone: stri
 }
 
 /**
+ * The first cadence slot (10am / 2pm for the current 2/day config) at or after
+ * `notBefore`, in the client's timezone — today's if one is still ahead, else
+ * tomorrow's. Used when a retry's own slot has already passed: the next real slot,
+ * never "a few minutes from now" (Cody Kennie, 2026-10-18: three calls six minutes
+ * apart, each one a missed slot being made up).
+ */
+export function nextSlotAfter(cadence: OutreachCadenceConfig, timeZone: string, notBefore: Date): Date {
+  const hours = slotHours(cadence.attemptsPerDay);
+  const inZone = new Date(notBefore.toLocaleString("en-US", { timeZone }));
+  for (let dayOffset = 0; dayOffset < 3; dayOffset++) {
+    for (const hour of hours) {
+      const day = new Date(inZone);
+      day.setDate(day.getDate() + dayOffset);
+      const candidate = zonedHourToUtc(day.getFullYear(), day.getMonth(), day.getDate(), hour, timeZone);
+      if (candidate.getTime() >= notBefore.getTime()) return candidate;
+    }
+  }
+  return zonedHourToUtc(inZone.getFullYear(), inZone.getMonth(), inZone.getDate() + 3, hours[0], timeZone);
+}
+
+/**
  * Full-precision local time, e.g. "Tuesday, September 22 at 6:30 PM" — for
  * a human reading a record later (a GHL contact note, or a Slack answer to
  * "what time was the last attempt"), not something Iris speaks aloud on a
