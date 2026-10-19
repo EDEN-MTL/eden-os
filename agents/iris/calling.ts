@@ -976,14 +976,17 @@ const escapeRegex = (text: string): string => text.replace(/[.*+?^${}()|[\]\\]/g
  * never touched.
  */
 export const SPEECH_REPLACEMENTS = [
-  escapeRegex(SILENT_MARKER),
-  "\\bI(?:'|’)?(?:ll| will| am|'m|’m) (?:stay(?:ing)?|remain(?:ing)?|keep(?:ing)?) (?:silent|quiet)[^.!?]*[.!?]?",
-  "\\bI(?:'|’)?(?:ll| will|'m|’m| am) (?:wait|waiting) (?:for|until) (?:a|the) (?:real|live|actual) (?:person|human)[^.!?]*[.!?]?",
+  [escapeRegex(SILENT_MARKER), ""],
+  ["\\bI(?:'|’)?(?:ll| will| am|'m|’m) (?:stay(?:ing)?|remain(?:ing)?|keep(?:ing)?) (?:silent|quiet)[^.!?]*[.!?]?", ""],
+  ["\\bI(?:'|’)?(?:ll| will|'m|’m| am) (?:wait|waiting) (?:for|until) (?:a|the) (?:real|live|actual) (?:person|human)[^.!?]*[.!?]?", ""],
   // A turn that is nothing but "Goodbye." — what she said into a screener and a voicemail
   // greeting (2026-10-13, 2026-10-14) when she should have hung up silently. Anchored to
   // the whole chunk, so a real goodbye inside a full sentence is untouched.
-  "^\\s*(?:good ?bye|bye)[.!]?\\s*$",
-].map((regex) => ({ type: "regex" as const, regex, value: "", options: [{ type: "ignore-case" as const, enabled: true }] }));
+  ["^\\s*(?:good ?bye|bye)[.!]?\\s*$", ""],
+  // Every price here is Canadian dollars; there are no euros. A stray "euro dollars" came out of
+  // the voice on a real call (Noeleen Gray, 2026-10-18) — whatever the model wrote, say dollars.
+  ["\\beuro(?:s| dollars?)?\\b", "dollars"],
+].map(([regex, value]) => ({ type: "regex" as const, regex, value, options: [{ type: "ignore-case" as const, enabled: true }] }));
 
 /**
  * Places a real call and logs it. Throws CallingDisabledError before

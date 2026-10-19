@@ -138,6 +138,9 @@ describe("buildCallPayload", () => {
       "Hi, this is Iris with 3 percent East Coast. Am I speaking with Koren?"
     );
     expect(spoken("I'll wait for the right time to call back.")).toBe("I'll wait for the right time to call back.");
+    // Every price is Canadian dollars — a stray "euro" is spoken as "dollars" (Noeleen Gray, 2026-10-18).
+    expect(spoken("budget around 299 thousand euro dollars")).toBe("budget around 299 thousand dollars");
+    expect(spoken("about 300 euros")).toBe("about 300 dollars");
     // A turn that is only "Goodbye." (said into screeners and voicemail greetings) is dropped; a real goodbye inside a sentence is not.
     expect(spoken("Goodbye.")).toBe("");
     expect(spoken("Bye!")).toBe("");

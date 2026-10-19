@@ -142,6 +142,9 @@ describe("text-qualification ending — call handoff", () => {
    * reach out". Anyone Iris takes through the questions is qualified and gets the call.
    */
   it("queues the call even when the numeric score is low — a lead who answered everything is qualified", async () => {
+    // Pinned to midday: outside 8am–9pm the call waits for the morning and the tool says so instead.
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date("2026-10-15T15:00:00Z"));
     db.query.mockResolvedValueOnce(row());
     vi.mocked(chatWithTools)
       .mockResolvedValueOnce(toolTurn(toolUseBlock("t1", "schedule_transfer_call", { intent: "seller", area: "Hussey Drive", propertyDetails: "house with apartments", timeline: null, budget: "$450000", financing: null, when: "now" })))
@@ -154,6 +157,7 @@ describe("text-qualification ending — call handoff", () => {
     expect(toolResult).toMatch(/^Scheduled/);
     expect(toolResult).toContain("connect them with one of our agents");
     expect(toolResult).toMatch(/not a good time or they'd rather another time/);
+    vi.useRealTimers();
   });
 
   it("tells the model to ask when they're free, book a named time, and call now only for 'now'", async () => {

@@ -1614,3 +1614,35 @@ describe("service area in the prompts", () => {
     expect(prompt).not.toContain("IN AREA");
   });
 });
+
+/**
+ * The long-term guard (Mark, 2026-10-18: "fix this so it never happens again"). Whatever shape a
+ * lead's budget field comes in, what reaches Iris — and so what she says — is plain words: no
+ * digits, no $, no K/M shorthand. Every real stored budget so far is in this list, plus the
+ * messy formats a web form lets people type.
+ */
+describe("budgets always reach Iris as plain words, whatever was typed", () => {
+  const BUDGETS = [
+    "$299K-$600K", "$300K-$600K", "$500K-$700K", "400- 500k", "1 MILLION", ">$400K", "$450,000", "1000000", "299250",
+    "$1,250,000", "500-600k", "1.2 mil", "$450k+", "2M", "$2.5M", "$3.5M - $5M", "250 to 300 thousand", "$75,000", "$99K", "600K",
+    "$1.25M", "up to 800k", "around 350k", "$1,000,000 - $1,500,000", "$ 450 000", "<$200K", "$12,500",
+  ];
+
+  for (const budget of BUDGETS) {
+    it(`"${budget}" -> words only`, () => {
+      const spoken = expandBudgetShorthand(budget);
+      expect(spoken).not.toMatch(/\\d/);
+      expect(spoken).not.toContain("$");
+      expect(spoken).not.toMatch(/\\b\\d*[km]\\b/i);
+      expect(spoken).toMatch(/dollars|^(?:over|under) /);
+    });
+  }
+
+  it("every one of them also comes out clean in the full call prompt", () => {
+    for (const budget of BUDGETS) {
+      const prompt = buildLeadQualificationPrompt(IRIS_CONFIG, { ...BLANK_LEAD, intent: "buyer", budget }, "3 Percent East Coast", "St. John's", false, true, false);
+      const line = prompt.split("\\n").filter((l) => /budget/i.test(l) && /still|around|mentioned/i.test(l) && !/WRITE every amount/.test(l));
+      for (const l of line) expect(l, `budget "${budget}"`).not.toMatch(/\\$\\s?\\d|\\d{4,}/);
+    }
+  });
+});

@@ -22,6 +22,8 @@ let prompt = buildLeadQualificationPrompt(iris, lead, br.brandName, br.city, tru
 const p: any = buildCallPayload({ clientId: "3-percent-east-coast", brandName: br.brandName, city: br.city, phone: lead.phone, firstName: "Amanda", intent: "buyer", leadSource: "Facebook", systemPrompt: prompt, contactId: "zz", triggeredBy: "manual" } as any, cfg);
 const assistant = { name: "zz-chat-test", model: p.assistant.model, firstMessageMode: "assistant-waits-for-user" };
 const OPENER = "Hi, this is Iris with 3 Percent East Coast. Am I speaking with Amanda?";
+/** Digits a voice reads one by one, a $ on a figure, or a currency that isn't ours — never acceptable in anything Iris says. */
+const SPOKEN_FIGURE_PROBLEM = /\d{5,}|(?:\d ){3,}\d|\$\s?\d|\b(?:euros?|pounds|pesos)\b|[€£]/i;
 async function turn(history: { role: string; content: string }[], input: string): Promise<string> {
   const msgs = [...history, { role: "user", content: input }];
   const r = await fetch("https://api.vapi.ai/chat", { method: "POST", headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json" }, body: JSON.stringify({ assistant, input: msgs.length === 1 ? input : msgs }) });
@@ -45,12 +47,20 @@ async function main() {
   cases.push(["voicemail: leave a message", [], "Hi, you've reached Angela. Please leave a message after the tone.", (o) => !/this is iris/i.test(o) && o.split(" ‖ ").every((p) => /^\s*(\[silent\]|""|good ?bye[.!]?)?\s*$/i.test(p))]);
   cases.push(["hold music msg", [], "Your call is important to us. Please hold while we connect your call.", (o) => /\[silent\]|^\s*$/.test(o)]);
   cases.push(["person joins after Iris.", [{ role: "user", content: "If you record your name and reason for calling, I'll see if this person is available." }, { role: "assistant", content: "Iris." }, { role: "user", content: "Thanks. Please stay on the line." }, { role: "assistant", content: "[silent]" }], "Hello?", (o) => norm(o).includes(norm(OPENER))]);
+  // The lead's stored budget is "$299K-$600K": when Iris verifies it she must say it in words (Noeleen Gray, 2026-10-18: "2 9 9 2 5 euro dollars").
+  cases.push([
+    "verifying a known budget is said in words",
+    [{ role: "user", content: "Hello?" }, { role: "assistant", content: OPENER }, { role: "user", content: "Yes." }, { role: "assistant", content: "How are you doing today?" }, { role: "user", content: "Good." },
+     { role: "assistant", content: "You said you're looking to move ASAP. Is that still the plan?" }],
+    "Yeah, still the plan.",
+    (o) => /budget/i.test(o) ? /thousand|hundred|million/i.test(o) : true,
+  ]);
   const starters = ["Hello", "Hi", "Yeah?", "Hello, this is Amanda", "Hello? Who's this?", "Hello? Hello?", "Hello? Can you hear me?", "Hello? Hello? Hello? Hello? Hello?", "Hello?? Anybody there?"];
   for (const st of starters) cases.push(["real person: " + st, [], st, (o) => norm(o).includes(norm(OPENER))]);
   const only = process.env.ONLY === "opener";
   for (const [name, hist, input, ok] of cases.filter((c) => !only || c[0].startsWith("real person"))) {
     let pass = 0; const samples: string[] = [];
-    for (let i = 0; i < N; i++) { const o = await turn(hist, input); if (ok(o)) pass++; if (samples.length < 2) samples.push(o.slice(0, 130)); }
+    for (let i = 0; i < N; i++) { const o = await turn(hist, input); if (ok(o) && !SPOKEN_FIGURE_PROBLEM.test(o)) pass++; if (samples.length < 2) samples.push(o.slice(0, 130)); }
     console.log(`${pass}/${N}  ${name}   e.g. ${JSON.stringify(samples)}`);
   }
   process.exit(0);
