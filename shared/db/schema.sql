@@ -748,3 +748,21 @@ CREATE TABLE IF NOT EXISTS iris_slack_commands (
     resolved_at TIMESTAMPTZ
 );
 CREATE INDEX IF NOT EXISTS idx_iris_slack_commands_pending ON iris_slack_commands(requested_by, channel_id, status, created_at);
+
+-- Iris's no-show follow-up (agents/iris/no-show.ts): one row per time a card
+-- was seen entering a client's No-Show stage. 'baseline' = already in the
+-- column when the feature was switched on (never followed up); 'started' =
+-- Iris texted and lined up calls; 'skipped' = looked at and deliberately left
+-- alone, with the reason. stage_changed_at is GHL's own lastStageChangeAt, so a
+-- card moved out and back in later counts as a fresh no-show.
+CREATE TABLE IF NOT EXISTS iris_noshow_followups (
+    id BIGSERIAL PRIMARY KEY,
+    client_id TEXT NOT NULL,
+    opportunity_id TEXT NOT NULL,
+    contact_id TEXT NOT NULL,
+    stage_changed_at TEXT NOT NULL,
+    outcome TEXT NOT NULL,
+    reason TEXT,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    UNIQUE (client_id, opportunity_id, stage_changed_at)
+);

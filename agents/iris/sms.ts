@@ -16,7 +16,8 @@ import { linkLineFor } from "./links";
 import { query } from "../../shared/db";
 import { NormalisedLead, buildKeyToId } from "../scout/intake";
 import { loadIrisConfig, loadClientBranding } from "./index";
-import { buildSmsQualificationPrompt } from "./scripts";
+import { buildSmsQualificationPrompt, buildNoShowSmsPrompt } from "./scripts";
+import { NO_SHOW_SOURCE } from "./no-show-state";
 import { classifyInboundText, lastInboundText, recentTexts } from "./text-signals";
 import { appendNoteToContact } from "./notes";
 import { checkHumanTouch, DEFAULT_HUMAN_HANDS_OFF_DAYS } from "./human-touch";
@@ -42,8 +43,9 @@ const MAX_SMS_TOOL_TURNS = 6;
 // worth introducing an import for.
 import { CALL_LOG_CHANNEL } from "./channels";
 
-function historyKey(clientId: string, contactId: string): string {
-  return `sms:${clientId}:${contactId}`;
+function historyKey(clientId: string, contactId: string, noShowFollowupId?: string): string {
+  // A no-show follow-up is its own conversation: it must not inherit the lead's earlier qualification thread.
+  return noShowFollowupId ? `sms:${clientId}:${contactId}:no-show:${noShowFollowupId}` : `sms:${clientId}:${contactId}`;
 }
 
 interface IrisLeadRow {
@@ -285,8 +287,10 @@ async function executeSmsTool(
   ghlConfig: { locationId: string; apiKey: string },
   name: string,
   input: any,
-  timezone: string
+  timezone: string,
+  source: string | null = null
 ): Promise<string> {
+  const isNoShow = source === NO_SHOW_SOURCE;
   if (name === "schedule_transfer_call") {
     if (!config.smsCallHandoff) throw new Error("schedule_transfer_call is not enabled for this client");
     return scheduleTransferCall(clientId, contactId, config, timezone, input);
@@ -313,13 +317,15 @@ async function executeSmsTool(
   if (name === "request_human_followup") {
     const summary = typeof input?.summary === "string" && input.summary.trim() ? input.summary.trim() : "(no summary given)";
 
-    await addContactTags(contactId, ["iris sms qualified"], ghlConfig.locationId, ghlConfig.apiKey).catch((error) => {
-      console.error(`[IRS-SMS] Failed to tag contact ${contactId}:`, error instanceof Error ? error.message : error);
-    });
-    await finishIrisLead(clientId, contactId, "qualified via text — handed off for human follow-up");
+    if (!isNoShow) {
+      await addContactTags(contactId, ["iris sms qualified"], ghlConfig.locationId, ghlConfig.apiKey).catch((error) => {
+        console.error(`[IRS-SMS] Failed to tag contact ${contactId}:`, error instanceof Error ? error.message : error);
+      });
+    }
+    await finishIrisLead(clientId, contactId, isNoShow ? "no-show follow-up — handed to a teammate" : "qualified via text — handed off for human follow-up");
     await sendMessage(AGENT_ID, {
       channel: CALL_LOG_CHANNEL,
-      text: `💬 Iris qualified a lead over text and needs a human to book them:\n${summary}${await linkSuffix(clientId, contactId)}`,
+      text: `${isNoShow ? "🔁 A no-show lead replied and needs a person (Iris stopped texting)" : "💬 Iris qualified a lead over text and needs a human to book them"}:\n${summary}${await linkSuffix(clientId, contactId)}`,
     }).catch((error) => {
       console.error(`[IRS-SMS] Failed to post handoff to Slack:`, error instanceof Error ? error.message : error);
     });
@@ -328,7 +334,7 @@ async function executeSmsTool(
   }
 
   if (name === "check_availability" || name === "book_appointment") {
-    if (!config.smsCallHandoff) throw new Error(`${name} is not enabled for this client`);
+    if (!config.smsCallHandoff && !isNoShow) throw new Error(`${name} is not enabled for this client`);
     const intent: CallIntent = ["buyer", "seller", "downsize", "upgrading"].includes(input?.intent) ? input.intent : "unknown";
     const calendarId = callbackCalendarForIntent(config, intent);
     if (!calendarId) return "There's no calendar set up for this kind of lead — don't try to book. Call request_human_followup so a teammate books a time.";
@@ -341,8 +347,8 @@ async function executeSmsTool(
     const outcome = await tools.handleBookAppointment(clientId, contactId, calendarId, intent, input?.isoTime, leadNotes, undefined, undefined, "Iris (by text)");
     if (!outcome.success) return outcome.result.replace(/Do not tell the lead there's a technical issue\.?/g, "");
     // The lead is booked: stop any call Iris had lined up for them, and tell the team.
-    await finishIrisLead(clientId, contactId, "qualified and booked by text — appointment made");
-    await addContactTags(contactId, ["iris sms qualified"], ghlConfig.locationId, ghlConfig.apiKey).catch(() => {});
+    await finishIrisLead(clientId, contactId, isNoShow ? "no-show rebooked by text — appointment made" : "qualified and booked by text — appointment made");
+    if (!isNoShow) await addContactTags(contactId, ["iris sms qualified"], ghlConfig.locationId, ghlConfig.apiKey).catch(() => {});
     const when = outcome.result.match(/^Booked for (.+?)\. /)?.[1] ?? "the time you agreed";
     return `Booked for ${when} — it's a real appointment now. Send ONE short text confirming it ("You're all set for ${when} — one of our agents will give you a call then.") and stop. Never mention a different time.`;
   }
@@ -454,7 +460,8 @@ async function handleInboundSms(contactId: string, text: string, options: Inboun
 
   const timezone = (await getLocationTimezone(ghlConfig.locationId, ghlConfig.apiKey).catch(() => null)) || config.timezone || "America/St_Johns";
 
-  const key = historyKey(clientId, contactId);
+  const isNoShow = row.source === NO_SHOW_SOURCE;
+  const key = historyKey(clientId, contactId, isNoShow ? (row.lead as any)?.noShow?.followupId : undefined);
   const history = await loadHistory(AGENT_ID, key).catch((error) => {
     console.error(`[IRS-SMS] Failed to load conversation history for ${contactId}:`, error instanceof Error ? error.message : error);
     return [] as ChatMessage[];
@@ -496,10 +503,11 @@ async function handleInboundSms(contactId: string, text: string, options: Inboun
   // quick call?" — the model books it as a real appointment. Queuing an Iris callback as well would
   // put two things on the calendar for one request. The first reply to the initial outreach text
   // (history empty) keeps the old callback behavior.
-  const bookingHandlesTimes = config.smsCallHandoff === true && history.length > 0;
+  // A no-show follow-up always books the time itself, even on the first reply.
+  const bookingHandlesTimes = isNoShow || (config.smsCallHandoff === true && history.length > 0);
   if (signal.type === "schedule_for" && !bookingHandlesTimes) await recordTextCallback(clientId, contactId, signal.when, timezone);
 
-  if (signal.type === "schedule_for" && history.length === 0) {
+  if (signal.type === "schedule_for" && history.length === 0 && !isNoShow) {
     const reply = "Sounds good — Iris will give you a call then. Talk soon!";
     await pauseLikeAHuman(reply);
     await sendSMS(contactId, reply, ghlConfig.locationId, ghlConfig.apiKey).catch((error) => {
@@ -527,21 +535,34 @@ async function handleInboundSms(contactId: string, text: string, options: Inboun
   // reasoning text-signals.ts's own doc comment already gives for using an
   // LLM pass over regex here.
   const initialOutreachText =
-    history.length === 0
+    history.length === 0 && !isNoShow
       ? (await lastInboundText(contactId, ghlConfig.locationId, ghlConfig.apiKey).catch(() => null))?.precedingOutbound ?? null
       : null;
 
   const recent = await recentTextsOnceAutomationQuiet(contactId, ghlConfig, wait);
 
-  const systemPrompt = buildSmsQualificationPrompt(config, row.lead, branding.brandName, branding.city, {
-    recentTexts: recent,
-    origin: "form",
-    callHandoff: config.smsCallHandoff,
-    initialOutreachText,
-    nowLocal: new Date().toLocaleString("en-US", { timeZone: timezone, weekday: "long", year: "numeric", month: "long", day: "numeric", hour: "numeric", minute: "2-digit" }),
-    timezoneName: timezone,
-  });
-  const tools = config.smsCallHandoff ? [...SMS_TOOLS, SCHEDULE_TRANSFER_CALL_TOOL, CHECK_AVAILABILITY_SMS_TOOL, BOOK_APPOINTMENT_SMS_TOOL] : SMS_TOOLS;
+  const nowLocal = new Date().toLocaleString("en-US", { timeZone: timezone, weekday: "long", year: "numeric", month: "long", day: "numeric", hour: "numeric", minute: "2-digit" });
+  const noShowContext = isNoShow ? (row.lead as any)?.noShow : null;
+  const systemPrompt = noShowContext
+    ? buildNoShowSmsPrompt(row.lead, branding.brandName, branding.city, noShowContext, { recentTexts: recent, nowLocal, timezoneName: timezone })
+    : buildSmsQualificationPrompt(config, row.lead, branding.brandName, branding.city, {
+        recentTexts: recent,
+        origin: "form",
+        callHandoff: config.smsCallHandoff,
+        initialOutreachText,
+        nowLocal,
+        timezoneName: timezone,
+      });
+  const requestHumanFollowup: ToolDef = {
+    ...SMS_TOOLS.find((t) => t.name === "request_human_followup")!,
+    description:
+      "Ends this conversation and tells the team a real person should take over. Call it ONCE when the lead is no longer interested, already has another agent, changed their plans, or wants a person to reach out instead of booking by text.",
+  };
+  const tools = noShowContext
+    ? [requestHumanFollowup, CHECK_AVAILABILITY_SMS_TOOL, BOOK_APPOINTMENT_SMS_TOOL]
+    : config.smsCallHandoff
+      ? [...SMS_TOOLS, SCHEDULE_TRANSFER_CALL_TOOL, CHECK_AVAILABILITY_SMS_TOOL, BOOK_APPOINTMENT_SMS_TOOL]
+      : SMS_TOOLS;
 
   let working: ChatMessage[] = [...history, { role: "user", content: text }];
   let finalText = "";
@@ -564,7 +585,7 @@ async function handleInboundSms(contactId: string, text: string, options: Inboun
         const call = tu as { id: string; name: string; input: any };
         let content: string;
         try {
-          content = await executeSmsTool(clientId, contactId, config, ghlConfig, call.name, call.input, timezone);
+          content = await executeSmsTool(clientId, contactId, config, ghlConfig, call.name, call.input, timezone, row.source);
         } catch (error) {
           content = `Error: ${error instanceof Error ? error.message : String(error)}`;
         }

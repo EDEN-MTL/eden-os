@@ -622,6 +622,14 @@ export function loadIrisConfig(clientId: string): IrisConfig | null {
       humanHandsOffDays: typeof raw.iris.humanHandsOff?.days === "number" ? raw.iris.humanHandsOff.days : undefined,
       humanTextBlocksCalls: raw.iris.humanHandsOff?.blocksCalls === true,
       noCallDates: Array.isArray(raw.iris.noCallDates) ? raw.iris.noCallDates.filter((d: unknown) => typeof d === "string") : undefined,
+      noShowFollowUp:
+        raw.iris.noShowFollowUp?.enabled === true
+          ? {
+              enabled: true,
+              stageName: typeof raw.iris.noShowFollowUp.stageName === "string" && raw.iris.noShowFollowUp.stageName ? raw.iris.noShowFollowUp.stageName : "No-Show",
+              maxCalls: Number.isInteger(raw.iris.noShowFollowUp.maxCalls) && raw.iris.noShowFollowUp.maxCalls > 0 ? raw.iris.noShowFollowUp.maxCalls : 3,
+            }
+          : undefined,
       vapiCallUrlTemplate: typeof raw.iris.links?.vapiCallUrl === "string" && raw.iris.links.vapiCallUrl.includes("{callId}") ? raw.iris.links.vapiCallUrl : undefined,
       callAlerts: Array.isArray(raw.iris.callAlerts?.userIds) && raw.iris.callAlerts.userIds.length > 0 ? { userIds: raw.iris.callAlerts.userIds } : undefined,
       liveTransferSlack: raw.iris.liveTransferSlack?.channel

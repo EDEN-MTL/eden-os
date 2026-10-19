@@ -5,7 +5,8 @@ import { getGhlConfig, getContact, addContactTags, findOpenOpportunitiesForConta
 import { sendMessage, uploadFile } from "../shared/slack";
 import { appendHistory } from "../shared/conversation-memory";
 import { loadIrisConfig, loadClientBranding } from "../agents/iris";
-import { reopenForNextAttempt, reopenAfterMissedCallback, scheduleExplicitCallback, holdForTextReply, SWEEP_SOURCE } from "../agents/iris/dial-pending";
+import { reopenForNextAttempt, reopenAfterMissedCallback, scheduleExplicitCallback, holdForTextReply, reopenNoShowAfterMiss, closeNoShowFollowUp, SWEEP_SOURCE } from "../agents/iris/dial-pending";
+import { NO_SHOW_SOURCE } from "../agents/iris/no-show-state";
 import { extractFirstName, buildCallOpeningLine } from "../agents/iris/scripts";
 import { buildKeyToId, readField } from "../agents/scout/intake";
 import { appendNoteToContact } from "../agents/iris/notes";
@@ -529,7 +530,12 @@ export async function postCallReview(
       if (triggeredBy === "automatic" && !genuinelyAnswered(endedReason, message) && endedReason !== TRANSFER_SUCCEEDED_REASON) {
         retryExpected = true;
         // A lead whose whole cadence is spent legitimately has no retry left.
-        retryLinedUp = !queueRow || queueRow.status === "pending" || queueRow.attempts_made >= 8;
+        retryLinedUp =
+          !queueRow ||
+          queueRow.status === "pending" ||
+          queueRow.attempts_made >= 8 ||
+          // A no-show follow-up ends after its own (shorter) number of calls.
+          (queueRow.source === NO_SHOW_SOURCE && queueRow.attempts_made >= (loadIrisConfig(clientId)?.noShowFollowUp?.maxCalls ?? 3));
       }
     }
 
@@ -580,7 +586,7 @@ async function alertTeamAboutCall(
 
     const reachedPerson = !machineOnly && genuinelyAnswered(endedReason, message);
     // A lead someone asked Iris to call (requested callback, or lined up by hand) — not a sweep or Ember row.
-    const watched = !!queueRow?.is_explicit_callback && queueRow.source !== "sweep" && queueRow.source !== "ember";
+    const watched = !!queueRow?.is_explicit_callback && queueRow.source !== "sweep" && queueRow.source !== "ember" && queueRow.source !== NO_SHOW_SOURCE;
     if (!shouldAlertTeam({ reachedPerson, flagged: review.verdict === "attention", watched })) return;
 
     const timezone = config.timezone || "America/St_Johns";
@@ -690,6 +696,11 @@ export async function maybeReopenPendingCall(clientId: string, contactId: string
       return;
     }
 
+    if (pending.source === NO_SHOW_SOURCE) {
+      await handleUnansweredNoShowCall(clientId, contactId, pending);
+      return;
+    }
+
     if (pending.is_explicit_callback) {
       // Ember reactivations were never a time the lead picked — one shot, as before.
       if (pending.source === "ember") return;
@@ -743,6 +754,32 @@ async function handleMissedExplicitCallback(
     `Iris: callback went unanswered — trying again ${formatLocal(outcome.callAfter.toISOString(), timezone)}${outcome.phase === "quick-retry" ? " (texted the lead to ask for a better time)" : ""}.`
   ).catch((error) => {
     console.error(`[VAPI] Failed to note the missed callback retry for contact ${contactId}:`, error instanceof Error ? error.message : error);
+  });
+}
+
+/**
+ * Mark, 2026-10-20: a no-show Iris texted and then called who did not pick up. The next call goes to the
+ * next 10 AM / 2 PM slot, until the client's maxCalls are used; then the follow-up ends and the team is told
+ * in the call-log channel so a person can take over. No second text, no voicemail, and the card never moves.
+ */
+async function handleUnansweredNoShowCall(
+  clientId: string,
+  contactId: string,
+  pending: { id: number; attempts_made: number; lead: { name?: string | null } | null }
+): Promise<void> {
+  const name = pending.lead?.name ?? contactId;
+  const next = await reopenNoShowAfterMiss(pending.id, clientId, pending.attempts_made);
+  if (next) {
+    console.log(`[VAPI] No-show ${contactId} didn't answer (call ${pending.attempts_made}) — next call ${next.toISOString()}.`);
+    return;
+  }
+  await closeNoShowFollowUp(pending.id, `no-show follow-up: no answer after the text and ${pending.attempts_made} call(s)`);
+  await appendNoteToContact(clientId, contactId, `Iris: no-show follow-up ended. Texted to rebook and called ${pending.attempts_made} time(s) with no answer.`).catch(() => {});
+  await sendMessage("iris", {
+    channel: CALL_LOG_CHANNEL,
+    text: `📵 *${name}* (no-show) never answered: Iris texted and called ${pending.attempts_made} time(s). Ending the follow-up, so this one needs a person to reach out.${await linkSuffix(clientId, contactId)}`,
+  }).catch((error) => {
+    console.error("[VAPI] Failed to post the exhausted no-show follow-up to Slack:", error instanceof Error ? error.message : error);
   });
 }
 

@@ -18,7 +18,10 @@ const key = process.env.VAPI_API_KEY!;
 const cfg: any = { apiKey: key, phoneNumberId: "x", modelProvider: process.env.VAPI_MODEL_PROVIDER, modelName: process.env.VAPI_MODEL_NAME, voiceProvider: process.env.VAPI_VOICE_PROVIDER, voiceId: process.env.VAPI_VOICE_ID, serverUrl: "https://eden-os.onrender.com/webhooks/vapi", webhookSecret: "s" };
 const iris = loadIrisConfig("3-percent-east-coast")!; const br = loadClientBranding("3-percent-east-coast")!;
 const lead: any = { name: "Amanda Test", email: null, phone: "+15555550100", intent: "buyer", score: 50, budget: "$300K-$600K", timeline: "ASAP", leadSource: "Facebook", contactId: "zz", scoreReasons: [], qualified: false, firstTouch: true, attributed: false, attribution: {}, preApproved: null, financing: null, bedrooms: null, propertyInterest: null, workingWithRealtor: false, sources: {} };
-let prompt = buildLeadQualificationPrompt(iris, lead, br.brandName, br.city, true, true, true);
+// NOSHOW=1 checks the no-show follow-up call (Mark, 2026-10-20): rebooking only, no qualification, no transfer.
+const NOSHOW = process.env.NOSHOW === "1";
+const noShowCtx = { agentName: "Chantelle English", missedDay: "yesterday", missedWhen: "Monday, October 19 at 11:00 AM" };
+let prompt = buildLeadQualificationPrompt(iris, lead, br.brandName, br.city, true, !NOSHOW, true, "form", NOSHOW ? noShowCtx : undefined);
 const p: any = buildCallPayload({ clientId: "3-percent-east-coast", brandName: br.brandName, city: br.city, phone: lead.phone, firstName: "Amanda", intent: "buyer", leadSource: "Facebook", systemPrompt: prompt, contactId: "zz", triggeredBy: "manual" } as any, cfg);
 const assistant = { name: "zz-chat-test", model: p.assistant.model, firstMessageMode: "assistant-waits-for-user" };
 const OPENER = "Hi, this is Iris with 3 Percent East Coast. Am I speaking with Amanda?";
@@ -55,8 +58,19 @@ async function main() {
     "Yeah, still the plan.",
     (o) => /budget/i.test(o) ? /thousand|hundred|million/i.test(o) : true,
   ]);
-  const starters = ["Hello", "Hi", "Yeah?", "Hello, this is Amanda", "Hello? Who's this?", "Hello? Hello?", "Hello? Can you hear me?", "Hello? Hello? Hello? Hello? Hello?", "Hello?? Anybody there?"];
+  const starters = NOSHOW ? [] : ["Hello", "Hi", "Yeah?", "Hello, this is Amanda", "Hello? Who's this?", "Hello? Hello?", "Hello? Can you hear me?", "Hello? Hello? Hello? Hello? Hello?", "Hello?? Anybody there?"];
   for (const st of starters) cases.push(["real person: " + st, [], st, (o) => norm(o).includes(norm(OPENER))]);
+  // After "How are you doing today?" is answered, Iris gives the reason for the call.
+  const NS_HISTORY = [{ role: "user", content: "Hello?" }, { role: "assistant", content: OPENER }, { role: "user", content: "Yes." }, { role: "assistant", content: "How are you doing today?" }];
+  const QUALIFYING = /\b(buy or sell|buying or selling|budget|pre-?approved|bedrooms?|what area|timeline|looking to move)\b/i;
+  if (NOSHOW) {
+    cases.length = 0;
+    cases.push(["no-show: opener on Hello?", [], "Hello?", (o) => norm(o).includes(norm(OPENER))]);
+    cases.push(["no-show: reason mentions the missed appointment", NS_HISTORY, "Good, thanks.", (o) => /missed|appointment|didn't connect/i.test(o) && !QUALIFYING.test(o)]);
+    cases.push(["no-show: yes -> asks for a day/time, no qualifying", [...NS_HISTORY, { role: "user", content: "Good, thanks." }, { role: "assistant", content: "I'm calling because it looks like we missed each other for your appointment with Chantelle yesterday. No worries at all, it happens. I just wanted to see if we could find you another time." }], "Oh yeah sorry about that, I'd like to rebook.", (o) => /(what|which) (day|time)|when|work for you|availab/i.test(o) && !QUALIFYING.test(o)]);
+    cases.push(["no-show: not interested -> kind close, no pushing", [...NS_HISTORY, { role: "user", content: "Good, thanks." }, { role: "assistant", content: "I'm following up on your appointment with Chantelle yesterday. It looks like we didn't connect, and I'd love to get you rebooked if you're still interested." }], "No, we already found another agent.", (o) => !QUALIFYING.test(o) && !/\b(rebook|another time|book)\b.*\?/i.test(o)]);
+    cases.push(["no-show: AI question", [{ role: "user", content: "Hello?" }, { role: "assistant", content: OPENER }], "Is this an AI?", (o) => /\bAI\b/.test(o)]);
+  }
   const only = process.env.ONLY === "opener";
   for (const [name, hist, input, ok] of cases.filter((c) => !only || c[0].startsWith("real person"))) {
     let pass = 0; const samples: string[] = [];
