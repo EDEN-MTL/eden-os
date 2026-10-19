@@ -26,7 +26,21 @@ function isoDate(d: Date): string {
 export async function computeWeeklyTotals(clientId: string): Promise<WeeklyTotals> {
   const until = new Date();
   const since = new Date(until.getTime() - 7 * 24 * 60 * 60 * 1000);
-  const rows = await attributionReport(isoDate(since), isoDate(until), clientId);
+  return computeTotals(clientId, isoDate(since), isoDate(until));
+}
+
+/** The calendar month before `now` (UTC dates): what the monthly report covers. */
+export function previousMonth(now = new Date()): { since: string; until: string; nextMonthStart: string; label: string } {
+  const start = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - 1, 1));
+  const end = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 0));
+  const next = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1));
+  const label = start.toLocaleString("en-CA", { month: "long", year: "numeric", timeZone: "UTC" });
+  return { since: isoDate(start), until: isoDate(end), nextMonthStart: isoDate(next), label };
+}
+
+/** Totals over an inclusive YYYY-MM-DD range. */
+export async function computeTotals(clientId: string, since: string, until: string): Promise<WeeklyTotals> {
+  const rows = await attributionReport(since, until, clientId);
 
   const totals = rows.reduce(
     (acc, r) => {
@@ -67,11 +81,27 @@ export function formatWeeklyReport(clientName: string, t: WeeklyTotals): string 
   return [`*${clientName} — weekly ad performance (last 7 days)*`, ...statLines(t)].join("\n");
 }
 
+export interface ReportEntry {
+  clientName: string;
+  totals: WeeklyTotals;
+  /** Extra blocks under the client's stats, e.g. the lead funnel. Each = a heading + its lines. */
+  sections?: { heading: string; lines: string[] }[];
+}
+
 /**
  * One message covering every client, for the internal ops channel only.
  * Never sent to a client's own channel — see runWeeklyLensReport.
  */
-export function formatAllClientsReport(entries: { clientName: string; totals: WeeklyTotals }[]): string {
-  const sections = entries.map(({ clientName, totals }) => [`*${clientName}*`, ...statLines(totals)].join("\n"));
-  return [`*Weekly ad performance — all clients (last 7 days)*`, "", sections.join("\n\n")].join("\n");
+export function formatAllClientsReport(
+  entries: ReportEntry[],
+  title = "Weekly ad performance — all clients (last 7 days)"
+): string {
+  const sections = entries.map(({ clientName, totals, sections: extra = [] }) =>
+    [
+      `*${clientName}*`,
+      ...statLines(totals),
+      ...extra.flatMap((x) => ["", `_${x.heading}_`, ...x.lines]),
+    ].join("\n")
+  );
+  return [`*${title}*`, "", sections.join("\n\n")].join("\n");
 }

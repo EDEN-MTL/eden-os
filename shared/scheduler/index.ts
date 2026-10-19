@@ -21,7 +21,8 @@ import * as ruleEngine from "../../agents/forge/ads/engine";
 import * as ruleQueue from "../../agents/forge/ads/queue";
 import { getCampaignHealth } from "../../agents/forge/ads/health";
 import { formatHealthDigest } from "../../agents/forge/ads/health-digest";
-import { computeWeeklyTotals, formatAllClientsReport, WeeklyTotals } from "../../agents/lens/report";
+import { computeTotals, computeWeeklyTotals, formatAllClientsReport, previousMonth, ReportEntry } from "../../agents/lens/report";
+import { computeFunnel, formatFunnelLines, loadFunnelConfig } from "../../agents/lens/funnel";
 import { runDialPendingCalls } from "../../agents/iris/dial-pending";
 import { runNoShowScan } from "../../agents/iris/no-show";
 import { sendMessage } from "../slack";
@@ -94,34 +95,76 @@ export async function runLeadSync(): Promise<void> {
  * weekly message, the team does.
  */
 export async function runWeeklyLensReport(): Promise<void> {
+  await runLensReport("weekly");
+}
+
+/**
+ * Same report for the previous calendar month, on the 1st (Mark, 2026-10-20).
+ * Adds the funnel of leads added that month next to the running total.
+ */
+export async function runMonthlyLensReport(): Promise<void> {
+  await runLensReport("monthly");
+}
+
+const sinceLabel = (iso: string) =>
+  new Date(`${iso}T00:00:00Z`).toLocaleDateString("en-CA", { month: "short", day: "numeric", year: "numeric", timeZone: "UTC" });
+
+/**
+ * Lead-funnel blocks for one client, only when it has a lens.funnel config:
+ * the running total since the configured date in both reports, and, in the
+ * monthly one, the leads added in that month.
+ */
+async function funnelSections(clientId: string, month: ReturnType<typeof previousMonth> | null): Promise<ReportEntry["sections"]> {
+  const config = loadFunnelConfig(clientId);
+  if (!config) return [];
+  const sections: NonNullable<ReportEntry["sections"]> = [];
+  if (month) {
+    const m = await computeFunnel(clientId, config, month.since, month.nextMonthStart);
+    sections.push({ heading: `Lead funnel: leads added in ${month.label}`, lines: formatFunnelLines(m, config) });
+  }
+  const all = await computeFunnel(clientId, config, config.since);
+  sections.push({ heading: `Lead funnel: all leads since ${sinceLabel(config.since)}`, lines: formatFunnelLines(all, config) });
+  return sections;
+}
+
+async function runLensReport(kind: "weekly" | "monthly"): Promise<void> {
   const opsChannel = process.env.LENS_OPS_CHANNEL;
   if (!opsChannel) {
-    console.warn("[SCHEDULER] LENS_OPS_CHANNEL not set, skipping weekly Lens report");
+    console.warn(`[SCHEDULER] LENS_OPS_CHANNEL not set, skipping ${kind} Lens report`);
     return;
   }
 
+  const month = kind === "monthly" ? previousMonth() : null;
   const clientIds = await listMetaClientIds();
-  const entries: { clientName: string; totals: WeeklyTotals }[] = [];
+  const entries: ReportEntry[] = [];
   for (const clientId of clientIds) {
     try {
       const cfg = loadClientJson(clientId);
-      const totals = await computeWeeklyTotals(clientId);
-      entries.push({ clientName: cfg?.clientName || clientId, totals });
+      const totals = month ? await computeTotals(clientId, month.since, month.until) : await computeWeeklyTotals(clientId);
+      let sections: ReportEntry["sections"] = [];
+      try {
+        sections = await funnelSections(clientId, month);
+      } catch (e) {
+        // The funnel is an add-on; a failure there shouldn't drop the client's spend numbers.
+        console.error(`[SCHEDULER] Lens funnel failed for ${clientId}:`, e instanceof Error ? e.message : e);
+      }
+      entries.push({ clientName: cfg?.clientName || clientId, totals, sections });
     } catch (e) {
       console.error(`[SCHEDULER] Lens totals failed for ${clientId}:`, e instanceof Error ? e.message : e);
     }
   }
   if (!entries.length) {
-    console.log("[SCHEDULER] no client totals computed, skipping Lens report");
+    console.log(`[SCHEDULER] no client totals computed, skipping ${kind} Lens report`);
     return;
   }
 
   try {
-    const text = formatAllClientsReport(entries);
+    const title = month ? `Monthly ad performance — all clients (${month.label})` : undefined;
+    const text = formatAllClientsReport(entries, title);
     await sendMessage("lens", { channel: opsChannel, text });
-    console.log(`[SCHEDULER] Lens weekly report sent to internal ops channel (${entries.length} clients)`);
+    console.log(`[SCHEDULER] Lens ${kind} report sent to internal ops channel (${entries.length} clients)`);
   } catch (e) {
-    console.error("[SCHEDULER] Lens weekly report failed:", e instanceof Error ? e.message : e);
+    console.error(`[SCHEDULER] Lens ${kind} report failed:`, e instanceof Error ? e.message : e);
   }
 }
 
@@ -280,6 +323,8 @@ export function startScheduler(): void {
   // 08:15 health report. Clear of Ember's :40 sends and :20 scan.
   cron.schedule("50 * * * *", runLeadSync, { timezone: TIMEZONE });
   cron.schedule("0 8 * * 1", runWeeklyLensReport, { timezone: TIMEZONE });
+  // 08:00 on the 1st, covering the month just ended.
+  cron.schedule("0 8 1 * *", runMonthlyLensReport, { timezone: TIMEZONE });
   // 08:15 daily: after the 08:00 Meta sync has written fresh numbers, before
   // the team's working day. Same channel as the 08:00 Monday Lens report.
   cron.schedule("15 8 * * *", runDailyForgeHealthReport, { timezone: TIMEZONE });
@@ -302,7 +347,7 @@ export function startScheduler(): void {
   // half an hour. Cheap — two GHL reads per lead Ember has texted.
   cron.schedule("*/2 * * * *", runEmberReplyPoll, { timezone: TIMEZONE });
   console.log(
-    "[SCHEDULER] hourly Meta sync, rule evaluation (5 past), GHL lead sync (50 past), weekly Lens report (Mon 08:00), daily Forge health report (08:15), per-minute Iris dial queue, " +
+    "[SCHEDULER] hourly Meta sync, rule evaluation (5 past), GHL lead sync (50 past), weekly Lens report (Mon 08:00), monthly Lens report (1st, 08:00), daily Forge health report (08:15), per-minute Iris dial queue, " +
       "and Ember scan (20 past) / sends (10 & 40 past) / reply poll (every 2 min), enabled clients only, scheduled"
   );
 }

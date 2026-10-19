@@ -95,6 +95,22 @@
       "lookbackNote": "14 not 7: at $50/day split over 3-4 ad sets, each gets under one lead a day (23 leads in 30 days account-wide), so 7 days rarely holds enough leads to separate a bad ad from an unlucky week."
     }
   },
+  "lens": {
+    "funnel": {
+      "_comment": "Lens's lead funnel (agents/lens/funnel.ts), in the weekly and monthly reports. Mark, 2026-10-20: show how many leads converted since August 2026, buyer vs seller, one line per stage. A lead reaches a step if it carries one of the step's tags OR its card sits in one of the step's pipeline columns; columns include the later ones, because the card moves on (a card in 'Showed Up' was also booked) while tags stay. Tags and column names verified against live ad_leads 2026-10-20.",
+      "since": "2026-08-01",
+      "sides": [
+        { "name": "Buyers", "tags": ["buyer lead"] },
+        { "name": "Sellers", "tags": ["seller lead"] }
+      ],
+      "steps": [
+        { "label": "Live transferred to an agent", "tags": ["live transferred"], "stages": ["Live Transferred"] },
+        { "label": "Appointment booked", "tags": ["appt booked"], "stages": ["Appointment Set", "Showed Up", "No-Show", "Buyer Confirmed", "Seller Confirmed", "Listing Active", "Deal Closed"] },
+        { "label": "Showed up", "tags": ["showed up"], "stages": ["Showed Up", "Buyer Confirmed", "Seller Confirmed", "Listing Active", "Deal Closed"] },
+        { "label": "Signed / closed", "stages": ["Buyer Confirmed", "Seller Confirmed", "Listing Active", "Deal Closed"] }
+      ]
+    }
+  },
   "iris": {
     "inboundPhoneNumberId": "9e60ef71-73b4-4124-b59b-b7f7c829e8bc",
     "inboundPhoneNumberIdNote": "Vapi's phone-number id for +17097013598 — confirmed live via GET /phone-number/{id}, 2026-09-29. This is the SAME number Iris calls out from; GHL's own location has no separate tracked line for this client. Lets agents/iris/inbound.ts resolve which client an inbound assistant-request belongs to without hardcoding it.",
