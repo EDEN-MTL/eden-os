@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { formatAllClientsReport, formatWeeklyReport } from "./report";
+import { formatAllClientsReport, formatWeeklyReport, previousMonth } from "./report";
 
 describe("formatWeeklyReport", () => {
   it("renders n/a for cpl and roas when nothing is computable", () => {
@@ -47,5 +47,31 @@ describe("formatAllClientsReport", () => {
     expect(text).toContain("*3 Percent East Coast*");
     expect(text).toContain("Spend: $100");
     expect(text).toContain("Spend: $1,200");
+  });
+});
+
+describe("formatAllClientsReport extras", () => {
+  const zero = { spend: 0, leads: 0, won: 0, revenue: 0, pipelineValue: 0, activeCount: 0, cpl: null, roas: null };
+
+  it("takes a custom title, for the monthly report", () => {
+    expect(formatAllClientsReport([{ clientName: "Eden", totals: zero }], "Monthly ad performance — all clients (September 2026)")).toContain(
+      "*Monthly ad performance — all clients (September 2026)*"
+    );
+  });
+
+  it("puts each extra section under the client's stats with its heading", () => {
+    const text = formatAllClientsReport([
+      { clientName: "3%", totals: zero, sections: [{ heading: "Lead funnel: all leads since Aug 1, 2026", lines: ["New leads: 63 (34 buyers, 20 sellers)"] }] },
+    ]);
+    expect(text).toContain("(not yet counted in ROAS)\n\n_Lead funnel: all leads since Aug 1, 2026_\nNew leads: 63 (34 buyers, 20 sellers)");
+  });
+});
+
+describe("previousMonth", () => {
+  it("covers the whole previous calendar month, including across a year boundary", () => {
+    expect(previousMonth(new Date("2026-11-01T12:00:00Z"))).toEqual({
+      since: "2026-10-01", until: "2026-10-31", nextMonthStart: "2026-11-01", label: "October 2026",
+    });
+    expect(previousMonth(new Date("2027-01-01T12:00:00Z"))).toMatchObject({ since: "2026-12-01", until: "2026-12-31" });
   });
 });
