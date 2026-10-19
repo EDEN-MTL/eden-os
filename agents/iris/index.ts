@@ -1,5 +1,5 @@
 import { SlackIncomingMessage } from "../../shared/types";
-import { handleCommandReply, prepareCallCommand, prepareStopCommand, SettingsLoader } from "./slack-commands";
+import { handleCommandReply, listTeammateCalls, prepareCallCommand, prepareFollowUpCommand, prepareStopCommand, SettingsLoader } from "./slack-commands";
 import { upcomingCalls, recentLeads, leadOverview } from "./slack-reports";
 import { readFileSync } from "fs";
 import { join } from "path";
@@ -92,6 +92,32 @@ const IRIS_TOOLS: ToolDef[] = [
       type: "object",
       properties: { nameOrPhone: { type: "string", description: "The lead's name or phone number, exactly as given." } },
       required: ["nameOrPhone"],
+    },
+  },
+  {
+    name: "iris_teammate_calls",
+    description:
+      "Lists the calls a TEAMMATE (Jacob, an agent) made from GHL on one local day, grouped by lead, with whether they reached the lead (a completed call of at least 30 seconds) or not. Use for \"who did Jacob call today?\" / \"which leads did Jacob not reach?\". These are people's own calls, not Iris's (use iris_calls_today for hers). Read-only.",
+    input_schema: {
+      type: "object",
+      properties: {
+        person: { type: "string", description: "The teammate's name, e.g. Jacob." },
+        daysAgo: { type: "number", description: "0 = today (default), 1 = yesterday." },
+      },
+      required: ["person"],
+    },
+  },
+  {
+    name: "iris_request_followup",
+    description:
+      "PREPARES following up on the leads a teammate called and did NOT reach (\"follow up on the leads Jacob called today\"). Works out who is safe to contact and returns one summary for the whole list; it does NOT queue anything. Show the summary and ask them to reply yes; it only happens after their yes, handled outside you. Never say anyone is lined up or called yourself.",
+    input_schema: {
+      type: "object",
+      properties: {
+        person: { type: "string", description: "The teammate whose unanswered calls to follow up on." },
+        daysAgo: { type: "number", description: "0 = today (default), 1 = yesterday." },
+      },
+      required: ["person"],
     },
   },
   {
@@ -247,6 +273,12 @@ class IrisAgent extends BaseAgent {
     switch (name) {
       case "iris_request_call":
         return JSON.stringify(await prepareCallCommand(String(input?.clientId ?? DEFAULT_CLIENT_ID), input ?? {}, ctx, loadSlackCommandSettings));
+
+      case "iris_teammate_calls":
+        return JSON.stringify(await listTeammateCalls(String(input?.clientId ?? DEFAULT_CLIENT_ID), input ?? {}, ctx, loadSlackCommandSettings));
+
+      case "iris_request_followup":
+        return JSON.stringify(await prepareFollowUpCommand(String(input?.clientId ?? DEFAULT_CLIENT_ID), input ?? {}, ctx, loadSlackCommandSettings));
 
       case "iris_request_stop":
         return JSON.stringify(await prepareStopCommand(String(input?.clientId ?? DEFAULT_CLIENT_ID), input ?? {}, ctx, loadSlackCommandSettings));
@@ -499,7 +531,7 @@ to the buyer/seller ring groups, the works. If asked whether you're live,
 say yes plainly — don't hedge or undersell it.
 
 ## Calling and stopping leads when Mark or Jacob asks in Slack
-They can tell you "call Koren Pye now", "call her at 3pm", or "stop calling Matthew Power". Use iris_request_call / iris_request_stop — they only PREPARE the action and return a summary. Show that summary to them and ask them to reply "yes" to confirm or "no" to cancel. The action happens only when they reply yes (handled outside you); until then NOTHING has been done, so never say a call is placed, scheduled or stopped. If a tool says refused, ambiguous, not found or nothing to do, tell them plainly and follow its instruction. Anyone else asking gets a polite no.
+They can tell you "call Koren Pye now", "call her at 3pm", or "stop calling Matthew Power". They can also ask who a teammate called ("who did Jacob call today?" → iris_teammate_calls, which lists them and who was reached) and to follow up on the ones the teammate did not reach ("follow up on them" → iris_request_followup, one summary for the whole list). Use iris_request_call / iris_request_stop / iris_request_followup — they only PREPARE the action and return a summary. Show that summary to them and ask them to reply "yes" to confirm or "no" to cancel. The action happens only when they reply yes (handled outside you); until then NOTHING has been done, so never say a call is placed, scheduled or stopped. If a tool says refused, ambiguous, not found or nothing to do, tell them plainly and follow its instruction. Anyone else asking gets a polite no.
 
 ## Answering questions in Slack
 You have real tools — use them, never answer from memory or guesswork. Pick the one that fits:

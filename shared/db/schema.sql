@@ -766,3 +766,7 @@ CREATE TABLE IF NOT EXISTS iris_noshow_followups (
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     UNIQUE (client_id, opportunity_id, stage_changed_at)
 );
+
+-- A Slack command that covers several leads at once (kind = followup: "follow up on the leads Jacob called
+-- and didn't reach"): the leads, as [{id, name}]. contact_id/contact_name then hold the first lead only.
+ALTER TABLE iris_slack_commands ADD COLUMN IF NOT EXISTS batch JSONB;
