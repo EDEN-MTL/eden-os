@@ -93,3 +93,17 @@ image generation, voice minutes, new paid services, plan upgrades. A general
 Comments explain *why*, especially where a value looks arbitrary or wrong.
 When you correct something, record what was wrong and how it was found — most
 config values here look plausible and are load-bearing.
+
+## Iris's voice: what she says must be speakable
+
+Everything Iris writes on a call is read aloud by a voice, so figures have to be words.
+`expandBudgetShorthand` (agents/iris/scripts.ts) turns any budget into words before the model
+sees it, the prompt tells her to write amounts in words, calling.ts raises Vapi's
+digit-by-digit cutoff and replaces a stray "euro" with "dollars", and the automatic call
+review flags any call where she said a figure as digits. A new budget format that slips
+through is caught by the table in scripts.test.ts — add it there.
+
+**Before shipping any change to the call prompt or tools, run
+`npx tsx --env-file=.env scripts/check-iris-call-prompt.ts`** (runs the real prompt through
+Vapi's text chat for a few cents; every line should score N/N). Two real people were lost to
+a prompt change that was only unit-tested.

@@ -143,32 +143,44 @@ describe("liveTransferLineForIntent", () => {
  * source (this function) rather than relying on the model to correctly
  * expand shorthand it sees as raw text every time.
  */
-describe("expandBudgetShorthand", () => {
-  it("expands a plain M-suffixed amount into million", () => {
-    expect(expandBudgetShorthand("$500M")).toBe("$500 million");
+describe("expandBudgetShorthand — a budget as words a voice reads correctly", () => {
+  it("says M-suffixed amounts in millions", () => {
+    expect(expandBudgetShorthand("$500M")).toBe("five hundred million dollars");
+    expect(expandBudgetShorthand("$3.5M")).toBe("three and a half million dollars");
+    expect(expandBudgetShorthand("$500m")).toBe("five hundred million dollars");
   });
 
-  it("expands a decimal M-suffixed amount into million", () => {
-    expect(expandBudgetShorthand("$3.5M")).toBe("$3.5 million");
+  it("says K-suffixed amounts in thousands", () => {
+    expect(expandBudgetShorthand("$450k")).toBe("four hundred fifty thousand dollars");
+    expect(expandBudgetShorthand("$450K")).toBe("four hundred fifty thousand dollars");
   });
 
-  it("expands a K-suffixed amount into thousand", () => {
-    expect(expandBudgetShorthand("$450k")).toBe("$450 thousand");
+  it("says both sides of a range, joined with 'to'", () => {
+    expect(expandBudgetShorthand("$3.5M - $5M")).toBe("three and a half million to five million dollars");
+    expect(expandBudgetShorthand("$1.5M - $2.5M")).toBe("one and a half million to two and a half million dollars");
   });
 
-  it("expands both sides of a range independently", () => {
-    expect(expandBudgetShorthand("$3.5M - $5M")).toBe("$3.5 million - $5 million");
-    expect(expandBudgetShorthand("$1.5M - $2.5M")).toBe("$1.5 million - $2.5 million");
+  /**
+   * The real budgets that came out wrong on live calls: Noeleen Gray's "$299K-$600K" was read as
+   * "2 9 9 2 5 euro dollars" (2026-10-18) and Sabrina Marie's as "299 dollars thousand" (Oct 17).
+   */
+  it("turns the real stored budgets into plain words", () => {
+    expect(expandBudgetShorthand("$299K-$600K")).toBe("two hundred ninety-nine thousand to six hundred thousand dollars");
+    expect(expandBudgetShorthand("$300K-$600K")).toBe("three hundred thousand to six hundred thousand dollars");
+    expect(expandBudgetShorthand("$500K-$700K")).toBe("five hundred thousand to seven hundred thousand dollars");
+    expect(expandBudgetShorthand("400- 500k")).toBe("four hundred thousand to five hundred thousand dollars");
+    expect(expandBudgetShorthand("1 MILLION")).toBe("one million dollars");
+    expect(expandBudgetShorthand(">$400K")).toBe("over four hundred thousand dollars");
   });
 
-  it("leaves a budget with no M/K shorthand untouched", () => {
-    expect(expandBudgetShorthand("$450,000")).toBe("$450,000");
-    expect(expandBudgetShorthand("1000000")).toBe("1000000");
+  it("says plain dollar figures in words too, never as digits", () => {
+    expect(expandBudgetShorthand("$450,000")).toBe("four hundred fifty thousand dollars");
+    expect(expandBudgetShorthand("1000000")).toBe("one million dollars");
+    expect(expandBudgetShorthand("299250")).toBe("two hundred ninety-nine thousand two hundred fifty dollars");
   });
 
-  it("is case-insensitive for the M/K suffix", () => {
-    expect(expandBudgetShorthand("$500m")).toBe("$500 million");
-    expect(expandBudgetShorthand("$450K")).toBe("$450 thousand");
+  it("leaves text with no figure in it alone", () => {
+    expect(expandBudgetShorthand("flexible")).toBe("flexible");
   });
 });
 
@@ -372,7 +384,7 @@ describe("buildLeadQualificationPrompt", () => {
    */
   it("verifies budget when known, asks it fresh when not", () => {
     const known = buildLeadQualificationPrompt(IRIS_CONFIG, { ...BLANK_LEAD, intent: "buyer", budget: "$450k" }, "3 Percent East Coast", "St. John's", false, true, false);
-    expect(known).toContain("I also see you mentioned a budget around $450 thousand — does that still sound right?");
+    expect(known).toContain("I also see you mentioned a budget around four hundred fifty thousand dollars — does that still sound right?");
     expect(known).not.toContain("What's your budget range?");
 
     const unknown = buildLeadQualificationPrompt(IRIS_CONFIG, { ...BLANK_LEAD, intent: "buyer" }, "3 Percent East Coast", "St. John's", false, true, false);
@@ -387,7 +399,7 @@ describe("buildLeadQualificationPrompt", () => {
    */
   it("expands M/K budget shorthand into words before it ever reaches the model", () => {
     const prompt = buildLeadQualificationPrompt(IRIS_CONFIG, { ...BLANK_LEAD, intent: "buyer", budget: "$3.5M - $5M" }, "3 Percent East Coast", "St. John's", false, true, false);
-    expect(prompt).toContain("$3.5 million - $5 million");
+    expect(prompt).toContain("three and a half million to five million dollars");
     expect(prompt).not.toMatch(/\$3\.5M\b/);
   });
 
@@ -1243,6 +1255,18 @@ describe("buildLeadQualificationPrompt", () => {
     expect(prompt).toMatch(/Never call schedule_callback with\s+no time after you've named a span/);
   });
 
+  /**
+   * Noeleen Gray, 2026-10-18: the model wrote "299000 dollars" and "euro dollars", and the voice read the
+   * digits one by one ("2 9 9 2 5 euro dollars").
+   */
+  it("tells Iris to write every amount in words, in Canadian dollars, never digits or 'euro'", () => {
+    const prompt = buildLeadQualificationPrompt(IRIS_CONFIG, BLANK_LEAD, "3 Percent East Coast", "St. John's", false, true, false);
+    expect(prompt).toContain('WRITE every amount in WORDS in your own replies');
+    expect(prompt).toContain('never "299000"');
+    expect(prompt).toContain('Every price here is in\n  Canadian dollars');
+    expect(prompt).toContain('never "euro"');
+  });
+
   it("never loops on the screener: 'Iris.' at most twice, and a screener that never connects ends through the normal no-answer handling", () => {
     const prompt = buildLeadQualificationPrompt(IRIS_CONFIG, BLANK_LEAD, "3 Percent East Coast", "St. John's", false, true, false);
     expect(prompt).toMatch(/never more than twice in total/i);
@@ -1392,7 +1416,7 @@ describe("buildSmsQualificationPrompt", () => {
   it("states already-known facts so they're confirmed rather than re-asked cold", () => {
     const lead: NormalisedLead = { ...BLANK_LEAD, intent: "buyer", budget: "$450k", timeline: "3-6 months" };
     const prompt = buildSmsQualificationPrompt(IRIS_CONFIG, lead, "3 Percent East Coast", "St. John's");
-    expect(prompt).toMatch(/budget.*450 thousand/i);
+    expect(prompt).toMatch(/budget.*four hundred fifty thousand/i);
     expect(prompt).toMatch(/timeline.*3-6 months/i);
   });
 
@@ -1588,5 +1612,37 @@ describe("service area in the prompts", () => {
 
     expect(prompt).toContain("never assume it's outside");
     expect(prompt).not.toContain("IN AREA");
+  });
+});
+
+/**
+ * The long-term guard (Mark, 2026-10-18: "fix this so it never happens again"). Whatever shape a
+ * lead's budget field comes in, what reaches Iris — and so what she says — is plain words: no
+ * digits, no $, no K/M shorthand. Every real stored budget so far is in this list, plus the
+ * messy formats a web form lets people type.
+ */
+describe("budgets always reach Iris as plain words, whatever was typed", () => {
+  const BUDGETS = [
+    "$299K-$600K", "$300K-$600K", "$500K-$700K", "400- 500k", "1 MILLION", ">$400K", "$450,000", "1000000", "299250",
+    "$1,250,000", "500-600k", "1.2 mil", "$450k+", "2M", "$2.5M", "$3.5M - $5M", "250 to 300 thousand", "$75,000", "$99K", "600K",
+    "$1.25M", "up to 800k", "around 350k", "$1,000,000 - $1,500,000", "$ 450 000", "<$200K", "$12,500",
+  ];
+
+  for (const budget of BUDGETS) {
+    it(`"${budget}" -> words only`, () => {
+      const spoken = expandBudgetShorthand(budget);
+      expect(spoken).not.toMatch(/\\d/);
+      expect(spoken).not.toContain("$");
+      expect(spoken).not.toMatch(/\\b\\d*[km]\\b/i);
+      expect(spoken).toMatch(/dollars|^(?:over|under) /);
+    });
+  }
+
+  it("every one of them also comes out clean in the full call prompt", () => {
+    for (const budget of BUDGETS) {
+      const prompt = buildLeadQualificationPrompt(IRIS_CONFIG, { ...BLANK_LEAD, intent: "buyer", budget }, "3 Percent East Coast", "St. John's", false, true, false);
+      const line = prompt.split("\\n").filter((l) => /budget/i.test(l) && /still|around|mentioned/i.test(l) && !/WRITE every amount/.test(l));
+      for (const l of line) expect(l, `budget "${budget}"`).not.toMatch(/\\$\\s?\\d|\\d{4,}/);
+    }
   });
 });

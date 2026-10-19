@@ -72,7 +72,7 @@ export interface VapiAssistantConfig {
     provider: string;
     voiceId: string;
     /** Text rewrites applied to each chunk of model output just before it is spoken (Vapi chunkPlan.formatPlan). */
-    chunkPlan?: { formatPlan?: { replacements?: { type: "regex"; regex: string; value: string; options?: { type: "ignore-case"; enabled: boolean }[] }[] } };
+    chunkPlan?: { formatPlan?: { numberToDigitsCutoff?: number; replacements?: { type: "regex"; regex: string; value: string; options?: { type: "ignore-case"; enabled: boolean }[] }[] } };
   };
   /**
    * Confirmed against Vapi's own OpenAPI schema (api.vapi.ai/api-json),

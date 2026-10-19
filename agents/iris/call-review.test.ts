@@ -176,3 +176,26 @@ describe("shouldAlertTeam / formatCallAlert — Mark is told, he doesn't go look
     expect(flagged).toContain("⚠️ *Needs a look:*");
   });
 });
+
+describe("reviewCall — a figure said the wrong way (Noeleen Gray, 2026-10-18)", () => {
+  it("flags the exact line from the real call: digits split by the voice, and 'euro'", () => {
+    const r = reviewCall({ ...base, lines: [u("Yes."), b("Timeline of 1 to 4 months, budget around 2 9 9 2 5 euro dollars, and you're Sorry.")] });
+    expect(r.verdict).toBe("attention");
+    expect(r.flags.some((f) => /figure the wrong way/.test(f))).toBe(true);
+  });
+
+  it("flags a long run of digits, a $ on a figure, or another currency", () => {
+    for (const text of ["Budget around 299000 dollars.", "Around $299 thousand.", "Around 300 euros.", "About £250,000."]) {
+      const r = reviewCall({ ...base, lines: [u("Yes."), b(text)] });
+      expect(r.flags.some((f) => /figure the wrong way/.test(f)), text).toBe(true);
+    }
+  });
+
+  it("does not flag amounts in words, street numbers, bedrooms or times", () => {
+    const r = reviewCall({
+      ...base,
+      lines: [u("Yes."), b("Budget around two hundred ninety-nine thousand to six hundred thousand dollars, 3 bedrooms, 2.5 bathrooms, 142 Hussey Drive, Friday at 2 PM.")],
+    });
+    expect(r.flags.some((f) => /figure the wrong way/.test(f))).toBe(false);
+  });
+});

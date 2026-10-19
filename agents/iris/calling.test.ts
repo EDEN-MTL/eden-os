@@ -138,6 +138,9 @@ describe("buildCallPayload", () => {
       "Hi, this is Iris with 3 percent East Coast. Am I speaking with Koren?"
     );
     expect(spoken("I'll wait for the right time to call back.")).toBe("I'll wait for the right time to call back.");
+    // Every price is Canadian dollars — a stray "euro" is spoken as "dollars" (Noeleen Gray, 2026-10-18).
+    expect(spoken("budget around 299 thousand euro dollars")).toBe("budget around 299 thousand dollars");
+    expect(spoken("about 300 euros")).toBe("about 300 dollars");
     // A turn that is only "Goodbye." (said into screeners and voicemail greetings) is dropped; a real goodbye inside a sentence is not.
     expect(spoken("Goodbye.")).toBe("");
     expect(spoken("Bye!")).toBe("");
@@ -148,6 +151,11 @@ describe("buildCallPayload", () => {
     expect(IDLE_NUDGE_PROMPT).toContain(SILENT_MARKER);
     expect(IDLE_NUDGE_PROMPT).toMatch(/call screener, a hold message, a phone menu/);
     expect(IDLE_NUDGE_PROMPT).toMatch(/are you still there/);
+  });
+
+  it("reads numbers as numbers — Vapi's digit-by-digit cutoff is raised past any price or street number", () => {
+    const payload = buildCallPayload(BASE_PARAMS, VAPI_CONFIG);
+    expect(payload.assistant.voice.chunkPlan?.formatPlan?.numberToDigitsCutoff).toBe(10_000_000);
   });
 
   it("carries the system prompt through as the model's only system message", () => {
@@ -736,7 +744,7 @@ describe("buildCallPayload", () => {
       expect(summary).toContain("Jason");
       expect(summary).toContain("condo");
       expect(summary).toContain("2 bedrooms");
-      expect(summary).toContain("$500 thousand");
+      expect(summary).toContain("five hundred thousand dollars");
       expect(summary).toContain("3 months");
       expect(summary).toContain("not working with a realtor");
     });

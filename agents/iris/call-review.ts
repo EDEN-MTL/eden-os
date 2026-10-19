@@ -47,6 +47,8 @@ const AI_QUESTION = /\b(?:are|is|am)\b.{0,25}\b(?:ai|a\.i\.|artificial|robot|bot
 const AI_ANSWER = /\b(?:ai|a\.i\.|artificial|virtual assistant|automated)\b/i;
 const NARRATION = /(?:stay(?:ing)?|remain(?:ing)?|keep(?:ing)?) (?:silent|quiet)|wait(?:ing)? for (?:a|the) (?:real|live|actual) (?:person|human)|\[silent\]/i;
 const IRIS_ONLY = /^\s*iris[.,!]?\s*$/i;
+/** Digits a voice reads one by one, a $ on a figure, or a currency that isn't ours. */
+const SPOKEN_FIGURE_PROBLEM = /\d{5,}|(?:\d ){3,}\d|\$\s?\d|\b(?:euros?|pounds|pesos)\b|[€£]/i;
 /** After a declined transfer, a booked time or a callback is a proper ending — not a dropped lead. */
 const BOOKED_OR_CALLBACK = /you(?:'re| are) all set|(?:i(?:'ve| have)|we(?:'ve| have)) (?:booked|scheduled|noted)|booked for|scheduled (?:a|for|your)|callback (?:for|is|scheduled|booked)|call you back|a teammate will follow up/i;
 
@@ -109,7 +111,14 @@ export function reviewCall(input: CallReviewInput): CallReview {
     }
   }
 
-  // 7. A call that should be retried but isn’t.
+  // 7. An amount said as digits, or in the wrong currency. The voice reads a long number one digit
+  // at a time and Iris has said "euro" — Noeleen Gray's budget came out as "2 9 9 2 5 euro dollars"
+  // (2026-10-18). Looks for what actually reached the call: a run of five or more digits, digits
+  // already split with spaces, a dollar sign on a figure, or another currency.
+  const odd = bot.find((l) => SPOKEN_FIGURE_PROBLEM.test(l.message));
+  if (odd) flags.push(`Iris said a figure the wrong way (digits or another currency): ${quote(odd.message)}`);
+
+  // 8. A call that should be retried but isn’t.
   if (input.retryExpected && input.retryLinedUp === false) flags.push("No retry is lined up for this lead");
 
   // Notes (not failures).

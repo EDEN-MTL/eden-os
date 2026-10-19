@@ -129,7 +129,7 @@ function buildLeadDetails(params: PlaceCallParams, audience: "buyer" | "seller")
   // client, since no client checked so far has a real area field at all.
   if (params.propertyInterest) details.push(`looking for a ${params.propertyInterest}`);
   if (params.bedrooms) details.push(`${params.bedrooms} bedrooms`);
-  if (params.budget) details.push(`around a ${expandBudgetShorthand(params.budget)} budget`);
+  if (params.budget) details.push(`a budget of around ${expandBudgetShorthand(params.budget)}`);
   if (params.timeline) details.push(`hoping to move within ${params.timeline}`);
   if (audience === "buyer" && params.financing) details.push(`financing: ${params.financing}`);
   if (params.workingWithRealtor !== null && params.workingWithRealtor !== undefined) {
@@ -895,7 +895,10 @@ export function buildCallPayload(
         // say nothing; this removes that marker, plus the narration it used to
         // write instead ("I'll stay silent and wait for a real person to join",
         // Koren Pye's call, 2026-10-12), so a slip can't be heard by a screener.
-        chunkPlan: { formatPlan: { replacements: SPEECH_REPLACEMENTS } },
+        // numberToDigitsCutoff: Vapi's default (2025) reads any number above it digit by digit,
+        // which turned a $299,000 budget into "2 9 9 0 0 0". Prices and street numbers are said
+        // as numbers up to ten million; phone numbers (ten digits) still read digit by digit.
+        chunkPlan: { formatPlan: { numberToDigitsCutoff: 10_000_000, replacements: SPEECH_REPLACEMENTS } },
       },
       // Confirmed against Vapi's own OpenAPI schema (api.vapi.ai/api-json),
       // 2026-09-05 — both fields live directly on `assistant`, not nested
@@ -973,14 +976,17 @@ const escapeRegex = (text: string): string => text.replace(/[.*+?^${}()|[\]\\]/g
  * never touched.
  */
 export const SPEECH_REPLACEMENTS = [
-  escapeRegex(SILENT_MARKER),
-  "\\bI(?:'|’)?(?:ll| will| am|'m|’m) (?:stay(?:ing)?|remain(?:ing)?|keep(?:ing)?) (?:silent|quiet)[^.!?]*[.!?]?",
-  "\\bI(?:'|’)?(?:ll| will|'m|’m| am) (?:wait|waiting) (?:for|until) (?:a|the) (?:real|live|actual) (?:person|human)[^.!?]*[.!?]?",
+  [escapeRegex(SILENT_MARKER), ""],
+  ["\\bI(?:'|’)?(?:ll| will| am|'m|’m) (?:stay(?:ing)?|remain(?:ing)?|keep(?:ing)?) (?:silent|quiet)[^.!?]*[.!?]?", ""],
+  ["\\bI(?:'|’)?(?:ll| will|'m|’m| am) (?:wait|waiting) (?:for|until) (?:a|the) (?:real|live|actual) (?:person|human)[^.!?]*[.!?]?", ""],
   // A turn that is nothing but "Goodbye." — what she said into a screener and a voicemail
   // greeting (2026-10-13, 2026-10-14) when she should have hung up silently. Anchored to
   // the whole chunk, so a real goodbye inside a full sentence is untouched.
-  "^\\s*(?:good ?bye|bye)[.!]?\\s*$",
-].map((regex) => ({ type: "regex" as const, regex, value: "", options: [{ type: "ignore-case" as const, enabled: true }] }));
+  ["^\\s*(?:good ?bye|bye)[.!]?\\s*$", ""],
+  // Every price here is Canadian dollars; there are no euros. A stray "euro dollars" came out of
+  // the voice on a real call (Noeleen Gray, 2026-10-18) — whatever the model wrote, say dollars.
+  ["\\beuro(?:s| dollars?)?\\b", "dollars"],
+].map(([regex, value]) => ({ type: "regex" as const, regex, value, options: [{ type: "ignore-case" as const, enabled: true }] }));
 
 /**
  * Places a real call and logs it. Throws CallingDisabledError before
