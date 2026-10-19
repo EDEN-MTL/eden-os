@@ -32,6 +32,7 @@ import { transferNumberForIntent, callbackCalendarForIntent } from "./qualificat
 import { classifyInboundText, lastInboundText } from "./text-signals";
 import { checkHumanTouch, DEFAULT_HUMAN_HANDS_OFF_DAYS } from "./human-touch";
 import { hasActiveSmsConversation } from "./sms";
+import { NO_SHOW_SOURCE, noShowStillApplies } from "./no-show-state";
 import { getGhlConfig, getLocationTimezone, addContactTags } from "../../shared/ghl";
 
 /**
@@ -161,6 +162,30 @@ export async function reopenForNextAttempt(
     [id, callAfter]
   );
   return true;
+}
+
+/**
+ * A no-show follow-up call went unanswered. The next call is the next real slot (10 AM or 2 PM, at least
+ * an hour away), until maxCalls have been placed. attempts_made was already bumped when the call went out.
+ * Never moves the card or tags the lead. Returns the new time, or null when the calls are used up.
+ */
+export async function reopenNoShowAfterMiss(id: number, clientId: string, attemptsMade: number): Promise<Date | null> {
+  const config = loadIrisConfig(clientId);
+  if (!config?.noShowFollowUp || attemptsMade >= config.noShowFollowUp.maxCalls) return null;
+  const timeZone = config.timezone || CLIENT_TIMEZONE;
+  const callAfter = clampToLegalCallingWindow(nextSlotAfter(config.outreachCadence, timeZone, new Date(Date.now() + 60 * 60 * 1000)), timeZone);
+  await query(
+    `UPDATE iris_pending_calls
+     SET call_after = $2, status = 'pending', resolution_reason = 'no-show follow-up: not answered, trying again', resolved_at = NULL
+     WHERE id = $1`,
+    [id, callAfter]
+  );
+  return callAfter;
+}
+
+/** Ends a no-show follow-up whose calls are used up. */
+export async function closeNoShowFollowUp(id: number, reason: string): Promise<void> {
+  await query(`UPDATE iris_pending_calls SET status = 'skipped', resolution_reason = $2, resolved_at = now() WHERE id = $1`, [id, reason]);
 }
 
 /** Mark's spec, 2026-10-05: a callback the lead asked for that goes unanswered gets ONE quick retry about this long after the miss. */
@@ -324,6 +349,17 @@ async function resolveOne(row: PendingCallRow): Promise<void> {
     return;
   }
 
+  // A no-show follow-up stops the moment the lead is no longer an unhandled no-show: an agent moved
+  // the card on, or they already have a new appointment. GHL unreadable: leave it due and retry.
+  if (row.source === NO_SHOW_SOURCE && config.noShowFollowUp) {
+    const check = await noShowStillApplies(row.client_id, row.contact_id, config.noShowFollowUp.stageName, config.timezone || CLIENT_TIMEZONE);
+    if (check.applies === "unknown") return;
+    if (check.applies === false) {
+      await finish(row.id, "skipped", `no-show follow-up stopped: ${check.reason}`);
+      return;
+    }
+  }
+
   let lead: NormalisedLead;
 
   if (row.is_explicit_callback) {
@@ -344,7 +380,7 @@ async function resolveOne(row: PendingCallRow): Promise<void> {
     // go-round, and transferring them again is the entire point. (The
     // stage-based firstTouch check isn't on this path at all — explicit
     // callbacks never ran it — so this tag check is the only gate to lift.)
-    if (fresh.qualified && row.source !== "ember") {
+    if (fresh.qualified && row.source !== "ember" && row.source !== NO_SHOW_SOURCE) {
       await finish(row.id, "skipped", "already qualified since the callback was requested");
       return;
     }
@@ -360,6 +396,7 @@ async function resolveOne(row: PendingCallRow): Promise<void> {
     // working for the callback dial instead of silently losing the
     // transfer tool.
     lead = { ...fresh, intent: fresh.intent !== "unknown" ? fresh.intent : row.lead.intent };
+    if (row.source === NO_SHOW_SOURCE) (lead as any).noShow = (row.lead as any).noShow;
   } else {
     // Fails closed by design (see recheckFirstTouch's own doc comment): both
     // "definitely already touched" and "couldn't verify" stop the sequence.
@@ -499,9 +536,14 @@ async function resolveOne(row: PendingCallRow): Promise<void> {
     // 2026-10-14: asked for a call tomorrow morning ("available till around 1ish"),
     // then kept texting Iris — the pause would have held his 9 AM call until
     // 24 hours after his last text, past his window.
-    if (inbound?.dateAdded && !row.sms_scheduled && !row.is_explicit_callback) {
+    // A no-show follow-up is the exception: its calls are explicit only because Iris lined them up, and
+    // the lead texting back is exactly the conversation to wait out. "Texting" there means a reply that
+    // arrived after Iris's own first text, not an old thread.
+    const noShowTextedAt = row.source === NO_SHOW_SOURCE ? Date.parse((row.lead as any)?.noShow?.textedAt ?? "") : NaN;
+    const noShowReplied = !Number.isNaN(noShowTextedAt) && inbound?.dateAdded ? new Date(inbound.dateAdded).getTime() > noShowTextedAt : false;
+    if (inbound?.dateAdded && !row.sms_scheduled && (!row.is_explicit_callback || noShowReplied)) {
       const hoursSinceLastText = (Date.now() - new Date(inbound.dateAdded).getTime()) / (60 * 60 * 1000);
-      if (hoursSinceLastText <= SMS_ACTIVE_COLD_OFF_HOURS && (await hasActiveSmsConversation(row.client_id, row.contact_id))) {
+      if (hoursSinceLastText <= SMS_ACTIVE_COLD_OFF_HOURS && (noShowReplied || (await hasActiveSmsConversation(row.client_id, row.contact_id)))) {
         await query(
           `UPDATE iris_pending_calls
            SET call_after = $2, status = 'pending', resolution_reason = 'texting with lead — call paused', resolved_at = NULL
@@ -514,7 +556,9 @@ async function resolveOne(row: PendingCallRow): Promise<void> {
   }
 
   const attemptNumber = row.attempts_made + 1;
-  const transferNumber = transferNumberForIntent(config, lead.intent) ?? undefined;
+  const isNoShow = row.source === NO_SHOW_SOURCE && Boolean((lead as any).noShow);
+  // A no-show call rebooks; it never live-transfers.
+  const transferNumber = isNoShow ? undefined : transferNumberForIntent(config, lead.intent) ?? undefined;
   const calendarId = callbackCalendarForIntent(config, lead.intent) ?? undefined;
 
   try {
@@ -540,7 +584,8 @@ async function resolveOne(row: PendingCallRow): Promise<void> {
         Boolean(process.env.VAPI_SERVER_URL),
         Boolean(transferNumber),
         Boolean(calendarId),
-        row.source === "ember" || row.sms_scheduled ? "text" : "form"
+        row.source === "ember" || row.sms_scheduled ? "text" : "form",
+        isNoShow ? (lead as any).noShow : undefined
       ),
       transferNumber,
       calendarId,

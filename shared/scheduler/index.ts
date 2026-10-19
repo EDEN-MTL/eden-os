@@ -23,6 +23,7 @@ import { getCampaignHealth } from "../../agents/forge/ads/health";
 import { formatHealthDigest } from "../../agents/forge/ads/health-digest";
 import { computeWeeklyTotals, formatAllClientsReport, WeeklyTotals } from "../../agents/lens/report";
 import { runDialPendingCalls } from "../../agents/iris/dial-pending";
+import { runNoShowScan } from "../../agents/iris/no-show";
 import { sendMessage } from "../slack";
 import { listEmberClientIds, loadEmberConfig } from "../../agents/ember/config";
 import { runEmberScanForClient } from "../../agents/ember/scan";
@@ -286,6 +287,9 @@ export function startScheduler(): void {
   // (agents/iris/index.ts's CALL_DELAY_MINUTES), so it needs to actually
   // catch rows close to when they become due, not up to an hour late.
   cron.schedule("* * * * *", runDialPendingCalls, { timezone: TIMEZONE });
+  // Every 5 minutes: finds cards the team just moved to No-Show and starts Iris's follow-up (text now,
+  // calls later). The first scan only records what is already in the column. See agents/iris/no-show.ts.
+  cron.schedule("*/5 * * * *", runNoShowScan, { timezone: TIMEZONE });
   // 20 past, clear of the Meta sync (:00) and rule evaluation (:05) — the
   // scan paginates a whole pipeline through GHL and shouldn't compete.
   cron.schedule("20 * * * *", runEmberScan, { timezone: TIMEZONE });

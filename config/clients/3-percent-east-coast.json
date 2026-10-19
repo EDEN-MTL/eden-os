@@ -128,6 +128,12 @@
     },
     "links": { "vapiCallUrl": "https://dashboard.vapi.ai/logs?callId={callId}&datePreset=last7d" },
     "linksNote": "Mark, 2026-10-15: the address of one call on Vapi's dashboard, copied from a real link (opens the Logs page filtered to that call; click the row to open it). {callId} is replaced with the call's id. datePreset=last7d is what Vapi showed — a call older than 7 days won't appear under that filter. Needs a Vapi login, like the dashboard itself. GHL links go to the contact page.",
+    "noShowFollowUp": {
+      "enabled": true,
+      "stageName": "No-Show",
+      "maxCalls": 3,
+      "note": "Mark, 2026-10-20: when an agent drags a lead's card into the No-Show column (a booked appointment the lead did not attend), Iris texts them within minutes to rebook, then calls at the next 10 AM / 2 PM slot if they have not replied, up to maxCalls calls in all. Only cards moved there after this was switched on count: the first scan records whatever is already in the column and leaves it alone."
+    },
     "callAlerts": { "userIds": ["U07H26WUGP5"] },
     "callAlertsNote": "Mark, 2026-10-14: Iris DMs these Slack users after a call that matters — a real person reached, something the review flagged, or any call to a lead someone asked her to call (a requested callback or one lined up by hand). Not for routine voicemails. U07H26WUGP5 = Mark Christian Nuada.",
     "liveTransferSlack": {

@@ -691,6 +691,49 @@ function verifyWorkingWithRealtorLines(workingWithRealtor: boolean): string[] {
  * known answer so Iris confirms rather than re-collects it, then only lists
  * what's still actually missing as things to ask.
  */
+/**
+ * The missed appointment, as the call and text prompts need it. Built by
+ * no-show.ts from the lead's real appointment; every field is plain text.
+ */
+export interface NoShowPromptContext {
+  /** The agent they were booked with ("Chantelle English"), or null when unknown. */
+  agentName: string | null;
+  /** "yesterday", "Thursday", "October 8" — ready for a sentence. */
+  missedDay: string;
+  /** "Thursday, October 15 at 11:00 AM". */
+  missedWhen: string;
+}
+
+function noShowAgentPhrase(ctx: NoShowPromptContext): string {
+  return ctx.agentName ? ` with ${ctx.agentName.split(" ")[0]}` : "";
+}
+
+function noShowDayPhrase(ctx: NoShowPromptContext): string {
+  return ["today", "yesterday", "recently"].includes(ctx.missedDay) ? ctx.missedDay : `on ${ctx.missedDay}`;
+}
+
+/** The "why I'm calling" lines for a no-show call: warm, no blame, straight to finding another time. */
+export function noShowCallContextLines(ctx: NoShowPromptContext): string[] {
+  const agent = noShowAgentPhrase(ctx);
+  const day = noShowDayPhrase(ctx);
+  return [
+    `I'm calling because it looks like we missed each other for your appointment${agent} ${day}. No worries at all, it happens, I just wanted to see if we could find you another time.`,
+    `I'm following up on your appointment${agent} ${day}. It looks like we didn't connect, and I'd love to get you rebooked if you're still interested.`,
+    `I saw we missed you for your appointment${agent} ${day}, so I wanted to reach out and see if another time would work better for you.`,
+  ];
+}
+
+function noShowCallBlock(ctx: NoShowPromptContext): string {
+  return `## Why you're calling — a missed appointment, not a new lead
+This person booked an appointment${noShowAgentPhrase(ctx)} for ${ctx.missedWhen} and did not make it. The team marked it a no-show, and you are following up to get them rebooked. They were already qualified when they booked, so:
+- NEVER ask about buying or selling, area, bedrooms, timeline, budget or pre-approval, and never re-confirm any of it. This is not a qualification call.
+- Say it warmly and without blame: things come up. Do not ask why they missed it unless they bring it up themselves.
+- Name the day exactly as the lines above give it (${noShowDayPhrase(ctx)}). Never swap it for "this morning", "earlier today" or any other day, and never read out the time of the missed appointment.
+- Offer to find another time. If they say yes, ask what day and time suits them, then use your scheduling tools exactly as described further down. Never claim a new time is booked until the tool has confirmed it.
+- If they say they are no longer interested, already found an agent, or the plan changed: thank them kindly, do not push, and end the call. Do not say "we'll be in touch" or "we'll follow up", because we will not.
+- If they ask to speak to the agent now, say you'll pass that on and that someone from the team will reach out, then wrap up.`;
+}
+
 export function buildLeadQualificationPrompt(
   config: IrisConfig,
   lead: NormalisedLead,
@@ -699,7 +742,8 @@ export function buildLeadQualificationPrompt(
   bookingToolsAvailable: boolean,
   transferAvailable: boolean,
   calendarAvailable: boolean,
-  origin: CallOrigin = "form"
+  origin: CallOrigin = "form",
+  noShow?: NoShowPromptContext
 ): string {
   const firstName = extractFirstName(lead.name);
   const identifyLine = callIdentifyLine(firstName);
@@ -707,7 +751,7 @@ export function buildLeadQualificationPrompt(
   // Moved out of the firstMessage (see callOpeningGreeting) into the
   // opening-sequence instructions below, so the reason for the call is its
   // own turn rather than crammed into the first thing Iris says.
-  const contextLine = callOpeningContextLine(lead.intent, city, lead.leadSource, origin);
+  const contextLine = noShow ? noShowCallContextLines(noShow) : callOpeningContextLine(lead.intent, city, lead.leadSource, origin);
 
   // Verifying lines are actual sentences to speak, confirming what Scout/the
   // form already established — never a generic "confirm it" instruction.
@@ -759,7 +803,9 @@ export function buildLeadQualificationPrompt(
 
   if (lead.workingWithRealtor !== null) verifying.push(verifyWorkingWithRealtorLines(lead.workingWithRealtor));
 
-  const verifyingBlock = verifying.length
+  const verifyingBlock = noShow
+    ? noShowCallBlock(noShow)
+    : verifying.length
     ? `## Verify what's already known — these are FACTS to confirm, not a script to read. Check in on each ONE AT A TIME, in your own natural words, pausing and waiting for their answer before the next one. Never re-discover any of this cold.
 
 Each item below is a small library of DIFFERENT ways to ask the same thing — pick ONE per item, and never pick the same shape twice in this call (e.g. don't close two different questions with "does that still sound right?" back to back — that's the exact repetitive pattern Jacob flagged on a real call). Feel free to write your own phrasing entirely, as long as it asks the same underlying fact:
@@ -784,7 +830,7 @@ EVERY item in this list gets asked as a confirmation, not one or two of them —
 The moment the lead actually answers one of these — confirms it, or gives you an updated value — that fact is CLOSED for the rest of the call. Never circle back and re-confirm something you already checked, even while wrapping up a different, newly-gathered fact in the same breath. Mark's live feedback, 2026-09-11: right after the lead gave their bedroom and bathroom count (a "still need to gather" item), Iris said "just to make sure I have that right, you're looking for a townhouse with that setup?" — re-asking the property type, which had ALREADY been confirmed several turns earlier in this same call. The lead had to say "don't need to repeat that." A single recap right before presenting the transfer (once, covering everything, after every item here and every "still need to gather" item is truly done) is fine and expected — see the transfer section below — but re-verifying one already-closed fact mid-conversation, unprompted, is not.`
     : `## What you already know about this lead\nNothing yet — this is a cold first contact.`;
 
-  const stillNeededBlock = stillNeeded.length
+  const stillNeededBlock = stillNeeded.length && !noShow
     ? `\n\n## Still need to gather — ask ONE at a time, always pausing and waiting for their answer before the next one. These are what to find out, not exact lines to read — ask naturally in your own words, phrased differently call to call:\n${stillNeeded.map((q) => `- ${q}`).join("\n")}`
     : "";
 
@@ -797,7 +843,7 @@ The moment the lead actually answers one of these — confirms it, or gives you 
    * two blocks above each one lands in (verified vs. still-needed), since
    * either can be known or unknown independently.
    */
-  const propertyTypeOrderingRule = `\n\n## Ordering rule — property type, then bedrooms/bathrooms, always back to back
+  const propertyTypeOrderingRule = noShow ? "" : `\n\n## Ordering rule — property type, then bedrooms/bathrooms, always back to back
 The moment the type of home is settled (confirmed if known, answered if you had to ask), your VERY NEXT question — before timeline, budget, area, financing, or anything else — must be how many bedrooms and bathrooms they need. Never let another topic land between these two.`;
 
   // bookingToolsAvailable reflects whether this environment actually has a
@@ -1492,7 +1538,7 @@ name in your opening turn above — never introduce yourself a second time):
    Say it in your own words rather than reciting it verbatim, and don't wait
    for an explicit "yes" before continuing — flow straight into your next
    question the way a real conversation would.
-7. Move into verifying what's known, then gathering what's still needed
+7. ${noShow ? "Move straight into rescheduling — this is NOT a qualification call, so do not verify or ask about their home search (see \"Why you're calling\" above). Everything below about verifying and gathering does not apply to this call. Otherwise: " : ""}Move into verifying what's known, then gathering what's still needed
    (both below) — one at a time, always pausing and genuinely waiting for
    their answer before asking the next one. Never stack more than one question
    into a single turn, and never answer your own question. If an item below
@@ -1503,9 +1549,13 @@ name in your opening turn above — never introduce yourself a second time):
    phrasing call to call.
 
 ## Your job
-Verify what's known above, gather what's still needed, decide fit, then get
+${
+  noShow
+    ? `Get this person booked into a NEW appointment, as a short natural back-and-forth. They were already qualified when they first booked, so never re-qualify them. You have no live-transfer on this call; the outcome you want is a real booking made with your scheduling tool.`
+    : `Verify what's known above, gather what's still needed, decide fit, then get
 a qualified lead connected to the right agent — as a natural back-and-forth
-conversation, not a questionnaire being read aloud.
+conversation, not a questionnaire being read aloud.`
+}
 
 ${transferSection}
 
@@ -2010,4 +2060,50 @@ ${endingBlock}
 If they clearly ask to stop being contacted, do not try to keep qualifying them — a separate system handles opt-outs before you ever see the message, so if you're seeing this at all, treat it as a genuine reply to respond to normally.
 
 Never invent availability, pricing, or legal/financial advice — that's what "${EDGE_CASE_RESPONSES.dontKnowAnswer}" is for. Never claim to have booked an appointment or transferred a call unless a tool confirmed it; ${options.callHandoff ? "the only ways this ends are an appointment book_appointment confirmed, a call schedule_transfer_call confirmed, or the human-followup handoff" : "the human-followup handoff above is the only way this ends — texting can't book or transfer"}.`;
+}
+
+export interface NoShowSmsOptions {
+  /** The current date and time in the client's timezone, spoken. */
+  nowLocal?: string;
+  /** IANA name of that timezone. */
+  timezoneName?: string;
+  /** The last few texts in the thread, oldest first (includes our own first text). */
+  recentTexts?: { from: "lead" | "us"; text: string }[];
+}
+
+/**
+ * Iris's text conversation with a lead who missed an appointment. She texted
+ * first to offer another time; this is her side of whatever they answer. The
+ * lead was qualified when they booked, so there are no qualification
+ * questions: the only job is a new booking (check_availability, then
+ * book_appointment), or a graceful stop.
+ */
+export function buildNoShowSmsPrompt(lead: NormalisedLead, brandName: string, city: string, ctx: NoShowPromptContext, options: NoShowSmsOptions = {}): string {
+  const firstName = extractFirstName(lead.name);
+  const recentBlock =
+    options.recentTexts && options.recentTexts.length > 0
+      ? `\n## The conversation so far (oldest first)\n${options.recentTexts.map((t) => `${t.from === "lead" ? "Lead" : "Us"}: ${t.text}`).join("\n")}\nThe newest "Lead" line is what you are replying to. Read it as an answer to the "Us" line just before it. Never repeat something the lead has already answered.\n`
+      : "";
+  const intentLine = lead.intent !== "unknown" ? `This lead is a ${lead.intent}; pass intent "${lead.intent}" to the booking tools.` : `Their home plan is not on file: pass intent "buyer" unless the appointment title above says selling.`;
+
+  return `You are IRIS, texting with ${firstName !== "there" ? firstName : "a lead"} on behalf of ${brandName}, a real estate brokerage in ${city}. This is a REAL text conversation with a real person. You have no voice here; every reply is a text message.
+
+## Situation
+${firstName !== "there" ? firstName : "This lead"} booked an appointment${noShowAgentPhrase(ctx)} for ${ctx.missedWhen} and did not make it. The team moved them to No-Show, and you texted them to offer another time. They have now replied. They were already qualified when they booked, so NEVER ask about buying, selling, area, bedrooms, timeline, budget or pre-approval. Your only job is to get them booked into a new appointment, or to leave them with a kind close.
+${recentBlock}
+## How to write a text
+Keep every message SHORT: one or two sentences, like a real person texting. One question per message. Warm and casual, never a script. No blame about the missed appointment, no asterisks or other formatting.
+
+## Getting them rebooked
+Right now it is ${options.nowLocal ?? "(time unknown)"}${options.timezoneName ? ` (${options.timezoneName})` : ""}. Use it to turn any day or time the lead names into a real timestamp. ${intentLine}
+- They want another time but have not named one: ask what day and time works for them.
+- They name a day or time: call check_availability with that moment (local time, no offset, like 2026-10-21T14:00:00). If it is open, call book_appointment with the isoTime it gave, copied verbatim, then send the ONE confirmation text it tells you to. If it is not open, offer the real open times it lists (never invent one); when they pick one, call book_appointment with that option's isoTime.
+- Book only ONE appointment, and call each tool at most once for the same request.
+- Never say or imply a new appointment is booked until book_appointment has confirmed it, and never mention a time other than the one it confirmed.
+- They are no longer interested, already have another agent, sold or changed plans, or want a person to reach out instead: reply with one kind line, call request_human_followup with a one-line summary of what they said, then stop texting.
+- They ask if you are a real person or an AI: "Yes, I'm an AI assistant with ${brandName}, happy to get you booked with one of our agents."
+- You cannot choose which agent they meet. Never promise a specific agent for the new time.
+- Anything you do not know, or that needs real estate advice: "${EDGE_CASE_RESPONSES.dontKnowAnswer}"
+
+A separate system handles opt-outs (STOP) before you ever see a message. Never invent availability, pricing or advice. Never claim a booking unless the tool confirmed it.`;
 }

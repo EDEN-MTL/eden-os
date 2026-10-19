@@ -145,6 +145,11 @@ export interface IrisConfig {
   humanHandsOffDays?: number;
   /** When true, a recent teammate text also stops Iris CALLING that lead. Off by default — texting only. */
   humanTextBlocksCalls?: boolean;
+  /**
+   * Follow up on leads the team marks as no-shows (iris.noShowFollowUp): the card moved to the
+   * client's No-Show pipeline stage after a booked appointment the lead did not attend. See no-show.ts.
+   */
+  noShowFollowUp?: { enabled: boolean; stageName: string; maxCalls: number };
   /** Local dates (YYYY-MM-DD, client timezone) Iris places no calls — holidays. Due calls roll to the next open day. */
   noCallDates?: string[];
   /** Address of one call on Vapi's dashboard, with {callId} where the call's id goes. See links.ts. */
