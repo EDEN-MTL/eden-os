@@ -39,7 +39,15 @@ app.use(
     },
   })
 );
-app.use(express.urlencoded({ extended: true }));
+app.use(
+  express.urlencoded({
+    extended: true,
+    // Slack signs the exact bytes of a button press, which arrives form-encoded (webhooks/slack-events.ts).
+    verify: (req, _res, buf) => {
+      (req as express.Request & { rawBody: Buffer }).rawBody = buf;
+    },
+  })
+);
 
 // ─── Health Check ───
 app.get("/", (_req, res) => {
