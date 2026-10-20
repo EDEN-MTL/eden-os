@@ -7,6 +7,7 @@ import { appendHistory } from "../shared/conversation-memory";
 import { loadIrisConfig, loadClientBranding } from "../agents/iris";
 import { reopenForNextAttempt, reopenAfterMissedCallback, scheduleExplicitCallback, holdForTextReply, reopenNoShowAfterMiss, closeNoShowFollowUp, SWEEP_SOURCE } from "../agents/iris/dial-pending";
 import { NO_SHOW_SOURCE } from "../agents/iris/no-show-state";
+import { helloRescue } from "../agents/iris/hello-rescue";
 import { extractFirstName, buildCallOpeningLine } from "../agents/iris/scripts";
 import { buildKeyToId, readField } from "../agents/scout/intake";
 import { appendNoteToContact } from "../agents/iris/notes";
@@ -1147,6 +1148,9 @@ export function createVapiRouter(): Router {
 
     try {
       if (!message) return;
+
+      // A lead who said hello but was never transcribed gets the opener (hello-rescue.ts).
+      helloRescue.observe(message);
 
       if (message.type === "end-of-call-report") {
         await handleEndOfCallReport(message);
