@@ -25,7 +25,8 @@ import { computeTotals, computeWeeklyTotals, formatAllClientsReport, previousMon
 import { computeFunnel, formatFunnelLines, loadFunnelConfig } from "../../agents/lens/funnel";
 import { runDialPendingCalls } from "../../agents/iris/dial-pending";
 import { runNoShowScan } from "../../agents/iris/no-show";
-import { sendMessage } from "../slack";
+import { sendBlocks, sendMessage } from "../slack";
+import { canApproveFromSlack, flagBlocks, runApprovalNudges } from "../../agents/forge/ads/approval";
 import { listEmberClientIds, loadEmberConfig } from "../../agents/ember/config";
 import { runEmberScanForClient } from "../../agents/ember/scan";
 import { sendPendingForClient } from "../../agents/ember/send";
@@ -210,12 +211,16 @@ export async function runRuleEvaluation(): Promise<void> {
           console.warn("[SCHEDULER] LENS_OPS_CHANNEL not set, skipping Slack notification for queued action");
           continue;
         }
+        // With approvers named for this client the flag carries Pause / Keep running buttons; without, it is the plain flag as before.
+        const buttons = canApproveFromSlack(clientId, action.entityType);
         const text =
           `🔔 *Forge flagged something* — ${clientName}\n` +
           `${action.entityName ?? action.entityId} (${action.entityType})\n` +
           `${action.reasoning}\n` +
-          `Review in the dashboard's pending actions, or ask Forge in chat.`;
-        const { ts } = await sendMessage("forge", { channel: opsChannel, text });
+          (buttons ? "Pause it, or keep it running?" : "Review in the dashboard's pending actions, or ask Forge in chat.");
+        const { ts } = buttons
+          ? await sendBlocks("forge", opsChannel, flagBlocks(text, pendingId, action.entityType), text)
+          : await sendMessage("forge", { channel: opsChannel, text });
         if (ts) await ruleQueue.recordSlackMessage(pendingId, opsChannel, ts);
       } catch (e) {
         console.error(`[SCHEDULER] Failed to queue/notify proposed action for ${clientId}:`, e instanceof Error ? e.message : e);
@@ -332,6 +337,8 @@ export function startScheduler(): void {
   // (agents/iris/index.ts's CALL_DELAY_MINUTES), so it needs to actually
   // catch rows close to when they become due, not up to an hour late.
   cron.schedule("* * * * *", runDialPendingCalls, { timezone: TIMEZONE });
+  // Every 10 minutes: one nudge in the thread of any Forge flag still unanswered after 2 hours (agents/forge/ads/approval.ts).
+  cron.schedule("*/10 * * * *", () => runApprovalNudges().catch((e) => console.error("[SCHEDULER] Approval nudges failed:", e instanceof Error ? e.message : e)), { timezone: TIMEZONE });
   // Every 5 minutes: finds cards the team just moved to No-Show and starts Iris's follow-up (text now,
   // calls later). The first scan only records what is already in the column. See agents/iris/no-show.ts.
   cron.schedule("*/5 * * * *", runNoShowScan, { timezone: TIMEZONE });

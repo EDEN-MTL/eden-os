@@ -126,7 +126,9 @@ export class ActionExecutor {
     entityId: string,
     entityName: string | null,
     payload: Record<string, any>,
-    decidedBy: string
+    decidedBy: string,
+    /** Where the human did it, for the audit detail: the dashboard by default, or e.g. "Slack". */
+    source = "dashboard"
   ): Promise<Record<string, unknown>> {
     const actor = `human:${decidedBy}`;
     let result: ActionResult;
@@ -146,7 +148,7 @@ export class ActionExecutor {
       clientId: this.clientId, actor, actionType,
       entityType: result.entityType, entityId: result.entityId || entityId, entityName,
       autoExecuted: false, beforeState: result.before, afterState: result.after, result: "success",
-      detail: `Manual action via dashboard. request=${JSON.stringify(result.requestPayload)}`,
+      detail: `Manual action via ${source}. request=${JSON.stringify(result.requestPayload)}`,
     });
     return { status: "executed", actionType, result };
   }

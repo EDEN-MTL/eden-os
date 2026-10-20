@@ -766,3 +766,14 @@ CREATE TABLE IF NOT EXISTS iris_noshow_followups (
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     UNIQUE (client_id, opportunity_id, stage_changed_at)
 );
+
+-- When Forge nudged the approvers about a flag nobody had acted on (agents/forge/ads/approval.ts).
+-- One nudge per flag: set once, never cleared. When the column is first created, every flag already
+-- pending counts as nudged, so switching this on does not re-ping people about old flags.
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'ad_pending_actions' AND column_name = 'nudged_at') THEN
+    ALTER TABLE ad_pending_actions ADD COLUMN nudged_at TIMESTAMPTZ;
+    UPDATE ad_pending_actions SET nudged_at = now() WHERE status = 'pending';
+  END IF;
+END $$;

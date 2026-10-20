@@ -63,6 +63,8 @@
     "roundRobin": true
   },
   "forge": {
+    "approverUserIds": ["U07H26WUGP5", "U06SA9782HW"],
+    "approverUserIdsNote": "Mark, 2026-10-21: who can press 'Pause this ad set' / 'Keep running' on a Forge flag in Slack, and who Forge nudges after 2 hours with no answer (agents/forge/ads/approval.ts). U07H26WUGP5 = Mark Christian Nuada, U06SA9782HW = Jacob Murphy. A client with no list gets plain flags, no buttons.",
     "_comment": "All values CAD. Grounded in real data pulled 2026-08-24 over a 30-day window: $1,131.37 total spend, $37.71/day actual, 3,203 clicks, $0.35 blended CPC. Client's own Meta daily budget is $50 ($30 buyers / $20 sellers).",
     "currency": "CAD",
     "cplThreshold": 110,
