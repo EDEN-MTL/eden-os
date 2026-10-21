@@ -47,8 +47,43 @@ describe("hello rescue", () => {
     expect(say).toHaveBeenCalledTimes(1);
   });
 
+  it("stays quiet for a voicemail greeting whose words arrive as a conversation update (Sabrina Marie, 2026-10-21)", async () => {
+    const r = make();
+    // the real sequence: two bursts of speech, the words land 2 seconds after the first stop
+    r.observe(speech("user", "started"));
+    r.observe(speech("user", "stopped"));
+    await vi.advanceTimersByTimeAsync(900);
+    r.observe(speech("user", "started"));
+    await vi.advanceTimersByTimeAsync(2400);
+    r.observe({ type: "conversation-update", conversation: [{ role: "system", content: "x" }, { role: "user", content: "You have reached Sabrina Legg. After leaving a message," }], call: call() });
+    r.observe(speech("user", "stopped"));
+    await vi.advanceTimersByTimeAsync(RESCUE_DELAY_MS + 500);
+    expect(say).not.toHaveBeenCalled();
+  });
+
+  it("stays quiet for sustained speech with no words either: two bursts is not a lone hello", async () => {
+    const r = make();
+    r.observe(speech("user", "started"));
+    r.observe(speech("user", "stopped"));
+    r.observe(speech("user", "started"));
+    r.observe(speech("user", "stopped"));
+    await vi.advanceTimersByTimeAsync(RESCUE_DELAY_MS + 500);
+    expect(say).not.toHaveBeenCalled();
+  });
+
+  it("does not step in before the wait is over", async () => {
+    const r = make();
+    r.observe(speech("user", "started"));
+    r.observe(speech("user", "stopped"));
+    await vi.advanceTimersByTimeAsync(RESCUE_DELAY_MS - 500);
+    expect(say).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(600);
+    expect(say).toHaveBeenCalledTimes(1);
+  });
+
   it("stays quiet when a transcript arrives (a screener, a voicemail greeting or a normal hello)", async () => {
     const r = make();
+    r.observe(speech("user", "started"));
     r.observe(speech("user", "stopped"));
     r.observe(transcript("user"));
     await vi.advanceTimersByTimeAsync(RESCUE_DELAY_MS + 50);
@@ -58,6 +93,7 @@ describe("hello rescue", () => {
   it("stays quiet once Iris has spoken", async () => {
     const r = make();
     r.observe(speech("assistant", "started"));
+    r.observe(speech("user", "started"));
     r.observe(speech("user", "stopped"));
     await vi.advanceTimersByTimeAsync(RESCUE_DELAY_MS + 50);
     expect(say).not.toHaveBeenCalled();
@@ -74,6 +110,7 @@ describe("hello rescue", () => {
     const fetchCall = vi.fn(async () => ({ monitor: { controlUrl: CONTROL }, assistant: { model: { messages: [{ role: "system", content: "no first turn block" }] } } }));
     const r = make({ fetchCall });
     const bare = call({ assistant: { model: { messages: [{ role: "system", content: "no first turn block" }] } } });
+    r.observe(speech("user", "started", bare));
     r.observe(speech("user", "stopped", bare));
     await vi.advanceTimersByTimeAsync(RESCUE_DELAY_MS + 50);
     expect(say).not.toHaveBeenCalled();
@@ -82,6 +119,7 @@ describe("hello rescue", () => {
   it("looks the call up when the live message carried neither the control address nor the prompt", async () => {
     const fetchCall = vi.fn(async () => ({ monitor: { controlUrl: CONTROL }, assistant: { model: { messages: [{ role: "system", content: PROMPT }] } } }));
     const r = make({ fetchCall });
+    r.observe(speech("user", "started", { id: "abc" } as any));
     r.observe(speech("user", "stopped", { id: "abc" } as any));
     await vi.advanceTimersByTimeAsync(RESCUE_DELAY_MS + 50);
     expect(fetchCall).toHaveBeenCalledWith("abc");
@@ -90,6 +128,7 @@ describe("hello rescue", () => {
 
   it("forgets a call when it ends, and says nothing if it ended during the wait", async () => {
     const r = make();
+    r.observe(speech("user", "started"));
     r.observe(speech("user", "stopped"));
     r.observe({ type: "end-of-call-report", call: call() });
     await vi.advanceTimersByTimeAsync(RESCUE_DELAY_MS + 50);
@@ -103,6 +142,7 @@ describe("hello rescue", () => {
     });
     const err = vi.spyOn(console, "error").mockImplementation(() => {});
     const r = createHelloRescue({ say: failing });
+    r.observe(speech("user", "started"));
     r.observe(speech("user", "stopped"));
     await vi.advanceTimersByTimeAsync(RESCUE_DELAY_MS + 50);
     expect(err).toHaveBeenCalled();
