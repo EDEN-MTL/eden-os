@@ -14,6 +14,9 @@ import { readFileSync } from "fs";
 import { join } from "path";
 import { query } from "../../../shared/db";
 import { getMetaConfig, MetaClient } from "../../../shared/meta";
+import { fetchLiveState } from "./health";
+import { applyOperator, loadRules } from "./engine";
+import { computeMetrics, runningOnly } from "./metrics";
 import { ActionExecutor } from "./executor";
 import { MetaActions } from "./actions";
 import * as queue from "./queue";
@@ -81,6 +84,11 @@ export interface ApprovalDeps {
   executorFor: (clientId: string) => Promise<ActionExecutor>;
   /** Meta's effective_status for one ad entity, or null when it can't be read. */
   liveStatus: (clientId: string, entityId: string) => Promise<string | null>;
+  /**
+   * Whether the rule that raised this flag would still raise it today, judged on the ads still running
+   * (someone may have turned the costly ad off since). true when it can't tell. Optional so tests can omit it.
+   */
+  stillApplies?: (row: PendingAction) => Promise<boolean>;
   now?: () => Date;
 }
 
@@ -90,7 +98,24 @@ async function metaClientFor(clientId: string): Promise<MetaClient> {
   return new MetaClient(cfg);
 }
 
+async function ruleStillTrips(row: PendingAction): Promise<boolean> {
+  try {
+    const rule = (await loadRules(row.client_id)).find((r) => r.id === row.rule_id);
+    if (!rule || rule.scope === "ad") return true;
+    const live = await fetchLiveState(await metaClientFor(row.client_id));
+    const raw = await computeMetrics(rule.scope, rule.lookbackDays, row.client_id);
+    const adRows = await computeMetrics("ad", rule.lookbackDays, row.client_id);
+    const mine = runningOnly(raw, rule.scope, adRows, live).find((r) => r.entity_id === row.entity_id);
+    if (!mine || mine.spend < rule.minSpend) return false;
+    const value = mine[rule.metric] as number | null | undefined;
+    return value !== null && value !== undefined && applyOperator(rule.operator, value, rule.threshold);
+  } catch {
+    return true;
+  }
+}
+
 export const realDeps: ApprovalDeps = {
+  stillApplies: ruleStillTrips,
   executorFor: async (clientId) => new ActionExecutor(new MetaActions(await metaClientFor(clientId)), clientId),
   liveStatus: async (clientId, entityId) => {
     try {
@@ -195,6 +220,12 @@ export async function runApprovalNudges(
       if (live === null) continue; // can't tell: try again next run rather than nag about something already off
       if (NOT_RUNNING.has(live)) {
         await query(`UPDATE ad_pending_actions SET status = 'expired', decided_at = now(), decided_by = 'auto: already paused' WHERE id = $1 AND status = 'pending'`, [row.id]);
+        continue;
+      }
+
+      if (deps.stillApplies && !(await deps.stillApplies(row))) {
+        // The cause is gone (the costly ad was turned off): close the flag quietly instead of nagging.
+        await query(`UPDATE ad_pending_actions SET status = 'expired', decided_at = now(), decided_by = 'auto: no longer applies' WHERE id = $1 AND status = 'pending'`, [row.id]);
         continue;
       }
 

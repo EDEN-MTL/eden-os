@@ -9,6 +9,8 @@ vi.mock("../../agents/lens/report", () => ({
   formatAllClientsReport: vi.fn(),
 }));
 vi.mock("../../agents/iris/dial-pending", () => ({ runDialPendingCalls: vi.fn() }));
+const fetchLiveStateMock = vi.fn();
+vi.mock("../../agents/forge/ads/health", () => ({ fetchLiveState: (...a: unknown[]) => fetchLiveStateMock(...a), getCampaignHealth: vi.fn() }));
 
 const evaluateMock = vi.fn();
 const markTriggeredMock = vi.fn();
@@ -30,6 +32,7 @@ vi.mock("../slack", () => ({ sendMessage: (...args: unknown[]) => sendMessageMoc
 vi.mock("fs", () => ({ readFileSync: vi.fn(() => JSON.stringify({ clientName: "Eden" })) }));
 
 import { runRuleEvaluation } from "./index";
+import { getMetaConfig } from "../meta";
 
 const proposedAction = {
   rule: { id: "auto-cpl-high", name: "CPL above config threshold" } as any,
@@ -52,6 +55,31 @@ afterEach(() => {
   delete process.env.LENS_OPS_CHANNEL;
 });
 
+describe("runRuleEvaluation: reading what is running on Meta", () => {
+  it("passes Meta's live ad status to the engine, so a flag stops once the ad is turned off", async () => {
+    const live = new Map([["ad-1", { effectiveStatus: "PAUSED" }]]);
+    queryMock.mockResolvedValueOnce([{ client_id: "eden" }]);
+    vi.mocked(getMetaConfig).mockResolvedValueOnce({ accessToken: "t" } as any);
+    fetchLiveStateMock.mockResolvedValueOnce(live);
+    evaluateMock.mockResolvedValueOnce([]);
+
+    await runRuleEvaluation();
+
+    expect(evaluateMock).toHaveBeenCalledWith("eden", live);
+  });
+
+  it("still evaluates, on snapshots alone, when Meta can't be read", async () => {
+    queryMock.mockResolvedValueOnce([{ client_id: "eden" }]);
+    vi.mocked(getMetaConfig).mockResolvedValueOnce({ accessToken: "t" } as any);
+    fetchLiveStateMock.mockRejectedValueOnce(new Error("Meta down"));
+    evaluateMock.mockResolvedValueOnce([]);
+
+    await runRuleEvaluation();
+
+    expect(evaluateMock).toHaveBeenCalledWith("eden", null);
+  });
+});
+
 describe("runRuleEvaluation", () => {
   it("does nothing when a client has no proposed actions", async () => {
     queryMock.mockResolvedValueOnce([{ client_id: "eden" }]);
@@ -71,7 +99,7 @@ describe("runRuleEvaluation", () => {
 
     await runRuleEvaluation();
 
-    expect(evaluateMock).toHaveBeenCalledWith("eden");
+    expect(evaluateMock).toHaveBeenCalledWith("eden", null);
     expect(enqueueMock).toHaveBeenCalledWith(proposedAction, "eden");
     expect(markTriggeredMock).toHaveBeenCalledWith(proposedAction.rule, "adset_1");
 

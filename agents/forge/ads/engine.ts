@@ -9,7 +9,7 @@
  * gate meaningful rather than cosmetic.
  */
 import { query } from "../../../shared/db";
-import { computeMetrics } from "./metrics";
+import { computeMetrics, LiveStatusLookup, runningOnly } from "./metrics";
 import { readEmergencyHoldAll } from "./settings";
 import { EntityMetrics, ProposedAction, Rule, RuleOperator, validateRule } from "./types";
 
@@ -136,14 +136,26 @@ export async function markTriggered(rule: Rule, entityId: string): Promise<void>
  * that throws while evaluating is logged and skipped — one bad rule
  * shouldn't take down the whole evaluation run.
  */
-export async function evaluate(clientId = "eden"): Promise<ProposedAction[]> {
+export async function evaluate(
+  clientId = "eden",
+  /**
+   * Meta's live state, read by the caller (this module never touches Meta). When given, an ad set or
+   * campaign is judged on the ads still running, and anything already paused is skipped, so a flag
+   * does not keep coming back after someone has turned the ad off. Without it, as before: snapshots only.
+   */
+  live: LiveStatusLookup | null = null
+): Promise<ProposedAction[]> {
   const emergencyHoldAll = await readEmergencyHoldAll(clientId);
   const rules = await loadRules(clientId);
   const proposed: ProposedAction[] = [];
 
   for (const rule of rules.filter((r) => r.enabled)) {
     try {
-      const rows = await computeMetrics(rule.scope, rule.lookbackDays, clientId);
+      let rows = await computeMetrics(rule.scope, rule.lookbackDays, clientId);
+      if (live) {
+        const adRows = rule.scope === "ad" ? rows : await computeMetrics("ad", rule.lookbackDays, clientId);
+        rows = runningOnly(rows, rule.scope, adRows, live);
+      }
       const cooldownFlags = new Map<string, boolean>();
       for (const row of rows) {
         cooldownFlags.set(row.entity_id, await isInCooldownDb(rule, row.entity_id));
