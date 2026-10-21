@@ -102,6 +102,36 @@ export function parseProspectName(title: string): string {
   return title;
 }
 
+// Page-load speed, added 2026-10-22 per Jacob ("loads so slow"): measured at
+// ~20s, of which only ~4s was the fixed GHL calls (calendars + the opportunity
+// list) — the rest was one-at-a-time per-contact lookups at ~2s each. Two
+// fixes: those lookups now run with bounded parallelism, and a contact's
+// conversation history is remembered for 10 minutes. History is the safe
+// thing to cache: it only feeds recovery fallbacks (a past transfer, or who
+// took the call), a lead that was JUST transferred is caught live by its tag
+// and stage instead, and the cache never holds a failed fetch. Tags, stages,
+// assignments and checkbox state are all still read fresh on every load.
+const HISTORY_CACHE_TTL_MS = 10 * 60 * 1000;
+const LOOKUP_CONCURRENCY = 6;
+const historyCache = new Map<string, { at: number; messages: any[] }>();
+
+export function clearCheckinCaches(): void {
+  historyCache.clear();
+}
+
+async function mapWithConcurrency<T, R>(items: T[], limit: number, fn: (item: T) => Promise<R>): Promise<R[]> {
+  const results = new Array<R>(items.length);
+  let next = 0;
+  async function worker(): Promise<void> {
+    while (next < items.length) {
+      const index = next++;
+      results[index] = await fn(items[index]);
+    }
+  }
+  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker));
+  return results;
+}
+
 /**
  * Recovers a live-transfer signal from a contact's raw conversation
  * activity log — added 2026-09-25 per Jacob: some real transferred/booked
@@ -130,12 +160,19 @@ async function findHistoricalLiveTransferSignal(
   targetStageName: string | null
 ): Promise<{ transferredAt: string | null; callUserIds: string[] }> {
   try {
-    const conversations = await getConversations(contactId, locationId, apiKey);
-    const conversationId = conversations?.conversations?.[0]?.id;
-    if (!conversationId) return { transferredAt: null, callUserIds: [] };
+    const cached = historyCache.get(contactId);
+    let messages: any[];
+    if (cached && Date.now() - cached.at < HISTORY_CACHE_TTL_MS) {
+      messages = cached.messages;
+    } else {
+      const conversations = await getConversations(contactId, locationId, apiKey);
+      const conversationId = conversations?.conversations?.[0]?.id;
+      if (!conversationId) return { transferredAt: null, callUserIds: [] };
 
-    const payload = await getConversationMessages(conversationId, locationId, apiKey);
-    const messages: any[] = payload?.messages?.messages || [];
+      const payload = await getConversationMessages(conversationId, locationId, apiKey);
+      messages = payload?.messages?.messages || [];
+      historyCache.set(contactId, { at: Date.now(), messages });
+    }
 
     // Messages come back newest-first (see getConversationMessages), so the
     // LAST matching stage-change activity found in this loop is the
@@ -287,16 +324,26 @@ export async function getCheckinData(token: string): Promise<CheckinData | null>
     }
 
     if (liveTransferStageName) {
-      for (const opp of reviewCandidates) {
-        if (!opp.contactId) continue;
-        const { transferredAt, callUserIds } = await findHistoricalLiveTransferSignal(
-          opp.contactId,
-          ghlConfig.locationId,
-          ghlConfig.apiKey,
-          liveTransferStageName
-        );
-        if (transferredAt) {
-          rawLiveTransfers.push({ ...opp, __historicalTransferAt: transferredAt, __recoveredCallUserIds: callUserIds });
+      const signals = await mapWithConcurrency(
+        reviewCandidates.filter((opp) => opp.contactId),
+        LOOKUP_CONCURRENCY,
+        async (opp) => ({
+          opp,
+          signal: await findHistoricalLiveTransferSignal(
+            opp.contactId,
+            ghlConfig.locationId,
+            ghlConfig.apiKey,
+            liveTransferStageName
+          ),
+        })
+      );
+      for (const { opp, signal } of signals) {
+        if (signal.transferredAt) {
+          rawLiveTransfers.push({
+            ...opp,
+            __historicalTransferAt: signal.transferredAt,
+            __recoveredCallUserIds: signal.callUserIds,
+          });
         }
       }
     }
@@ -402,7 +449,7 @@ export async function getCheckinData(token: string): Promise<CheckinData | null>
   // per-contact conversation fetch bounded, and skips anything a manual
   // override or checkinOverrides.hidden already settled.
   const stillUnresolved = items.filter((item) => item.assignedId === null && item.contactId);
-  for (const item of stillUnresolved) {
+  await mapWithConcurrency(stillUnresolved, LOOKUP_CONCURRENCY, async (item) => {
     const { callUserIds } = await findHistoricalLiveTransferSignal(
       item.contactId!,
       ghlConfig.locationId,
@@ -411,7 +458,7 @@ export async function getCheckinData(token: string): Promise<CheckinData | null>
     );
     const recovered = callUserIds.find((candidate) => memberIds.has(candidate));
     if (recovered) item.assignedId = recovered;
-  }
+  });
 
   // Anything within the "recent" 60-day window always shows, same as
   // before. Anything older (only discoverable at all because calendar
@@ -430,7 +477,7 @@ export async function getCheckinData(token: string): Promise<CheckinData | null>
     )
   );
   const openStaleContactIds = new Set<string>();
-  for (const contactId of staleContactIds) {
+  await mapWithConcurrency(staleContactIds, LOOKUP_CONCURRENCY, async (contactId) => {
     try {
       const openOpportunities = await findOpenOpportunitiesForContact(contactId, ghlConfig.locationId, ghlConfig.apiKey);
       if (openOpportunities.length > 0) openStaleContactIds.add(contactId);
@@ -438,7 +485,7 @@ export async function getCheckinData(token: string): Promise<CheckinData | null>
       console.error(`[CHECKIN] Failed to check open-opportunity status for stale contact ${contactId} — keeping it:`, error);
       openStaleContactIds.add(contactId);
     }
-  }
+  });
   items = items.filter((item) => {
     if (item.isLiveTransfer) return true; // already guaranteed open at the fetch stage
     const isRecent = new Date(item.appointmentAt).getTime() >= start;
