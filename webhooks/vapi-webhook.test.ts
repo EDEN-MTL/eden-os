@@ -277,6 +277,78 @@ describe("moveToFollowUpStage", () => {
 });
 
 /**
+ * Mark, 2026-10-21: "double check the recent conversation; if the lead is being talked to by Jacob or other
+ * agents, leave that lead and not touch it or move it." Sabrina Marie: Jacob phoned and texted her on Oct 20;
+ * Iris called her and moved her card to Day 2 on Oct 21.
+ */
+describe("leaving a lead a teammate is talking to", () => {
+  const followUpStageIds = ["stage-day1-am", "stage-day1-pm", "stage-day2-am"];
+  const RULE_ON = { followUpStageIds, humanTextBlocksCalls: true, humanHandsOffDays: 7 };
+
+  beforeEach(() => {
+    iris.loadIrisConfig.mockReturnValue(RULE_ON);
+    ghl.getGhlConfig.mockResolvedValue({ locationId: "loc-1", apiKey: "key-1" });
+    ghl.findOpenOpportunitiesForContact.mockResolvedValue([{ id: "opp-1", pipelineStageId: "stage-intake" }]);
+    humanTouch.checkHumanTouch.mockResolvedValue({ status: "none" } as any);
+  });
+
+  it("does not move the card when a teammate texted or called the lead recently", async () => {
+    humanTouch.checkHumanTouch.mockResolvedValue({ status: "human", kind: "call", at: "2026-10-20T18:49:45.000Z", userId: "u" } as any);
+    await moveToFollowUpStage("3-percent-east-coast", "contact-1", 3);
+    expect(ghl.updateOpportunityStage).not.toHaveBeenCalled();
+  });
+
+  it("does not move the card when the thread cannot be read (fails closed)", async () => {
+    humanTouch.checkHumanTouch.mockResolvedValue({ status: "unknown" } as any);
+    await moveToFollowUpStage("3-percent-east-coast", "contact-1", 3);
+    expect(ghl.updateOpportunityStage).not.toHaveBeenCalled();
+  });
+
+  it("does not pull a card out of a column a person works (Live Transferred, Appointment Set, ...)", async () => {
+    // 3% Realty's real Live Transferred stage id, from config/clients/3-percent-east-coast.json
+    ghl.findOpenOpportunitiesForContact.mockResolvedValue([{ id: "opp-1", pipelineStageId: "d4cb572b-5fa5-48e5-bced-46c88715e2da" }]);
+    await moveToFollowUpStage("3-percent-east-coast", "contact-1", 3);
+    expect(ghl.updateOpportunityStage).not.toHaveBeenCalled();
+  });
+
+  it("still moves the card when nobody is talking to the lead", async () => {
+    await moveToFollowUpStage("3-percent-east-coast", "contact-1", 3);
+    expect(ghl.updateOpportunityStage).toHaveBeenCalledWith("opp-1", "stage-day2-am", "loc-1", "key-1");
+  });
+
+  it("does not tag the lead 'iris no answer' while a teammate is on them", async () => {
+    humanTouch.checkHumanTouch.mockResolvedValue({ status: "human", kind: "text", at: "x", userId: "u" } as any);
+    await tagSequenceExhausted("3-percent-east-coast", "contact-1");
+    expect(ghl.addContactTags).not.toHaveBeenCalled();
+  });
+
+  it("stops retrying a missed call to a lead a teammate is on, and closes the row without moving or tagging it", async () => {
+    db.query.mockResolvedValue([{ id: 5, attempts_made: 3, created_at: new Date(), status: "placed", is_explicit_callback: true, source: null, callback_misses: 1, human_requested: false, lead: { name: "Sabrina Marie" } }]);
+    humanTouch.checkHumanTouch.mockResolvedValue({ status: "human", kind: "text", at: "x", userId: "u" } as any);
+    await maybeReopenPendingCall("3-percent-east-coast", "contact-1");
+    expect(dialPending.reopenAfterMissedCallback).not.toHaveBeenCalled();
+    expect(dialPending.reopenForNextAttempt).not.toHaveBeenCalled();
+    expect(ghl.updateOpportunityStage).not.toHaveBeenCalled();
+    expect(db.query.mock.calls.some((c) => String(c[0]).includes("SET status = 'skipped'"))).toBe(true);
+  });
+
+  it("keeps retrying when a teammate asked for the call in Slack", async () => {
+    db.query.mockResolvedValue([{ id: 5, attempts_made: 1, created_at: new Date(), status: "placed", is_explicit_callback: true, source: null, callback_misses: 0, human_requested: true, lead: { name: "Koren Pye" } }]);
+    humanTouch.checkHumanTouch.mockResolvedValue({ status: "human", kind: "text", at: "x", userId: "u" } as any);
+    dialPending.reopenAfterMissedCallback.mockResolvedValue({ reopened: true, callAfter: new Date(), misses: 1, phase: "quick-retry" });
+    await maybeReopenPendingCall("3-percent-east-coast", "contact-1");
+    expect(dialPending.reopenAfterMissedCallback).toHaveBeenCalled();
+  });
+
+  it("does nothing different for a client that hasn't turned the rule on", async () => {
+    iris.loadIrisConfig.mockReturnValue({ followUpStageIds });
+    humanTouch.checkHumanTouch.mockResolvedValue({ status: "human", kind: "text", at: "x", userId: "u" } as any);
+    await moveToFollowUpStage("eden-sub-account-one", "contact-1", 1);
+    expect(ghl.updateOpportunityStage).toHaveBeenCalled();
+  });
+});
+
+/**
  * Real gap found live 2026-09-20: nothing surfaced Iris's calls anywhere
  * outside our own DB. Mark created #iris-call-logs and asked for every call
  * — real or test, any outcome — to post there.

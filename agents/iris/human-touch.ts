@@ -18,14 +18,15 @@
  * outright. A text that failed
  * to send doesn't count — nobody actually reached the lead.
  *
- * A person texting from their own phone, outside GHL, can't be seen here.
+ * A teammate who CALLED from GHL also counts (calls carry their userId); Iris's own calls never appear
+ * in GHL. A person texting or calling from their own phone, outside GHL, can't be seen here.
  */
 import { getConversationMessages, getConversations } from "../../shared/ghl";
 
 export const DEFAULT_HUMAN_HANDS_OFF_DAYS = 7;
 
 export type HumanTouch =
-  | { status: "human"; at: string; userId: string }
+  | { status: "human"; at: string; userId: string; kind: "text" | "call" }
   | { status: "none" }
   /** The thread couldn't be read — callers fail closed (don't act), same as the rest of Iris. */
   | { status: "unknown" };
@@ -35,8 +36,15 @@ export async function checkHumanTouch(
   locationId: string,
   apiKey: string,
   withinDays: number = DEFAULT_HUMAN_HANDS_OFF_DAYS,
-  now: Date = new Date()
+  now: Date = new Date(),
+  /**
+   * A teammate's CALL counts too (Mark, 2026-10-21, after Iris called and moved Sabrina Marie a day
+   * after Jacob had phoned and texted her). Off only for the Slack follow-up on leads a teammate
+   * called and did not reach, where the call is the whole point.
+   */
+  options: { includeCalls?: boolean } = {}
 ): Promise<HumanTouch> {
+  const includeCalls = options.includeCalls !== false;
   try {
     const convoResult = await getConversations(contactId, locationId, apiKey);
     const conversationId: string | undefined = convoResult?.conversations?.[0]?.id;
@@ -46,7 +54,8 @@ export async function checkHumanTouch(
     const messages: any[] = msgResult?.messages?.messages ?? [];
     const cutoff = now.getTime() - withinDays * 24 * 60 * 60 * 1000;
 
-    // GHL returns newest first, so the first match is the most recent human text.
+    // GHL returns newest first, so the first match is the most recent human contact.
+    const inWindow = (m: any) => typeof m?.dateAdded === "string" && Date.parse(m.dateAdded) >= cutoff;
     const human = messages.find(
       (m) =>
         m?.messageType === "TYPE_SMS" &&
@@ -60,10 +69,16 @@ export async function checkHumanTouch(
         // texted her (2026-10-13) — and would have kept Iris out of her text thread.
         m?.source !== "workflow" &&
         m?.status !== "failed" &&
-        typeof m?.dateAdded === "string" &&
-        Date.parse(m.dateAdded) >= cutoff
+        inWindow(m)
     );
-    return human ? { status: "human", at: human.dateAdded, userId: human.userId } : { status: "none" };
+    // A call a teammate placed or answered from GHL (Iris's own calls go through Vapi and never appear here).
+    const call = includeCalls
+      ? messages.find((m) => m?.messageType === "TYPE_CALL" && typeof m?.userId === "string" && m.userId !== "" && inWindow(m))
+      : undefined;
+    const newest = [human && { m: human, kind: "text" as const }, call && { m: call, kind: "call" as const }]
+      .filter((x): x is { m: any; kind: "text" | "call" } => Boolean(x))
+      .sort((a, b) => Date.parse(b.m.dateAdded) - Date.parse(a.m.dateAdded))[0];
+    return newest ? { status: "human", at: newest.m.dateAdded, userId: newest.m.userId, kind: newest.kind } : { status: "none" };
   } catch (error) {
     console.error(`[IRS] checkHumanTouch failed for contact ${contactId}:`, error instanceof Error ? error.message : error);
     return { status: "unknown" };

@@ -161,8 +161,8 @@
     },
     "humanHandsOff": {
       "days": 7,
-      "blocksCalls": false,
-      "note": "Mark, 2026-10-10: when a teammate (Mark, Jacob, any 3% agent) has texted a lead from GHL in the last N days, Iris stays out of that text conversation — no auto-replies, no texts of her own. blocksCalls=false: calls are unaffected (Mark has asked Iris to call leads he texted by hand); set true to stop Iris calling them too."
+      "blocksCalls": true,
+      "note": "Mark, 2026-10-10: when a teammate (Mark, Jacob, any 3% agent) has texted a lead from GHL in the last N days, Iris stays out of that text conversation — no auto-replies, no texts of her own. UPDATED 2026-10-21 (Mark, after Iris called and moved Sabrina Marie a day after Jacob had phoned and texted her): blocksCalls=true. A teammate's text OR call in the window also stops Iris's own calls, stage moves and tags on that lead. Calls a teammate asks for in Slack, and sweeps Mark lines up by hand, still go ahead."
     },
     "slackCommands": {
       "allowedUserIds": ["U07H26WUGP5", "U06SA9782HW"],

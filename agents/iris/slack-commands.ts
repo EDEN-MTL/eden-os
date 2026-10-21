@@ -273,7 +273,7 @@ export async function handleCommandReply(message: SlackIncomingMessage, loadSett
   if (cmd.kind === "call") {
     const when = cmd.call_at ? new Date(cmd.call_at) : new Date(Date.now() + 60_000);
     // scheduleExplicitCallback refreshes the lead first; false = the lead couldn't be read, so nothing was queued.
-    const ok = await scheduleExplicitCallback(clientId, cmd.contact_id, when);
+    const ok = await scheduleExplicitCallback(clientId, cmd.contact_id, when, true);
     if (!ok) {
       await resolve("cancelled");
       return `I couldn't read ${cmd.contact_name}'s record just now, so I did NOT queue the call. Try again in a minute.`;

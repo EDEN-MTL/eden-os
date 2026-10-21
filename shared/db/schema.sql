@@ -777,3 +777,8 @@ BEGIN
     UPDATE ad_pending_actions SET nudged_at = now() WHERE status = 'pending';
   END IF;
 END $$;
+
+-- True when a teammate (Mark or Jacob, in Slack) asked for this call, as opposed to the lead asking for a
+-- callback or Iris's own cadence. Those are the only calls that go ahead while a teammate is already
+-- talking to the lead (agents/iris/dial-pending.ts): the person asking has already seen that warning.
+ALTER TABLE iris_pending_calls ADD COLUMN IF NOT EXISTS human_requested BOOLEAN NOT NULL DEFAULT FALSE;
