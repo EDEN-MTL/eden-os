@@ -24,9 +24,12 @@ function asyncGeneratorOf<T>(items: T[]) {
   })();
 }
 
-import { getCheckinData, parseProspectName, updateCheckinItem } from "./checkin";
+import { clearCheckinCaches, getCheckinData, parseProspectName, updateCheckinItem } from "./checkin";
 
-afterEach(() => vi.clearAllMocks());
+afterEach(() => {
+  vi.clearAllMocks();
+  clearCheckinCaches();
+});
 
 describe("parseProspectName", () => {
   it("strips the buyer-consultation prefix", () => {
@@ -393,6 +396,43 @@ describe("getCheckinData", () => {
     expect(data!.teams[0].members).toHaveLength(0);
     expect(data!.unassigned).toHaveLength(1);
     expect(data!.unassigned[0].ghlEventId).toBe("opp-truly-unassigned");
+  });
+
+  it("remembers a contact's conversation history between page loads instead of refetching it, and resolves several unresolved contacts in one load", async () => {
+    function unresolvedOpp(id: string, contactId: string) {
+      return {
+        id,
+        name: id,
+        contactId,
+        pipelineStageId: "live-transfer-stage",
+        status: "open",
+        lastStageChangeAt: "2026-09-01T00:00:00.000Z",
+        assignedTo: null,
+        followers: [],
+      };
+    }
+    for (let load = 0; load < 2; load++) {
+      db.query.mockResolvedValueOnce([{ client_id: "3-percent-east-coast" }]).mockResolvedValueOnce([]);
+      readFileSyncMock.mockReturnValueOnce(configJsonWithLiveTransfer());
+      ghl.getGhlConfig.mockResolvedValueOnce({ apiKey: "key", locationId: "loc" });
+      ghl.listCalendarEvents.mockResolvedValueOnce([]).mockResolvedValueOnce([]);
+      ghl.listOpportunitiesPaginated.mockReturnValueOnce(
+        asyncGeneratorOf([unresolvedOpp("opp-a", "contact-a"), unresolvedOpp("opp-b", "contact-b")])
+      );
+    }
+    ghl.getConversations.mockImplementation(async (contactId: string) => ({ conversations: [{ id: `conv-${contactId}` }] }));
+    ghl.getConversationMessages.mockResolvedValue({
+      messages: { messages: [{ messageType: "TYPE_CALL", userId: "ashley-id" }] },
+    });
+
+    const first = await getCheckinData("good-token");
+    const second = await getCheckinData("good-token");
+
+    expect(first!.unassigned).toHaveLength(0);
+    expect(first!.teams[0].members[0].appointments).toHaveLength(2);
+    expect(second!.teams[0].members[0].appointments).toHaveLength(2);
+    // 2 contacts x 1 fetch each — the second page load is served from memory.
+    expect(ghl.getConversations).toHaveBeenCalledTimes(2);
   });
 
   function configJsonWithReviewStage() {
