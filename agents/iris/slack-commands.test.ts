@@ -195,7 +195,7 @@ describe("handleCommandReply — the only thing that ever acts", () => {
 
     const reply = await handleCommandReply(msg("yes"), loader, "3pc");
 
-    expect(dialPending.scheduleExplicitCallback).toHaveBeenCalledWith("3pc", "contact-koren", PENDING_CALL.call_at);
+    expect(dialPending.scheduleExplicitCallback).toHaveBeenCalledWith("3pc", "contact-koren", PENDING_CALL.call_at, true);
     expect(reply).toMatch(/queued the call to Koren Pye/);
     expect(db.query.mock.calls.some((c) => String(c[0]).includes("SET status = $2") && (c[1] as unknown[])[1] === "executed")).toBe(true);
     expect(slack.sendMessage).toHaveBeenCalledWith("iris", expect.objectContaining({ text: expect.stringContaining(`<@${MARK}> asked me to call *Koren Pye*`) }));

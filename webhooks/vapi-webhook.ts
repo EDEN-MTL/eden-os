@@ -10,6 +10,7 @@ import { NO_SHOW_SOURCE } from "../agents/iris/no-show-state";
 import { helloRescue } from "../agents/iris/hello-rescue";
 import { extractFirstName, buildCallOpeningLine } from "../agents/iris/scripts";
 import { buildKeyToId, readField } from "../agents/scout/intake";
+import { loadScoutConfig } from "../agents/scout";
 import { appendNoteToContact } from "../agents/iris/notes";
 import { checkHumanTouch, DEFAULT_HUMAN_HANDS_OFF_DAYS } from "../agents/iris/human-touch";
 import { clampToLegalCallingWindow, formatLocal } from "../agents/iris/cadence";
@@ -629,6 +630,29 @@ async function alertTeamAboutCall(
  * this is a visibility nicety, never something that should block the
  * actual cadence logic in reopenForNextAttempt.
  */
+/**
+ * Whether Iris must leave this lead alone: a teammate (Jacob or any agent) texted or called them
+ * recently, or their card already sits in a column a person works (Live Transferred, Appointment
+ * Set, ...). Mark, 2026-10-21: "double check the recent conversation; if the lead is being talked
+ * to by Jacob or other agents, leave that lead and not touch it or move it." Sabrina Marie had been
+ * called and texted by Jacob the day before Iris called her and moved her card to Day 2.
+ * Returns the reason, or null when the lead is free. Fails closed: a thread that can't be read
+ * counts as "leave it".
+ */
+export async function reasonToLeaveLead(clientId: string, contactId: string, currentStageId?: string | null): Promise<string | null> {
+  const config = loadIrisConfig(clientId);
+  if (!config?.humanTextBlocksCalls) return null; // the client hasn't turned the rule on
+  const ghlConfig = await getGhlConfig(clientId).catch(() => null);
+  if (!ghlConfig) return "couldn't reach the CRM to check";
+  const scout = loadScoutConfig(clientId);
+  const protectedStages = scout?.historyStageIds?.length ? scout.historyStageIds : scout?.touchedStageIds ?? [];
+  if (currentStageId && protectedStages.includes(currentStageId)) return "their card is in a column a person works";
+  const touch = await checkHumanTouch(contactId, ghlConfig.locationId, ghlConfig.apiKey, config.humanHandsOffDays ?? DEFAULT_HUMAN_HANDS_OFF_DAYS);
+  if (touch.status === "human") return `a teammate ${touch.kind === "call" ? "called" : "texted"} them on ${touch.at}`;
+  if (touch.status === "unknown") return "couldn't verify no teammate is talking to them";
+  return null;
+}
+
 export async function moveToFollowUpStage(clientId: string, contactId: string, attemptsMade: number): Promise<void> {
   const config = loadIrisConfig(clientId);
   const stageId = config?.followUpStageIds?.[attemptsMade - 1];
@@ -641,6 +665,11 @@ export async function moveToFollowUpStage(clientId: string, contactId: string, a
     const opportunity = opportunities[0];
     if (!opportunity) {
       console.warn(`[VAPI] No open opportunity found for contact ${contactId} — cannot move to follow-up stage.`);
+      return;
+    }
+    const leave = await reasonToLeaveLead(clientId, contactId, opportunity.pipelineStageId);
+    if (leave) {
+      console.log(`[VAPI] Not moving contact ${contactId} to a follow-up stage — ${leave}.`);
       return;
     }
     await updateOpportunityStage(opportunity.id, stageId, ghlConfig.locationId, ghlConfig.apiKey);
@@ -659,6 +688,11 @@ export async function tagSequenceExhausted(clientId: string, contactId: string):
   try {
     const ghlConfig = await getGhlConfig(clientId);
     if (!ghlConfig) return;
+    const leave = await reasonToLeaveLead(clientId, contactId);
+    if (leave) {
+      console.log(`[VAPI] Not tagging contact ${contactId} "iris no answer" — ${leave}.`);
+      return;
+    }
     await addContactTags(contactId, ["iris no answer"], ghlConfig.locationId, ghlConfig.apiKey);
   } catch (error) {
     console.error(`[VAPI] Failed to tag contact ${contactId} as "iris no answer":`, error instanceof Error ? error.message : error);
@@ -683,14 +717,25 @@ export async function maybeReopenPendingCall(clientId: string, contactId: string
       status: string;
       source: string | null;
       callback_misses: number;
+      human_requested: boolean;
       lead: { name?: string | null; intent?: string | null } | null;
     }>(
-      `SELECT id, attempts_made, created_at, is_explicit_callback, status, source, callback_misses, lead FROM iris_pending_calls
+      `SELECT id, attempts_made, created_at, is_explicit_callback, status, source, callback_misses, human_requested, lead FROM iris_pending_calls
        WHERE client_id = $1 AND contact_id = $2`,
       [clientId, contactId]
     );
     const pending = rows[0];
     if (!pending || pending.status !== "placed") return;
+
+    // A teammate is now talking to this lead (or already was): no retry, no stage move, no tag.
+    if (!pending.human_requested && pending.source !== SWEEP_SOURCE) {
+      const leave = await reasonToLeaveLead(clientId, contactId);
+      if (leave) {
+        await query(`UPDATE iris_pending_calls SET status = 'skipped', resolution_reason = $2, resolved_at = now() WHERE id = $1`, [pending.id, `no retry — ${leave}`]);
+        console.log(`[VAPI] Contact ${contactId} didn't answer, and Iris is leaving the lead alone — ${leave}.`);
+        return;
+      }
+    }
 
     if (pending.source === SWEEP_SOURCE) {
       await handleUnansweredSweepCall(clientId, contactId, pending, endedReason);

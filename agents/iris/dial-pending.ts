@@ -32,6 +32,8 @@ import { transferNumberForIntent, callbackCalendarForIntent } from "./qualificat
 import { classifyInboundText, lastInboundText } from "./text-signals";
 import { checkHumanTouch, DEFAULT_HUMAN_HANDS_OFF_DAYS } from "./human-touch";
 import { hasActiveSmsConversation } from "./sms";
+import { sendMessage } from "../../shared/slack";
+import { CALL_LOG_CHANNEL } from "./channels";
 import { NO_SHOW_SOURCE, noShowStillApplies } from "./no-show-state";
 import { getGhlConfig, getLocationTimezone, addContactTags } from "../../shared/ghl";
 
@@ -75,6 +77,8 @@ interface PendingCallRow {
   source: string | null;
   /** The lead agreed to this call over text. See schema.sql. */
   sms_scheduled: boolean;
+  /** A teammate asked for this call in Slack. See schema.sql. */
+  human_requested?: boolean;
 }
 
 /** Ends the sequence for this row — no further attempts will be scheduled. */
@@ -451,12 +455,19 @@ async function resolveOne(row: PendingCallRow): Promise<void> {
   // comment for why. Best-effort: any failure here (no GHL config, the
   // fetch itself failing) just falls through to the normal dial, same
   // fail-toward-"proceed as before" philosophy as the rest of this file.
-  // Off unless the client turns it on (humanHandsOff.blocksCalls): a teammate's
-  // text normally stops Iris TEXTING that lead, not calling them.
-  if (ghlConfig && config.humanTextBlocksCalls) {
+  // A teammate talking to this lead means Iris leaves them alone, calls included (Mark, 2026-10-21, after
+  // Iris called and moved Sabrina Marie the day after Jacob phoned and texted her). Goes ahead only when a
+  // teammate asked for THIS call in Slack, or for a cold-lead sweep Mark lined up by hand: those people
+  // have already been shown that a teammate is in touch.
+  const humanAsked = row.human_requested === true || row.source === SWEEP_SOURCE;
+  if (ghlConfig && config.humanTextBlocksCalls && !humanAsked) {
     const humanTouch = await checkHumanTouch(row.contact_id, ghlConfig.locationId, ghlConfig.apiKey, config.humanHandsOffDays ?? DEFAULT_HUMAN_HANDS_OFF_DAYS);
     if (humanTouch.status === "human") {
-      await finish(row.id, "skipped", "a teammate texted this lead recently — Iris stays out");
+      await finish(row.id, "skipped", `a teammate is talking to this lead (${humanTouch.kind} ${humanTouch.at}) — Iris stays out`);
+      await sendMessage("iris", {
+        channel: CALL_LOG_CHANNEL,
+        text: `🤝 Not calling *${row.lead?.name ?? row.contact_id}*: a teammate ${humanTouch.kind === "call" ? "called" : "texted"} them recently, so Iris is leaving the lead alone (no call, no stage move).`,
+      }).catch(() => {});
       return;
     }
     if (humanTouch.status === "unknown") return; // can't verify — leave it due and try again next run
@@ -616,17 +627,18 @@ async function resolveOne(row: PendingCallRow): Promise<void> {
  * right now — the caller (webhooks/vapi-tools.ts) must not tell the lead a
  * callback is scheduled when it isn't.
  */
-export async function scheduleExplicitCallback(clientId: string, contactId: string, callbackTime: Date): Promise<boolean> {
+export async function scheduleExplicitCallback(clientId: string, contactId: string, callbackTime: Date, requestedByTeammate = false): Promise<boolean> {
   const lead = await refreshLead(contactId, clientId);
   if (!lead) return false;
 
   await query(
-    `INSERT INTO iris_pending_calls (client_id, contact_id, lead, call_after, status, is_explicit_callback)
-     VALUES ($1, $2, $3, $4, 'pending', true)
+    `INSERT INTO iris_pending_calls (client_id, contact_id, lead, call_after, status, is_explicit_callback, human_requested)
+     VALUES ($1, $2, $3, $4, 'pending', true, $5)
      ON CONFLICT (client_id, contact_id) DO UPDATE
      SET lead = EXCLUDED.lead, call_after = EXCLUDED.call_after, status = 'pending',
-         is_explicit_callback = true, callback_misses = 0, resolution_reason = 'lead requested callback', resolved_at = NULL`,
-    [clientId, contactId, JSON.stringify(lead), callbackTime]
+         is_explicit_callback = true, callback_misses = 0, resolution_reason = 'lead requested callback', resolved_at = NULL,
+         human_requested = $5`,
+    [clientId, contactId, JSON.stringify(lead), callbackTime, requestedByTeammate]
   );
   return true;
 }
@@ -634,7 +646,7 @@ export async function scheduleExplicitCallback(clientId: string, contactId: stri
 /** Entry point called by the scheduler. Each row's failure is isolated — one bad row must not block the rest. */
 export async function runDialPendingCalls(): Promise<void> {
   const due = await query<PendingCallRow>(
-    `SELECT id, client_id, contact_id, lead, attempts_made, created_at, is_explicit_callback, source, sms_scheduled FROM iris_pending_calls
+    `SELECT id, client_id, contact_id, lead, attempts_made, created_at, is_explicit_callback, source, sms_scheduled, human_requested FROM iris_pending_calls
      WHERE status = 'pending' AND call_after <= now()
      ORDER BY call_after ASC, id ASC
      LIMIT 25`
