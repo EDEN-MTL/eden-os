@@ -9,7 +9,9 @@
  * gate meaningful rather than cosmetic.
  */
 import { query } from "../../../shared/db";
-import { computeMetrics, LiveStatusLookup, runningOnly } from "./metrics";
+import { readFileSync } from "fs";
+import { join } from "path";
+import { computeMetrics, holdRecentlyChanged, LiveStatusLookup, runningOnly } from "./metrics";
 import { readEmergencyHoldAll } from "./settings";
 import { EntityMetrics, ProposedAction, Rule, RuleOperator, validateRule } from "./types";
 
@@ -136,6 +138,51 @@ export async function markTriggered(rule: Rule, entityId: string): Promise<void>
  * that throws while evaluating is logged and skipped — one bad rule
  * shouldn't take down the whole evaluation run.
  */
+/** The seeded CPL-threshold rule (rule-seed.ts). With health verdicts available, it flags only what the health check calls a kill. */
+export const CPL_THRESHOLD_RULE_ID = "auto-cpl-high";
+
+/** How many hours after a change on Meta an ad set / campaign / ad is left alone (forge.holdAfterChangeHours; 0 turns it off). */
+export const DEFAULT_HOLD_AFTER_CHANGE_HOURS = 72;
+
+export function holdAfterChangeHours(clientId: string): number {
+  try {
+    const raw = JSON.parse(readFileSync(join(process.cwd(), "config", "clients", `${clientId}.json`), "utf-8"));
+    const h = raw?.forge?.holdAfterChangeHours;
+    return typeof h === "number" && h >= 0 ? h : DEFAULT_HOLD_AFTER_CHANGE_HOURS;
+  } catch {
+    return DEFAULT_HOLD_AFTER_CHANGE_HOURS;
+  }
+}
+
+/** What the health check says about one entity: its verdict and, for a kill, why and what to do. */
+export interface HealthVerdict {
+  verdict: string;
+  reasons: string[];
+  recommendation: string;
+}
+
+/**
+ * Makes the CPL-threshold flag agree with the daily health check instead of contradicting it. The flat
+ * threshold (config forge.cplThreshold) looked at one number; the health check is calibrated to the
+ * account's own history and refuses to judge on too little. 2026-10-20: the flat rule flagged an ad set
+ * on $116 and 1 lead while the digest called the same ad set a "scale". Only a "kill" survives, and its
+ * text is the health check's. Other rules pass through untouched.
+ */
+export function gateByHealth(proposed: ProposedAction[], verdicts: Map<string, HealthVerdict> | null): ProposedAction[] {
+  if (!verdicts) return proposed;
+  const out: ProposedAction[] = [];
+  for (const p of proposed) {
+    if (p.rule.id !== CPL_THRESHOLD_RULE_ID) {
+      out.push(p);
+      continue;
+    }
+    const h = verdicts.get(p.entityId);
+    if (!h || h.verdict !== "kill") continue;
+    out.push({ ...p, reasoning: `[Forge health: kill] ${h.reasons.join(" ")} ${h.recommendation}`.trim() });
+  }
+  return out;
+}
+
 export async function evaluate(
   clientId = "eden",
   /**
@@ -143,8 +190,11 @@ export async function evaluate(
    * campaign is judged on the ads still running, and anything already paused is skipped, so a flag
    * does not keep coming back after someone has turned the ad off. Without it, as before: snapshots only.
    */
-  live: LiveStatusLookup | null = null
+  live: LiveStatusLookup | null = null,
+  options: { now?: Date; holdHours?: number; healthVerdicts?: Map<string, HealthVerdict> | null } = {}
 ): Promise<ProposedAction[]> {
+  const now = options.now ?? new Date();
+  const holdHours = options.holdHours ?? holdAfterChangeHours(clientId);
   const emergencyHoldAll = await readEmergencyHoldAll(clientId);
   const rules = await loadRules(clientId);
   const proposed: ProposedAction[] = [];
@@ -155,6 +205,7 @@ export async function evaluate(
       if (live) {
         const adRows = rule.scope === "ad" ? rows : await computeMetrics("ad", rule.lookbackDays, clientId);
         rows = runningOnly(rows, rule.scope, adRows, live);
+        rows = holdRecentlyChanged(rows, rule.scope, live, now, holdHours);
       }
       const cooldownFlags = new Map<string, boolean>();
       for (const row of rows) {
@@ -165,5 +216,5 @@ export async function evaluate(
       console.error(`[FORGE] Rule ${rule.id} failed to evaluate — skipping it this run.`, error);
     }
   }
-  return proposed;
+  return gateByHealth(proposed, options.healthVerdicts ?? null);
 }

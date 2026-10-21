@@ -192,7 +192,10 @@ export async function computeAdMetricsForAdset(
 }
 
 /** What the roll-up needs to know about each entity's live state: whether it delivers, and where it sits. */
-export type LiveStatusLookup = Map<string, { effectiveStatus?: string; adsetId?: string; campaignId?: string }>;
+export type LiveStatusLookup = Map<
+  string,
+  { effectiveStatus?: string; adsetId?: string; campaignId?: string; kind?: "campaign" | "adset" | "ad"; updatedAt?: number }
+>;
 
 /**
  * An ad set or campaign judged on the ads that are still on.
@@ -243,4 +246,28 @@ export function runningOnly(rows: EntityMetrics[], scope: RuleScope, adRows: Ent
     );
   }
   return out;
+}
+
+/**
+ * Leaves alone an entity that was changed lately. A professional media buyer doesn't judge an ad set the
+ * day after pausing one of its ads: Meta's delivery re-settles, and the number being judged still mixes
+ * the old setup with the new. So an entity is held back for `hours` after Meta last recorded a change to
+ * it, or to anything directly under it (an ad set: its ads; a campaign: its ad sets). Ads are held on
+ * their own change, which also keeps brand-new ads out of the running. 2026-10-20: Jacob paused the ad
+ * that was spending the budget, and Forge flagged the ad set again anyway.
+ *
+ * hours <= 0 turns it off. An entity Meta gave no change time for is never held.
+ */
+export function holdRecentlyChanged(rows: EntityMetrics[], scope: RuleScope, live: LiveStatusLookup, now: Date, hours: number): EntityMetrics[] {
+  if (hours <= 0) return rows;
+  const since = now.getTime() - hours * 3_600_000;
+  const recent = (id: string) => (live.get(id)?.updatedAt ?? 0) >= since;
+  const childRecent = (id: string): boolean => {
+    for (const [childId, c] of live) {
+      if (scope === "adset" && c.kind === "ad" && c.adsetId === id && recent(childId)) return true;
+      if (scope === "campaign" && c.kind === "adset" && c.campaignId === id && recent(childId)) return true;
+    }
+    return false;
+  };
+  return rows.filter((r) => !(recent(r.entity_id) || (scope !== "ad" && childRecent(r.entity_id))));
 }

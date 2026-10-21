@@ -10,7 +10,8 @@ vi.mock("../../agents/lens/report", () => ({
 }));
 vi.mock("../../agents/iris/dial-pending", () => ({ runDialPendingCalls: vi.fn() }));
 const fetchLiveStateMock = vi.fn();
-vi.mock("../../agents/forge/ads/health", () => ({ fetchLiveState: (...a: unknown[]) => fetchLiveStateMock(...a), getCampaignHealth: vi.fn() }));
+const getCampaignHealthMock = vi.fn();
+vi.mock("../../agents/forge/ads/health", () => ({ fetchLiveState: (...a: unknown[]) => fetchLiveStateMock(...a), getCampaignHealth: (...a: unknown[]) => getCampaignHealthMock(...a) }));
 
 const evaluateMock = vi.fn();
 const markTriggeredMock = vi.fn();
@@ -61,11 +62,27 @@ describe("runRuleEvaluation: reading what is running on Meta", () => {
     queryMock.mockResolvedValueOnce([{ client_id: "eden" }]);
     vi.mocked(getMetaConfig).mockResolvedValueOnce({ accessToken: "t" } as any);
     fetchLiveStateMock.mockResolvedValueOnce(live);
+    getCampaignHealthMock.mockResolvedValueOnce({ entities: [{ id: "adset-1", verdict: "kill", reasons: ["r"], recommendation: "Pause this ad set." }] });
     evaluateMock.mockResolvedValueOnce([]);
 
     await runRuleEvaluation();
 
-    expect(evaluateMock).toHaveBeenCalledWith("eden", live);
+    expect(evaluateMock).toHaveBeenCalledWith("eden", live, {
+      healthVerdicts: new Map([["adset-1", { verdict: "kill", reasons: ["r"], recommendation: "Pause this ad set." }]]),
+    });
+  });
+
+  it("keeps the flat CPL threshold when the health check can't give verdicts (no target for the client)", async () => {
+    const live = new Map();
+    queryMock.mockResolvedValueOnce([{ client_id: "eden" }]);
+    vi.mocked(getMetaConfig).mockResolvedValueOnce({ accessToken: "t" } as any);
+    fetchLiveStateMock.mockResolvedValueOnce(live);
+    getCampaignHealthMock.mockRejectedValueOnce(new Error("No CPL target"));
+    evaluateMock.mockResolvedValueOnce([]);
+
+    await runRuleEvaluation();
+
+    expect(evaluateMock).toHaveBeenCalledWith("eden", live, { healthVerdicts: null });
   });
 
   it("still evaluates, on snapshots alone, when Meta can't be read", async () => {
@@ -76,7 +93,7 @@ describe("runRuleEvaluation: reading what is running on Meta", () => {
 
     await runRuleEvaluation();
 
-    expect(evaluateMock).toHaveBeenCalledWith("eden", null);
+    expect(evaluateMock).toHaveBeenCalledWith("eden", null, { healthVerdicts: null });
   });
 });
 
@@ -99,7 +116,7 @@ describe("runRuleEvaluation", () => {
 
     await runRuleEvaluation();
 
-    expect(evaluateMock).toHaveBeenCalledWith("eden", null);
+    expect(evaluateMock).toHaveBeenCalledWith("eden", null, { healthVerdicts: null });
     expect(enqueueMock).toHaveBeenCalledWith(proposedAction, "eden");
     expect(markTriggeredMock).toHaveBeenCalledWith(proposedAction.rule, "adset_1");
 

@@ -15,8 +15,8 @@ import { join } from "path";
 import { query } from "../../../shared/db";
 import { getMetaConfig, MetaClient } from "../../../shared/meta";
 import { fetchLiveState } from "./health";
-import { applyOperator, loadRules } from "./engine";
-import { computeMetrics, runningOnly } from "./metrics";
+import { applyOperator, holdAfterChangeHours, loadRules } from "./engine";
+import { computeMetrics, holdRecentlyChanged, runningOnly } from "./metrics";
 import { ActionExecutor } from "./executor";
 import { MetaActions } from "./actions";
 import * as queue from "./queue";
@@ -105,7 +105,9 @@ async function ruleStillTrips(row: PendingAction): Promise<boolean> {
     const live = await fetchLiveState(await metaClientFor(row.client_id));
     const raw = await computeMetrics(rule.scope, rule.lookbackDays, row.client_id);
     const adRows = await computeMetrics("ad", rule.lookbackDays, row.client_id);
-    const mine = runningOnly(raw, rule.scope, adRows, live).find((r) => r.entity_id === row.entity_id);
+    // Also drops it if something under it was changed since the flag: whoever acted has handled it.
+    const settled = holdRecentlyChanged(runningOnly(raw, rule.scope, adRows, live), rule.scope, live, new Date(), holdAfterChangeHours(row.client_id));
+    const mine = settled.find((r) => r.entity_id === row.entity_id);
     if (!mine || mine.spend < rule.minSpend) return false;
     const value = mine[rule.metric] as number | null | undefined;
     return value !== null && value !== undefined && applyOperator(rule.operator, value, rule.threshold);
