@@ -8,7 +8,7 @@ TypeScript monorepo, Express API, Vite/React dashboard, Postgres on Render.
 ```bash
 npm test              # vitest — must stay green
 npx tsc --noEmit -p . # typecheck; run before every commit
-npm run dev           # API on :3000 (or PORT)
+npm run dev           # API on :3000 (or PORT) — see "Running locally" first
 ```
 Dashboard: `cd dashboards/eden-command-ui && npm run dev` (:5173, expects the API on the port in its `.env`).
 
@@ -71,6 +71,17 @@ warning. They belong in `config/clients/<id>.json`.
    column the card sits in. See `ghl.outcomeStages` in the client config, and
    `deriveWon` / `derivePipelineActive`.
 
+7. **A GHL workflow webhook is a trigger, not a data payload.** It can only
+   relay the Key/Value pairs someone wired up in the UI, as flat strings inside
+   `customData` — it can't carry the real tags array at all. Treat it as
+   "contactId X changed" and read current state live (`getContact`,
+   `refreshLead` in `agents/scout/index.ts`).
+
+8. **Credentials are per client.** Real GHL keys live in the `ghl_credentials`
+   table; there is no global `GHL_API_KEY`. Every `shared/ghl` function must
+   accept the client's `apiKey` — two have already shipped without it and failed
+   only once exercised against a real client.
+
 ## Verify against live data before you believe a config
 
 Every config in this repo has had at least one wrong value that typechecked
@@ -81,6 +92,28 @@ Write a throwaway script, run it against the live account, and check that the
 fields you depend on are actually populated — not just that they resolve. A
 field that exists but is empty on every record is worth knowing about before
 you build scoring on top of it.
+
+## Running locally
+
+The local `.env` points at the production database. **Don't run `npm run dev`
+or the scheduler locally** — a second scheduler double-dials and double-texts
+real leads. Use one-off `npx tsx` scripts instead. There's no
+`ANTHROPIC_API_KEY` locally, so AI paths only run on Render.
+
+Iris and Ember are live for paying clients: a merge to `main` touching
+`agents/iris`, `agents/ember` or `webhooks/vapi-*` reaches real leads on the
+next deploy.
+
+## Agent notes
+
+Per-agent architecture, lessons and open items — read the relevant one before
+changing that agent:
+
+- `docs/agents/iris.md` — Vapi calling, live-call debugging, Vapi lessons
+- `docs/agents/ember.md` — nurture rules, CASL, self-pause
+- `docs/agents/forge-lens.md` — campaign health, lead attribution, Lens funnel
+
+When a change makes one of these wrong, update it in the same PR.
 
 ## Money
 
