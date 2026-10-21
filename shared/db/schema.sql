@@ -782,3 +782,7 @@ END $$;
 -- callback or Iris's own cadence. Those are the only calls that go ahead while a teammate is already
 -- talking to the lead (agents/iris/dial-pending.ts): the person asking has already seen that warning.
 ALTER TABLE iris_pending_calls ADD COLUMN IF NOT EXISTS human_requested BOOLEAN NOT NULL DEFAULT FALSE;
+
+-- A Slack command that covers several leads at once (kind = followup: "follow up on the leads Jacob called
+-- and didn't reach"): the leads, as [{id, name}]. contact_id/contact_name then hold the first lead only.
+ALTER TABLE iris_slack_commands ADD COLUMN IF NOT EXISTS batch JSONB;

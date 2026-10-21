@@ -877,6 +877,22 @@ export async function getConversations(
 }
 
 /**
+ * The location's conversations, most recently active first, one page at a time.
+ * `startAfterDate` (epoch ms of the last conversation already seen) pages on.
+ * Used to find everything that happened on one day without knowing the contacts.
+ */
+export async function listRecentConversations(
+  locationId: string,
+  apiKey?: string,
+  options: { limit?: number; startAfterDate?: number } = {}
+): Promise<any[]> {
+  const params = new URLSearchParams({ locationId, sortBy: "last_message_date", sort: "desc", limit: String(options.limit ?? 50) });
+  if (options.startAfterDate) params.set("startAfterDate", String(options.startAfterDate));
+  const payload = await ghlRequest(`/conversations/search?${params.toString()}`, { locationId, apiKey });
+  return payload?.conversations || [];
+}
+
+/**
  * The full message list for one conversation, newest first per GHL's own
  * ordering — added 2026-09-22 alongside the fix above, for the SAME class
  * of bug one level up: getConversations' summary only ever exposes the

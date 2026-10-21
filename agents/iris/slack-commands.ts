@@ -20,7 +20,8 @@ import { sendMessage } from "../../shared/slack";
 import { SlackIncomingMessage } from "../../shared/types";
 import { ToolContext } from "../base-agent";
 import { clampToLegalCallingWindow, formatLocal } from "./cadence";
-import { scheduleExplicitCallback } from "./dial-pending";
+import { queueColdLeadSweep, scheduleExplicitCallback } from "./dial-pending";
+import { findTeammateCalls } from "./teammate-calls";
 import { checkHumanTouch, DEFAULT_HUMAN_HANDS_OFF_DAYS } from "./human-touch";
 import { linkLineFor } from "./links";
 
@@ -96,10 +97,11 @@ async function resolveOne(clientId: string, nameOrPhone: string): Promise<{ cont
 async function storePending(
   clientId: string,
   ctx: ToolContext,
-  kind: "call" | "stop",
+  kind: "call" | "stop" | "followup",
   contact: { id: string; name: string },
   summary: string,
-  callAt: Date | null
+  callAt: Date | null,
+  batch: { id: string; name: string }[] | null = null
 ): Promise<number> {
   // One live request per person per place: a newer one replaces the older.
   await query(
@@ -108,9 +110,9 @@ async function storePending(
     [ctx.userId, ctx.channelId]
   );
   const rows = await query<{ id: string }>(
-    `INSERT INTO iris_slack_commands (client_id, requested_by, channel_id, thread_ts, kind, contact_id, contact_name, call_at, summary)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING id`,
-    [clientId, ctx.userId, ctx.channelId, ctx.threadTs ?? null, kind, contact.id, contact.name, callAt, summary]
+    `INSERT INTO iris_slack_commands (client_id, requested_by, channel_id, thread_ts, kind, contact_id, contact_name, call_at, summary, batch)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) RETURNING id`,
+    [clientId, ctx.userId, ctx.channelId, ctx.threadTs ?? null, kind, contact.id, contact.name, callAt, summary, batch ? JSON.stringify(batch) : null]
   );
   return Number(rows[0].id);
 }
@@ -228,6 +230,94 @@ export async function prepareStopCommand(
   };
 }
 
+/** Reads who a teammate called on a day and whether they reached each lead. Read-only: nothing is queued. */
+export async function listTeammateCalls(
+  clientId: string,
+  input: { person?: unknown; daysAgo?: unknown },
+  ctx: ToolContext | undefined,
+  loadSettings: SettingsLoader
+): Promise<unknown> {
+  const settings = loadSettings(clientId);
+  const denied = authorise(settings, ctx);
+  if (denied || !settings) return { status: "refused", reason: denied ?? "Not allowed." };
+  const person = String(input.person ?? "").trim();
+  if (!person) return { status: "refused", reason: "I need the teammate's name." };
+  const daysAgo = Math.min(Math.max(Number(input.daysAgo ?? 0) || 0, 0), 6);
+
+  const result = await findTeammateCalls(clientId, person, daysAgo, settings.timezone);
+  if (!result.ok) return { status: "not_found", reason: result.reason, candidates: result.candidates };
+  return {
+    status: "ok",
+    person: result.person,
+    day: result.day,
+    reachedMeansCompletedAndAtLeast: "30 seconds",
+    calls: result.calls.map((c) => ({ name: c.name, calls: c.calls, reached: c.reached, longestSeconds: c.longestSeconds, lastCallAt: formatLocal(c.lastCallAt, settings.timezone) })),
+  };
+}
+
+/**
+ * Prepares "follow up on the leads <teammate> called and didn't reach": works out who is safe to
+ * contact and stores ONE pending command for the whole list. Nothing is queued until the same
+ * person replies yes (handleCommandReply).
+ */
+export async function prepareFollowUpCommand(
+  clientId: string,
+  input: { person?: unknown; daysAgo?: unknown },
+  ctx: ToolContext | undefined,
+  loadSettings: SettingsLoader,
+  now: Date = new Date()
+): Promise<PreparedCommand> {
+  const settings = loadSettings(clientId);
+  const denied = authorise(settings, ctx);
+  if (denied || !settings || !ctx) return refused(denied ?? "Not allowed.");
+  const person = String(input.person ?? "").trim();
+  if (!person) return refused("I need the teammate's name.");
+  const daysAgo = Math.min(Math.max(Number(input.daysAgo ?? 0) || 0, 0), 6);
+
+  const found = await findTeammateCalls(clientId, person, daysAgo, settings.timezone, now);
+  if (!found.ok) return { status: "not_found", reason: found.reason, candidates: found.candidates, instruction: `Tell them: ${found.reason}` };
+  const ghl = await getGhlConfig(clientId);
+  if (!ghl) return refused(`I couldn't reach the CRM for ${clientId}.`);
+
+  const unreached = found.calls.filter((c) => !c.reached);
+  if (unreached.length === 0) {
+    return { status: "nothing_to_do", reason: `${found.person} has no unanswered calls on ${found.day}.`, instruction: `Tell them ${found.person} made ${found.calls.length} call(s) on ${found.day} and reached every lead, so there is nobody to follow up.` };
+  }
+
+  const eligible: { id: string; name: string }[] = [];
+  const left: string[] = [];
+  for (const c of unreached) {
+    const raw = await getContact(c.contactId, ghl.locationId, ghl.apiKey).catch(() => null);
+    const contact = raw?.contact ?? raw;
+    const tags: string[] = (contact?.tags ?? []).map((t: string) => String(t).toLowerCase());
+    if (!contact) left.push(`${c.name} (couldn't read their record)`);
+    else if (contact.dnd || tags.includes("do not call")) left.push(`${c.name} (do not call)`);
+    else if (!contact.phone) left.push(`${c.name} (no phone)`);
+    else if (tags.includes("appt booked") || tags.includes("live transferred")) left.push(`${c.name} (already ${tags.includes("appt booked") ? "booked" : "live transferred"})`);
+    else {
+      const touch = await checkHumanTouch(c.contactId, ghl.locationId, ghl.apiKey, settings.humanHandsOffDays);
+      if (touch.status !== "none") left.push(`${c.name} (a teammate has texted them)`);
+      else eligible.push({ id: c.contactId, name: c.name });
+    }
+  }
+  if (eligible.length === 0) {
+    return { status: "nothing_to_do", reason: "Nobody safe to follow up.", instruction: `Tell them none of ${found.person}'s unanswered leads can be followed up, and why: ${left.join("; ")}.` };
+  }
+
+  const startAt = clampToLegalCallingWindow(new Date(now.getTime() + 2 * 60_000), settings.timezone);
+  const summary =
+    `Follow up on ${eligible.length} lead${eligible.length === 1 ? "" : "s"} ${found.person} called on ${found.day} and didn't reach: ${eligible.map((e) => `*${e.name}*`).join(", ")}.\n` +
+    `Iris calls them one at a time starting ${formatLocal(startAt.toISOString(), settings.timezone)}; anyone who doesn't pick up gets one text.` +
+    (left.length ? `\nLeaving out: ${left.join("; ")}.` : "");
+  const commandId = await storePending(clientId, ctx, "followup", eligible[0], summary, startAt, eligible);
+  return {
+    status: "needs_confirmation",
+    commandId,
+    summary,
+    instruction: `Show them this summary exactly, then ask them to reply "yes" to confirm or "no" to cancel. Nothing is queued yet. Never say anyone is lined up until after their yes.`,
+  };
+}
+
 /**
  * Runs BEFORE the model (the agent's handleCustom hook). Returns the reply
  * text when this message was a yes/no to a pending command of the sender's —
@@ -240,13 +330,14 @@ export async function handleCommandReply(message: SlackIncomingMessage, loadSett
 
   const rows = await query<{
     id: string;
-    kind: "call" | "stop";
+    kind: "call" | "stop" | "followup";
     contact_id: string;
     contact_name: string;
     call_at: Date | null;
     created_at: Date;
+    batch: { id: string; name: string }[] | null;
   }>(
-    `SELECT id, kind, contact_id, contact_name, call_at, created_at FROM iris_slack_commands
+    `SELECT id, kind, contact_id, contact_name, call_at, created_at, batch FROM iris_slack_commands
      WHERE requested_by = $1 AND channel_id = $2 AND thread_ts IS NOT DISTINCT FROM $3 AND status = 'pending'
      ORDER BY created_at DESC LIMIT 1`,
     [message.userId, message.channelId, message.threadTs ?? null]
@@ -268,6 +359,20 @@ export async function handleCommandReply(message: SlackIncomingMessage, loadSett
   if (no) {
     await resolve("cancelled");
     return "Okay — cancelled, nothing was done.";
+  }
+
+  if (cmd.kind === "followup") {
+    const leads = cmd.batch ?? [];
+    const startAt = cmd.call_at && new Date(cmd.call_at).getTime() > Date.now() ? new Date(cmd.call_at) : clampToLegalCallingWindow(new Date(Date.now() + 60_000), settings.timezone);
+    const queued = await queueColdLeadSweep(clientId, leads.map((l) => l.id), startAt);
+    await resolve("executed");
+    const names = queued.map((q) => q.name);
+    const missed = leads.filter((l) => !queued.some((q) => q.contactId === l.id)).map((l) => l.name);
+    await audit(`📣 <@${message.userId}> asked me to follow up on ${queued.length} lead${queued.length === 1 ? "" : "s"} a teammate called and didn't reach — ${names.join(", ") || "none queued"}.`);
+    return (
+      `Done — lined up ${queued.length}: ${names.join(", ")}. I'll call them one at a time from ${formatLocal(startAt.toISOString(), settings.timezone)}, and text anyone who doesn't pick up.` +
+      (missed.length ? `\nCouldn't queue (no readable record, phone or name): ${missed.join(", ")}.` : "")
+    );
   }
 
   if (cmd.kind === "call") {
