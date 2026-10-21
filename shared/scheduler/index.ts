@@ -19,7 +19,7 @@ import { getGhlConfig } from "../ghl";
 import { syncGhl, syncMetaPerformance } from "../../agents/forge/ads/sync";
 import * as ruleEngine from "../../agents/forge/ads/engine";
 import * as ruleQueue from "../../agents/forge/ads/queue";
-import { getCampaignHealth } from "../../agents/forge/ads/health";
+import { fetchLiveState, getCampaignHealth } from "../../agents/forge/ads/health";
 import { formatHealthDigest } from "../../agents/forge/ads/health-digest";
 import { computeTotals, computeWeeklyTotals, formatAllClientsReport, previousMonth, ReportEntry } from "../../agents/lens/report";
 import { computeFunnel, formatFunnelLines, loadFunnelConfig } from "../../agents/lens/funnel";
@@ -191,7 +191,31 @@ export async function runRuleEvaluation(): Promise<void> {
   for (const clientId of clientIds) {
     let proposed: Awaited<ReturnType<typeof ruleEngine.evaluate>>;
     try {
-      proposed = await ruleEngine.evaluate(clientId);
+      // Read what is running on Meta right now, so a flag stops coming back once the ad is turned off.
+      // If Meta can't be read, judge on the snapshots as before rather than skip the check.
+      let live: Awaited<ReturnType<typeof fetchLiveState>> | null = null;
+      let metaClient: MetaClient | null = null;
+      try {
+        const metaConfig = await getMetaConfig(clientId);
+        if (metaConfig) {
+          metaClient = new MetaClient(metaConfig);
+          live = await fetchLiveState(metaClient);
+        }
+      } catch (e) {
+        console.warn(`[SCHEDULER] Couldn't read live ad status for ${clientId}; judging on snapshots only:`, e instanceof Error ? e.message : e);
+      }
+      // The CPL-threshold flag follows the health check: only what it calls a kill (see engine.gateByHealth).
+      // No health target for this client, or Meta unreadable: the flat threshold rule works as before.
+      let healthVerdicts: Map<string, { verdict: string; reasons: string[]; recommendation: string }> | null = null;
+      if (live && metaClient) {
+        try {
+          const report = await getCampaignHealth(clientId, metaClient);
+          healthVerdicts = new Map(report.entities.map((e) => [e.id, { verdict: e.verdict, reasons: e.reasons, recommendation: e.recommendation }]));
+        } catch (e) {
+          console.warn(`[SCHEDULER] No health verdicts for ${clientId}; CPL flags use the flat threshold:`, e instanceof Error ? e.message : e);
+        }
+      }
+      proposed = await ruleEngine.evaluate(clientId, live, { healthVerdicts });
     } catch (e) {
       console.error(`[SCHEDULER] Rule evaluation failed for ${clientId}:`, e instanceof Error ? e.message : e);
       continue;

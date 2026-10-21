@@ -22,7 +22,7 @@
 import { readFileSync } from "fs";
 import { join } from "path";
 import { MetaClient } from "../../../shared/meta";
-import { computeMetrics } from "./metrics";
+import { computeMetrics, runningOnly } from "./metrics";
 import { EntityMetrics, RuleScope } from "./types";
 
 export type HealthVerdict = "kill" | "refresh_creative" | "scale" | "watch" | "healthy" | "too_early";
@@ -195,6 +195,12 @@ export interface LiveEntityState {
   effectiveStatus?: string;
   campaignId?: string;
   campaignName?: string;
+  /** Ads only: the ad set it belongs to. */
+  adsetId?: string;
+  /** Which level this entry is. */
+  kind?: "campaign" | "adset" | "ad";
+  /** When Meta last recorded a change to it (an edit, a pause, a new creative), epoch ms. */
+  updatedAt?: number;
   /** Daily budget in account currency (Meta returns minor units; already converted). */
   dailyBudget?: number | null;
   /** Ad sets only. */
@@ -375,6 +381,13 @@ function loadForgeConfig(clientId: string): any | null {
   }
 }
 
+/** Meta writes times like "2026-10-20T00:47:15-0230" (no colon in the offset), which not every parser reads. */
+export function parseMetaTime(value: unknown): number | undefined {
+  if (typeof value !== "string") return undefined;
+  const ms = Date.parse(value.replace(/([+-]\d{2})(\d{2})$/, "$1:$2"));
+  return Number.isNaN(ms) ? undefined : ms;
+}
+
 const centsToUnits = (v: unknown) => (v === undefined || v === null || v === "" ? null : Number(v) / 100);
 
 /**
@@ -388,9 +401,9 @@ const centsToUnits = (v: unknown) => (v === undefined || v === null || v === "" 
  */
 export async function fetchLiveState(client: MetaClient): Promise<Map<string, LiveEntityState>> {
   const [campaigns, adsets, ads] = await Promise.all([
-    client.listCampaigns(["id", "name", "effective_status", "daily_budget", "lifetime_budget"]),
-    client.listAdsets(undefined, ["id", "name", "effective_status", "campaign_id", "daily_budget", "learning_stage_info"]),
-    client.listAds(undefined, ["id", "effective_status", "campaign_id", "adset_id"]),
+    client.listCampaigns(["id", "name", "effective_status", "daily_budget", "lifetime_budget", "updated_time"]),
+    client.listAdsets(undefined, ["id", "name", "effective_status", "campaign_id", "daily_budget", "learning_stage_info", "updated_time"]),
+    client.listAds(undefined, ["id", "effective_status", "campaign_id", "adset_id", "updated_time"]),
   ]);
 
   const out = new Map<string, LiveEntityState>();
@@ -398,12 +411,14 @@ export async function fetchLiveState(client: MetaClient): Promise<Map<string, Li
   const nowSec = Date.now() / 1000;
 
   for (const c of campaigns) {
-    out.set(c.id, { effectiveStatus: c.effective_status, campaignId: c.id, campaignName: c.name, dailyBudget: centsToUnits(c.daily_budget) });
+    out.set(c.id, { kind: "campaign", updatedAt: parseMetaTime(c.updated_time), effectiveStatus: c.effective_status, campaignId: c.id, campaignName: c.name, dailyBudget: centsToUnits(c.daily_budget) });
   }
   for (const s of adsets) {
     const parent = campaignById.get(s.campaign_id);
     const info = s.learning_stage_info;
     out.set(s.id, {
+      kind: "adset",
+      updatedAt: parseMetaTime(s.updated_time),
       effectiveStatus: s.effective_status,
       campaignId: s.campaign_id,
       campaignName: parent?.name,
@@ -420,7 +435,7 @@ export async function fetchLiveState(client: MetaClient): Promise<Map<string, Li
   }
   for (const a of ads) {
     const parent = campaignById.get(a.campaign_id);
-    out.set(a.id, { effectiveStatus: a.effective_status, campaignId: a.campaign_id, campaignName: parent?.name });
+    out.set(a.id, { kind: "ad", updatedAt: parseMetaTime(a.updated_time), effectiveStatus: a.effective_status, campaignId: a.campaign_id, campaignName: parent?.name, adsetId: a.adset_id });
   }
   return out;
 }
@@ -474,7 +489,12 @@ export function buildHealthReport(
   playbook: HealthPlaybook,
   rowsByScope: Record<RuleScope, EntityMetrics[]>,
   live: Map<string, LiveEntityState> | null,
-  lookbackDays: number
+  lookbackDays: number,
+  /**
+   * What each ad set and campaign is judged on: only the ads still running (see runningOnly). Totals
+   * still come from rowsByScope, because money already spent on a since-paused ad was still spent.
+   */
+  assessRows: Record<RuleScope, EntityMetrics[]> = rowsByScope
 ): CampaignHealthReport {
   const entities: EntityHealth[] = [];
   let budgetSum = 0;
@@ -482,7 +502,7 @@ export function buildHealthReport(
   const budgetByFunnel = new Map<string, number>();
 
   for (const scope of ["campaign", "adset", "ad"] as RuleScope[]) {
-    for (const row of rowsByScope[scope]) {
+    for (const row of assessRows[scope]) {
       if (row.spend <= 0) continue;
       const state = live?.get(row.entity_id);
       // Paused/archived since: nothing to decide. Unknown to Meta (deleted) also drops out.
@@ -577,6 +597,14 @@ export async function getCampaignHealth(clientId: string, client: MetaClient | n
     liveStateError = "No Meta account configured; judged on synced snapshots only (may include paused entities).";
   }
 
-  const report = buildHealthReport(clientId, playbook, { campaign, adset, ad }, live, days);
+  const raw = { campaign, adset, ad };
+  const assess = live
+    ? {
+        campaign: runningOnly(campaign, "campaign", ad, live),
+        adset: runningOnly(adset, "adset", ad, live),
+        ad: runningOnly(ad, "ad", ad, live),
+      }
+    : raw;
+  const report = buildHealthReport(clientId, playbook, raw, live, days, assess);
   return liveStateError ? { ...report, liveStateError } : report;
 }

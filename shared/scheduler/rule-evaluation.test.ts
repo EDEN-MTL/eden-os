@@ -9,6 +9,9 @@ vi.mock("../../agents/lens/report", () => ({
   formatAllClientsReport: vi.fn(),
 }));
 vi.mock("../../agents/iris/dial-pending", () => ({ runDialPendingCalls: vi.fn() }));
+const fetchLiveStateMock = vi.fn();
+const getCampaignHealthMock = vi.fn();
+vi.mock("../../agents/forge/ads/health", () => ({ fetchLiveState: (...a: unknown[]) => fetchLiveStateMock(...a), getCampaignHealth: (...a: unknown[]) => getCampaignHealthMock(...a) }));
 
 const evaluateMock = vi.fn();
 const markTriggeredMock = vi.fn();
@@ -30,6 +33,7 @@ vi.mock("../slack", () => ({ sendMessage: (...args: unknown[]) => sendMessageMoc
 vi.mock("fs", () => ({ readFileSync: vi.fn(() => JSON.stringify({ clientName: "Eden" })) }));
 
 import { runRuleEvaluation } from "./index";
+import { getMetaConfig } from "../meta";
 
 const proposedAction = {
   rule: { id: "auto-cpl-high", name: "CPL above config threshold" } as any,
@@ -52,6 +56,47 @@ afterEach(() => {
   delete process.env.LENS_OPS_CHANNEL;
 });
 
+describe("runRuleEvaluation: reading what is running on Meta", () => {
+  it("passes Meta's live ad status to the engine, so a flag stops once the ad is turned off", async () => {
+    const live = new Map([["ad-1", { effectiveStatus: "PAUSED" }]]);
+    queryMock.mockResolvedValueOnce([{ client_id: "eden" }]);
+    vi.mocked(getMetaConfig).mockResolvedValueOnce({ accessToken: "t" } as any);
+    fetchLiveStateMock.mockResolvedValueOnce(live);
+    getCampaignHealthMock.mockResolvedValueOnce({ entities: [{ id: "adset-1", verdict: "kill", reasons: ["r"], recommendation: "Pause this ad set." }] });
+    evaluateMock.mockResolvedValueOnce([]);
+
+    await runRuleEvaluation();
+
+    expect(evaluateMock).toHaveBeenCalledWith("eden", live, {
+      healthVerdicts: new Map([["adset-1", { verdict: "kill", reasons: ["r"], recommendation: "Pause this ad set." }]]),
+    });
+  });
+
+  it("keeps the flat CPL threshold when the health check can't give verdicts (no target for the client)", async () => {
+    const live = new Map();
+    queryMock.mockResolvedValueOnce([{ client_id: "eden" }]);
+    vi.mocked(getMetaConfig).mockResolvedValueOnce({ accessToken: "t" } as any);
+    fetchLiveStateMock.mockResolvedValueOnce(live);
+    getCampaignHealthMock.mockRejectedValueOnce(new Error("No CPL target"));
+    evaluateMock.mockResolvedValueOnce([]);
+
+    await runRuleEvaluation();
+
+    expect(evaluateMock).toHaveBeenCalledWith("eden", live, { healthVerdicts: null });
+  });
+
+  it("still evaluates, on snapshots alone, when Meta can't be read", async () => {
+    queryMock.mockResolvedValueOnce([{ client_id: "eden" }]);
+    vi.mocked(getMetaConfig).mockResolvedValueOnce({ accessToken: "t" } as any);
+    fetchLiveStateMock.mockRejectedValueOnce(new Error("Meta down"));
+    evaluateMock.mockResolvedValueOnce([]);
+
+    await runRuleEvaluation();
+
+    expect(evaluateMock).toHaveBeenCalledWith("eden", null, { healthVerdicts: null });
+  });
+});
+
 describe("runRuleEvaluation", () => {
   it("does nothing when a client has no proposed actions", async () => {
     queryMock.mockResolvedValueOnce([{ client_id: "eden" }]);
@@ -71,7 +116,7 @@ describe("runRuleEvaluation", () => {
 
     await runRuleEvaluation();
 
-    expect(evaluateMock).toHaveBeenCalledWith("eden");
+    expect(evaluateMock).toHaveBeenCalledWith("eden", null, { healthVerdicts: null });
     expect(enqueueMock).toHaveBeenCalledWith(proposedAction, "eden");
     expect(markTriggeredMock).toHaveBeenCalledWith(proposedAction.rule, "adset_1");
 
