@@ -146,6 +146,11 @@
     },
     "links": { "vapiCallUrl": "https://dashboard.vapi.ai/logs?callId={callId}&datePreset=last7d" },
     "linksNote": "Mark, 2026-10-15: the address of one call on Vapi's dashboard, copied from a real link (opens the Logs page filtered to that call; click the row to open it). {callId} is replaced with the call's id. datePreset=last7d is what Vapi showed — a call older than 7 days won't appear under that filter. Needs a Vapi login, like the dashboard itself. GHL links go to the contact page.",
+    "followUpCohort": {
+      "notReadyStage": "Not Ready - [Endless Loop]",
+      "notInterestedStage": "Not Qualified/Not Interested",
+      "note": "Mark, 2026-10-22: leads Iris follows up on for a week (enrolled by scripts/enroll-followup-cohort.ts) end in Not Ready if they never answered a call or text, and in Not Interested if they opted out. Anyone who engages is left where they are."
+    },
     "noShowFollowUp": {
       "enabled": true,
       "stageName": "No-Show",

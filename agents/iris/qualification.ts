@@ -150,6 +150,11 @@ export interface IrisConfig {
    * client's No-Show pipeline stage after a booked appointment the lead did not attend. See no-show.ts.
    */
   noShowFollowUp?: { enabled: boolean; stageName: string; maxCalls: number };
+  /**
+   * Where a card goes when a week of follow-up ends (iris.followUpCohort): no answer to any call or text
+   * -> notReadyStage; opted out -> notInterestedStage. Stage NAMES, resolved against the live pipeline.
+   */
+  followUpCohort?: { notReadyStage: string; notInterestedStage: string };
   /** Local dates (YYYY-MM-DD, client timezone) Iris places no calls — holidays. Due calls roll to the next open day. */
   noCallDates?: string[];
   /** Address of one call on Vapi's dashboard, with {callId} where the call's id goes. See links.ts. */

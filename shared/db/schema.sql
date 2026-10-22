@@ -786,3 +786,23 @@ ALTER TABLE iris_pending_calls ADD COLUMN IF NOT EXISTS human_requested BOOLEAN 
 -- A Slack command that covers several leads at once (kind = followup: "follow up on the leads Jacob called
 -- and didn't reach"): the leads, as [{id, name}]. contact_id/contact_name then hold the first lead only.
 ALTER TABLE iris_slack_commands ADD COLUMN IF NOT EXISTS batch JSONB;
+
+-- A week of Iris follow-up on a hand-picked group of leads, and how it ends (agents/iris/followup-cohort.ts).
+-- rounds = extra call rounds still to queue; deadline_at = when "no answer to anything" moves the card to Not Ready.
+-- stage_id / opportunity_id = where the card sat when enrolled; a card someone has moved since is never touched.
+CREATE TABLE IF NOT EXISTS iris_followup_cohort (
+    id BIGSERIAL PRIMARY KEY,
+    client_id TEXT NOT NULL,
+    contact_id TEXT NOT NULL,
+    contact_name TEXT NOT NULL,
+    opportunity_id TEXT NOT NULL,
+    stage_id TEXT NOT NULL,
+    started_at TIMESTAMPTZ NOT NULL,
+    deadline_at TIMESTAMPTZ NOT NULL,
+    rounds TIMESTAMPTZ[] NOT NULL DEFAULT '{}',
+    rounds_done INTEGER NOT NULL DEFAULT 0,
+    status TEXT NOT NULL DEFAULT 'active',  -- active | moved_not_ready | moved_not_interested | engaged | dropped
+    outcome TEXT,
+    resolved_at TIMESTAMPTZ,
+    UNIQUE (client_id, contact_id)
+);
