@@ -25,6 +25,7 @@ import { computeTotals, computeWeeklyTotals, formatAllClientsReport, previousMon
 import { computeFunnel, formatFunnelLines, loadFunnelConfig } from "../../agents/lens/funnel";
 import { runDialPendingCalls } from "../../agents/iris/dial-pending";
 import { runNoShowScan } from "../../agents/iris/no-show";
+import { runFollowUpCohortCheck } from "../../agents/iris/followup-cohort";
 import { sendBlocks, sendMessage } from "../slack";
 import { canApproveFromSlack, flagBlocks, runApprovalNudges } from "../../agents/forge/ads/approval";
 import { listEmberClientIds, loadEmberConfig } from "../../agents/ember/config";
@@ -366,6 +367,9 @@ export function startScheduler(): void {
   // Every 5 minutes: finds cards the team just moved to No-Show and starts Iris's follow-up (text now,
   // calls later). The first scan only records what is already in the column. See agents/iris/no-show.ts.
   cron.schedule("*/5 * * * *", runNoShowScan, { timezone: TIMEZONE });
+  // Hourly at :35: the week-long follow-up on a hand-picked group (next call rounds, and the final move to
+  // Not Ready / Not Interested). Does nothing while no group is enrolled. See agents/iris/followup-cohort.ts.
+  cron.schedule("35 * * * *", () => runFollowUpCohortCheck(), { timezone: TIMEZONE });
   // 20 past, clear of the Meta sync (:00) and rule evaluation (:05) — the
   // scan paginates a whole pipeline through GHL and shouldn't compete.
   cron.schedule("20 * * * *", runEmberScan, { timezone: TIMEZONE });
