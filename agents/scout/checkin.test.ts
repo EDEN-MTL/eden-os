@@ -398,41 +398,91 @@ describe("getCheckinData", () => {
     expect(data!.unassigned[0].ghlEventId).toBe("opp-truly-unassigned");
   });
 
-  it("remembers a contact's conversation history between page loads instead of refetching it, and resolves several unresolved contacts in one load", async () => {
-    function unresolvedOpp(id: string, contactId: string) {
-      return {
-        id,
-        name: id,
-        contactId,
-        pipelineStageId: "live-transfer-stage",
-        status: "open",
-        lastStageChangeAt: "2026-09-01T00:00:00.000Z",
-        assignedTo: null,
-        followers: [],
-      };
-    }
-    for (let load = 0; load < 2; load++) {
-      db.query.mockResolvedValueOnce([{ client_id: "3-percent-east-coast" }]).mockResolvedValueOnce([]);
-      readFileSyncMock.mockReturnValueOnce(configJsonWithLiveTransfer());
-      ghl.getGhlConfig.mockResolvedValueOnce({ apiKey: "key", locationId: "loc" });
-      ghl.listCalendarEvents.mockResolvedValueOnce([]).mockResolvedValueOnce([]);
-      ghl.listOpportunitiesPaginated.mockReturnValueOnce(
-        asyncGeneratorOf([unresolvedOpp("opp-a", "contact-a"), unresolvedOpp("opp-b", "contact-b")])
-      );
-    }
+  function snapshotLoadMocks() {
+    db.query.mockResolvedValueOnce([{ client_id: "3-percent-east-coast" }]).mockResolvedValueOnce([]);
+    readFileSyncMock.mockReturnValueOnce(configJsonWithLiveTransfer());
+    ghl.getGhlConfig.mockResolvedValueOnce({ apiKey: "key", locationId: "loc" });
+  }
+  function ghlListMocks() {
+    ghl.listCalendarEvents.mockResolvedValueOnce([]).mockResolvedValueOnce([]);
+    ghl.listOpportunitiesPaginated.mockReturnValueOnce(
+      asyncGeneratorOf(
+        ["a", "b"].map((k) => ({
+          id: `opp-${k}`,
+          name: `opp-${k}`,
+          contactId: `contact-${k}`,
+          pipelineStageId: "live-transfer-stage",
+          status: "open",
+          lastStageChangeAt: "2026-09-01T00:00:00.000Z",
+          assignedTo: null,
+          followers: [],
+        }))
+      )
+    );
+  }
+
+  it("serves a repeat page load from the GHL snapshot cache while still reading saved checkbox state fresh from the DB, resolving several unresolved contacts in parallel on the first load", async () => {
+    snapshotLoadMocks();
+    ghlListMocks();
     ghl.getConversations.mockImplementation(async (contactId: string) => ({ conversations: [{ id: `conv-${contactId}` }] }));
     ghl.getConversationMessages.mockResolvedValue({
       messages: { messages: [{ messageType: "TYPE_CALL", userId: "ashley-id" }] },
     });
 
     const first = await getCheckinData("good-token");
+
+    // Second load: only the DB-backed reads are queued — any GHL call would
+    // hit an unqueued mock and return undefined, breaking the result.
+    db.query
+      .mockResolvedValueOnce([{ client_id: "3-percent-east-coast" }])
+      .mockResolvedValueOnce([
+        {
+          ghl_event_id: "opp-a",
+          still_in_conversation: false,
+          showed_up: true,
+          deal_progressing: false,
+          deal_closed: false,
+          contract_signed: false,
+          potential_commission: null,
+        },
+      ]);
+    readFileSyncMock.mockReturnValueOnce(configJsonWithLiveTransfer());
+    ghl.getGhlConfig.mockResolvedValueOnce({ apiKey: "key", locationId: "loc" });
     const second = await getCheckinData("good-token");
 
     expect(first!.unassigned).toHaveLength(0);
     expect(first!.teams[0].members[0].appointments).toHaveLength(2);
-    expect(second!.teams[0].members[0].appointments).toHaveLength(2);
-    // 2 contacts x 1 fetch each — the second page load is served from memory.
+    expect(ghl.listOpportunitiesPaginated).toHaveBeenCalledTimes(1);
     expect(ghl.getConversations).toHaveBeenCalledTimes(2);
+    const appA = second!.teams[0].members[0].appointments.find((a) => a.ghlEventId === "opp-a");
+    expect(appA!.checkboxes.showed_up).toBe(true);
+  });
+
+  it("past the fresh window, serves the stale snapshot instantly and refreshes it in the background for the next load", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    try {
+      snapshotLoadMocks();
+      ghlListMocks();
+      ghl.getConversations.mockImplementation(async (contactId: string) => ({ conversations: [{ id: `conv-${contactId}` }] }));
+      ghl.getConversationMessages.mockResolvedValue({
+        messages: { messages: [{ messageType: "TYPE_CALL", userId: "ashley-id" }] },
+      });
+      await getCheckinData("good-token");
+
+      vi.setSystemTime(Date.now() + 2 * 60 * 1000); // past fresh (1 min), within stale (10 min)
+      snapshotLoadMocks();
+      ghlListMocks();
+      const stale = await getCheckinData("good-token");
+      expect(stale!.teams[0].members[0].appointments).toHaveLength(2);
+
+      await vi.waitFor(() => expect(ghl.listOpportunitiesPaginated).toHaveBeenCalledTimes(2));
+      // Let the background refresh finish writing its snapshot before this
+      // test ends, so it can't land after afterEach's cache clear and leak
+      // into the next test.
+      await new Promise((resolve) => setTimeout(resolve, 25));
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   function configJsonWithReviewStage() {
