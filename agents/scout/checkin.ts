@@ -117,6 +117,7 @@ const historyCache = new Map<string, { at: number; messages: any[] }>();
 
 export function clearCheckinCaches(): void {
   historyCache.clear();
+  snapshotCache.clear();
 }
 
 async function mapWithConcurrency<T, R>(items: T[], limit: number, fn: (item: T) => Promise<R>): Promise<R[]> {
@@ -230,14 +231,87 @@ interface CheckinRow {
  * turns that into a plain 404 without hinting at why, same non-committal
  * response Quarry's unsubscribe route already uses for its own token.
  */
-export async function getCheckinData(token: string): Promise<CheckinData | null> {
-  const clientId = await resolveClientId(token);
-  if (!clientId) return null;
+interface RawItem {
+  id: string;
+  contactId: string | null;
+  prospectName: string;
+  appointmentAt: string;
+  status: string;
+  // Candidate GHL user ids for "who owns this," in priority order —
+  // resolved against the real roster below rather than trusted blindly,
+  // because neither GHL field is reliable alone. Verified live twice
+  // with contradictory results: 2026-09-09, some opportunities had
+  // assignedTo null while followers[0] correctly held the real assignee.
+  // 2026-09-24, two opportunities had assignedTo correctly set to a
+  // real current team member (Stephanie McGrath) while followers[0]
+  // still held an unrelated dead/former-user id — if followers were
+  // checked first here, as it originally was, a properly-assigned lead
+  // would have wrongly landed in "Needs routing". Resolved by trying
+  // each candidate against the known roster (see memberIds below) and
+  // taking the first one that actually matches, instead of assuming
+  // either field's mere presence means it's correct.
+  assignedCandidates: string[];
+  assignedId: string | null;
+  // Live-transfer items are already filtered to status==="open" at the
+  // fetch stage above, however old — the stale/open-opportunity re-check
+  // below is only meaningful for calendar events, so this flag lets that
+  // step skip them rather than misreading a live-transfer's (often
+  // absent) contactId as "nothing to keep it alive."
+  isLiveTransfer: boolean;
+}
 
-  const config = loadClientJson(clientId);
-  const ghlConfig = await getGhlConfig(clientId);
-  if (!config || !ghlConfig) return null;
+// Snapshot cache, added 2026-10-22 per Jacob ("how can we speed that up?"):
+// everything read from GHL (calendars, opportunities, history recovery) is
+// kept per client for SNAPSHOT_FRESH_MS and then served stale-while-
+// revalidate for up to SNAPSHOT_MAX_STALE_MS — a stale copy is returned
+// instantly while a fresh one loads in the background, so almost no one
+// waits on GHL. Deliberately NOT cached: the checkbox/commission rows
+// (read from our own DB on every request, so a save is visible on the very
+// next refresh) and the roster/period (cheap). Tradeoff accepted: a GHL-side
+// change (new transfer, reassignment) can take up to ~a minute to show.
+const SNAPSHOT_FRESH_MS = 60 * 1000;
+const SNAPSHOT_MAX_STALE_MS = 10 * 60 * 1000;
+interface SnapshotEntry {
+  at: number;
+  items?: RawItem[];
+  inflight?: Promise<RawItem[]>;
+}
+const snapshotCache = new Map<string, SnapshotEntry>();
 
+function refreshSnapshot(clientId: string, load: () => Promise<RawItem[]>): Promise<RawItem[]> {
+  const entry = snapshotCache.get(clientId);
+  if (entry?.inflight) return entry.inflight;
+  const inflight = load().then(
+    (items) => {
+      snapshotCache.set(clientId, { at: Date.now(), items });
+      return items;
+    },
+    (error) => {
+      const current = snapshotCache.get(clientId);
+      if (current) delete current.inflight;
+      throw error;
+    }
+  );
+  snapshotCache.set(clientId, { at: entry?.at ?? 0, items: entry?.items, inflight });
+  return inflight;
+}
+
+async function getSnapshot(clientId: string, load: () => Promise<RawItem[]>): Promise<RawItem[]> {
+  const entry = snapshotCache.get(clientId);
+  const age = entry?.items ? Date.now() - entry.at : Infinity;
+  if (entry?.items && age < SNAPSHOT_FRESH_MS) return entry.items;
+  if (entry?.items && age < SNAPSHOT_MAX_STALE_MS) {
+    // Serve the stale copy now; refresh quietly. A failed background
+    // refresh just leaves the old copy to age out — never surfaced.
+    refreshSnapshot(clientId, load).catch((error) =>
+      console.error("[CHECKIN] Background refresh failed — serving the previous snapshot:", error)
+    );
+    return entry.items;
+  }
+  return refreshSnapshot(clientId, load);
+}
+
+async function loadGhlItems(config: any, ghlConfig: { locationId: string; apiKey?: string }): Promise<RawItem[]> {
   const teamsConfig: { teamName: string; teamLead: string; members: { name: string; ghlUserId: string }[] }[] =
     config.teams || [];
   const memberIds = new Set(teamsConfig.flatMap((t) => t.members.map((m) => m.ghlUserId)));
@@ -256,11 +330,14 @@ export async function getCheckinData(token: string): Promise<CheckinData | null>
   // original appointment was a while ago — anything older than 60 days
   // gets filtered back down below, unless its contact still has an open
   // opportunity.
-  const rawEvents: any[] = [];
-  for (const calendarId of calendarIds) {
-    const events = await listCalendarEvents(ghlConfig.locationId, calendarId, extendedStart, now, ghlConfig.apiKey);
-    rawEvents.push(...events);
-  }
+  const fetchEvents = async (): Promise<any[]> => {
+    const lists = await Promise.all(
+      calendarIds.map((calendarId) =>
+        listCalendarEvents(ghlConfig.locationId, calendarId, extendedStart, now, ghlConfig.apiKey)
+      )
+    );
+    return lists.flat();
+  };
 
   // Live-transferred calls: opportunities carrying a "live transferred" tag
   // — a different GHL object entirely from a booked calendar appointment,
@@ -296,22 +373,28 @@ export async function getCheckinData(token: string): Promise<CheckinData | null>
   const reviewStageIds: string[] = config.scout?.reviewStageIds || [];
   const rawLiveTransfers: any[] = [];
   const reviewCandidates: any[] = [];
-  if (pipelineId && (liveTransferStageId || liveTransferTags.length > 0)) {
-    for await (const opp of listOpportunitiesPaginated(ghlConfig.locationId, {
-      pipelineId,
-      apiKey: ghlConfig.apiKey,
-    })) {
-      if (opp.status !== "open") continue;
-      const contactTags: string[] = (opp.contact?.tags || []).map((t: unknown) => String(t).toLowerCase());
-      const isTagged = liveTransferTags.length > 0 && contactTags.some((t) => liveTransferTags.includes(t));
-      const isInStage = !!liveTransferStageId && opp.pipelineStageId === liveTransferStageId;
-      if (isTagged || isInStage) {
-        rawLiveTransfers.push(opp);
-      } else if (reviewStageIds.includes(opp.pipelineStageId)) {
-        reviewCandidates.push(opp);
+  const scanOpportunities = async (): Promise<void> => {
+    if (pipelineId && (liveTransferStageId || liveTransferTags.length > 0)) {
+      for await (const opp of listOpportunitiesPaginated(ghlConfig.locationId, {
+        pipelineId,
+        apiKey: ghlConfig.apiKey,
+      })) {
+        if (opp.status !== "open") continue;
+        const contactTags: string[] = (opp.contact?.tags || []).map((t: unknown) => String(t).toLowerCase());
+        const isTagged = liveTransferTags.length > 0 && contactTags.some((t) => liveTransferTags.includes(t));
+        const isInStage = !!liveTransferStageId && opp.pipelineStageId === liveTransferStageId;
+        if (isTagged || isInStage) {
+          rawLiveTransfers.push(opp);
+        } else if (reviewStageIds.includes(opp.pipelineStageId)) {
+          reviewCandidates.push(opp);
+        }
       }
     }
-  }
+  };
+
+  // Calendars and the opportunity scan are independent GHL reads — started
+  // together (2026-10-22) rather than back to back.
+  const [rawEvents] = await Promise.all([fetchEvents(), scanOpportunities()]);
 
   if (reviewCandidates.length > 0 && liveTransferStageId) {
     let liveTransferStageName: string | null = null;
@@ -349,34 +432,6 @@ export async function getCheckinData(token: string): Promise<CheckinData | null>
     }
   }
 
-  interface RawItem {
-    id: string;
-    contactId: string | null;
-    prospectName: string;
-    appointmentAt: string;
-    status: string;
-    // Candidate GHL user ids for "who owns this," in priority order —
-    // resolved against the real roster below rather than trusted blindly,
-    // because neither GHL field is reliable alone. Verified live twice
-    // with contradictory results: 2026-09-09, some opportunities had
-    // assignedTo null while followers[0] correctly held the real assignee.
-    // 2026-09-24, two opportunities had assignedTo correctly set to a
-    // real current team member (Stephanie McGrath) while followers[0]
-    // still held an unrelated dead/former-user id — if followers were
-    // checked first here, as it originally was, a properly-assigned lead
-    // would have wrongly landed in "Needs routing". Resolved by trying
-    // each candidate against the known roster (see memberIds below) and
-    // taking the first one that actually matches, instead of assuming
-    // either field's mere presence means it's correct.
-    assignedCandidates: string[];
-    assignedId: string | null;
-    // Live-transfer items are already filtered to status==="open" at the
-    // fetch stage above, however old — the stale/open-opportunity re-check
-    // below is only meaningful for calendar events, so this flag lets that
-    // step skip them rather than misreading a live-transfer's (often
-    // absent) contactId as "nothing to keep it alive."
-    isLiveTransfer: boolean;
-  }
 
   let items: RawItem[] = [
     ...rawEvents.map((e) => ({
@@ -492,6 +547,25 @@ export async function getCheckinData(token: string): Promise<CheckinData | null>
     if (isRecent) return true;
     return item.contactId ? openStaleContactIds.has(item.contactId) : false;
   });
+
+  return items;
+}
+
+export async function getCheckinData(token: string): Promise<CheckinData | null> {
+  const clientId = await resolveClientId(token);
+  if (!clientId) return null;
+
+  const config = loadClientJson(clientId);
+  const ghlConfig = await getGhlConfig(clientId);
+  if (!config || !ghlConfig) return null;
+
+  const teamsConfig: { teamName: string; teamLead: string; members: { name: string; ghlUserId: string }[] }[] =
+    config.teams || [];
+  const memberIds = new Set(teamsConfig.flatMap((t) => t.members.map((m) => m.ghlUserId)));
+
+  const now = Date.now();
+  const start = now - CHECKIN_WINDOW_DAYS * 24 * 60 * 60 * 1000;
+  const items = await getSnapshot(clientId, () => loadGhlItems(config, ghlConfig));
 
   const itemIds = items.map((i) => i.id);
   const checkinRows = itemIds.length
