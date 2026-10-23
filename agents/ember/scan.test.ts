@@ -105,6 +105,15 @@ describe("detectChange", () => {
     expect(detectChange(lead(), opp(), ctx())).toEqual({ kind: "none" });
   });
 
+  it("drops a lead quietly when its stage is taken off includeStages (Mark, 2026-10-24)", () => {
+    const off = ctx({ config: config({ includeStages: ["Replied"] }) });
+    expect(detectChange(lead(), opp(), off)).toEqual({ kind: "exited", reason: '"Long Term Nurturing" is no longer a stage Ember works' });
+    const on = ctx({ config: config({ includeStages: ["Long Term Nurturing", "Replied"] }) });
+    expect(detectChange(lead(), opp(), on)).toEqual({ kind: "none" });
+    // A card moved elsewhere is still a reactivation, not a quiet drop.
+    expect(detectChange(lead(), opp({ pipelineStageId: "s_confirmed" }), off).kind).toBe("reactivated");
+  });
+
   it("reactivates when the card moved to another column", () => {
     const change = detectChange(lead(), opp({ pipelineStageId: "s_confirmed", lastStageChangeAt: daysAgo(0) }), ctx());
     expect(change).toEqual({ kind: "reactivated", reason: 'card moved from "Long Term Nurturing" to "Buyer Confirmed"' });

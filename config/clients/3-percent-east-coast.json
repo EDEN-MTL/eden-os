@@ -382,7 +382,7 @@
     "stageDormancyDays": {
       "Replied": 14
     },
-    "stageDormancyDaysNote": "Mark, 2026-09-25: Replied leads are picked up after 14 quiet days; Not Ready and Long Term Nurturing use the 60-day default.",
+    "stageDormancyDaysNote": "Mark, 2026-09-25: Replied leads are picked up after 14 quiet days; Not Ready uses the 60-day default.",
     "excludeStages": [
       "Appointment Set",
       "Appointment Set (Not qualified)",
@@ -392,10 +392,9 @@
     ],
     "includeStages": [
       "Not Ready - [Endless Loop]",
-      "Long Term Nurturing",
       "Replied"
     ],
-    "includeStagesNote": "Mark, 2026-09-25: Ember focuses on these three stages only, for now. Names verified live against this pipeline (and 3-percent-east-coast's, which has the same three).",
+    "includeStagesNote": "Mark, 2026-10-24: Long Term Nurturing REMOVED - Ember must not touch leads in that stage; tracked ones there are dropped quietly (scan.ts detectChange). Mark, 2026-09-25: Ember focuses on these three stages only, for now. Names verified live against this pipeline (and 3-percent-east-coast's, which has the same three).",
     "notInterestedStage": "Not Qualified/Not Interested",
     "notInterestedNote": "Mark, 2026-10-01: on CLEAR evidence a lead is no longer a prospect (bought, sold, another agent, no longer looking, asked to stop), Ember moves the card here and never contacts them again. Not ready / next year / busy / no reply keep nurturing. See agents/ember/status.ts.",
     "consentWindowDays": 180,
