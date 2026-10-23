@@ -7,14 +7,19 @@
  * she never talks over a screener or voicemail), and the lead hung up after 22 seconds of
  * nothing. The same day a second call sat silent for 30 seconds.
  *
- * The rule here is narrow: speech was HEARD but nothing was transcribed, Iris has said nothing,
- * and a couple of seconds have passed. Then Iris says her opening line once, through Vapi's
+ * The rule here is narrow: ONE short burst of speech was heard, nothing was transcribed, Iris has
+ * said nothing, and several seconds have passed. Then Iris says her opening line once, through Vapi's
  * live-call control. A screener, voicemail greeting or hold message always produces a
  * transcript, so none of those can trigger it. At most once per call.
  */
 
-/** How long after the lead stops speaking to wait for a transcript before stepping in. */
-export const RESCUE_DELAY_MS = 2500;
+/**
+ * How long after the lead stops speaking to wait for their words to show up before stepping in.
+ * Vapi finalizes a transcript about 2 seconds after speech ends (1.5s endpointing plus processing),
+ * so this leaves a wide margin: acting on a transcript that is merely late is how Iris once spoke
+ * into a voicemail greeting (Sabrina Marie, 2026-10-21, one day after this feature shipped).
+ */
+export const RESCUE_DELAY_MS = 5000;
 
 /**
  * The opening line, read back out of the call's own system prompt (the FIRST TURN block in
@@ -31,6 +36,8 @@ interface CallState {
   opener: string | null;
   controlUrl: string | null;
   userTranscripts: number;
+  /** How many separate times the lead started speaking. A hello is ONE short burst; a greeting is two or more. */
+  bursts: number;
   assistantSpoke: boolean;
   rescued: boolean;
   timer: ReturnType<typeof setTimeout> | null;
@@ -66,7 +73,7 @@ export function createHelloRescue(deps: RescueDeps = { say: defaultSay, fetchCal
     let state = calls.get(id);
     if (!state) {
       const systemPrompt = (call.assistant?.model?.messages ?? []).find((m: any) => m?.role === "system")?.content;
-      state = { opener: openerFromPrompt(systemPrompt), controlUrl: call.monitor?.controlUrl ?? null, userTranscripts: 0, assistantSpoke: false, rescued: false, timer: null };
+      state = { opener: openerFromPrompt(systemPrompt), controlUrl: call.monitor?.controlUrl ?? null, userTranscripts: 0, bursts: 0, assistantSpoke: false, rescued: false, timer: null };
       calls.set(id, state);
     }
     if (!state.controlUrl && call.monitor?.controlUrl) state.controlUrl = call.monitor.controlUrl;
@@ -99,6 +106,9 @@ export function createHelloRescue(deps: RescueDeps = { say: defaultSay, fetchCal
     if (type === "conversation-update") {
       const msgs: any[] = message.conversation ?? message.messages ?? [];
       if (msgs.some((m) => m?.role === "assistant" && typeof m.content === "string" && m.content.trim() && m.content.trim() !== "[silent]")) state.assistantSpoke = true;
+      // Vapi does not send "transcript" messages to us by default; the words reach us here, as a user
+      // message in the conversation. Missing this is what let Iris speak into a voicemail greeting.
+      if (msgs.some((m) => m?.role === "user" && typeof m.content === "string" && m.content.trim())) state.userTranscripts++;
       return;
     }
     // speech-update
@@ -106,11 +116,19 @@ export function createHelloRescue(deps: RescueDeps = { say: defaultSay, fetchCal
       state.assistantSpoke = true;
       return;
     }
+    if (message.role === "user" && message.status === "started") {
+      state.bursts++;
+      if (state.timer) {
+        clearTimeout(state.timer);
+        state.timer = null;
+      }
+      return;
+    }
     if (message.role !== "user" || message.status !== "stopped" || state.rescued || state.assistantSpoke) return;
     if (state.timer) clearTimeout(state.timer);
     state.timer = setTimeout(async () => {
       state.timer = null;
-      if (state.rescued || state.assistantSpoke || state.userTranscripts > 0) return;
+      if (state.rescued || state.assistantSpoke || state.userTranscripts > 0 || state.bursts !== 1) return;
       if (!state.controlUrl || !state.opener) {
         const full = await deps.fetchCall?.(id).catch(() => null);
         const prompt = (full?.assistant?.model?.messages ?? []).find((m: any) => m?.role === "system")?.content;
@@ -118,7 +136,7 @@ export function createHelloRescue(deps: RescueDeps = { say: defaultSay, fetchCal
         state.opener = state.opener ?? openerFromPrompt(prompt);
       }
       // Re-check after the lookup: the lead may have been heard, or the call ended, meanwhile.
-      if (state.rescued || state.assistantSpoke || state.userTranscripts > 0 || !state.controlUrl || !state.opener || !calls.has(id)) return;
+      if (state.rescued || state.assistantSpoke || state.userTranscripts > 0 || state.bursts !== 1 || !state.controlUrl || !state.opener || !calls.has(id)) return;
       state.rescued = true;
       deps.say(state.controlUrl, state.opener).then(
         () => console.log(`[VAPI] Call ${id}: heard the lead speak but got no transcript — said the opener once.`),
