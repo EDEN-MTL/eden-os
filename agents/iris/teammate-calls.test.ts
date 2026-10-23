@@ -139,6 +139,12 @@ describe("the Slack commands", () => {
     expect(JSON.parse((insert[1] as unknown[])[9] as string)).toEqual([{ id: "amanda", name: "Amanda Marie" }]);
   });
 
+  it("asks the teammate check about texts only, so Jacob's own unanswered call doesn't exclude the lead", async () => {
+    await prepareFollowUpCommand("c", { person: "Jacob" }, CTX, loader, NOW);
+    expect(touch.checkHumanTouch).toHaveBeenCalled();
+    for (const call of touch.checkHumanTouch.mock.calls as unknown as unknown[][]) expect(call[5]).toEqual({ includeCalls: false });
+  });
+
   it("leaves out a lead a teammate has since texted", async () => {
     touch.checkHumanTouch.mockResolvedValue({ status: "human", at: "x" } as any);
     const p = await prepareFollowUpCommand("c", { person: "Jacob" }, CTX, loader, NOW);

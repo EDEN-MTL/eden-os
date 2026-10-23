@@ -295,7 +295,8 @@ export async function prepareFollowUpCommand(
     else if (!contact.phone) left.push(`${c.name} (no phone)`);
     else if (tags.includes("appt booked") || tags.includes("live transferred")) left.push(`${c.name} (already ${tags.includes("appt booked") ? "booked" : "live transferred"})`);
     else {
-      const touch = await checkHumanTouch(c.contactId, ghl.locationId, ghl.apiKey, settings.humanHandsOffDays);
+      // Texts only: the teammate's own unanswered call is exactly why this lead is on the list.
+      const touch = await checkHumanTouch(c.contactId, ghl.locationId, ghl.apiKey, settings.humanHandsOffDays, now, { includeCalls: false });
       if (touch.status !== "none") left.push(`${c.name} (a teammate has texted them)`);
       else eligible.push({ id: c.contactId, name: c.name });
     }
