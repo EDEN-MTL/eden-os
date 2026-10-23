@@ -53,7 +53,12 @@ export interface ConversationDeps {
   chat: typeof chatWithTools;
   loadHistory(key: string): Promise<ChatMessage[]>;
   appendHistory(key: string, role: "user" | "assistant", content: string): Promise<void>;
-  sendSMS(contactId: string, text: string): Promise<unknown>;
+  /**
+   * Sends one text to the lead this conversation is with. Takes ONLY the text: the dependency is already bound
+   * to the lead. It used to take (contactId, text) while the real one took just (text), so every Ember reply
+   * went out with the lead's contact id as its body (Marcia Wiseman, 2026-10-23: "oTCjDHG2AP4okGSGUsYs").
+   */
+  sendSMS(text: string): Promise<unknown>;
   /** Waits the human-like gap before a reply (iris/sms humanReplyDelayMs). */
   pauseLikeAHuman(reply: string): Promise<void>;
   /** Writes the qualification summary to the contact's notes field. */
@@ -309,7 +314,7 @@ export async function emberConverse(
   }
   reply = fitOneSegment(smsSafe(reply));
   await deps.pauseLikeAHuman(reply);
-  await deps.sendSMS(lead.ghlContactId, reply);
+  await deps.sendSMS(reply);
   await deps.appendHistory(key, "user", text).catch(() => {});
   await deps.appendHistory(key, "assistant", reply).catch(() => {});
   return reply;
