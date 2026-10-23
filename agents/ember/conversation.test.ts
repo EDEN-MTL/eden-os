@@ -40,7 +40,7 @@ function deps(...turns: any[]): ConversationDeps & { sent: string[] } {
     chat: chat as any,
     loadHistory: vi.fn(async () => []),
     appendHistory: vi.fn(async () => {}),
-    sendSMS: vi.fn(async (_c: string, t: string) => { sent.push(t); }),
+    sendSMS: vi.fn(async (t: string) => { sent.push(t); }),
     pauseLikeAHuman: vi.fn(async () => {}),
     saveNotes: vi.fn(async () => true),
     queueIrisCall: vi.fn(async () => {}),
@@ -67,6 +67,10 @@ describe("emberConverse — Ember texts the old lead itself", () => {
     expect(reply).toBe("Great to hear from you, Jacob! Are you still thinking of buying?");
     expect(d.pauseLikeAHuman).toHaveBeenCalledBefore(d.sendSMS as any);
     expect(d.sent).toEqual([reply]);
+    // The text itself is the ONLY argument. When this took (contactId, text) while the real sender took just
+    // (text), every reply went out as the lead's contact id (Marcia Wiseman, 2026-10-23).
+    expect(d.sendSMS).toHaveBeenCalledWith(reply);
+    expect((d.sendSMS as any).mock.calls[0]).toHaveLength(1);
     expect(d.updateLead).toHaveBeenCalledWith(1, expect.objectContaining({ status: "conversing" }));
     expect(d.appendHistory).toHaveBeenCalledWith("sms:eden-sub-account-one:c1", "user", "yes still looking");
     expect(d.appendHistory).toHaveBeenCalledWith("sms:eden-sub-account-one:c1", "assistant", reply);
