@@ -25,6 +25,7 @@ import { computeTotals, computeWeeklyTotals, formatAllClientsReport, previousMon
 import { computeFunnel, formatFunnelLines, loadFunnelConfig } from "../../agents/lens/funnel";
 import { runDialPendingCalls } from "../../agents/iris/dial-pending";
 import { runNoShowScan } from "../../agents/iris/no-show";
+import { runAppointmentSync } from "../../agents/lens/dashboard/appointments-sync";
 import { runFollowUpCohortCheck } from "../../agents/iris/followup-cohort";
 import { sendBlocks, sendMessage } from "../slack";
 import { canApproveFromSlack, flagBlocks, runApprovalNudges } from "../../agents/forge/ads/approval";
@@ -367,6 +368,9 @@ export function startScheduler(): void {
   // Every 5 minutes: finds cards the team just moved to No-Show and starts Iris's follow-up (text now,
   // calls later). The first scan only records what is already in the column. See agents/iris/no-show.ts.
   cron.schedule("*/5 * * * *", runNoShowScan, { timezone: TIMEZONE });
+  // Hourly at :25, after the lead sync: copies each client's GHL appointments (with their showed / no-show outcomes)
+  // into our database for the Lens dashboard. See agents/lens/dashboard/appointments-sync.ts.
+  cron.schedule("25 * * * *", () => runAppointmentSync(), { timezone: TIMEZONE });
   // Hourly at :35: the week-long follow-up on a hand-picked group (next call rounds, and the final move to
   // Not Ready / Not Interested). Does nothing while no group is enrolled. See agents/iris/followup-cohort.ts.
   cron.schedule("35 * * * *", () => runFollowUpCohortCheck(), { timezone: TIMEZONE });

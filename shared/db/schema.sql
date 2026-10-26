@@ -806,3 +806,39 @@ CREATE TABLE IF NOT EXISTS iris_followup_cohort (
     resolved_at TIMESTAMPTZ,
     UNIQUE (client_id, contact_id)
 );
+
+-- Appointments copied from GHL's calendars (agents/lens/dashboard/appointments-sync.ts) so Lens can report
+-- booked / confirmed / attended / no-show without calling GHL on every page load. One row per GHL event;
+-- `status` is normalized (booked | confirmed | attended | no_show | cancelled | invalid | deleted).
+-- start_time / booked_at are real instants (GHL sends the offset). A row whose event disappears from GHL
+-- inside the synced window is marked 'deleted' rather than kept as a phantom booking.
+CREATE TABLE IF NOT EXISTS ghl_appointments (
+    id BIGSERIAL PRIMARY KEY,
+    client_id TEXT NOT NULL,
+    appointment_id TEXT NOT NULL,
+    contact_id TEXT,
+    calendar_id TEXT,
+    title TEXT,
+    start_time TIMESTAMPTZ NOT NULL,
+    end_time TIMESTAMPTZ,
+    booked_at TIMESTAMPTZ,
+    status TEXT NOT NULL,
+    raw_status TEXT,
+    assigned_user_id TEXT,
+    synced_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    UNIQUE (client_id, appointment_id)
+);
+CREATE INDEX IF NOT EXISTS idx_ghl_appts_client_start ON ghl_appointments(client_id, start_time);
+CREATE INDEX IF NOT EXISTS idx_ghl_appts_contact ON ghl_appointments(client_id, contact_id);
+
+-- Marketing costs other than ad spend, entered by hand per client and day (agency fees, creative, tools...).
+-- Lens adds them to ad spend for Marketing ROI only; ROAS always uses ad spend alone.
+CREATE TABLE IF NOT EXISTS lens_other_costs (
+    id BIGSERIAL PRIMARY KEY,
+    client_id TEXT NOT NULL,
+    cost_date DATE NOT NULL,
+    amount DOUBLE PRECISION NOT NULL,
+    label TEXT,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_lens_other_costs ON lens_other_costs(client_id, cost_date);
