@@ -37,3 +37,27 @@ transferred, appointment booked, showed up, signed/closed — split buyer/seller
 `buyer lead` / `seller lead` tags. A step matches on a tag **or** a pipeline column, and
 a step's columns include every later column, because cards move on while tags stay.
 Lens's lead count is GHL-attributed only, so it reads lower than Forge's.
+
+## Lens reporting dashboard (`agents/lens/dashboard/`, `server/lens-api.ts`, `dashboards/eden-command-ui/src/lens/`)
+
+Read-only, per client and period, behind `x-dashboard-key`. `metrics.ts` is the one place numbers are computed, so the
+cards, charts, campaign table and attribution can't disagree. Rules that cost debugging time:
+
+- A lead is "from ads" only with a real Meta campaign ID (confirmed). A typed label or a Facebook source with no ID is
+  partial; nothing is unknown. Only confirmed leads count in ROAS, cost per deal and the campaign table.
+- Closed deal = Deal Closed stage, dated by the opportunity's `lastStageChangeAt`. Appointment-to-sale is a cohort rate.
+- Zero denominators and unconnected sources are N/A, never 0. A previous period that starts before our Meta history
+  (`historyCovers`) shows N/A for ad metrics, not $0. GHL-side history has no such check yet: a previous period before
+  the first synced lead reads 0.
+- Revenue by campaign ranks only traceable campaigns; revenue with no campaign shows last and never wins "top campaign".
+- Presets include last 90 days and this year because deals close months after the ad ran.
+- Exports (`export-model.ts` builds one model, `csv.ts` and `PrintReport.tsx` render it): CSV is raw numbers rounded to 2
+  decimals with a formula guard on typed text; the PDF is the browser's Save-as-PDF of a print-only light copy, landscape.
+  Lead names are off by default (a report for a client is not a customer list); ledger rows read "Lead 1, Lead 2". The
+  button is disabled while loading so a file never mixes one period's numbers with another's label.
+- Failure states: `lensGet` times out at 30s (408) and reports a non-JSON reply as 502; `errors.ts` turns each status into
+  a plain sentence and names which of the four requests failed; `reportProblem` refuses a payload the page cannot draw;
+  `LensBoundary` catches render errors. When a reload fails the old numbers stay up, dimmed and labelled, and export is
+  off. `freshness.ts` warns when the period runs past the last Meta day. Custom periods are checked before any request
+  (`validate-period.ts`: real dates, start before end, at most 366 days, future dates warned). The server returns 400 for
+  a repeated query option rather than quietly using the default.

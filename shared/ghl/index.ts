@@ -682,6 +682,12 @@ export async function getCalendarSlots(
   );
 }
 
+/** Every calendar on the location (id + name), so a report can read the bookings on all of them. */
+export async function listCalendars(locationId: string, apiKey?: string): Promise<{ id: string; name: string; isActive?: boolean }[]> {
+  const result = await ghlRequest(`/calendars/?locationId=${locationId}`, { locationId, apiKey });
+  return result?.calendars || [];
+}
+
 /**
  * Lists booked calendar events (appointments) in a time range — verified
  * live, 2026-09-09, against 3% Realty's account. `calendarId` is required:
