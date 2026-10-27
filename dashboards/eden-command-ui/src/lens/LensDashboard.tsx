@@ -174,14 +174,14 @@ function LensDashboardInner() {
             </div>
           )}
           {kpis.notes.length > 0 && (
-            <div className="lens-banner" role="note">
-              <strong>Read this with the numbers</strong>
+            <details className="lens-banner lens-notes">
+              <summary>Notes about this data ({kpis.notes.length})</summary>
               <ul>
                 {kpis.notes.map((n) => (
                   <li key={n}>{n}</li>
                 ))}
               </ul>
-            </div>
+            </details>
           )}
           <KpiGrid sections={kpis.sections} compared={Boolean(kpis.previousPeriod)} dim={dim} />
           <section className={`lens-section${dim ? " lens-dim" : ""}`} aria-labelledby="lens-trends">

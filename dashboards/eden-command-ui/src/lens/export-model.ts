@@ -3,7 +3,7 @@
  * different things. Pure: no DOM, no fetching. Everything here comes from the same responses the page shows, so
  * an export always matches the client and period it was made from, and "N/A" stays "N/A" (never 0).
  */
-import { formatValue, NA } from "./format";
+import { formatChange, formatValue, NA, toneOf, Tone } from "./format";
 import type { Report } from "./useLensReport";
 import type { AttributionStatus, DealRow, PeriodJson, Unit } from "./types";
 
@@ -50,6 +50,38 @@ export interface ExportOptions {
 }
 
 const num = (v: number | null | undefined, unit: Unit): Num => ({ v: v ?? null, unit });
+
+export interface Tile {
+  key: string;
+  label: string;
+  /** The value as the reader sees it ("$9,335.66", "N/A"). */
+  text: string;
+  /** "+12.5% vs $8,300.00" style, only when the period was compared and the change is known. */
+  change: string | null;
+  tone: Tone;
+}
+
+/** The numbers worth a big tile on the first page, in reading order. A metric a client hides, or that the report lacks, is skipped. */
+const TILE_KEYS: { key: string; label?: string }[] = [
+  { key: "spend" },
+  { key: "totalLeads", label: "Leads" },
+  { key: "cpl" },
+  { key: "appointmentsBooked" },
+  { key: "showUpRate" },
+  { key: "closedDeals" },
+  { key: "revenueAll", label: "Revenue" },
+  { key: "roas" },
+];
+
+export function headlineTiles(report: Report): Tile[] {
+  const byKey = new Map(report.kpis.sections.flatMap((s) => s.metrics).map((m) => [m.key, m]));
+  return TILE_KEYS.flatMap(({ key, label }) => {
+    const m = byKey.get(key);
+    if (!m) return [];
+    const change = report.kpis.previousPeriod ? formatChange(m.change, m.changePct, m.unit) : null;
+    return [{ key, label: label ?? m.label, text: formatValue(m.value, m.unit), change: change ? `${change} vs ${formatValue(m.previous ?? null, m.unit)}` : null, tone: toneOf(key, m.change) }];
+  });
+}
 
 export function slug(text: string): string {
   return text.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "") || "client";
@@ -121,6 +153,8 @@ export function buildExportModel(report: Report, options: ExportOptions): Export
       STATUS_LABEL[d.attribution], d.evidence, d.campaignName ?? (d.attribution === "confirmed" ? "" : "Not traced to a campaign"), d.formName ?? "",
       d.value === null ? "No value recorded" : num(d.value, "currency"),
     ]),
+    // The sum of the values shown, so a reader can check it against the revenue tile. A deal with no value adds nothing.
+    footer: attribution.deals.length ? ["Total", "", "", "", "", "", "", "", "", num(attribution.deals.reduce((sum, d) => sum + (d.value ?? 0), 0), "currency")] : undefined,
     empty: "No deals closed in this period.",
   });
 

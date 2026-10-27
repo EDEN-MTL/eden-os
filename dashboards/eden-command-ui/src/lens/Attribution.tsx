@@ -8,7 +8,7 @@ function Pill({ status }: { status: AttributionStatus }) {
 }
 
 /** One step of the chain: the total, and how much of it is confirmed / partial / unknown as a stacked bar. */
-function Step({ step }: { step: ChainStep }) {
+export function Step({ step }: { step: ChainStep }) {
   const total = step.total ?? 0;
   const part = (n: number | null) => (total > 0 && n ? (n / total) * 100 : 0);
   const fmt = (n: number | null) => formatValue(n, step.unit);
@@ -179,7 +179,7 @@ export default function Attribution({ data }: { data: AttributionResponse }) {
         </div>
       )}
 
-      <details className="lens-method-box" open>
+      <details className="lens-method-box">
         <summary>How attribution is worked out</summary>
         <dl>
           {methodology.map((m) => (

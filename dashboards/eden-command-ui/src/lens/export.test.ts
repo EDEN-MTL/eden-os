@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { csvField, toCsv } from "./csv";
-import { buildExportModel, leadLabel, slug } from "./export-model";
+import { buildExportModel, headlineTiles, leadLabel, slug } from "./export-model";
 import type { Report } from "./useLensReport";
 
 const period = { from: "2026-02-01", to: "2026-10-26", label: "Feb 1 to Oct 26, 2026" };
@@ -89,6 +89,15 @@ describe("buildExportModel", () => {
     expect(notes).not.toMatch(/left out of ROAS/);
   });
 
+  it("totals the deal values under the deals table, counting a deal with no value as nothing", () => {
+    const deals = buildExportModel(report(), { includeNames: false }).tables.find((t) => t.id === "deals")!;
+    expect(deals.footer?.[0]).toBe("Total");
+    expect(deals.footer?.[9]).toEqual({ v: 5698.5, unit: "currency" });
+    const none = report();
+    none.attribution.deals = [];
+    expect(buildExportModel(none, { includeNames: false }).tables.find((t) => t.id === "deals")!.footer).toBeUndefined();
+  });
+
   it("labels leads in the order shown", () => {
     expect(leadLabel({ name: "Ann" }, 0, false)).toBe("Lead 1");
     expect(leadLabel({ name: " Ann " }, 0, true)).toBe("Ann");
@@ -140,5 +149,47 @@ describe("toCsv", () => {
 
   it("includes no lead names when they were not asked for", () => {
     expect(toCsv(buildExportModel(report(), { includeNames: false }))).not.toContain("Matthew Broders");
+  });
+});
+
+describe("headlineTiles", () => {
+  const withMetrics = (compare = true) => {
+    const r = report(compare);
+    r.kpis.sections = [
+      { id: "meta", title: "Meta", metrics: [
+        { key: "spend", label: "Ad spend", definition: "", source: "Meta", unit: "currency", value: 9335.66, previous: 8000, change: 1335.66, changePct: 16.7 },
+        { key: "cpl", label: "Cost per lead", definition: "", source: "Meta", unit: "currency", value: null, previous: null, change: null, changePct: null },
+      ] },
+      { id: "rev", title: "Revenue", metrics: [
+        { key: "revenueAll", label: "Revenue, all closed deals", definition: "", source: "GHL", unit: "currency", value: 21520.5, previous: 0, change: 21520.5, changePct: null },
+        { key: "roas", label: "ROAS", definition: "", source: "Meta + GHL", unit: "ratio", value: 2.31, previous: 1.5, change: 0.81, changePct: 54 },
+      ] },
+    ];
+    return r;
+  };
+
+  it("picks the key numbers in reading order, skips ones the report lacks (a client's hidden ROI is never a tile), and relabels", () => {
+    const tiles = headlineTiles(withMetrics());
+    expect(tiles.map((t) => t.key)).toEqual(["spend", "cpl", "revenueAll", "roas"]);
+    expect(tiles.find((t) => t.key === "revenueAll")!.label).toBe("Revenue");
+  });
+
+  it("shows N/A for a number that cannot be worked out, with no change", () => {
+    const cpl = headlineTiles(withMetrics()).find((t) => t.key === "cpl")!;
+    expect(cpl.text).toBe("N/A");
+    expect(cpl.change).toBeNull();
+  });
+
+  it("says how a number moved only when the period was compared", () => {
+    expect(headlineTiles(withMetrics(true)).find((t) => t.key === "spend")!.change).toBe("+16.7% vs $8,000.00");
+    expect(headlineTiles(withMetrics(false)).find((t) => t.key === "spend")!.change).toBeNull();
+  });
+
+  it("marks a rise in ROAS good and a rise in cost per lead bad", () => {
+    const r = withMetrics();
+    r.kpis.sections[0].metrics[1] = { key: "cpl", label: "Cost per lead", definition: "", source: "Meta", unit: "currency", value: 30, previous: 20, change: 10, changePct: 50 };
+    const tiles = headlineTiles(r);
+    expect(tiles.find((t) => t.key === "roas")!.tone).toBe("good");
+    expect(tiles.find((t) => t.key === "cpl")!.tone).toBe("bad");
   });
 });
