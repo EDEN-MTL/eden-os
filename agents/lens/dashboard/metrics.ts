@@ -82,6 +82,14 @@ export interface MetricsConfig {
   /** Default "calendar". */
   appointmentSource?: AppointmentSource;
   pipeline?: PipelineAppointmentConfig;
+  /**
+   * The client's own rule that every lead came from ads (Jacob, 2026-10-28, for 3%), so every lead, appointment and deal
+   * counts as "from ads" in the cards, ROAS and cost per closed deal. Confirmed / partial / unknown still says how many we
+   * can tie to an exact campaign.
+   */
+  allLeadsFromAds?: boolean;
+  /** First day GHL data exists for this client (YYYY-MM-DD). Periods before it have no lead data, which is unknown, not zero. */
+  ghlDataStart?: string | null;
 }
 
 export interface MetricsInput {
@@ -94,7 +102,7 @@ export interface MetricsInput {
   /** Latest name for each campaign id we hold Meta data for (any period), for the campaign table. */
   campaignNames?: Map<string, string>;
   /** Which source systems actually have data for this client; a metric from a missing source is N/A, not zero. Default: all present. */
-  sources?: { meta: boolean; appointments: boolean };
+  sources?: { meta: boolean; appointments: boolean; ghl?: boolean };
   timeZone: string;
   now: Date;
   meta: MetaRow[];
@@ -125,6 +133,8 @@ export interface MetricsResult {
     appointmentBasis: AppointmentSource;
     leadsByAttribution: Record<Attribution, number>;
     closedDealsMissingValue: number;
+    /** Every lead counts as from ads for this client (config). */
+    allLeadsFromAds: boolean;
     appointmentsWithoutOutcome: number;
     costsIncluded: "ad spend" | "ad spend + other costs";
   };
@@ -186,7 +196,9 @@ export function computeMetrics(input: MetricsInput): MetricsResult {
   const knownCampaignIds = input.knownCampaignIds ?? new Set(input.meta.map((r) => r.campaignId));
   const attributionByContact = new Map<string, Attribution>();
   for (const lead of input.leads) attributionByContact.set(lead.contactId, attributionOf(lead, knownCampaignIds));
-  const isConfirmed = (contactId: string | null) => (contactId ? attributionByContact.get(contactId) === "confirmed" : false);
+  const allFromAds = Boolean(config.allLeadsFromAds);
+  // "From ads" for the headline numbers: a confirmed campaign, or any lead at all when the client's rule is that they all are.
+  const isConfirmed = (contactId: string | null) => (contactId ? allFromAds || attributionByContact.get(contactId) === "confirmed" : false);
 
   // ── Meta, from the days in the period ──
   const metaRows = input.meta.filter((r) => r.date >= range.from && r.date <= range.to);
@@ -203,8 +215,10 @@ export function computeMetrics(input: MetricsInput): MetricsResult {
 
   const inStages = (stage: string | null, list: string[]) => list.map(norm).includes(norm(stage));
   const haveQualification = config.qualifiedStages.length > 0 || config.unqualifiedStages.length > 0;
-  const qualified = haveQualification ? leadsInRange.filter((l) => inStages(l.stage, config.qualifiedStages)).length : null;
   const unqualified = haveQualification ? leadsInRange.filter((l) => inStages(l.stage, config.unqualifiedStages)).length : null;
+  // With no explicit qualified stages, qualified is everyone who is not in a Not Qualified stage (Jacob, 2026-10-28).
+  const qualifiedByExclusion = haveQualification && config.qualifiedStages.length === 0;
+  const qualified = !haveQualification ? null : qualifiedByExclusion ? leadsInRange.length - (unqualified ?? 0) : leadsInRange.filter((l) => inStages(l.stage, config.qualifiedStages)).length;
   if (!haveQualification) notes.push("Qualified and unqualified leads are N/A: no qualified/unqualified pipeline stages are set for this client.");
 
   // ── Appointments ──
@@ -223,13 +237,13 @@ export function computeMetrics(input: MetricsInput): MetricsResult {
     const reachedNoShow = (l: LeadRow) => !reachedAttended(l) && (inStages(l.stage, pc.noShowStages) || hasTag(l, pc.noShowTags));
     const reachedBooked = (l: LeadRow) => inStages(l.stage, pc.bookedStages) || hasTag(l, pc.bookedTags) || reachedAttended(l) || reachedNoShow(l);
     const booked = leadsInRange.filter(reachedBooked);
-    const bookedConfirmed = booked.filter((l) => attributionByContact.get(l.contactId) === "confirmed");
+    const bookedConfirmed = booked.filter((l) => isConfirmed(l.contactId));
     const attendedLeads = booked.filter(reachedAttended);
     apptBooked = booked.length;
     apptBookedAttributed = bookedConfirmed.length;
     apptConfirmed = null;
     apptAttended = attendedLeads.length;
-    apptAttendedAttributed = attendedLeads.filter((l) => attributionByContact.get(l.contactId) === "confirmed").length;
+    apptAttendedAttributed = attendedLeads.filter((l) => isConfirmed(l.contactId)).length;
     apptNoShow = booked.filter(reachedNoShow).length;
     showUp = pct(apptAttended, apptAttended + apptNoShow);
     leadToAppt = pct(booked.length, leadsInRange.length);
@@ -265,7 +279,7 @@ export function computeMetrics(input: MetricsInput): MetricsResult {
   // ── Closed deals ──
   const haveClosedStage = config.closedStages.length > 0;
   const closed = haveClosedStage ? input.leads.filter((l) => inStages(l.stage, config.closedStages) && inRange(l.closedAt, range, timeZone)) : [];
-  const closedAttributed = closed.filter((l) => attributionByContact.get(l.contactId) === "confirmed");
+  const closedAttributed = closed.filter((l) => isConfirmed(l.contactId));
   const value = (l: LeadRow) => (l.dealValue && l.dealValue > 0 ? l.dealValue : 0);
   const closedMissingValue = closed.filter((l) => !(l.dealValue && l.dealValue > 0)).length;
   if (!haveClosedStage) notes.push("Closed deals and revenue are N/A: no closed-deal stage is set for this client.");
@@ -295,8 +309,8 @@ export function computeMetrics(input: MetricsInput): MetricsResult {
     cpl: n("cpl", div(spend, metaLeads), "currency"),
 
     totalLeads: n("totalLeads", leadsInRange.length, "count"),
-    attributedLeads: n("attributedLeads", leadsByAttribution.confirmed, "count"),
-    qualifiedLeads: n("qualifiedLeads", qualified, "count", haveQualification ? "Provisional: stages set in config." : "No qualified stages set."),
+    attributedLeads: n("attributedLeads", allFromAds ? leadsInRange.length : leadsByAttribution.confirmed, "count"),
+    qualifiedLeads: n("qualifiedLeads", qualified, "count", !haveQualification ? "No qualified stages set." : qualifiedByExclusion ? "Every lead not in a Not Qualified stage." : "Stages set in config."),
     unqualifiedLeads: n("unqualifiedLeads", unqualified, "count", haveQualification ? undefined : "No unqualified stages set."),
     leadToAppointment: n("leadToAppointment", leadToAppt, "percent"),
 
@@ -322,6 +336,9 @@ export function computeMetrics(input: MetricsInput): MetricsResult {
 
   // A metric that depends on a source with no data for this client is N/A, not a convincing zero.
   const sources = input.sources ?? { meta: true, appointments: true };
+  if (config.ghlDataStart && range.from < config.ghlDataStart && sources.ghl !== false) {
+    notes.push(`GHL data starts ${config.ghlDataStart}, so days before it have no leads, appointments or deals in these numbers.`);
+  }
   const mask = (keys: MetricKey[], why: string) => {
     for (const k of keys) kpis[k] = { key: k, value: null, unit: kpis[k].unit, note: why };
     notes.push(why);
@@ -329,11 +346,15 @@ export function computeMetrics(input: MetricsInput): MetricsResult {
   if (!sources.meta) {
     mask(["spend", "impressions", "reach", "clicks", "ctr", "cpc", "metaLeads", "cpl", "costPerAppointment", "costPerAttended", "roas", "roi", "costPerClosedDeal"], "Ad metrics are N/A: no Meta ad data is connected for this client.");
   }
+  if (sources.ghl === false) {
+    const metaOnly = new Set<MetricKey>(["spend", "impressions", "reach", "clicks", "ctr", "cpc", "metaLeads", "cpl"]);
+    mask((Object.keys(kpis) as MetricKey[]).filter((k) => !metaOnly.has(k)), "Lead, appointment and deal numbers are N/A: we hold no GHL data for this period.");
+  }
   if (!sources.appointments && !pipelineMode) {
     mask(["appointmentsBooked", "appointmentsBookedAttributed", "costPerAppointment", "confirmedAppointments", "attendedAppointments", "noShowAppointments", "showUpRate", "costPerAttended", "leadToAppointment", "appointmentToSale"], "Appointment metrics are N/A: no GHL appointments have synced for this client yet.");
   }
 
-  return { range, kpis, detail: { appointmentBasis: pipelineMode ? "pipeline" : "calendar", leadsByAttribution, closedDealsMissingValue: closedMissingValue, appointmentsWithoutOutcome: withoutOutcome, costsIncluded }, notes };
+  return { range, kpis, detail: { appointmentBasis: pipelineMode ? "pipeline" : "calendar", leadsByAttribution, closedDealsMissingValue: closedMissingValue, allLeadsFromAds: allFromAds, appointmentsWithoutOutcome: withoutOutcome, costsIncluded }, notes };
 }
 
 export interface MetricChange {

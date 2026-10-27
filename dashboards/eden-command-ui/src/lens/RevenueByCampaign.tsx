@@ -46,7 +46,7 @@ export default function RevenueByCampaign({ data }: { data: CampaignsResponse })
                 </span>
                 <span className="lens-revenue-meta">
                   {b.deals !== null ? `${b.deals} deal${b.deals === 1 ? "" : "s"}` : NA}
-                  {b.tied ? ` · spend ${formatValue(b.spend, "currency")} · ROAS ${formatValue(b.roas, "ratio")}` : " · cannot be traced to an ad"}
+                  {b.tied ? ` · spend ${formatValue(b.spend, "currency")} · ROAS ${formatValue(b.roas, "ratio")}` : " · no campaign recorded on the lead"}
                 </span>
               </li>
             ))}

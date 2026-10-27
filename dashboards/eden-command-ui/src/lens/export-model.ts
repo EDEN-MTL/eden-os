@@ -168,7 +168,11 @@ export function buildExportModel(report: Report, options: ExportOptions): Export
       ? [`${q.closedDealsMissingValue.length} closed deal${q.closedDealsMissingValue.length === 1 ? " has" : "s have"} no value recorded in GHL${names ? ` (${q.closedDealsMissingValue.map((d) => d.name ?? "a lead with no name").join(", ")})` : ""}, so revenue is understated by ${q.closedDealsMissingValue.length === 1 ? "it" : "them"}.`]
       : []),
     ...(q.closedDealsNotConfirmed > 0
-      ? [`${q.closedDealsNotConfirmed} closed deal${q.closedDealsNotConfirmed === 1 ? " is" : "s are"} not confirmed from ads (partial or unknown) and ${q.closedDealsNotConfirmed === 1 ? "is" : "are"} left out of ROAS and cost per closed deal.`]
+      ? [
+          attribution.allLeadsFromAds
+            ? `${q.closedDealsNotConfirmed} closed deal${q.closedDealsNotConfirmed === 1 ? " has" : "s have"} no exact campaign recorded (partial or unknown). ${q.closedDealsNotConfirmed === 1 ? "It still counts" : "They still count"} in ROAS and cost per closed deal but cannot be placed on a campaign.`
+            : `${q.closedDealsNotConfirmed} closed deal${q.closedDealsNotConfirmed === 1 ? " is" : "s are"} not confirmed from ads (partial or unknown) and ${q.closedDealsNotConfirmed === 1 ? "is" : "are"} left out of ROAS and cost per closed deal.`,
+        ]
       : []),
     q.metaHistoryStarts ? `Meta spend is held from ${q.metaHistoryStarts}; earlier spend is not in these figures.` : "No Meta spend history is held for this client.",
     `${NA} means the number cannot be worked out from the data available (a zero denominator, or a source that is not connected). It is never shown as 0.`,

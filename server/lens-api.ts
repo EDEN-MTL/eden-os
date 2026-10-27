@@ -14,7 +14,7 @@
  */
 import { Request, Response, Router } from "express";
 import { timingSafeStringEqual } from "../shared/security";
-import { clientTimezone, listLensClients } from "../agents/lens/dashboard/clients";
+import { clientTimezone, listLensClients, loadDashboardConfig } from "../agents/lens/dashboard/clients";
 import { buildDashboardKpis, loadDashboardInputs } from "../agents/lens/dashboard/data";
 import { computeSeries } from "../agents/lens/dashboard/series";
 import { computeCampaignTable } from "../agents/lens/dashboard/campaigns";
@@ -109,7 +109,7 @@ export function createLensRouter(): Router {
       if (!parsed.ok) return res.status(400).json({ error: parsed.error });
       const out = await buildDashboardKpis(clientId, parsed.range, { compare: parsed.compare });
       if (!out) return res.status(404).json({ error: `No client "${clientId}".` });
-      res.json(toKpiResponse(out));
+      res.json(toKpiResponse(out, new Date(), loadDashboardConfig(clientId).hiddenMetrics));
     } catch (error) {
       console.error("[LENS-API] kpis:", error instanceof Error ? error.message : error);
       res.status(500).json({ error: "Could not build the report. Try again in a moment." });

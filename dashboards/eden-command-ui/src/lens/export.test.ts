@@ -10,7 +10,7 @@ function report(compare = true): Report {
   return {
     kpis: {
       client: { clientId: "3-percent-east-coast", name: "3% Realty", timezone: "America/St_Johns", meta: { connected: true, lastDay: "2026-10-26" }, ghl: { connected: true }, missing: ["Other marketing costs are not entered"] },
-      period, previousPeriod: compare ? previous : null, generatedAt: "2026-10-27T12:00:00.000Z", appointmentBasis: "pipeline",
+      period, previousPeriod: compare ? previous : null, generatedAt: "2026-10-27T12:00:00.000Z", appointmentBasis: "pipeline", allLeadsFromAds: false,
       sections: [
         { id: "ads", title: "Advertising", metrics: [
           { key: "spend", label: "Ad spend", definition: "Money spent on Meta ads.", source: "Meta", unit: "currency", value: 9273.5, previous: 100, change: 9173.5, changePct: 9173.5 },
@@ -29,7 +29,7 @@ function report(compare = true): Report {
       totals: { spend: 778, leads: 33, closedDeals: 4, revenue: 21520.5 },
     },
     attribution: {
-      period, basis: "pipeline", ads: { spend: 778, metaLeads: 17 },
+      period, basis: "pipeline", allLeadsFromAds: false, ads: { spend: 778, metaLeads: 17 },
       chain: [{ id: "leads", label: "Leads", unit: "count", total: 301, confirmed: 283, partial: 3, unknown: 15 }, { id: "revenue", label: "Revenue recorded", unit: "currency", total: 21520.5, confirmed: 15295.5, partial: 6225, unknown: 0 }],
       deals: [
         { contactId: "c1", name: "=HYPERLINK(\"http://x\")", leadDate: "2026-03-01", closedDate: "2026-05-03", daysToClose: 63, value: 5698.5, attribution: "confirmed", evidence: "Meta campaign ID 120239794885580259", campaignId: "120239794885580259", campaignName: "Seller Campaign - EDEN", adsetId: null, adId: null, source: "Facebook", formName: "New March Seller Form", appointments: [], booked: true, attended: true },
@@ -79,6 +79,14 @@ describe("buildExportModel", () => {
     expect(notes).toMatch(/not confirmed from ads/);
     expect(notes).toMatch(/Meta spend is held from 2026-02-01/);
     expect(notes).toMatch(/never shown as 0/);
+  });
+
+  it("words the not-confirmed note to match the client's rule: still counted in ROAS when every lead counts as from ads", () => {
+    const r = report();
+    r.attribution.allLeadsFromAds = true;
+    const notes = buildExportModel(r, { includeNames: false }).notes.join("\n");
+    expect(notes).toMatch(/still counts in ROAS and cost per closed deal but cannot be placed on a campaign/);
+    expect(notes).not.toMatch(/left out of ROAS/);
   });
 
   it("labels leads in the order shown", () => {

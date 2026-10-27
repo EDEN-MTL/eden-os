@@ -110,9 +110,15 @@
         "attendedTags": ["showed up"],
         "noShowTags": ["no show"]
       },
-      "qualifiedStages": ["Live Transferred", "Appointment Set", "Showed Up", "No-Show", "Buyer Confirmed", "Seller Confirmed", "Listing Active", "Deal Closed"],
+      "qualifiedStages": [],
       "unqualifiedStages": ["Not Qualified/Not Interested", "Appointment Set (Not qualified)"],
-      "qualificationNote": "PROVISIONAL (2026-10-27): qualified = the lead reached a person or an appointment (Live Transferred or any later column); unqualified = Not Qualified/Not Interested or Appointment Set (Not qualified). Leads in the automated follow-up columns are neither. Jacob to confirm. Closed deals use ghl.outcomeStages.wonStages (Deal Closed only; Buyer/Seller Confirmed and Listing Active are pipeline, not closed)."
+      "qualificationNote": "Jacob, 2026-10-28: qualified = anyone not in a Not Qualified stage, so qualifiedStages stays empty and unqualifiedStages is the whole rule. Closed deals use ghl.outcomeStages.wonStages (Deal Closed only; Buyer/Seller Confirmed and Listing Active are pipeline, not closed).",
+      "allLeadsFromAds": true,
+      "allLeadsFromAdsNote": "Jacob, 2026-10-28: 'They all come from ads anyways so they should all count, but if we can know exactly what ad then that's better.' So every lead, appointment and closed deal counts as from ads in the cards, ROAS and cost per closed deal; a real Meta campaign ID still names the campaign (confirmed) in the campaign table.",
+      "hiddenMetrics": ["roi", "otherCosts"],
+      "hiddenMetricsNote": "Jacob, 2026-10-28: 'For now just do ROAS.' Marketing ROI and other marketing costs are left off the page and the exports until someone enters other costs (table lens_other_costs). Remove hiddenMetrics to bring them back.",
+      "ghlDataStart": "2026-02-01",
+      "ghlDataStartNote": "Jacob, 2026-10-28: 3% started using GHL 'in February I think'. Periods that begin before this show N/A, not zero, for lead, appointment and deal numbers. Checked 2026-10-28: the first lead in ad_leads is 2026-02-18 (41 in February, none earlier)."
     },
     "funnel": {
       "_comment": "Lens's lead funnel (agents/lens/funnel.ts), in the weekly and monthly reports. Mark, 2026-10-20: show how many leads converted since August 2026, buyer vs seller, one line per stage. A lead reaches a step if it carries one of the step's tags OR its card sits in one of the step's pipeline columns; columns include the later ones, because the card moves on (a card in 'Showed Up' was also booked) while tags stay. Tags and column names verified against live ad_leads 2026-10-20.",

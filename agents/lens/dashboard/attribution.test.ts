@@ -129,3 +129,17 @@ describe("evidence text", () => {
     expect(attributionEvidence(lead("x", "2026-10-01T00:00:00Z", null, { source: null }), "unknown", null)).toBe("No campaign or ad source recorded on the lead");
   });
 });
+
+describe("methodology for a client whose leads all count as from ads", () => {
+  it("says every lead counts, and no longer says partial or unknown leads are left out", () => {
+    const plain = methodology("pipeline", "2026-02-01");
+    const rule = methodology("pipeline", "2026-02-01", true);
+    expect(plain.map((m) => m.title)).toContain("What confirms a lead came from an ad");
+    expect(rule.map((m) => m.title)).toContain("What counts as from ads, and what names the campaign");
+    const text = rule.map((m) => m.text).join(" ");
+    expect(text).toMatch(/every lead counts as coming from ads/);
+    expect(text).not.toMatch(/Neither is ever counted as from ads/);
+    expect(text).toMatch(/cannot be placed on a campaign/);
+    expect(rule).toHaveLength(plain.length);
+  });
+});

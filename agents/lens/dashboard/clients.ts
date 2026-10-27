@@ -43,6 +43,12 @@ export interface DashboardConfig {
   /** "calendar" (default) counts GHL calendar events; "pipeline" counts from card stages and tags. */
   appointmentSource: AppointmentSource;
   pipeline?: PipelineAppointmentConfig;
+  /** Every lead counts as from ads for this client (the owner's rule). */
+  allLeadsFromAds: boolean;
+  /** Metric keys left off the page and the exports (for example "roi" until other marketing costs are entered). */
+  hiddenMetrics: string[];
+  /** First day GHL data exists for this client; periods before it are N/A, not zero. */
+  ghlDataStart: string | null;
 }
 
 function readClientConfig(clientId: string): any | null {
@@ -72,6 +78,9 @@ export function loadDashboardConfig(clientId: string): DashboardConfig {
         }
       : undefined,
     timezone: typeof raw.lens?.dashboard?.timezone === "string" ? raw.lens.dashboard.timezone : typeof raw.iris?.timezone === "string" ? raw.iris.timezone : null,
+    allLeadsFromAds: raw.lens?.dashboard?.allLeadsFromAds === true,
+    hiddenMetrics: list(raw.lens?.dashboard?.hiddenMetrics),
+    ghlDataStart: typeof raw.lens?.dashboard?.ghlDataStart === "string" && /^\d{4}-\d{2}-\d{2}$/.test(raw.lens.dashboard.ghlDataStart) ? raw.lens.dashboard.ghlDataStart : null,
   };
 }
 
