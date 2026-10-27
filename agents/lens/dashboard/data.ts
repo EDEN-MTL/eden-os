@@ -5,7 +5,7 @@
  */
 import { query } from "../../../shared/db";
 import { clientTimezone, listLensClients, loadDashboardConfig, LensClient } from "./clients";
-import { AppointmentRow, compareMetrics, computeMetrics, LeadRow, MetaRow, MetricChange, MetricsResult, OtherCostRow } from "./metrics";
+import { AppointmentRow, compareMetrics, computeMetrics, LeadRow, MetaRow, MetricChange, MetricsInput, MetricsResult, OtherCostRow } from "./metrics";
 import { MetricKey } from "./definitions";
 import { addDays, DateRange, previousRange } from "./ranges";
 import { AppointmentStatus } from "./appointments-sync";
@@ -98,14 +98,23 @@ export interface DashboardKpis {
   changes?: Record<MetricKey, MetricChange>;
 }
 
-/** KPIs for one client over one period, and optionally against the period of equal length just before it. */
-export async function buildDashboardKpis(clientId: string, range: DateRange, options: { compare?: boolean; now?: Date } = {}): Promise<DashboardKpis | null> {
+export interface DashboardInputs {
+  client: LensClient;
+  timezone: string;
+  range: DateRange;
+  previousRange: DateRange | null;
+  /** Everything computeMetrics needs except the period. */
+  base: Omit<MetricsInput, "range">;
+}
+
+/** Loads what one client's dashboard needs for a period (and the one before it, when comparing). One place, so every endpoint agrees. */
+export async function loadDashboardInputs(clientId: string, range: DateRange, options: { compare?: boolean; now?: Date } = {}): Promise<DashboardInputs | null> {
   const now = options.now ?? new Date();
   const client = (await listLensClients()).find((c) => c.clientId === clientId);
   if (!client) return null;
   const timeZone = await clientTimezone(clientId);
-  const prev = options.compare ? previousRange(range) : null;
-  const earliest = prev ? prev.from : range.from;
+  const previous = options.compare ? previousRange(range) : null;
+  const earliest = previous ? previous.from : range.from;
   // A day of slack either side: Meta rows are keyed by the account's own day, which can sit a day off the client's.
   const [meta, knownCampaignIds, leads, appointments, otherCosts] = await Promise.all([
     loadMetaRows(clientId, addDays(earliest, -1), addDays(range.to, 1)),
@@ -115,19 +124,31 @@ export async function buildDashboardKpis(clientId: string, range: DateRange, opt
     loadOtherCosts(clientId, earliest, range.to),
   ]);
   const config = loadDashboardConfig(clientId);
-  const base = {
-    timeZone,
-    now,
-    meta,
-    knownCampaignIds,
-    leads,
-    appointments,
-    otherCosts,
-    config,
-    sources: { meta: client.meta.connected && meta.length > 0, appointments: config.appointmentSource === "pipeline" ? client.ghl.leads > 0 : client.ghl.appointments > 0 },
+  return {
+    client,
+    timezone: timeZone,
+    range,
+    previousRange: previous,
+    base: {
+      timeZone,
+      now,
+      meta,
+      knownCampaignIds,
+      leads,
+      appointments,
+      otherCosts,
+      config,
+      sources: { meta: client.meta.connected && meta.length > 0, appointments: config.appointmentSource === "pipeline" ? client.ghl.leads > 0 : client.ghl.appointments > 0 },
+    },
   };
-  const current = computeMetrics({ ...base, range });
-  if (!prev) return { client, timezone: timeZone, range, current };
-  const previous = computeMetrics({ ...base, range: prev });
-  return { client, timezone: timeZone, range, current, previousRange: prev, previous, changes: compareMetrics(current, previous) };
+}
+
+/** KPIs for one client over one period, and optionally against the period of equal length just before it. */
+export async function buildDashboardKpis(clientId: string, range: DateRange, options: { compare?: boolean; now?: Date } = {}): Promise<DashboardKpis | null> {
+  const inputs = await loadDashboardInputs(clientId, range, options);
+  if (!inputs) return null;
+  const current = computeMetrics({ ...inputs.base, range });
+  if (!inputs.previousRange) return { client: inputs.client, timezone: inputs.timezone, range, current };
+  const previous = computeMetrics({ ...inputs.base, range: inputs.previousRange });
+  return { client: inputs.client, timezone: inputs.timezone, range, current, previousRange: inputs.previousRange, previous, changes: compareMetrics(current, previous) };
 }

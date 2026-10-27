@@ -23,6 +23,7 @@ import { createClientsRouter } from "./clients-api";
 import { createQuarryRouter } from "./quarry-api";
 import { createEmberRouter } from "./ember-api";
 import { createCheckinRouter } from "./checkin-api";
+import { createLensRouter } from "./lens-api";
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -76,6 +77,7 @@ app.use("/api/chat", createChatRouter());
 app.use("/api/tts", createTtsRouter());
 app.use("/api/settings", createSettingsRouter());
 app.use("/api/clients", createClientsRouter());
+app.use("/api/lens", createLensRouter());
 app.use("/api/quarry", createQuarryRouter());
 app.use("/api/ember", createEmberRouter());
 app.use(createCheckinRouter());
