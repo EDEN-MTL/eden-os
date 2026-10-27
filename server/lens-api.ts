@@ -23,7 +23,7 @@ import { computeMetrics } from "../agents/lens/dashboard/metrics";
 import { DateRange, RangePreset, rangeLabel, resolveRange } from "../agents/lens/dashboard/ranges";
 import { toKpiResponse } from "../agents/lens/dashboard/response";
 
-const PRESETS: RangePreset[] = ["today", "yesterday", "last_7_days", "last_30_days", "this_month", "custom"];
+const PRESETS: RangePreset[] = ["today", "yesterday", "last_7_days", "last_30_days", "last_90_days", "this_month", "this_year", "custom"];
 
 export function isValidClientId(clientId: string): boolean {
   return /^[a-z0-9][a-z0-9-]*$/.test(clientId);

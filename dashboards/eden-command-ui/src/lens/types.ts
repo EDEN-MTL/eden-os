@@ -98,7 +98,7 @@ export interface CampaignsResponse {
   totals: { spend: number | null; leads: number | null; closedDeals: number | null; revenue: number | null };
 }
 
-export type Preset = "today" | "yesterday" | "last_7_days" | "last_30_days" | "this_month" | "custom";
+export type Preset = "today" | "yesterday" | "last_7_days" | "last_30_days" | "last_90_days" | "this_month" | "this_year" | "custom";
 
 export interface PeriodChoice {
   preset: Preset;

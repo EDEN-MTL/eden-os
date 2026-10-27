@@ -194,3 +194,77 @@
 .lens-method-box dl { margin: 0; display: grid; gap: 14px; }
 .lens-method-box dt { font-weight: 650; color: var(--lens-green); font-size: 13px; }
 .lens-method-box dd { margin: 3px 0 0; color: var(--lens-text); font-size: 13.5px; max-width: 95ch; }
+
+/* ── Revenue by campaign ── */
+.lens-chart-wide { grid-column: 1 / -1; }
+.lens-revenue-lead { margin: 10px 0 4px; font-size: 14px; max-width: 95ch; }
+.lens-revenue-lead strong { color: var(--lens-white); }
+.lens-revenue-bars { list-style: none; margin: 12px 0 0; padding: 0; display: flex; flex-direction: column; gap: 14px; }
+.lens-revenue-bars li { display: grid; grid-template-columns: minmax(120px, 28%) 1fr auto; gap: 2px 12px; align-items: center; }
+.lens-revenue-name { font-size: 13px; font-weight: 600; color: var(--lens-white); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.lens-revenue-name.is-untied { color: var(--lens-text-dim); font-style: italic; }
+.lens-revenue-track { height: 16px; background: var(--lens-panel-2); border-radius: 4px; overflow: hidden; }
+.lens-revenue-fill { display: block; height: 100%; min-width: 2px; background: var(--lens-green); border-radius: 4px; }
+.lens-revenue-fill.is-untied { background: var(--lens-grey-bar); }
+.lens-revenue-val { font-size: 13px; font-variant-numeric: tabular-nums; text-align: right; color: var(--lens-text-dim); white-space: nowrap; }
+.lens-revenue-val strong { color: var(--lens-white); }
+.lens-revenue-meta { grid-column: 2 / -1; font-size: 11.5px; color: var(--lens-text-dim); }
+@media (max-width: 640px) {
+  .lens-revenue-bars li { grid-template-columns: 1fr auto; }
+  .lens-revenue-track, .lens-revenue-meta { grid-column: 1 / -1; }
+}
+
+/* ── Export menu ── */
+.lens-export { position: relative; display: flex; flex-direction: column; align-items: flex-end; gap: 4px; }
+.lens-export .lens-export-note { flex-basis: auto; margin: 0; }
+.lens-export-pop { position: absolute; z-index: 30; top: 46px; right: 0; width: min(360px, calc(100vw - 32px)); background: var(--lens-panel); border: 1px solid var(--lens-line); border-radius: 10px; padding: 14px; box-shadow: 0 12px 32px rgba(0, 0, 0, 0.55); display: flex; flex-direction: column; gap: 10px; text-align: left; }
+.lens-export-what { margin: 0; display: flex; flex-direction: column; gap: 2px; font-size: 13px; color: var(--lens-text-dim); }
+.lens-export-what strong { color: var(--lens-white); font-size: 14.5px; }
+.lens-export-hint { margin: 0; font-size: 12px; color: var(--lens-text-dim); }
+.lens-export-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+.lens-export-actions .lens-button { flex: 1 1 130px; }
+.lens-print-root { display: none; }
+
+/* ── Print / PDF: a light copy of the report, landscape. The screen version is hidden. ── */
+@page { size: A4 landscape; margin: 12mm; }
+@media print {
+  body.lens-printing > *:not(.lens-print-root) { display: none !important; }
+  body.lens-printing { background: #fff !important; }
+  .lens-print-root { display: block; }
+}
+.lens-print-root {
+  --lens-bg: #fff; --lens-panel: #fff; --lens-panel-2: #f1f3f2; --lens-line: #d3d9d6;
+  --lens-text: #111; --lens-text-dim: #55605a; --lens-green: #14925f; --lens-green-dim: #0e6b45;
+  --lens-grey-bar: #8a948e; --lens-white: #111; --lens-warn: #8a6a00; --lens-bad: #b42318;
+  font-family: var(--font-body, system-ui, sans-serif); color: #111; background: #fff; font-size: 11px; line-height: 1.4;
+  -webkit-print-color-adjust: exact; print-color-adjust: exact;
+}
+.lens-print-root * { box-sizing: border-box; }
+.lens-print-root h1, .lens-print-root h2 { font-family: inherit; text-transform: none; letter-spacing: normal; margin: 0; }
+.lens-print-header { border-bottom: 3px solid var(--lens-green); padding-bottom: 10px; margin-bottom: 12px; }
+.lens-print-eyebrow { font-size: 10px; letter-spacing: 0.14em; color: var(--lens-green); font-weight: 700; }
+.lens-print-header h1 { font-size: 24px; font-weight: 700; margin: 2px 0 8px; color: #000; }
+.lens-print-header dl { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px 16px; margin: 0; }
+.lens-print-header dt { font-size: 9.5px; color: var(--lens-text-dim); text-transform: uppercase; letter-spacing: 0.06em; }
+.lens-print-header dd { margin: 0; font-weight: 600; }
+.lens-print-block { margin-top: 14px; break-inside: avoid-page; }
+.lens-print-block h2 { font-size: 13px; font-weight: 700; color: #000; border-bottom: 1px solid var(--lens-line); padding-bottom: 4px; margin-bottom: 6px; }
+.lens-print-page { break-before: page; break-inside: auto; }
+.lens-print-caption, .lens-print-empty { margin: 0 0 6px; color: var(--lens-text-dim); font-size: 10.5px; }
+.lens-print-notes { border: 1px solid var(--lens-warn); border-radius: 6px; padding: 8px 12px; }
+.lens-print-notes h2 { border: 0; color: var(--lens-warn); }
+.lens-print-notes ul { margin: 0; padding-left: 16px; }
+.lens-print-table { width: 100%; border-collapse: collapse; font-variant-numeric: tabular-nums; }
+.lens-print-table th, .lens-print-table td { padding: 4px 6px; border-bottom: 1px solid var(--lens-line); vertical-align: top; }
+.lens-print-table thead th { background: #111; color: #fff; font-weight: 600; font-size: 10px; text-align: left; }
+.lens-print-table .is-num { text-align: right; white-space: nowrap; }
+.lens-print-table .is-text { text-align: left; }
+.lens-print-table .is-short { white-space: nowrap; }
+.lens-print-table tfoot td { font-weight: 700; background: var(--lens-panel-2); }
+.lens-print-table tr { break-inside: avoid; }
+.lens-print-table.is-kpi th:first-child, .lens-print-table.is-kpi td:first-child { width: 36%; }
+.lens-print-root .lens-charts { grid-template-columns: 1fr 1fr; gap: 10px; }
+.lens-print-root .lens-chart { break-inside: avoid; padding: 8px; border: 1px solid var(--lens-line); background: #fff; }
+.lens-print-root .lens-chart-wide { grid-column: 1 / -1; }
+.lens-print-root .lens-chart-data, .lens-print-root .lens-tooltip { display: none; }
+.lens-print-root .lens-revenue-bars { gap: 8px; }

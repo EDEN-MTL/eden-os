@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { addDays, daysInRange, inRange, isValidDate, previousRange, rangeBounds, rangeLabel, resolveRange, todayIn } from "./ranges";
+import { addDays, daysInRange, historyCovers, inRange, isValidDate, previousRange, rangeBounds, rangeLabel, resolveRange, todayIn } from "./ranges";
 
 const TZ = "America/St_Johns"; // UTC-2:30 in October
 // 2026-10-27 01:00 UTC is still Oct 26 at 10:30 PM in St. John's
@@ -17,6 +17,11 @@ describe("periods follow the client's own calendar day", () => {
     expect(resolveRange("today", TZ, LATE)).toEqual({ ok: true, range: { from: "2026-10-26", to: "2026-10-26" } });
     expect(resolveRange("yesterday", TZ, LATE)).toEqual({ ok: true, range: { from: "2026-10-25", to: "2026-10-25" } });
     expect(resolveRange("this_month", TZ, LATE)).toEqual({ ok: true, range: { from: "2026-10-01", to: "2026-10-26" } });
+  });
+
+  it("has the longer windows revenue questions need: last 90 days and this year", () => {
+    expect(resolveRange("last_90_days", TZ, LATE)).toEqual({ ok: true, range: { from: "2026-07-28", to: "2026-10-25" } });
+    expect(resolveRange("this_year", TZ, LATE)).toEqual({ ok: true, range: { from: "2026-01-01", to: "2026-10-26" } });
   });
 
   it("accepts a custom range and rejects bad ones with a plain message", () => {
@@ -64,5 +69,14 @@ describe("rangeLabel", () => {
     expect(rangeLabel({ from: "2026-10-01", to: "2026-10-07" })).toBe("Oct 1 to Oct 7, 2026");
     expect(rangeLabel({ from: "2026-10-05", to: "2026-10-05" })).toBe("Oct 5, 2026");
     expect(rangeLabel({ from: "2025-12-20", to: "2026-01-05" })).toBe("Dec 20, 2025 to Jan 5, 2026");
+  });
+});
+
+describe("historyCovers", () => {
+  it("is true when the history starts on or just after the period's first day, false when it starts later or is empty", () => {
+    expect(historyCovers("2026-01-12", "2026-03-07")).toBe(true);
+    expect(historyCovers("2026-03-08", "2026-03-07")).toBe(true);
+    expect(historyCovers("2026-03-09", "2026-03-07")).toBe(false);
+    expect(historyCovers(null, "2026-03-07")).toBe(false);
   });
 });

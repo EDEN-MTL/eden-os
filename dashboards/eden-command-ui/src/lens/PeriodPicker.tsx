@@ -2,7 +2,7 @@ import { useState } from "react";
 import { PRESET_LABELS } from "./format";
 import type { PeriodChoice, Preset } from "./types";
 
-const PRESETS: Preset[] = ["today", "yesterday", "last_7_days", "last_30_days", "this_month", "custom"];
+const PRESETS: Preset[] = ["today", "yesterday", "last_7_days", "last_30_days", "last_90_days", "this_month", "this_year", "custom"];
 
 /** Preset periods, a custom start and end date, and the compare toggle. Custom dates apply on "Apply". */
 export default function PeriodPicker({ value, onChange }: { value: PeriodChoice; onChange: (p: PeriodChoice) => void }) {

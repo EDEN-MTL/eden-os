@@ -7,7 +7,7 @@ import { query } from "../../../shared/db";
 import { clientTimezone, getLensClient, loadDashboardConfig, LensClient, memo } from "./clients";
 import { AppointmentRow, compareMetrics, computeMetrics, LeadRow, MetaRow, MetricChange, MetricsInput, MetricsResult, OtherCostRow } from "./metrics";
 import { MetricKey } from "./definitions";
-import { addDays, DateRange, previousRange } from "./ranges";
+import { addDays, DateRange, historyCovers, previousRange } from "./ranges";
 import { AppointmentStatus } from "./appointments-sync";
 
 /** Meta's "lead" result for one row of insights. Other lead-ish action types (grouped, offsite) are not added: they repeat it. */
@@ -179,6 +179,12 @@ export async function buildDashboardKpis(clientId: string, range: DateRange, opt
   if (!inputs) return null;
   const current = computeMetrics({ ...inputs.base, range });
   if (!inputs.previousRange) return { client: inputs.client, timezone: inputs.timezone, range, current };
-  const previous = computeMetrics({ ...inputs.base, range: inputs.previousRange });
+  // A previous period that starts before our Meta history has no spend to compare with: that is "unknown", and showing
+  // it as $0 would make every ad number look like it grew from nothing. A day of slack, as in the loader.
+  const metaCoversPrevious = historyCovers(inputs.metaHistoryStarts, inputs.previousRange.from);
+  const previous = computeMetrics({ ...inputs.base, range: inputs.previousRange, sources: { ...inputs.base.sources!, meta: inputs.base.sources!.meta && metaCoversPrevious } });
+  if (inputs.base.sources!.meta && !metaCoversPrevious) {
+    current.notes.push(`Ad metrics are not compared with the previous period: we hold Meta data only from ${inputs.metaHistoryStarts ?? "(none)"}, which is after that period began.`);
+  }
   return { client: inputs.client, timezone: inputs.timezone, range, current, previousRange: inputs.previousRange, previous, changes: compareMetrics(current, previous) };
 }

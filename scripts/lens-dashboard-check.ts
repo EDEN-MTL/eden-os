@@ -1,6 +1,6 @@
 /**
  * Read-only check of the Lens dashboard numbers against the real database:
- *   npx tsx scripts/lens-dashboard-check.ts <clientId> [last_7_days|last_30_days|this_month]
+ *   npx tsx scripts/lens-dashboard-check.ts <clientId> [last_7_days|last_30_days|last_90_days|this_month|this_year]
  * Prints every KPI for the period and the previous one, plus how well leads match real Meta campaigns.
  */
 import "dotenv/config";

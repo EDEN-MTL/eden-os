@@ -6,7 +6,7 @@
  */
 import { zonedHourToUtc } from "../../iris/cadence";
 
-export type RangePreset = "today" | "yesterday" | "last_7_days" | "last_30_days" | "this_month" | "custom";
+export type RangePreset = "today" | "yesterday" | "last_7_days" | "last_30_days" | "last_90_days" | "this_month" | "this_year" | "custom";
 
 export interface DateRange {
   /** YYYY-MM-DD, inclusive. */
@@ -30,6 +30,14 @@ function parts(ymd: string): [number, number, number] {
 export function addDays(ymd: string, days: number): string {
   const [y, m, d] = parts(ymd);
   return new Date(Date.UTC(y, m, d + days)).toISOString().slice(0, 10);
+}
+
+/**
+ * Whether data we hold from `historyStart` onward reaches back to the start of a period. A day of slack: Meta rows
+ * are keyed by the ad account's own day, which can sit a day off the client's.
+ */
+export function historyCovers(historyStart: string | null, periodFrom: string): boolean {
+  return historyStart !== null && historyStart <= addDays(periodFrom, 1);
 }
 
 export function daysInRange(r: DateRange): number {
@@ -60,8 +68,13 @@ export function resolveRange(preset: RangePreset, timeZone: string, now: Date = 
       return { ok: true, range: { from: addDays(today, -7), to: addDays(today, -1) } };
     case "last_30_days":
       return { ok: true, range: { from: addDays(today, -30), to: addDays(today, -1) } };
+    // Deals close weeks or months after the ad ran, so revenue questions need a window longer than a month.
+    case "last_90_days":
+      return { ok: true, range: { from: addDays(today, -90), to: addDays(today, -1) } };
     case "this_month":
       return { ok: true, range: { from: `${today.slice(0, 7)}-01`, to: today } };
+    case "this_year":
+      return { ok: true, range: { from: `${today.slice(0, 4)}-01-01`, to: today } };
     case "custom": {
       if (!isValidDate(custom?.from) || !isValidDate(custom?.to)) return { ok: false, error: "Pick a start and an end date." };
       if (custom!.from! > custom!.to!) return { ok: false, error: "The start date is after the end date." };
