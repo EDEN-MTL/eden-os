@@ -8,6 +8,8 @@ import { loadIrisConfig, loadClientBranding } from "../agents/iris";
 import { reopenForNextAttempt, reopenAfterMissedCallback, scheduleExplicitCallback, holdForTextReply, reopenNoShowAfterMiss, closeNoShowFollowUp, SWEEP_SOURCE } from "../agents/iris/dial-pending";
 import { NO_SHOW_SOURCE } from "../agents/iris/no-show-state";
 import { helloRescue } from "../agents/iris/hello-rescue";
+import { hasActiveSmsConversation } from "../agents/iris/sms";
+import { isWithinLegalCallingWindow } from "../agents/iris/cadence";
 import { extractFirstName, buildCallOpeningLine } from "../agents/iris/scripts";
 import { buildKeyToId, readField } from "../agents/scout/intake";
 import { loadScoutConfig } from "../agents/scout";
@@ -761,8 +763,66 @@ export async function maybeReopenPendingCall(clientId: string, contactId: string
 
     await moveToFollowUpStage(clientId, contactId, pending.attempts_made);
     if (!reopened) await tagSequenceExhausted(clientId, contactId);
+    await maybeTextAfterMissedCalls(clientId, contactId, pending, endedReason);
   } catch (error) {
     console.error(`[VAPI] Failed to check/reopen pending call for ${contactId}:`, error instanceof Error ? error.message : error);
+  }
+}
+
+/** The early attempts of a normal sequence: a text goes out after the second miss (or the third, for a lead already past it when this began). */
+const MISSED_CALL_TEXT_ATTEMPTS = [2, 3];
+
+export function buildMissedCallFollowUpText(leadName: string | null | undefined, brandName: string, intent: string | null | undefined): string {
+  const subject = intent === "seller" || intent === "downsize" || intent === "upgrading" ? "selling your home" : "your home search";
+  return `Hi ${extractFirstName(leadName)}, it's Iris from ${brandName}. I tried calling you about ${subject} but missed you. Is there a better time for a quick call, or would you rather just text? Reply STOP to opt out.`;
+}
+
+/**
+ * Mark, 2026-10-27 (Eileen Hillier: two voicemails and nothing in between but the intake automation): a new lead's
+ * normal call sequence sent no text of its own. After the second unanswered call Iris now texts once, so the lead
+ * has an easy way to name a time or reply. The lead's reply is handled by her text flow (booking included).
+ * Skipped when: the lead is already texting with Iris, opted out, outside calling hours, or a teammate is in touch
+ * (sendIrisText checks that too). Claimed in the database first, so it can never go out twice.
+ */
+async function maybeTextAfterMissedCalls(
+  clientId: string,
+  contactId: string,
+  pending: { id: number; attempts_made: number; lead: { name?: string | null; intent?: string | null } | null },
+  endedReason: string | null
+): Promise<void> {
+  try {
+    if (!MISSED_CALL_TEXT_ATTEMPTS.includes(pending.attempts_made)) return;
+    // A call that never connected for a technical reason is not a "missed you".
+    if (endedReason && /error|failed/i.test(endedReason)) return;
+    const config = loadIrisConfig(clientId);
+    const branding = loadClientBranding(clientId);
+    if (!config || !branding) return;
+    if (!isWithinLegalCallingWindow(new Date(), config.timezone || "America/St_Johns")) return;
+    if (await hasActiveSmsConversation(clientId, contactId)) return;
+
+    const ghlConfig = await getGhlConfig(clientId);
+    if (!ghlConfig) return;
+    const raw = await getContact(contactId, ghlConfig.locationId, ghlConfig.apiKey);
+    const contact = raw?.contact ?? raw;
+    const tags: string[] = (contact?.tags ?? []).map((t: string) => String(t).toLowerCase());
+    if (contact?.dnd === true || tags.includes("do not call")) return;
+
+    const claim = await query<{ id: number }>(
+      `UPDATE iris_pending_calls SET missed_call_texted = true WHERE id = $1 AND missed_call_texted = false RETURNING id`,
+      [pending.id]
+    );
+    if (claim.length === 0) return;
+
+    const outcome = await sendIrisText(clientId, contactId, pending.lead?.name, buildMissedCallFollowUpText(pending.lead?.name, branding.brandName, pending.lead?.intent));
+    if (outcome === "skipped" || outcome === "failed") return;
+    await sendMessage("iris", {
+      channel: CALL_LOG_CHANNEL,
+      text: `📱 Texted *${pending.lead?.name ?? contactId}* after ${pending.attempts_made} unanswered calls (no voicemail left) — ${outcome === "delivered" ? "delivered" : "sent"}, waiting for a reply.${await linkSuffix(clientId, contactId)}`,
+    }).catch((error) => {
+      console.error("[VAPI] Failed to post the missed-call text to Slack:", error instanceof Error ? error.message : error);
+    });
+  } catch (error) {
+    console.error(`[VAPI] Failed to text ${contactId} after the missed calls:`, error instanceof Error ? error.message : error);
   }
 }
 
