@@ -100,6 +100,16 @@
   "lens": {
     "dashboard": {
       "timezone": "America/St_Johns",
+      "appointmentSource": "pipeline",
+      "appointmentSourceNote": "2026-10-27: 3%'s team records appointments by moving the card and tagging the contact; only ~12 events ever reached GHL calendars (vs ~80 leads in booked-or-later stages), so calendar counts would badly undercount. Appointments are therefore counted from stages and tags (same lists as lens.funnel), for leads created in the period. Set to \"calendar\" if the team starts booking on GHL calendars.",
+      "pipeline": {
+        "bookedStages": ["Appointment Set", "Showed Up", "No-Show", "Buyer Confirmed", "Seller Confirmed", "Listing Active", "Deal Closed"],
+        "attendedStages": ["Showed Up", "Buyer Confirmed", "Seller Confirmed", "Listing Active", "Deal Closed"],
+        "noShowStages": ["No-Show"],
+        "bookedTags": ["appt booked"],
+        "attendedTags": ["showed up"],
+        "noShowTags": ["no show"]
+      },
       "qualifiedStages": ["Live Transferred", "Appointment Set", "Showed Up", "No-Show", "Buyer Confirmed", "Seller Confirmed", "Listing Active", "Deal Closed"],
       "unqualifiedStages": ["Not Qualified/Not Interested", "Appointment Set (Not qualified)"],
       "qualificationNote": "PROVISIONAL (2026-10-27): qualified = the lead reached a person or an appointment (Live Transferred or any later column); unqualified = Not Qualified/Not Interested or Appointment Set (Not qualified). Leads in the automated follow-up columns are neither. Jacob to confirm. Closed deals use ghl.outcomeStages.wonStages (Deal Closed only; Buyer/Seller Confirmed and Listing Active are pipeline, not closed)."

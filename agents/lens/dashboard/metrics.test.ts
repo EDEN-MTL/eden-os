@@ -149,6 +149,68 @@ describe("appointments", () => {
   });
 });
 
+describe("pipeline mode (3% Realty records appointments by moving cards and tagging contacts)", () => {
+  const pipeline = {
+    bookedStages: ["Appointment Set", "Showed Up", "No-Show", "Buyer Confirmed", "Deal Closed"],
+    attendedStages: ["Showed Up", "Buyer Confirmed", "Deal Closed"],
+    noShowStages: ["No-Show"],
+    bookedTags: ["appt booked"],
+    attendedTags: ["showed up"],
+    noShowTags: ["no show"],
+  };
+  const cfg = { closedStages: ["Deal Closed"], qualifiedStages: [], unqualifiedStages: [], appointmentSource: "pipeline" as const, pipeline };
+  const pl = (id: string, stage: string | null, over: Partial<LeadRow> = {}) => lead({ contactId: id, stage, tags: [], ...over });
+  const run = (leads: LeadRow[]) => computeMetrics(input({ leads, appointments: [], config: cfg, sources: { meta: true, appointments: false } }));
+
+  it("counts booked, attended and no-show from where each lead stands, ignoring the (empty) calendar", () => {
+    const r = run([
+      pl("a", "Appointment Set"),
+      pl("b", "Showed Up"),
+      pl("c", "No-Show"),
+      pl("d", "Deal Closed", { dealValue: 5000, closedAt: at("2026-10-20T15:00:00Z") }),
+      pl("e", "Replied"),
+      pl("f", "Replied", { tags: ["appt booked"] }), // the tag alone counts as booked
+    ]);
+    expect(r.detail.appointmentBasis).toBe("pipeline");
+    expect(v(r, "totalLeads")).toBe(6);
+    expect(v(r, "appointmentsBooked")).toBe(5); // a, b, c, d, f
+    expect(v(r, "attendedAppointments")).toBe(2); // b, d
+    expect(v(r, "noShowAppointments")).toBe(1); // c
+    expect(v(r, "showUpRate")).toBeCloseTo((2 / 3) * 100); // attended ÷ (attended + no-show)
+    expect(v(r, "leadToAppointment")).toBeCloseTo((5 / 6) * 100);
+    expect(v(r, "confirmedAppointments")).toBeNull();
+    expect(r.notes.join(" ")).toMatch(/pipeline stages and tags/);
+  });
+
+  it("a lead that no-showed and later showed counts as attended, not as a no-show", () => {
+    const r = run([pl("a", "Replied", { tags: ["no show", "showed up"] })]);
+    expect(v(r, "attendedAppointments")).toBe(1);
+    expect(v(r, "noShowAppointments")).toBe(0);
+  });
+
+  it("only counts leads that arrived in the period, and only confirmed-attribution ones in the cost per appointment", () => {
+    const r = run([pl("a", "Appointment Set"), pl("old", "Appointment Set", { createdAt: at("2026-08-01T15:00:00Z") }), pl("organic", "Appointment Set", { campaignId: null })]);
+    expect(v(r, "appointmentsBooked")).toBe(2);
+    expect(v(r, "appointmentsBookedAttributed")).toBe(1);
+    expect(v(r, "costPerAppointment")).toBe(100);
+  });
+
+  it("appointment-to-sale: of booked ad leads, the share closed to date, never above 100%", () => {
+    const r = run([pl("a", "Appointment Set"), pl("b", "Deal Closed", { dealValue: 1000, closedAt: at("2026-10-20T15:00:00Z") })]);
+    expect(v(r, "appointmentToSale")).toBe(50);
+  });
+
+  it("says how many booked leads are still waiting for an outcome", () => {
+    const r = run([pl("a", "Appointment Set"), pl("b", "Showed Up")]);
+    expect(r.detail.appointmentsWithoutOutcome).toBe(1);
+    expect(r.notes.join(" ")).toMatch(/still in the booked stage/);
+  });
+
+  it("is not blanked out by 'no GHL appointments synced', because it doesn't use them", () => {
+    expect(v(run([pl("a", "Appointment Set")]), "appointmentsBooked")).toBe(1);
+  });
+});
+
 describe("qualified leads", () => {
   it("counts by stage and is N/A, with a note, when none are configured", () => {
     const withConfig = computeMetrics(input({ leads: [lead({ contactId: "a", stage: "Appointment Set" }), lead({ contactId: "b", stage: "Not Qualified/Not Interested" }), lead({ contactId: "c", stage: "Replied" })] }));

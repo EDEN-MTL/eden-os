@@ -80,3 +80,24 @@ export const METRIC_DEFINITIONS = {
 } as const satisfies Record<string, MetricDefinition>;
 
 export type MetricKey = keyof typeof METRIC_DEFINITIONS;
+
+/**
+ * For clients whose team records appointments by moving cards and tagging contacts (no GHL calendar), the
+ * appointment numbers mean something slightly different. This returns the full definition set with those
+ * metrics reworded; anything else is unchanged.
+ */
+export function definitionsForBasis(basis: "calendar" | "pipeline"): Record<MetricKey, MetricDefinition> {
+  if (basis === "calendar") return METRIC_DEFINITIONS;
+  const cohort = "Counted from card stages and contact tags for leads that arrived in the period, by where they stand now (this client does not book on a GHL calendar).";
+  return {
+    ...METRIC_DEFINITIONS,
+    leadToAppointment: { label: "Lead-to-appointment rate", definition: `Leads created in the period that have reached the booked stage or later ÷ all leads created in the period × 100. ${cohort}`, source: "GHL" },
+    appointmentsBooked: { label: "Appointments booked", definition: `Leads created in the period that reached the booked stage (Appointment Set or later) or carry the booked tag. ${cohort}`, source: "GHL" },
+    appointmentsBookedAttributed: { label: "Booked from ads", definition: "Booked leads (as above) with confirmed ad attribution. This is the count used for cost per appointment.", source: "Meta + GHL" },
+    confirmedAppointments: { label: "Confirmed appointments", definition: "Not tracked for this client: confirmation is not recorded in the pipeline.", source: "GHL" },
+    attendedAppointments: { label: "Appointments attended", definition: `Booked leads now in Showed Up or a later stage, or tagged showed up. ${cohort}`, source: "GHL" },
+    noShowAppointments: { label: "No-shows", definition: `Booked leads now in the No-Show stage (and not attended). ${cohort}`, source: "GHL" },
+    showUpRate: { label: "Show-up rate", definition: "Attended ÷ (attended + no-show) × 100: only appointments with a recorded outcome. Booked leads still waiting for an outcome are not in this rate.", source: "GHL" },
+    appointmentToSale: { label: "Appointment-to-sale rate", definition: "Of the booked leads with confirmed ad attribution, the share that have closed a deal to date × 100.", source: "Meta + GHL" },
+  } as Record<MetricKey, MetricDefinition>;
+}

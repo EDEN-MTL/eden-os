@@ -8,6 +8,7 @@ import { join } from "path";
 import { query } from "../../../shared/db";
 import { getGhlConfig, getLocationTimezone } from "../../../shared/ghl";
 import { getMetaConfig } from "../../../shared/meta";
+import type { AppointmentSource, PipelineAppointmentConfig } from "./metrics";
 
 export const DEFAULT_TIMEZONE = "America/Toronto";
 
@@ -19,6 +20,9 @@ export interface DashboardConfig {
   /** Stages that mean the lead did not qualify. */
   unqualifiedStages: string[];
   timezone: string | null;
+  /** "calendar" (default) counts GHL calendar events; "pipeline" counts from card stages and tags. */
+  appointmentSource: AppointmentSource;
+  pipeline?: PipelineAppointmentConfig;
 }
 
 function readClientConfig(clientId: string): any | null {
@@ -36,6 +40,17 @@ export function loadDashboardConfig(clientId: string): DashboardConfig {
     closedStages: list(raw.lens?.dashboard?.closedStages).length ? list(raw.lens?.dashboard?.closedStages) : list(raw.ghl?.outcomeStages?.wonStages),
     qualifiedStages: list(raw.lens?.dashboard?.qualifiedStages),
     unqualifiedStages: list(raw.lens?.dashboard?.unqualifiedStages),
+    appointmentSource: raw.lens?.dashboard?.appointmentSource === "pipeline" && raw.lens?.dashboard?.pipeline ? "pipeline" : "calendar",
+    pipeline: raw.lens?.dashboard?.pipeline
+      ? {
+          bookedStages: list(raw.lens.dashboard.pipeline.bookedStages),
+          attendedStages: list(raw.lens.dashboard.pipeline.attendedStages),
+          noShowStages: list(raw.lens.dashboard.pipeline.noShowStages),
+          bookedTags: list(raw.lens.dashboard.pipeline.bookedTags),
+          attendedTags: list(raw.lens.dashboard.pipeline.attendedTags),
+          noShowTags: list(raw.lens.dashboard.pipeline.noShowTags),
+        }
+      : undefined,
     timezone: typeof raw.lens?.dashboard?.timezone === "string" ? raw.lens.dashboard.timezone : typeof raw.iris?.timezone === "string" ? raw.iris.timezone : null,
   };
 }
@@ -92,7 +107,7 @@ export async function listLensClients(): Promise<LensClient[]> {
     if (!ghl) missing.push("No GoHighLevel connection");
     else {
       if (leads === 0) missing.push("No GHL leads synced yet");
-      if (!apptStats?.last) missing.push("GHL appointments have not synced yet");
+      if (!apptStats?.last && loadDashboardConfig(clientId).appointmentSource === "calendar") missing.push("GHL appointments have not synced yet");
     }
     const dash = loadDashboardConfig(clientId);
     if (dash.closedStages.length === 0) missing.push("No closed-deal stage configured, so closed deals and revenue cannot be counted");

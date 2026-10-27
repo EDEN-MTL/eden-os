@@ -36,6 +36,8 @@ export interface LeadRow {
   dealValue: number | null;
   /** When the card reached its current stage (for closed deals: when it closed). */
   closedAt: Date | null;
+  /** The contact's GHL tags. Only read in pipeline mode. */
+  tags?: string[];
 }
 
 export interface AppointmentRow {
@@ -52,10 +54,26 @@ export interface OtherCostRow {
   amount: number;
 }
 
+/** How a client records appointments: GHL calendar events, or by moving the card (and tagging the contact). */
+export type AppointmentSource = "calendar" | "pipeline";
+
+export interface PipelineAppointmentConfig {
+  /** Stages at or past "appointment booked" (the card moves on, so later columns count too). */
+  bookedStages: string[];
+  attendedStages: string[];
+  noShowStages: string[];
+  bookedTags: string[];
+  attendedTags: string[];
+  noShowTags: string[];
+}
+
 export interface MetricsConfig {
   closedStages: string[];
   qualifiedStages: string[];
   unqualifiedStages: string[];
+  /** Default "calendar". */
+  appointmentSource?: AppointmentSource;
+  pipeline?: PipelineAppointmentConfig;
 }
 
 export interface MetricsInput {
@@ -93,6 +111,8 @@ export interface MetricsResult {
   kpis: Record<MetricKey, MetricValue>;
   /** Counts behind the numbers, for the transparency panel and the exports. */
   detail: {
+    /** "calendar": appointments counted by their date on the GHL calendar. "pipeline": counted from the stage/tags of leads, grouped by the day the lead arrived. */
+    appointmentBasis: AppointmentSource;
     leadsByAttribution: Record<Attribution, number>;
     closedDealsMissingValue: number;
     appointmentsWithoutOutcome: number;
@@ -159,20 +179,59 @@ export function computeMetrics(input: MetricsInput): MetricsResult {
   if (!haveQualification) notes.push("Qualified and unqualified leads are N/A: no qualified/unqualified pipeline stages are set for this client.");
 
   // ── Appointments ──
-  const valid = input.appointments.filter((a) => !VOID.has(a.status));
-  const bookedInRange = valid.filter((a) => inRange(a.bookedAt, range, timeZone));
-  const bookedAttributed = bookedInRange.filter((a) => isConfirmed(a.contactId));
-  const scheduledInRange = valid.filter((a) => inRange(a.start, range, timeZone));
-  const due = scheduledInRange.filter((a) => a.start.getTime() <= now.getTime());
-  const confirmed = scheduledInRange.filter((a) => a.status === "confirmed");
-  const attended = due.filter((a) => a.status === "attended");
-  const noShows = due.filter((a) => a.status === "no_show");
-  const attendedAttributed = attended.filter((a) => isConfirmed(a.contactId));
-  const withoutOutcome = due.filter((a) => a.status === "booked" || a.status === "confirmed").length;
-  if (withoutOutcome > 0) notes.push(`${withoutOutcome} past appointment${withoutOutcome === 1 ? " has" : "s have"} no outcome recorded in GHL (not marked showed or no-show), which lowers the show-up rate.`);
+  const closedNowIds = new Set(input.leads.filter((l) => inStages(l.stage, config.closedStages)).map((l) => l.contactId));
+  const pipelineMode = config.appointmentSource === "pipeline" && Boolean(config.pipeline);
+  let apptBooked: number, apptBookedAttributed: number, apptConfirmed: number | null, apptAttended: number, apptAttendedAttributed: number;
+  let apptNoShow: number, showUp: number | null, leadToAppt: number | null, apptToSale: number | null, withoutOutcome: number;
 
-  const leadsWithAppointment = new Set(valid.map((a) => a.contactId).filter((id): id is string => Boolean(id)));
-  const leadsThatBooked = leadsInRange.filter((l) => leadsWithAppointment.has(l.contactId)).length;
+  if (pipelineMode) {
+    // The team records appointments by moving the card (Appointment Set, Showed Up, No-Show...) and tagging the contact,
+    // not by booking on a calendar, and a card keeps no history of WHEN it reached a stage. So these are counted from
+    // the leads that arrived in the period (a cohort), by where they stand now.
+    const pc = config.pipeline!;
+    const hasTag = (l: LeadRow, tags: string[]) => (l.tags ?? []).some((t) => tags.map(norm).includes(norm(t)));
+    const reachedAttended = (l: LeadRow) => inStages(l.stage, pc.attendedStages) || hasTag(l, pc.attendedTags);
+    const reachedNoShow = (l: LeadRow) => !reachedAttended(l) && (inStages(l.stage, pc.noShowStages) || hasTag(l, pc.noShowTags));
+    const reachedBooked = (l: LeadRow) => inStages(l.stage, pc.bookedStages) || hasTag(l, pc.bookedTags) || reachedAttended(l) || reachedNoShow(l);
+    const booked = leadsInRange.filter(reachedBooked);
+    const bookedConfirmed = booked.filter((l) => attributionByContact.get(l.contactId) === "confirmed");
+    const attendedLeads = booked.filter(reachedAttended);
+    apptBooked = booked.length;
+    apptBookedAttributed = bookedConfirmed.length;
+    apptConfirmed = null;
+    apptAttended = attendedLeads.length;
+    apptAttendedAttributed = attendedLeads.filter((l) => attributionByContact.get(l.contactId) === "confirmed").length;
+    apptNoShow = booked.filter(reachedNoShow).length;
+    showUp = pct(apptAttended, apptAttended + apptNoShow);
+    leadToAppt = pct(booked.length, leadsInRange.length);
+    apptToSale = config.closedStages.length > 0 ? pct(bookedConfirmed.filter((l) => closedNowIds.has(l.contactId)).length, bookedConfirmed.length) : null;
+    withoutOutcome = booked.filter((l) => !reachedAttended(l) && !reachedNoShow(l)).length;
+    notes.push("Appointments are counted from pipeline stages and tags (this client does not book on a GHL calendar), for leads that arrived in the period, by where they stand now. Confirmed appointments are not tracked this way.");
+    if (withoutOutcome > 0) notes.push(`${withoutOutcome} booked lead${withoutOutcome === 1 ? " is" : "s are"} still in the booked stage with no showed or no-show outcome yet.`);
+  } else {
+    const valid = input.appointments.filter((a) => !VOID.has(a.status));
+    const bookedInRange = valid.filter((a) => inRange(a.bookedAt, range, timeZone));
+    const bookedAttributed = bookedInRange.filter((a) => isConfirmed(a.contactId));
+    const scheduledInRange = valid.filter((a) => inRange(a.start, range, timeZone));
+    const due = scheduledInRange.filter((a) => a.start.getTime() <= now.getTime());
+    const attended = due.filter((a) => a.status === "attended");
+    const attendedAttributed = attended.filter((a) => isConfirmed(a.contactId));
+    withoutOutcome = due.filter((a) => a.status === "booked" || a.status === "confirmed").length;
+    if (withoutOutcome > 0) notes.push(`${withoutOutcome} past appointment${withoutOutcome === 1 ? " has" : "s have"} no outcome recorded in GHL (not marked showed or no-show), which lowers the show-up rate.`);
+    const leadsWithAppointment = new Set(valid.map((a) => a.contactId).filter((id): id is string => Boolean(id)));
+    apptBooked = bookedInRange.length;
+    apptBookedAttributed = bookedAttributed.length;
+    apptConfirmed = scheduledInRange.filter((a) => a.status === "confirmed").length;
+    apptAttended = attended.length;
+    apptAttendedAttributed = attendedAttributed.length;
+    apptNoShow = due.filter((a) => a.status === "no_show").length;
+    showUp = pct(attended.length, due.length);
+    leadToAppt = pct(leadsInRange.filter((l) => leadsWithAppointment.has(l.contactId)).length, leadsInRange.length);
+    // Of the ad leads who had an appointment in the period, how many have closed a deal (to date). Counting leads, not
+    // appointments, so a lead with two appointments is one; and a cohort, so the rate can never pass 100%.
+    const appointmentLeads = new Set(due.map((a) => a.contactId).filter((id): id is string => Boolean(id) && isConfirmed(id)));
+    apptToSale = config.closedStages.length > 0 ? pct([...appointmentLeads].filter((id) => closedNowIds.has(id)).length, appointmentLeads.size) : null;
+  }
 
   // ── Closed deals ──
   const haveClosedStage = config.closedStages.length > 0;
@@ -182,12 +241,6 @@ export function computeMetrics(input: MetricsInput): MetricsResult {
   const closedMissingValue = closed.filter((l) => !(l.dealValue && l.dealValue > 0)).length;
   if (!haveClosedStage) notes.push("Closed deals and revenue are N/A: no closed-deal stage is set for this client.");
   if (closedMissingValue > 0) notes.push(`${closedMissingValue} closed deal${closedMissingValue === 1 ? " has" : "s have"} no value recorded in GHL, so revenue is understated by those.`);
-
-  // Of the ad leads who had an appointment in the period, how many have closed a deal (to date). Counting leads, not
-  // appointments, so a lead with two appointments is one; and a cohort, so the rate can never pass 100%.
-  const appointmentLeads = new Set(due.map((a) => a.contactId).filter((id): id is string => Boolean(id) && isConfirmed(id)));
-  const closedNow = new Set(input.leads.filter((l) => inStages(l.stage, config.closedStages)).map((l) => l.contactId));
-  const soldAmongAppointments = haveClosedStage ? [...appointmentLeads].filter((id) => closedNow.has(id)).length : 0;
 
   const revenueAll = haveClosedStage ? sum(closed.map(value)) : null;
   const revenueAttributed = haveClosedStage ? sum(closedAttributed.map(value)) : null;
@@ -216,20 +269,20 @@ export function computeMetrics(input: MetricsInput): MetricsResult {
     attributedLeads: n("attributedLeads", leadsByAttribution.confirmed, "count"),
     qualifiedLeads: n("qualifiedLeads", qualified, "count", haveQualification ? "Provisional: stages set in config." : "No qualified stages set."),
     unqualifiedLeads: n("unqualifiedLeads", unqualified, "count", haveQualification ? undefined : "No unqualified stages set."),
-    leadToAppointment: n("leadToAppointment", pct(leadsThatBooked, leadsInRange.length), "percent"),
+    leadToAppointment: n("leadToAppointment", leadToAppt, "percent"),
 
-    appointmentsBooked: n("appointmentsBooked", bookedInRange.length, "count"),
-    appointmentsBookedAttributed: n("appointmentsBookedAttributed", bookedAttributed.length, "count"),
-    costPerAppointment: n("costPerAppointment", div(spend, bookedAttributed.length), "currency"),
-    confirmedAppointments: n("confirmedAppointments", confirmed.length, "count"),
-    attendedAppointments: n("attendedAppointments", attended.length, "count"),
-    noShowAppointments: n("noShowAppointments", noShows.length, "count"),
-    showUpRate: n("showUpRate", pct(attended.length, due.length), "percent"),
-    costPerAttended: n("costPerAttended", div(spend, attendedAttributed.length), "currency"),
+    appointmentsBooked: n("appointmentsBooked", apptBooked, "count"),
+    appointmentsBookedAttributed: n("appointmentsBookedAttributed", apptBookedAttributed, "count"),
+    costPerAppointment: n("costPerAppointment", div(spend, apptBookedAttributed), "currency"),
+    confirmedAppointments: n("confirmedAppointments", apptConfirmed, "count", apptConfirmed === null ? "Not tracked: this client records appointments by pipeline stage." : undefined),
+    attendedAppointments: n("attendedAppointments", apptAttended, "count"),
+    noShowAppointments: n("noShowAppointments", apptNoShow, "count"),
+    showUpRate: n("showUpRate", showUp, "percent"),
+    costPerAttended: n("costPerAttended", div(spend, apptAttendedAttributed), "currency"),
 
     closedDeals: n("closedDeals", haveClosedStage ? closed.length : null, "count"),
     closedDealsAttributed: n("closedDealsAttributed", haveClosedStage ? closedAttributed.length : null, "count"),
-    appointmentToSale: n("appointmentToSale", haveClosedStage ? pct(soldAmongAppointments, appointmentLeads.size) : null, "percent"),
+    appointmentToSale: n("appointmentToSale", apptToSale, "percent"),
     revenueAttributed: n("revenueAttributed", revenueAttributed, "currency", closedMissingValue > 0 ? "Some closed deals have no value recorded." : undefined),
     revenueAll: n("revenueAll", revenueAll, "currency"),
     otherCosts: n("otherCosts", otherCosts, "currency", otherCosts === null ? "None entered for this period." : undefined),
@@ -247,11 +300,11 @@ export function computeMetrics(input: MetricsInput): MetricsResult {
   if (!sources.meta) {
     mask(["spend", "impressions", "reach", "clicks", "ctr", "cpc", "metaLeads", "cpl", "costPerAppointment", "costPerAttended", "roas", "roi", "costPerClosedDeal"], "Ad metrics are N/A: no Meta ad data is connected for this client.");
   }
-  if (!sources.appointments) {
+  if (!sources.appointments && !pipelineMode) {
     mask(["appointmentsBooked", "appointmentsBookedAttributed", "costPerAppointment", "confirmedAppointments", "attendedAppointments", "noShowAppointments", "showUpRate", "costPerAttended", "leadToAppointment", "appointmentToSale"], "Appointment metrics are N/A: no GHL appointments have synced for this client yet.");
   }
 
-  return { range, kpis, detail: { leadsByAttribution, closedDealsMissingValue: closedMissingValue, appointmentsWithoutOutcome: withoutOutcome, costsIncluded }, notes };
+  return { range, kpis, detail: { appointmentBasis: pipelineMode ? "pipeline" : "calendar", leadsByAttribution, closedDealsMissingValue: closedMissingValue, appointmentsWithoutOutcome: withoutOutcome, costsIncluded }, notes };
 }
 
 export interface MetricChange {

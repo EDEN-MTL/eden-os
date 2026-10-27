@@ -52,7 +52,8 @@ export async function loadKnownCampaignIds(clientId: string): Promise<Set<string
 export async function loadLeads(clientId: string): Promise<LeadRow[]> {
   const rows = await query<any>(
     `SELECT ghl_contact_id, created_at, meta_campaign_id, pipeline_stage, deal_value,
-            raw->'opportunity'->>'lastStageChangeAt' AS last_stage_change, raw->'opportunity'->>'updatedAt' AS opp_updated
+            raw->'opportunity'->>'lastStageChangeAt' AS last_stage_change, raw->'opportunity'->>'updatedAt' AS opp_updated,
+            raw->'contact'->'tags' AS tags
      FROM ad_leads WHERE client_id = $1`,
     [clientId]
   );
@@ -66,6 +67,7 @@ export async function loadLeads(clientId: string): Promise<LeadRow[]> {
       stage: r.pipeline_stage ?? null,
       dealValue: r.deal_value === null || r.deal_value === undefined ? null : Number(r.deal_value),
       closedAt: closedAt && !Number.isNaN(closedAt.getTime()) ? closedAt : null,
+      tags: Array.isArray(r.tags) ? r.tags.filter((t: unknown): t is string => typeof t === "string") : [],
     };
   });
 }
@@ -122,7 +124,7 @@ export async function buildDashboardKpis(clientId: string, range: DateRange, opt
     appointments,
     otherCosts,
     config,
-    sources: { meta: client.meta.connected && meta.length > 0, appointments: client.ghl.appointments > 0 },
+    sources: { meta: client.meta.connected && meta.length > 0, appointments: config.appointmentSource === "pipeline" ? client.ghl.leads > 0 : client.ghl.appointments > 0 },
   };
   const current = computeMetrics({ ...base, range });
   if (!prev) return { client, timezone: timeZone, range, current };
