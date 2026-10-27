@@ -4,7 +4,7 @@
  * load never waits on either API.
  */
 import { query } from "../../../shared/db";
-import { clientTimezone, listLensClients, loadDashboardConfig, LensClient } from "./clients";
+import { clientTimezone, getLensClient, loadDashboardConfig, LensClient, memo } from "./clients";
 import { AppointmentRow, compareMetrics, computeMetrics, LeadRow, MetaRow, MetricChange, MetricsInput, MetricsResult, OtherCostRow } from "./metrics";
 import { MetricKey } from "./definitions";
 import { addDays, DateRange, previousRange } from "./ranges";
@@ -43,6 +43,16 @@ export async function loadMetaRows(clientId: string, from: string, to: string): 
 export async function loadKnownCampaignIds(clientId: string): Promise<Set<string>> {
   const rows = await query<{ campaign_id: string }>(`SELECT DISTINCT campaign_id FROM meta_performance_snapshots WHERE client_id = $1 AND campaign_id IS NOT NULL`, [clientId]);
   return new Set(rows.map((r) => r.campaign_id));
+}
+
+/** The latest name of every campaign we hold Meta data for, in any period. */
+export async function loadCampaignNames(clientId: string): Promise<Map<string, string>> {
+  const rows = await query<{ campaign_id: string; campaign_name: string | null }>(
+    `SELECT DISTINCT ON (campaign_id) campaign_id, campaign_name FROM meta_performance_snapshots
+     WHERE client_id = $1 AND campaign_id IS NOT NULL AND campaign_name IS NOT NULL ORDER BY campaign_id, date_start DESC`,
+    [clientId]
+  );
+  return new Map(rows.map((r) => [r.campaign_id, r.campaign_name!]));
 }
 
 /**
@@ -110,17 +120,18 @@ export interface DashboardInputs {
 /** Loads what one client's dashboard needs for a period (and the one before it, when comparing). One place, so every endpoint agrees. */
 export async function loadDashboardInputs(clientId: string, range: DateRange, options: { compare?: boolean; now?: Date } = {}): Promise<DashboardInputs | null> {
   const now = options.now ?? new Date();
-  const client = (await listLensClients()).find((c) => c.clientId === clientId);
+  const client = await getLensClient(clientId);
   if (!client) return null;
   const timeZone = await clientTimezone(clientId);
   const previous = options.compare ? previousRange(range) : null;
   const earliest = previous ? previous.from : range.from;
   // A day of slack either side: Meta rows are keyed by the account's own day, which can sit a day off the client's.
-  const [meta, knownCampaignIds, leads, appointments, otherCosts] = await Promise.all([
+  const [meta, knownCampaignIds, campaignNames, leads, appointments, otherCosts] = await Promise.all([
     loadMetaRows(clientId, addDays(earliest, -1), addDays(range.to, 1)),
-    loadKnownCampaignIds(clientId),
-    loadLeads(clientId),
-    loadAppointments(clientId),
+    memo(`campaigns:${clientId}`, 30_000, () => loadKnownCampaignIds(clientId)),
+    memo(`campaign-names:${clientId}`, 30_000, () => loadCampaignNames(clientId)),
+    memo(`leads:${clientId}`, 30_000, () => loadLeads(clientId)),
+    memo(`appointments:${clientId}`, 30_000, () => loadAppointments(clientId)),
     loadOtherCosts(clientId, earliest, range.to),
   ]);
   const config = loadDashboardConfig(clientId);
@@ -134,6 +145,7 @@ export async function loadDashboardInputs(clientId: string, range: DateRange, op
       now,
       meta,
       knownCampaignIds,
+      campaignNames,
       leads,
       appointments,
       otherCosts,

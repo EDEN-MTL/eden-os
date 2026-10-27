@@ -14,6 +14,7 @@ import ModuleScreen from "./components/ModuleScreen";
 import SettingsPage from "./components/SettingsPage";
 import ClientsListPage from "./components/ClientsListPage";
 import ClientDetailPage from "./components/ClientDetailPage";
+import LensDashboard from "./lens/LensDashboard";
 
 /**
  * Two shells, deliberately.
@@ -89,6 +90,8 @@ export default function App() {
           <AgentNetwork selectedAgent={selectedAgent} onSelectAgent={setSelectedAgent} />
         ) : activeTab === "SETTINGS" ? (
           <SettingsPage />
+        ) : activeTab === "LENS" ? (
+          <LensDashboard />
         ) : activeTab === "CLIENTS" ? (
           selectedClientId ? (
             <ClientDetailPage clientId={selectedClientId} onBack={() => setSelectedClientId(null)} />

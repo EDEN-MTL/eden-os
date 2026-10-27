@@ -34,7 +34,7 @@ function sideItem(head: string, text: string, color: string) {
 
 // AGENTS sits second so the reactor's top bar can reach the console; every
 // other tab leaves the reactor anyway.
-export const TABS = ["COMMAND", "AGENTS", "LEADS", "ISA", "ADS", "CONTENT", "INTEL", "CLIENTS", "SETTINGS"];
+export const TABS = ["COMMAND", "AGENTS", "LEADS", "ISA", "ADS", "CONTENT", "LENS", "CLIENTS", "SETTINGS"];
 
 export const MODULES: Record<string, any> = {
   LEADS: {
@@ -98,26 +98,6 @@ export const MODULES: Record<string, any> = {
       sideItem("PARADISE BUYERS", "CPL $17.40 · 4.4x ROAS · holding. New creative set entering test.", "#00b8ff"),
       sideItem("CONCEPTION BAY BUYERS 03", "CPL $36.20 · paused by Forge. Creative fatigue after 9 days.", "#ff2255"),
       sideItem("TORBAY FIRST-TIME", "CPL $21.10 · 3.2x ROAS · learning phase, 2 days remaining.", "#ffa800"),
-    ],
-  },
-  INTEL: {
-    eyebrow: "LENS · ANALYTICS & INTELLIGENCE",
-    title: "INTEL",
-    metrics: [metric("PIPELINE VALUE", "$2.1M", "↑ 9%", "#00ff88"), metric("LEAD → APPT", "23%", "↑ 2pt", "#00b8ff"), metric("APPT → CLOSE", "31%", "", "#00fff2"), metric("AD SPEND MTD", "$8.4k", "", "#ffa800")],
-    feedLabel: "BOTTLENECK ALERTS",
-    feed: [
-      feedItem("LENS", "30m ago", "Bottleneck flagged: Martinez follow-up 3x above team average. Routing weight reduced.", "#00ff88"),
-      feedItem("LENS", "2h ago", "Speed-to-lead degraded 11% on weekend inbound — Iris coverage window extended.", "#00ff88"),
-      feedItem("LENS", "6h ago", "Nurture cohort from March showing 4% reactivation lift after Ember rewrite.", "#00ff88"),
-      feedItem("LENS", "1d ago", "Weekly report delivered to #eden-command — 14 campaigns, 312 leads, 67 appts.", "#00ff88"),
-      feedItem("LENS", "1d ago", "Forecast updated: 21 closings projected this quarter at current conversion.", "#00ff88"),
-    ],
-    sideLabel: "WEEKLY REPORT",
-    side: [
-      sideItem("LEADS · 312 MTD", "Up 14% over prior month. Meta is 78% of source volume.", "#00b8ff"),
-      sideItem("APPOINTMENTS · 67", "23% of leads booked. Iris qualification is the largest lift driver.", "#00e5ff"),
-      sideItem("CLOSINGS · 21 PROJ.", "31% appointment-to-close held flat for three consecutive weeks.", "#00ff88"),
-      sideItem("EFFICIENCY", "Blended CPL $18. Cost per appointment $126, down from $158.", "#ffa800"),
     ],
   },
   CONTENT: {

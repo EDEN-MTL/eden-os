@@ -83,6 +83,8 @@ export interface MetricsInput {
    * older campaign still counts as confirmed. Defaults to the campaigns in `meta`.
    */
   knownCampaignIds?: Set<string>;
+  /** Latest name for each campaign id we hold Meta data for (any period), for the campaign table. */
+  campaignNames?: Map<string, string>;
   /** Which source systems actually have data for this client; a metric from a missing source is N/A, not zero. Default: all present. */
   sources?: { meta: boolean; appointments: boolean };
   timeZone: string;

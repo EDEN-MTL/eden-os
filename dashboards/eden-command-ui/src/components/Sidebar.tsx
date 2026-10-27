@@ -29,7 +29,7 @@ export const NAV_SECTIONS: { heading?: string; items: NavItem[] }[] = [
       { id: "ISA", label: "AI ISA", icon: "◉" },
       { id: "ADS", label: "Ad Engine", icon: "◆" },
       { id: "CONTENT", label: "Content", icon: "✎" },
-      { id: "INTEL", label: "Intel", icon: "▤" },
+      { id: "LENS", label: "Lens reports", icon: "▤" },
     ],
   },
   {

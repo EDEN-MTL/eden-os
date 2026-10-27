@@ -12,6 +12,26 @@ import type { AppointmentSource, PipelineAppointmentConfig } from "./metrics";
 
 export const DEFAULT_TIMEZONE = "America/Toronto";
 
+const cache = new Map<string, { at: number; value: Promise<unknown> }>();
+
+/**
+ * Keeps an answer for a short time so the dashboard's three simultaneous requests (and a quick re-click) share one
+ * set of database and GHL lookups instead of repeating them. A failure is never kept.
+ */
+export function memo<T>(key: string, ttlMs: number, load: () => Promise<T>): Promise<T> {
+  const hit = cache.get(key);
+  if (hit && Date.now() - hit.at < ttlMs) return hit.value as Promise<T>;
+  const value = load();
+  cache.set(key, { at: Date.now(), value });
+  value.catch(() => cache.delete(key));
+  return value;
+}
+
+/** Forgets everything kept (tests, and after a sync if ever needed). */
+export function clearMemo(): void {
+  cache.clear();
+}
+
 export interface DashboardConfig {
   /** Pipeline stage names that mean a deal CLOSED (the client's own outcome stages; GHL's won/lost status is not used). */
   closedStages: string[];
@@ -83,49 +103,59 @@ export interface LensClient {
 export async function clientTimezone(clientId: string): Promise<string> {
   const configured = loadDashboardConfig(clientId).timezone;
   if (configured) return configured;
+  // The location's own setting rarely changes; one live lookup an hour is plenty.
+  return memo(`tz:${clientId}`, 3_600_000, async () => {
+    const ghl = await getGhlConfig(clientId).catch(() => null);
+    const live = ghl ? await getLocationTimezone(ghl.locationId, ghl.apiKey).catch(() => null) : null;
+    return live || DEFAULT_TIMEZONE;
+  });
+}
+
+async function describeClient(clientId: string): Promise<LensClient> {
+  const raw = readClientConfig(clientId) ?? {};
+  const missing: string[] = [];
+
+  const meta = await getMetaConfig(clientId).catch(() => null);
+  const lastDay = (await query<{ d: string | null }>(`SELECT max(date_start)::text AS d FROM meta_performance_snapshots WHERE client_id = $1`, [clientId]).catch(() => []))[0]?.d ?? null;
+  if (!meta) missing.push("No Meta ad account connected");
+  else if (!lastDay) missing.push("Meta is connected but no ad data has synced yet");
+
   const ghl = await getGhlConfig(clientId).catch(() => null);
-  const live = ghl ? await getLocationTimezone(ghl.locationId, ghl.apiKey).catch(() => null) : null;
-  return live || DEFAULT_TIMEZONE;
+  const leadStats = (await query<{ n: string; last: Date | null }>(`SELECT count(*) AS n, max(updated_at) AS last FROM ad_leads WHERE client_id = $1`, [clientId]).catch(() => []))[0];
+  const apptStats = (await query<{ n: string; last: Date | null }>(`SELECT count(*) AS n, max(synced_at) AS last FROM ghl_appointments WHERE client_id = $1`, [clientId]).catch(() => []))[0];
+  const leads = Number(leadStats?.n ?? 0);
+  const appointments = Number(apptStats?.n ?? 0);
+  const dash = loadDashboardConfig(clientId);
+  if (!ghl) missing.push("No GoHighLevel connection");
+  else {
+    if (leads === 0) missing.push("No GHL leads synced yet");
+    if (!apptStats?.last && dash.appointmentSource === "calendar") missing.push("GHL appointments have not synced yet");
+  }
+  if (dash.closedStages.length === 0) missing.push("No closed-deal stage configured, so closed deals and revenue cannot be counted");
+
+  return {
+    clientId,
+    name: raw.clientName ?? clientId,
+    timezone: await clientTimezone(clientId),
+    meta: { connected: Boolean(meta), adAccountId: meta?.adAccountId ?? null, lastDay },
+    ghl: {
+      connected: Boolean(ghl),
+      lastLeadSync: leadStats?.last ? new Date(leadStats.last).toISOString() : null,
+      lastAppointmentSync: apptStats?.last ? new Date(apptStats.last).toISOString() : null,
+      leads,
+      appointments,
+    },
+    missing,
+  };
+}
+
+/** One client's connection status (kept for a minute). Null when there is no such client. */
+export async function getLensClient(clientId: string): Promise<LensClient | null> {
+  if (!allClientIds().includes(clientId)) return null;
+  return memo(`client:${clientId}`, 60_000, () => describeClient(clientId));
 }
 
 export async function listLensClients(): Promise<LensClient[]> {
-  const out: LensClient[] = [];
-  for (const clientId of allClientIds()) {
-    const raw = readClientConfig(clientId) ?? {};
-    const missing: string[] = [];
-
-    const meta = await getMetaConfig(clientId).catch(() => null);
-    const lastDay = (await query<{ d: string | null }>(`SELECT max(date_start)::text AS d FROM meta_performance_snapshots WHERE client_id = $1`, [clientId]).catch(() => []))[0]?.d ?? null;
-    if (!meta) missing.push("No Meta ad account connected");
-    else if (!lastDay) missing.push("Meta is connected but no ad data has synced yet");
-
-    const ghl = await getGhlConfig(clientId).catch(() => null);
-    const leadStats = (await query<{ n: string; last: Date | null }>(`SELECT count(*) AS n, max(updated_at) AS last FROM ad_leads WHERE client_id = $1`, [clientId]).catch(() => []))[0];
-    const apptStats = (await query<{ n: string; last: Date | null }>(`SELECT count(*) AS n, max(synced_at) AS last FROM ghl_appointments WHERE client_id = $1`, [clientId]).catch(() => []))[0];
-    const leads = Number(leadStats?.n ?? 0);
-    const appointments = Number(apptStats?.n ?? 0);
-    if (!ghl) missing.push("No GoHighLevel connection");
-    else {
-      if (leads === 0) missing.push("No GHL leads synced yet");
-      if (!apptStats?.last && loadDashboardConfig(clientId).appointmentSource === "calendar") missing.push("GHL appointments have not synced yet");
-    }
-    const dash = loadDashboardConfig(clientId);
-    if (dash.closedStages.length === 0) missing.push("No closed-deal stage configured, so closed deals and revenue cannot be counted");
-
-    out.push({
-      clientId,
-      name: raw.clientName ?? clientId,
-      timezone: await clientTimezone(clientId),
-      meta: { connected: Boolean(meta), adAccountId: meta?.adAccountId ?? null, lastDay },
-      ghl: {
-        connected: Boolean(ghl),
-        lastLeadSync: leadStats?.last ? new Date(leadStats.last).toISOString() : null,
-        lastAppointmentSync: apptStats?.last ? new Date(apptStats.last).toISOString() : null,
-        leads,
-        appointments,
-      },
-      missing,
-    });
-  }
-  return out;
+  const all = await Promise.all(allClientIds().map((id) => getLensClient(id)));
+  return all.filter((c): c is LensClient => c !== null);
 }

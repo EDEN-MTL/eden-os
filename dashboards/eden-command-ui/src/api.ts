@@ -228,3 +228,18 @@ export async function decidePendingAction(
     throw new Error(data.error || `Failed to ${decision} action: ${res.status}`);
   }
 }
+
+/** An error from the Lens API with the HTTP status, so the page can say "wrong key" differently from "server error". */
+export class LensApiError extends Error {
+  constructor(message: string, public status: number) {
+    super(message);
+  }
+}
+
+/** GET a Lens endpoint (read-only). `signal` lets a newer request cancel an older one. */
+export async function lensGet<T>(path: string, signal?: AbortSignal): Promise<T> {
+  const res = await fetch(`${API_BASE}/api/lens${path}`, { headers: authHeaders(), signal });
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok) throw new LensApiError(body.error || `Request failed: ${res.status}`, res.status);
+  return body as T;
+}

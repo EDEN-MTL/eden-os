@@ -32,7 +32,7 @@ const val = (m: MetricValue) => m.value;
 
 export function computeCampaignTable(input: MetricsInput): CampaignRow[] {
   const known = input.knownCampaignIds ?? new Set(input.meta.map((r) => r.campaignId));
-  const names = new Map<string, string>();
+  const names = new Map<string, string>(input.campaignNames ?? []);
   for (const r of input.meta) if (r.campaignName) names.set(r.campaignId, r.campaignName);
 
   const inPeriod = (date: string) => date >= input.range.from && date <= input.range.to;
@@ -49,13 +49,14 @@ export function computeCampaignTable(input: MetricsInput): CampaignRow[] {
       meta,
       leads,
       appointments: input.appointments.filter((a) => a.contactId && contacts.has(a.contactId)),
-      sources: { meta: meta.some((r) => inPeriod(r.date)), appointments: input.sources?.appointments ?? true },
+      // A campaign we hold Meta data for has spend 0 in a period it didn't run; one we hold none for is N/A, never a zero.
+      sources: { meta: id !== null && known.has(id), appointments: input.sources?.appointments ?? true },
     }).kpis;
     const inRangeLeads = val(k.totalLeads) ?? 0;
     return {
       campaignId: id,
       name: id === null ? "Not tied to a campaign" : names.get(id) ?? `Campaign ${id}`,
-      noMetaData: id !== null && !names.has(id),
+      noMetaData: id !== null && !known.has(id),
       spend: val(k.spend),
       impressions: val(k.impressions),
       clicks: val(k.clicks),

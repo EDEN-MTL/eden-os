@@ -119,12 +119,28 @@ describe("campaign table", () => {
   });
 
   it("shows a campaign we hold no Meta data for (an older one) and says so", () => {
-    const input = base({ leads: [lead("old", "2026-10-05T15:00:00Z", "120239794885580259", { stage: "Deal Closed", dealValue: 4048.5, closedAt: at("2026-10-07T15:00:00Z") })] });
+    const input = base({ knownCampaignIds: new Set(["111111111111", "222222222222"]), leads: [lead("old", "2026-10-05T15:00:00Z", "120239794885580259", { stage: "Deal Closed", dealValue: 4048.5, closedAt: at("2026-10-07T15:00:00Z") })] });
     const row = computeCampaignTable(input).find((r) => r.campaignId === "120239794885580259")!;
     expect(row.noMetaData).toBe(true);
     expect(row.name).toBe("Campaign 120239794885580259");
     expect(row.closedDeals).toBe(1);
     expect(row.revenue).toBe(4048.5);
+  });
+
+  it("a campaign we hold data for that did not run in the period shows its real name and a zero spend, not N/A", () => {
+    // Seller Campaign - EDEN ran Feb-Jul; a deal from one of its leads closed this month
+    const input = base({
+      knownCampaignIds: new Set(["111111111111", "222222222222", "120239794885580259"]),
+      campaignNames: new Map([["120239794885580259", "Seller Campaign - EDEN"]]),
+      leads: [lead("old", "2026-04-05T15:00:00Z", "120239794885580259", { stage: "Deal Closed", dealValue: 4048.5, closedAt: at("2026-10-07T15:00:00Z") })],
+    });
+    const row = computeCampaignTable(input).find((r) => r.campaignId === "120239794885580259")!;
+    expect(row.name).toBe("Seller Campaign - EDEN");
+    expect(row.noMetaData).toBe(false);
+    expect(row.spend).toBe(0);
+    expect(row.closedDeals).toBe(1);
+    expect(row.revenue).toBe(4048.5);
+    expect(row.roas).toBeNull(); // no spend this period, so no ratio
   });
 
   it("a campaign with no spend, leads or deals in the period is left out", () => {
