@@ -1,4 +1,5 @@
 // Side-effect import, NOT `import dotenv` + `dotenv.config()`.
+import { announceStartup } from "../agents/iris/watchdog";
 // TypeScript emits every `require` above the first statement in the CJS
 // output, so `dotenv.config()` used to run AFTER shared/db had already been
 // loaded — and shared/db builds its Pool at module scope from
@@ -109,6 +110,8 @@ async function start() {
     console.log(`  Server online: port ${PORT}`);
     console.log("  All systems nominal.");
     console.log("");
+    // Tell #backend-ops a deploy landed (a few seconds in, once the Slack clients are ready).
+    setTimeout(() => void announceStartup(), 5000);
   });
 }
 

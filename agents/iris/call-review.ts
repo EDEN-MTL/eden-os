@@ -97,6 +97,21 @@ export function reviewCall(input: CallReviewInput): CallReview {
     if (heard) flags.push(`Someone spoke (${quote(heard.message)}) and Iris never said a word`);
   }
 
+  // 5b. The line was answered, nothing at all was transcribed, and Iris never spoke. Soyemi Damilola,
+  // 2026-10-20: she picked up, said a quick hello that the transcriber dropped, and hung up on 22 seconds of
+  // silence; a second call sat silent for 30 seconds. Without this, a call like that looks like any other.
+  // (An unanswered call ends "customer-did-not-answer" and a voicemail is machineOnly, so neither lands here.)
+  if (
+    !input.machineOnly &&
+    lines.length === 0 &&
+    (input.durationSeconds ?? 0) >= 8 &&
+    (input.endedReason === "customer-ended-call" || input.endedReason === "silence-timed-out")
+  ) {
+    flags.push(
+      `The call was answered but nothing was transcribed and Iris never spoke (${input.endedReason}, ${Math.round(input.durationSeconds ?? 0)}s). The person may have said hello and hung up on silence — worth a text or another call.`
+    );
+  }
+
   // 6. She said she'd connect the lead with an agent and then nothing happened. Angela
   // Marie, 2026-10-14: a fully qualified seller heard the transfer line, stayed quiet and
   // hung up — no transfer, no booking, and nobody was told.

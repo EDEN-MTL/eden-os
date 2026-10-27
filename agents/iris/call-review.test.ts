@@ -199,3 +199,19 @@ describe("reviewCall — a figure said the wrong way (Noeleen Gray, 2026-10-18)"
     expect(r.flags.some((f) => /figure the wrong way/.test(f))).toBe(false);
   });
 });
+
+describe("reviewCall: an answered call where nothing was transcribed", () => {
+  const base = { lines: [], durationSeconds: 22, machineOnly: false } as const;
+  it("flags a call the person answered and then hung up on silence (Soyemi Damilola, 2026-10-20)", () => {
+    const r = reviewCall({ ...base, endedReason: "customer-ended-call" });
+    expect(r.verdict).toBe("attention");
+    expect(r.flags[0]).toMatch(/nothing was transcribed and Iris never spoke/);
+    expect(reviewCall({ ...base, durationSeconds: 30, endedReason: "silence-timed-out" }).verdict).toBe("attention");
+  });
+  it("does not flag a call nobody answered, a very short blip, or a voicemail", () => {
+    expect(reviewCall({ ...base, endedReason: "customer-did-not-answer" }).verdict).toBe("ok");
+    expect(reviewCall({ ...base, durationSeconds: 3, endedReason: "customer-ended-call" }).verdict).toBe("ok");
+    expect(reviewCall({ ...base, machineOnly: true, endedReason: "customer-ended-call" }).verdict).toBe("ok");
+  });
+});
+

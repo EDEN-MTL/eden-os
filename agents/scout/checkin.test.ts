@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const readFileSyncMock = vi.fn();
 vi.mock("fs", () => ({ readFileSync: (...args: unknown[]) => readFileSyncMock(...args) }));
@@ -26,7 +26,16 @@ function asyncGeneratorOf<T>(items: T[]) {
 
 import { clearCheckinCaches, getCheckinData, parseProspectName, updateCheckinItem } from "./checkin";
 
+// The fixtures below use real dates from late Aug to early Oct 2026, and getCheckinData only looks back 60 days
+// from "now". Left on the real clock these tests passed until Oct 23 and then failed on their own: 22 of them
+// on 2026-10-27. Pinned to the middle of the window they were written for, they no longer age.
+beforeEach(() => {
+  vi.useFakeTimers({ toFake: ["Date"] });
+  vi.setSystemTime(new Date("2026-10-10T12:00:00.000Z"));
+});
+
 afterEach(() => {
+  vi.useRealTimers();
   vi.clearAllMocks();
   clearCheckinCaches();
 });

@@ -5,6 +5,7 @@
  * GHL is the source of truth for all lead data.
  */
 import { query } from "../db";
+import { assertSendableText } from "./outbound-guard";
 
 const GHL_BASE_URL = "https://services.leadconnectorhq.com";
 
@@ -768,6 +769,8 @@ export async function sendSMS(
   apiKey?: string,
   fromNumber?: string
 ): Promise<any> {
+  // Never let an id, an empty string or an unfilled template reach a person (outbound-guard.ts).
+  assertSendableText(contactId, message);
   return ghlRequest(`/conversations/messages`, {
     method: "POST",
     body: {

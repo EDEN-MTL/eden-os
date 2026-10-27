@@ -806,3 +806,23 @@ CREATE TABLE IF NOT EXISTS iris_followup_cohort (
     resolved_at TIMESTAMPTZ,
     UNIQUE (client_id, contact_id)
 );
+
+-- The watchdog (agents/iris/watchdog.ts): one row per kind of trouble so it alerts once per cooldown, and a
+-- heartbeat per scheduled job so a stalled job is noticed.
+CREATE TABLE IF NOT EXISTS watchdog_alerts (
+    key TEXT PRIMARY KEY,
+    last_alert_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    times INTEGER NOT NULL DEFAULT 1
+);
+CREATE TABLE IF NOT EXISTS watchdog_heartbeats (
+    name TEXT PRIMARY KEY,
+    at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+-- One morning summary per client per local day (agents/iris/daily-summary.ts), so a double run posts once.
+CREATE TABLE IF NOT EXISTS daily_summaries (
+    client_id TEXT NOT NULL,
+    day TEXT NOT NULL,
+    posted_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    PRIMARY KEY (client_id, day)
+);
