@@ -55,3 +55,9 @@ cards, charts, campaign table and attribution can't disagree. Rules that cost de
   decimals with a formula guard on typed text; the PDF is the browser's Save-as-PDF of a print-only light copy, landscape.
   Lead names are off by default (a report for a client is not a customer list); ledger rows read "Lead 1, Lead 2". The
   button is disabled while loading so a file never mixes one period's numbers with another's label.
+- Failure states: `lensGet` times out at 30s (408) and reports a non-JSON reply as 502; `errors.ts` turns each status into
+  a plain sentence and names which of the four requests failed; `reportProblem` refuses a payload the page cannot draw;
+  `LensBoundary` catches render errors. When a reload fails the old numbers stay up, dimmed and labelled, and export is
+  off. `freshness.ts` warns when the period runs past the last Meta day. Custom periods are checked before any request
+  (`validate-period.ts`: real dates, start before end, at most 366 days, future dates warned). The server returns 400 for
+  a repeated query option rather than quietly using the default.

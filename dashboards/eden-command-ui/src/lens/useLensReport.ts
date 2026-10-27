@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { LensApiError, lensGet } from "../api";
+import { lensGet } from "../api";
+import { describeError, reportProblem, within } from "./errors";
 import { periodQuery } from "./format";
 import type { AttributionResponse, CampaignsResponse, KpiResponse, LensClient, PeriodChoice, SeriesResponse } from "./types";
 
@@ -10,20 +11,13 @@ export interface Report {
   attribution: AttributionResponse;
 }
 
+export { describeError } from "./errors";
+
 export type ReportState =
   | { status: "idle" }
   | { status: "loading"; previous: Report | null }
   | { status: "ready"; report: Report }
   | { status: "error"; message: string; httpStatus: number | null; previous: Report | null };
-
-export function describeError(error: unknown): { message: string; httpStatus: number | null } {
-  if (error instanceof LensApiError) {
-    if (error.status === 401) return { message: "The dashboard key is missing or wrong. Set VITE_DASHBOARD_API_KEY to the server's DASHBOARD_API_KEY.", httpStatus: 401 };
-    if (error.status === 503) return { message: "The reporting service is not available yet: the server has no dashboard key configured.", httpStatus: 503 };
-    return { message: error.message, httpStatus: error.status };
-  }
-  return { message: "Could not reach the reporting service. Check your connection and try again.", httpStatus: null };
-}
 
 /** Loads the client list once. */
 export function useLensClients() {
@@ -64,13 +58,18 @@ export function useLensReport(clientId: string | null, period: PeriodChoice) {
     setState({ status: "loading", previous: keep });
     const q = periodQuery(period);
     Promise.all([
-      lensGet<KpiResponse>(`/${clientId}/kpis?${q}`, ctrl.signal),
-      lensGet<SeriesResponse>(`/${clientId}/timeseries?${q}`, ctrl.signal),
-      lensGet<CampaignsResponse>(`/${clientId}/campaigns?${q}`, ctrl.signal),
-      lensGet<AttributionResponse>(`/${clientId}/attribution?${q}`, ctrl.signal),
+      within("the numbers", lensGet<KpiResponse>(`/${clientId}/kpis?${q}`, ctrl.signal)),
+      within("the trend charts", lensGet<SeriesResponse>(`/${clientId}/timeseries?${q}`, ctrl.signal)),
+      within("the campaign table", lensGet<CampaignsResponse>(`/${clientId}/campaigns?${q}`, ctrl.signal)),
+      within("the attribution", lensGet<AttributionResponse>(`/${clientId}/attribution?${q}`, ctrl.signal)),
     ])
       .then(([kpis, series, campaigns, attribution]) => {
         const report = { kpis, series, campaigns, attribution };
+        const problem = reportProblem(report);
+        if (problem) {
+          setState({ status: "error", message: problem, httpStatus: 502, previous: keep });
+          return;
+        }
         shown.current = { clientId, report };
         setState({ status: "ready", report });
       })

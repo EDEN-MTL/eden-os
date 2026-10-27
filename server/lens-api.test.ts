@@ -63,6 +63,12 @@ describe("parsePeriod", () => {
   it("reads a custom range and compare=0", () => {
     expect(parsePeriod({ preset: "custom", from: "2026-10-01", to: "2026-10-07", compare: "0" }, "America/St_Johns", NOW)).toMatchObject({ ok: true, compare: false, range: { from: "2026-10-01", to: "2026-10-07" } });
   });
+  it("rejects a repeated or non-text option instead of quietly using the default", () => {
+    expect(parsePeriod({ preset: ["last_7_days", "today"] } as any, "America/St_Johns", NOW)).toMatchObject({ ok: false, error: expect.stringMatching(/"preset" once/) });
+    expect(parsePeriod({ preset: "custom", from: { a: "1" } } as any, "America/St_Johns", NOW)).toMatchObject({ ok: false, error: expect.stringMatching(/"from" once/) });
+    expect(parsePeriod({ compare: ["1", "0"] } as any, "America/St_Johns", NOW)).toMatchObject({ ok: false });
+  });
+
   it("rejects an unknown preset and a bad custom range with a plain message", () => {
     expect(parsePeriod({ preset: "forever" }, "America/St_Johns", NOW)).toMatchObject({ ok: false, error: expect.stringMatching(/Unknown period/) });
     expect(parsePeriod({ preset: "custom", from: "2026-10-09", to: "2026-10-01" }, "America/St_Johns", NOW)).toMatchObject({ ok: false });

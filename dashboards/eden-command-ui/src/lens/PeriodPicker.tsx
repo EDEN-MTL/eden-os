@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { PRESET_LABELS } from "./format";
+import { checkCustomPeriod } from "./validate-period";
 import type { PeriodChoice, Preset } from "./types";
 
 const PRESETS: Preset[] = ["today", "yesterday", "last_7_days", "last_30_days", "last_90_days", "this_month", "this_year", "custom"];
@@ -8,7 +9,8 @@ const PRESETS: Preset[] = ["today", "yesterday", "last_7_days", "last_30_days", 
 export default function PeriodPicker({ value, onChange }: { value: PeriodChoice; onChange: (p: PeriodChoice) => void }) {
   const [from, setFrom] = useState(value.from);
   const [to, setTo] = useState(value.to);
-  const invalid = value.preset === "custom" && (!from || !to || from > to);
+  const check = value.preset === "custom" ? checkCustomPeriod(from, to, new Date().toLocaleDateString("en-CA")) : { error: null, warning: null };
+  const invalid = check.error !== null;
 
   return (
     <div className="lens-field lens-period">
@@ -42,7 +44,8 @@ export default function PeriodPicker({ value, onChange }: { value: PeriodChoice;
           <span>Compare with previous period</span>
         </label>
       </div>
-      {invalid && <div className="lens-hint" role="alert">Pick a start date that is on or before the end date.</div>}
+      {check.error && <div className="lens-hint" role="alert">{check.error}</div>}
+      {!check.error && check.warning && <div className="lens-hint" role="status">{check.warning}</div>}
     </div>
   );
 }

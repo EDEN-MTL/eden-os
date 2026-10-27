@@ -8,6 +8,8 @@ import CampaignTable from "./CampaignTable";
 import RevenueByCampaign from "./RevenueByCampaign";
 import Attribution from "./Attribution";
 import ExportMenu from "./ExportMenu";
+import LensBoundary from "./LensBoundary";
+import { freshnessNotes } from "./freshness";
 import { Report, useLensClients, useLensReport } from "./useLensReport";
 import type { LensClient, PeriodChoice } from "./types";
 
@@ -66,7 +68,7 @@ function ClientBanner({ client, kpis }: { client: LensClient | undefined; kpis: 
   );
 }
 
-export default function LensDashboard() {
+function LensDashboardInner() {
   const clients = useLensClients();
   const [clientId, setClientId] = useState<string | null>(remembered());
   const [period, setPeriod] = useState<PeriodChoice>({ preset: "last_30_days", from: ymdDaysAgo(30), to: ymdDaysAgo(1), compare: true });
@@ -84,9 +86,13 @@ export default function LensDashboard() {
   const shown: Report | null = state.status === "ready" ? state.report : state.status === "loading" || state.status === "error" ? state.previous : null;
   const kpis = shown?.kpis ?? null;
   const loading = state.status === "loading";
+  // When a reload fails the old numbers stay up, so they are dimmed and named, never passed off as the new selection.
+  const stale = state.status === "error" && state.previous !== null;
+  const dim = loading || stale;
+  const freshness = kpis ? freshnessNotes({ periodTo: kpis.period.to, metaConnected: kpis.client.meta.connected, metaLastDay: kpis.client.meta.lastDay }) : [];
 
   // An export must match the client and period chosen, so it waits for the report that belongs to them.
-  const exportBlocked = state.status === "loading" ? "Wait for the report to finish loading" : state.status === "error" ? "Fix the error below, then export" : state.status === "idle" ? "Choose a client and a period first" : null;
+  const exportBlocked = state.status === "loading" ? "Wait for the report to finish loading" : state.status === "error" ? "Reload the report first, then export" : state.status === "idle" ? "Choose a client and a period first" : null;
 
   function pickClient(id: string) {
     setClientId(id);
@@ -132,6 +138,7 @@ export default function LensDashboard() {
       {state.status === "error" && (
         <div className="lens-banner is-error" role="alert">
           <strong>Could not build this report.</strong> {state.message}
+          {stale && kpis && <span>The numbers below are the last report that loaded ({kpis.client.name}, {kpis.period.label}), not what is selected above.</span>}
           <button type="button" className="lens-button" onClick={retry}>Try again</button>
         </div>
       )}
@@ -140,6 +147,16 @@ export default function LensDashboard() {
 
       {kpis && shown && (
         <>
+          {freshness.length > 0 && (
+            <div className="lens-banner is-warn" role="note">
+              <strong>Data stops early</strong>
+              <ul>
+                {freshness.map((n) => (
+                  <li key={n}>{n}</li>
+                ))}
+              </ul>
+            </div>
+          )}
           {kpis.notes.length > 0 && (
             <div className="lens-banner" role="note">
               <strong>Read this with the numbers</strong>
@@ -150,17 +167,17 @@ export default function LensDashboard() {
               </ul>
             </div>
           )}
-          <KpiGrid sections={kpis.sections} compared={Boolean(kpis.previousPeriod)} dim={loading} />
-          <section className={`lens-section${loading ? " lens-dim" : ""}`} aria-labelledby="lens-trends">
+          <KpiGrid sections={kpis.sections} compared={Boolean(kpis.previousPeriod)} dim={dim} />
+          <section className={`lens-section${dim ? " lens-dim" : ""}`} aria-labelledby="lens-trends">
             <h2 className="lens-h2" id="lens-trends">Trends</h2>
             <ChartsGrid report={shown} />
           </section>
-          <section className={`lens-section${loading ? " lens-dim" : ""}`} aria-labelledby="lens-campaigns">
+          <section className={`lens-section${dim ? " lens-dim" : ""}`} aria-labelledby="lens-campaigns">
             <h2 className="lens-h2" id="lens-campaigns">Campaign performance</h2>
             <RevenueByCampaign data={shown.campaigns} />
             <CampaignTable data={shown.campaigns} />
           </section>
-          <section className={`lens-section${loading ? " lens-dim" : ""}`} aria-labelledby="lens-attribution">
+          <section className={`lens-section${dim ? " lens-dim" : ""}`} aria-labelledby="lens-attribution">
             <h2 className="lens-h2" id="lens-attribution">Closed-deal attribution</h2>
             <Attribution data={shown.attribution} />
           </section>
@@ -169,5 +186,13 @@ export default function LensDashboard() {
 
       {!kpis && loading && <Skeleton />}
     </div>
+  );
+}
+
+export default function LensDashboard() {
+  return (
+    <LensBoundary>
+      <LensDashboardInner />
+    </LensBoundary>
   );
 }

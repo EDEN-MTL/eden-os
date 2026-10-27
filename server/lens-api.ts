@@ -33,6 +33,10 @@ export type ParsedQuery = { ok: true; preset: RangePreset; range: DateRange; com
 
 /** Reads the period out of the query string, in the client's own timezone. */
 export function parsePeriod(query: Request["query"], timeZone: string, now: Date = new Date()): ParsedQuery {
+  // ?preset=a&preset=b arrives as an array. Quietly falling back to the default would answer a question nobody asked.
+  for (const key of ["preset", "from", "to", "compare"]) {
+    if (query[key] !== undefined && typeof query[key] !== "string") return { ok: false, error: `Send "${key}" once, as plain text.` };
+  }
   const preset = (typeof query.preset === "string" ? query.preset : "last_30_days") as RangePreset;
   if (!PRESETS.includes(preset)) return { ok: false, error: `Unknown period "${String(query.preset)}". Use one of: ${PRESETS.join(", ")}.` };
   const resolved = resolveRange(preset, timeZone, now, { from: typeof query.from === "string" ? query.from : undefined, to: typeof query.to === "string" ? query.to : undefined });

@@ -236,10 +236,34 @@ export class LensApiError extends Error {
   }
 }
 
-/** GET a Lens endpoint (read-only). `signal` lets a newer request cancel an older one. */
+const LENS_TIMEOUT_MS = 30_000;
+
+/**
+ * GET a Lens endpoint (read-only). `signal` lets a newer request cancel an older one. A request that gets no answer
+ * in 30 seconds fails with status 408 instead of leaving the page on "Loading…" forever, and a reply that is not
+ * JSON (a gateway's HTML error page) is reported as a bad gateway rather than crashing the page that reads it.
+ */
 export async function lensGet<T>(path: string, signal?: AbortSignal): Promise<T> {
-  const res = await fetch(`${API_BASE}/api/lens${path}`, { headers: authHeaders(), signal });
-  const body = await res.json().catch(() => ({}));
-  if (!res.ok) throw new LensApiError(body.error || `Request failed: ${res.status}`, res.status);
-  return body as T;
+  const ctrl = new AbortController();
+  let timedOut = false;
+  const onAbort = () => ctrl.abort();
+  if (signal?.aborted) ctrl.abort();
+  else signal?.addEventListener("abort", onAbort, { once: true });
+  const timer = setTimeout(() => {
+    timedOut = true;
+    ctrl.abort();
+  }, LENS_TIMEOUT_MS);
+  try {
+    const res = await fetch(`${API_BASE}/api/lens${path}`, { headers: authHeaders(), signal: ctrl.signal });
+    const body = await res.json().catch(() => null);
+    if (!res.ok) throw new LensApiError(body && typeof body.error === "string" ? body.error : `Request failed: ${res.status}`, res.status);
+    if (body === null || typeof body !== "object") throw new LensApiError("The reporting service sent a reply this page could not read.", 502);
+    return body as T;
+  } catch (error) {
+    if (timedOut) throw new LensApiError("The reporting service took too long to answer.", 408);
+    throw error;
+  } finally {
+    clearTimeout(timer);
+    signal?.removeEventListener("abort", onAbort);
+  }
 }
