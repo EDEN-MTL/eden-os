@@ -1,12 +1,13 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { LensApiError, lensGet } from "../api";
 import { periodQuery } from "./format";
-import type { CampaignsResponse, KpiResponse, LensClient, PeriodChoice, SeriesResponse } from "./types";
+import type { AttributionResponse, CampaignsResponse, KpiResponse, LensClient, PeriodChoice, SeriesResponse } from "./types";
 
 export interface Report {
   kpis: KpiResponse;
   series: SeriesResponse;
   campaigns: CampaignsResponse;
+  attribution: AttributionResponse;
 }
 
 export type ReportState =
@@ -66,9 +67,10 @@ export function useLensReport(clientId: string | null, period: PeriodChoice) {
       lensGet<KpiResponse>(`/${clientId}/kpis?${q}`, ctrl.signal),
       lensGet<SeriesResponse>(`/${clientId}/timeseries?${q}`, ctrl.signal),
       lensGet<CampaignsResponse>(`/${clientId}/campaigns?${q}`, ctrl.signal),
+      lensGet<AttributionResponse>(`/${clientId}/attribution?${q}`, ctrl.signal),
     ])
-      .then(([kpis, series, campaigns]) => {
-        const report = { kpis, series, campaigns };
+      .then(([kpis, series, campaigns, attribution]) => {
+        const report = { kpis, series, campaigns, attribution };
         shown.current = { clientId, report };
         setState({ status: "ready", report });
       })

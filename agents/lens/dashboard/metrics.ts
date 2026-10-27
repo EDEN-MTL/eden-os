@@ -38,6 +38,14 @@ export interface LeadRow {
   closedAt: Date | null;
   /** The contact's GHL tags. Only read in pipeline mode. */
   tags?: string[];
+  /** Original lead source as GHL records it ("Facebook"), for the attribution evidence. */
+  source?: string | null;
+  /** The typed campaign label, when that is all the lead carries (utm_campaign). */
+  campaignLabel?: string | null;
+  name?: string | null;
+  formName?: string | null;
+  adsetId?: string | null;
+  adId?: string | null;
 }
 
 export interface AppointmentRow {
@@ -140,15 +148,34 @@ export function looksLikeMetaCampaignId(value: string | null | undefined): boole
   return /^\d{12,}$/.test(String(value ?? "").trim());
 }
 
+/** True when a lead's recorded source points at Meta ads even though no campaign id was kept. */
+export function looksLikeMetaSource(source: string | null | undefined): boolean {
+  return /facebook|instagram|\bmeta\b|\bfb\b|paid social/i.test(String(source ?? ""));
+}
+
 /**
  * confirmed = the lead carries a real Meta campaign id (it need not be a campaign we hold data for: leads from
  *             a campaign that ran before our synced history began are still ads leads).
- * partial   = only text (a utm label or campaign name): probably from ads, not proven.
+ * partial   = evidence points at Meta but does not prove the campaign: only a typed label (utm), or a Facebook /
+ *             paid-social source with no campaign id.
  * unknown   = nothing recorded.
  */
-export function attributionOf(lead: Pick<LeadRow, "campaignId">, knownCampaignIds: Set<string>): Attribution {
-  if (!lead.campaignId) return "unknown";
-  return knownCampaignIds.has(lead.campaignId) || looksLikeMetaCampaignId(lead.campaignId) ? "confirmed" : "partial";
+export function attributionOf(lead: Pick<LeadRow, "campaignId"> & Partial<Pick<LeadRow, "source">>, knownCampaignIds: Set<string>): Attribution {
+  if (lead.campaignId && (knownCampaignIds.has(lead.campaignId) || looksLikeMetaCampaignId(lead.campaignId))) return "confirmed";
+  if (lead.campaignId || looksLikeMetaSource(lead.source)) return "partial";
+  return "unknown";
+}
+
+const normLower = (s: string | null | undefined) => String(s ?? "").trim().toLowerCase();
+
+/** Where a lead stands on the booked / attended / no-show ladder, from its card stage and contact tags (pipeline mode). */
+export function pipelineStatus(l: Pick<LeadRow, "stage" | "tags">, pc: PipelineAppointmentConfig): { booked: boolean; attended: boolean; noShow: boolean } {
+  const inStage = (list: string[]) => list.map(normLower).includes(normLower(l.stage));
+  const hasTag = (list: string[]) => (l.tags ?? []).some((t) => list.map(normLower).includes(normLower(t)));
+  const attended = inStage(pc.attendedStages) || hasTag(pc.attendedTags);
+  const noShow = !attended && (inStage(pc.noShowStages) || hasTag(pc.noShowTags));
+  const booked = inStage(pc.bookedStages) || hasTag(pc.bookedTags) || attended || noShow;
+  return { booked, attended, noShow };
 }
 
 const VOID: ReadonlySet<AppointmentStatus> = new Set(["cancelled", "invalid", "deleted"]);

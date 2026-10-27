@@ -6,6 +6,7 @@
  *   GET /api/lens/:clientId/kpis?preset=last_30_days&compare=1        (or &preset=custom&from=YYYY-MM-DD&to=YYYY-MM-DD)
  *   GET /api/lens/:clientId/timeseries?preset=...
  *   GET /api/lens/:clientId/campaigns?preset=...
+ *   GET /api/lens/:clientId/attribution?preset=...      (the lead-to-revenue chain, the closed-deal ledger, how it is worked out)
  *
  * Same access rule as the rest of the dashboard API: the x-dashboard-key header must match DASHBOARD_API_KEY.
  * Unlike the older routes, a missing key in production is refused rather than waved through: this carries
@@ -17,6 +18,7 @@ import { clientTimezone, listLensClients } from "../agents/lens/dashboard/client
 import { buildDashboardKpis, loadDashboardInputs } from "../agents/lens/dashboard/data";
 import { computeSeries } from "../agents/lens/dashboard/series";
 import { computeCampaignTable } from "../agents/lens/dashboard/campaigns";
+import { computeAttribution } from "../agents/lens/dashboard/attribution";
 import { computeMetrics } from "../agents/lens/dashboard/metrics";
 import { DateRange, RangePreset, rangeLabel, resolveRange } from "../agents/lens/dashboard/ranges";
 import { toKpiResponse } from "../agents/lens/dashboard/response";
@@ -127,6 +129,13 @@ export function createLensRouter(): Router {
         totals: { spend: totals.spend.value, leads: totals.totalLeads.value, closedDeals: totals.closedDeals.value, revenue: totals.revenueAll.value },
       };
     })
+  );
+
+  router.get("/:clientId/attribution", (req, res) =>
+    withInputs(req, res, (ctx, range) => ({
+      period: { from: range.from, to: range.to, label: rangeLabel(range), timezone: ctx.timezone },
+      ...computeAttribution({ ...ctx.base, range, metaHistoryStarts: ctx.metaHistoryStarts }),
+    }))
   );
 
   return router;

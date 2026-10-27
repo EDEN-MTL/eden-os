@@ -54,9 +54,13 @@ describe("attribution", () => {
     expect(attributionOf({ campaignId: "c1" }, known)).toBe("confirmed");
     expect(attributionOf({ campaignId: "120239794885580259" }, known)).toBe("confirmed"); // an older campaign, before our synced history
   });
-  it("is partial for text only (a utm label), and unknown for nothing", () => {
+  it("is partial for text only (a utm label) or a Facebook / paid-social source with no campaign id, and unknown for nothing", () => {
     expect(attributionOf({ campaignId: "Seller Campaign - EDEN" }, known)).toBe("partial");
+    expect(attributionOf({ campaignId: null, source: "Facebook / facebook / Paid Social" }, known)).toBe("partial"); // Matthew Broders, 3% Realty: Facebook paid social, no campaign id kept
+    expect(attributionOf({ campaignId: null, source: "Instagram" }, known)).toBe("partial");
+    expect(attributionOf({ campaignId: null, source: "Referral" }, known)).toBe("unknown");
     expect(attributionOf({ campaignId: null }, known)).toBe("unknown");
+    expect(attributionOf({ campaignId: "120239794885580259", source: "Referral" }, known)).toBe("confirmed"); // a real campaign id wins
   });
 
   it("splits leads into confirmed, partial and unknown, and counts only confirmed as from ads", () => {

@@ -106,3 +106,57 @@ export interface PeriodChoice {
   to: string;
   compare: boolean;
 }
+
+export type AttributionStatus = "confirmed" | "partial" | "unknown";
+
+export interface ChainStep {
+  id: "leads" | "booked" | "attended" | "closed" | "revenue";
+  label: string;
+  unit: "count" | "currency";
+  total: number | null;
+  confirmed: number | null;
+  partial: number | null;
+  unknown: number | null;
+}
+
+export interface DealRow {
+  contactId: string;
+  name: string | null;
+  leadDate: string;
+  closedDate: string;
+  daysToClose: number | null;
+  value: number | null;
+  attribution: AttributionStatus;
+  evidence: string;
+  campaignId: string | null;
+  campaignName: string | null;
+  adsetId: string | null;
+  adId: string | null;
+  source: string | null;
+  formName: string | null;
+  appointments: string[];
+  booked: boolean | null;
+  attended: boolean | null;
+}
+
+export interface SourceRow {
+  source: string;
+  leads: number;
+  confirmed: number;
+  partial: number;
+  unknown: number;
+  booked: number | null;
+  closedDeals: number | null;
+  revenue: number | null;
+}
+
+export interface AttributionResponse {
+  period: PeriodJson;
+  basis: "calendar" | "pipeline";
+  ads: { spend: number | null; metaLeads: number | null };
+  chain: ChainStep[];
+  deals: DealRow[];
+  sources: SourceRow[];
+  quality: { closedDealsMissingValue: { contactId: string; name: string | null }[]; closedDealsNotConfirmed: number; metaHistoryStarts: string | null };
+  methodology: { title: string; text: string }[];
+}

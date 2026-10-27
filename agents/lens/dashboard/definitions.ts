@@ -25,7 +25,7 @@ export const METRIC_DEFINITIONS = {
   cpl: { label: "Cost per lead", definition: "Ad spend ÷ leads Meta recorded.", source: "Meta" },
 
   totalLeads: { label: "Total leads (GHL)", definition: "Contacts created in GoHighLevel during the period.", source: "GHL" },
-  attributedLeads: { label: "Leads with confirmed ad attribution", definition: "GHL leads created in the period that carry a real Meta campaign ID (the long number Meta writes onto the lead). Leads with only a typed campaign name or none are not counted.", source: "Meta + GHL" },
+  attributedLeads: { label: "Leads with confirmed ad attribution", definition: "GHL leads created in the period that carry a real Meta campaign ID (the long number Meta writes onto the lead). Leads with only a typed campaign name, a Facebook source without a campaign, or nothing are not counted.", source: "Meta + GHL" },
   qualifiedLeads: { label: "Qualified leads", definition: "Leads created in the period whose pipeline stage is one of the client's qualified stages (set in config; provisional until the client confirms).", source: "GHL" },
   unqualifiedLeads: { label: "Unqualified leads", definition: "Leads created in the period whose pipeline stage is one of the client's unqualified stages.", source: "GHL" },
   leadToAppointment: {

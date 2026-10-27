@@ -41,7 +41,7 @@ export interface KpiResponse {
 const labelled = (r: DateRange) => ({ from: r.from, to: r.to, label: rangeLabel(r) });
 
 export const ATTRIBUTION_NOTE =
-  "A lead counts as coming from ads only when it carries a real Meta campaign ID (confirmed). A lead with only a typed campaign label is partial and one with nothing is unknown; neither is counted as from ads. " +
+  "A lead counts as coming from ads only when it carries a real Meta campaign ID (confirmed). A lead with only a typed campaign label, or a Facebook source but no campaign ID, is partial; one with nothing is unknown. Neither is counted as from ads. " +
   "Closed deals and revenue are counted in the period the deal closed, whenever the lead arrived. Revenue is the deal value recorded in GHL; a closed deal with no value adds nothing and is flagged.";
 
 export function toKpiResponse(out: DashboardKpis, now: Date = new Date()): KpiResponse {

@@ -162,6 +162,24 @@ describe("GET /:clientId/timeseries and /campaigns", () => {
   });
 });
 
+describe("GET /:clientId/attribution", () => {
+  it("returns the chain, the closed-deal ledger, sources, data-quality flags and the written method", async () => {
+    const input = baseInput();
+    input.leads.push({ contactId: "d1", createdAt: new Date("2026-04-01T15:00:00Z"), campaignId: "111111111111", stage: "Deal Closed", dealValue: 5000, closedAt: new Date("2026-10-08T15:00:00Z"), tags: [], source: "Facebook", name: "Pat Example" } as any);
+    data.loadDashboardInputs.mockResolvedValue({ client: CLIENT, timezone: "America/St_Johns", range: { from: "2026-10-01", to: "2026-10-31" }, previousRange: null, metaHistoryStarts: "2026-01-12", base: input });
+    const res = await fetch(`${base}/3-percent-east-coast/attribution?preset=custom&from=2026-10-01&to=2026-10-31&compare=0`);
+    expect(res.status).toBe(200);
+    const body: any = await res.json();
+    expect(body.chain.map((s: any) => s.id)).toEqual(["leads", "booked", "attended", "closed", "revenue"]);
+    expect(body.chain.find((s: any) => s.id === "closed")).toMatchObject({ total: 1, confirmed: 1 });
+    expect(body.deals).toHaveLength(1);
+    expect(body.deals[0]).toMatchObject({ contactId: "d1", value: 5000, attribution: "confirmed" });
+    expect(body.quality.metaHistoryStarts).toBe("2026-01-12");
+    expect(body.methodology.length).toBeGreaterThanOrEqual(7);
+    expect(body.period.label).toBe("Oct 1 to Oct 31, 2026");
+  });
+});
+
 describe("isValidClientId", () => {
   it("only allows lower-case ids with digits and hyphens", () => {
     expect(isValidClientId("matama-floors")).toBe(true);

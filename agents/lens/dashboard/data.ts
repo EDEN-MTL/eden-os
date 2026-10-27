@@ -45,6 +45,12 @@ export async function loadKnownCampaignIds(clientId: string): Promise<Set<string
   return new Set(rows.map((r) => r.campaign_id));
 }
 
+/** The first day we hold Meta data for this client, so reports can say where the spend history begins. */
+export async function loadMetaHistoryStart(clientId: string): Promise<string | null> {
+  const rows = await query<{ d: string | null }>(`SELECT min(date_start)::text AS d FROM meta_performance_snapshots WHERE client_id = $1`, [clientId]);
+  return rows[0]?.d ?? null;
+}
+
 /** The latest name of every campaign we hold Meta data for, in any period. */
 export async function loadCampaignNames(clientId: string): Promise<Map<string, string>> {
   const rows = await query<{ campaign_id: string; campaign_name: string | null }>(
@@ -63,7 +69,9 @@ export async function loadLeads(clientId: string): Promise<LeadRow[]> {
   const rows = await query<any>(
     `SELECT ghl_contact_id, created_at, meta_campaign_id, pipeline_stage, deal_value,
             raw->'opportunity'->>'lastStageChangeAt' AS last_stage_change, raw->'opportunity'->>'updatedAt' AS opp_updated,
-            raw->'contact'->'tags' AS tags
+            raw->'contact'->'tags' AS tags, utm_source, utm_campaign, meta_adset_id, meta_ad_id,
+            raw->'contact'->>'source' AS contact_source, raw->'contact'->>'firstName' AS first_name, raw->'contact'->>'lastName' AS last_name,
+            raw->'contact'->'attributionSource'->>'formName' AS form_name, raw->'contact'->'attributionSource'->>'sessionSource' AS session_source
      FROM ad_leads WHERE client_id = $1`,
     [clientId]
   );
@@ -78,6 +86,12 @@ export async function loadLeads(clientId: string): Promise<LeadRow[]> {
       dealValue: r.deal_value === null || r.deal_value === undefined ? null : Number(r.deal_value),
       closedAt: closedAt && !Number.isNaN(closedAt.getTime()) ? closedAt : null,
       tags: Array.isArray(r.tags) ? r.tags.filter((t: unknown): t is string => typeof t === "string") : [],
+      source: [r.contact_source, r.utm_source, r.session_source].filter(Boolean).join(" / ") || null,
+      campaignLabel: r.utm_campaign || null,
+      name: [r.first_name, r.last_name].filter(Boolean).join(" ") || null,
+      formName: r.form_name || null,
+      adsetId: r.meta_adset_id || null,
+      adId: r.meta_ad_id || null,
     };
   });
 }
@@ -113,6 +127,8 @@ export interface DashboardInputs {
   timezone: string;
   range: DateRange;
   previousRange: DateRange | null;
+  /** First day of Meta data we hold for this client (null when none). */
+  metaHistoryStarts: string | null;
   /** Everything computeMetrics needs except the period. */
   base: Omit<MetricsInput, "range">;
 }
@@ -126,13 +142,14 @@ export async function loadDashboardInputs(clientId: string, range: DateRange, op
   const previous = options.compare ? previousRange(range) : null;
   const earliest = previous ? previous.from : range.from;
   // A day of slack either side: Meta rows are keyed by the account's own day, which can sit a day off the client's.
-  const [meta, knownCampaignIds, campaignNames, leads, appointments, otherCosts] = await Promise.all([
+  const [meta, knownCampaignIds, campaignNames, leads, appointments, otherCosts, metaHistoryStarts] = await Promise.all([
     loadMetaRows(clientId, addDays(earliest, -1), addDays(range.to, 1)),
     memo(`campaigns:${clientId}`, 30_000, () => loadKnownCampaignIds(clientId)),
     memo(`campaign-names:${clientId}`, 30_000, () => loadCampaignNames(clientId)),
     memo(`leads:${clientId}`, 30_000, () => loadLeads(clientId)),
     memo(`appointments:${clientId}`, 30_000, () => loadAppointments(clientId)),
     loadOtherCosts(clientId, earliest, range.to),
+    memo(`meta-start:${clientId}`, 300_000, () => loadMetaHistoryStart(clientId)),
   ]);
   const config = loadDashboardConfig(clientId);
   return {
@@ -140,6 +157,7 @@ export async function loadDashboardInputs(clientId: string, range: DateRange, op
     timezone: timeZone,
     range,
     previousRange: previous,
+    metaHistoryStarts,
     base: {
       timeZone,
       now,

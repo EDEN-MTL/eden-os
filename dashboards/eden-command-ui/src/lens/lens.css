@@ -159,3 +159,38 @@
   .lens-card-value { font-size: 22px; }
   .lens-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
+
+/* ── Closed-deal attribution ── */
+.lens-attr-lead { margin: 0 0 16px; max-width: 92ch; font-size: 14.5px; }
+.lens-attr-lead strong { color: var(--lens-white); }
+.lens-h3 { font-size: 14.5px; font-weight: 650; color: var(--lens-white); margin: 26px 0 10px; }
+.lens-chain { list-style: none; margin: 0; padding: 0; display: grid; gap: 10px; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); counter-reset: step; }
+.lens-step { background: var(--lens-panel); border: 1px solid var(--lens-line); border-radius: var(--lens-radius); padding: 13px 14px; position: relative; display: flex; flex-direction: column; gap: 8px; }
+.lens-step + .lens-step::before { content: "→"; position: absolute; left: -15px; top: 18px; color: var(--lens-green); font-size: 16px; }
+@media (max-width: 640px) { .lens-step + .lens-step::before { content: "↓"; left: 14px; top: -16px; } }
+.lens-step-label { font-size: 12.5px; color: var(--lens-text-dim); font-weight: 600; }
+.lens-step-total { font-size: 26px; font-weight: 700; color: var(--lens-white); font-variant-numeric: tabular-nums; }
+.lens-stack { display: flex; height: 10px; border-radius: 5px; overflow: hidden; background: var(--lens-panel-2); }
+.lens-stack span, .lens-step-split i { display: inline-block; }
+.lens-stack .is-confirmed, .lens-step-split i.is-confirmed { background: var(--lens-green); }
+.lens-stack .is-partial, .lens-step-split i.is-partial { background: var(--lens-white); opacity: 0.85; }
+.lens-stack .is-unknown, .lens-step-split i.is-unknown { background: var(--lens-grey-bar); }
+.lens-step-split { margin: 0; display: flex; flex-direction: column; gap: 3px; font-size: 12px; }
+.lens-step-split div { display: flex; justify-content: space-between; gap: 8px; }
+.lens-step-split dt { display: inline-flex; align-items: center; gap: 6px; color: var(--lens-text-dim); }
+.lens-step-split dd { margin: 0; font-weight: 600; font-variant-numeric: tabular-nums; }
+.lens-step-split i { width: 9px; height: 9px; border-radius: 2px; }
+.lens-pill { display: inline-block; padding: 2px 9px; border-radius: 999px; font-size: 11.5px; font-weight: 600; border: 1px solid var(--lens-line); }
+.lens-pill.is-confirmed { color: var(--lens-green); border-color: var(--lens-green); }
+.lens-pill.is-partial { color: var(--lens-white); border-color: var(--lens-white); }
+.lens-pill.is-unknown { color: var(--lens-text-dim); }
+.lens-ledger { min-width: 1020px; }
+.lens-ledger .is-evidence { text-align: left; white-space: normal; min-width: 260px; max-width: 380px; color: var(--lens-text-dim); }
+.lens-ledger .is-text { text-align: left; white-space: normal; }
+.lens-sub { font-weight: 400; font-size: 11.5px; color: var(--lens-text-dim); }
+.lens-missing { color: var(--lens-warn); font-style: italic; }
+.lens-method-box { margin-top: 26px; background: var(--lens-panel); border: 1px solid var(--lens-line); border-radius: var(--lens-radius); padding: 4px 16px 14px; }
+.lens-method-box summary { cursor: pointer; font-weight: 650; padding: 12px 0; color: var(--lens-white); }
+.lens-method-box dl { margin: 0; display: grid; gap: 14px; }
+.lens-method-box dt { font-weight: 650; color: var(--lens-green); font-size: 13px; }
+.lens-method-box dd { margin: 3px 0 0; color: var(--lens-text); font-size: 13.5px; max-width: 95ch; }

@@ -5,6 +5,7 @@ import PeriodPicker from "./PeriodPicker";
 import KpiGrid from "./KpiGrid";
 import TrendChart, { ChartSeries } from "./Charts";
 import CampaignTable, { CampaignBars } from "./CampaignTable";
+import Attribution from "./Attribution";
 import { bucketLabel } from "./format";
 import { Report, useLensClients, useLensReport } from "./useLensReport";
 import type { LensClient, PeriodChoice } from "./types";
@@ -184,14 +185,9 @@ export default function LensDashboard() {
             <h2 className="lens-h2" id="lens-campaigns">Campaign performance</h2>
             <CampaignTable data={shown.campaigns} />
           </section>
-          <section className="lens-section" aria-labelledby="lens-attribution">
-            <h2 className="lens-h2" id="lens-attribution">How closed deals are attributed</h2>
-            <div className="lens-attribution">
-              <div><b>{kpis.attribution.confirmed}</b><span>leads with a confirmed Meta campaign ID</span></div>
-              <div><b>{kpis.attribution.partial}</b><span>with only a typed campaign label (partial)</span></div>
-              <div><b>{kpis.attribution.unknown}</b><span>with no campaign recorded (unknown)</span></div>
-            </div>
-            <p className="lens-method">{kpis.attribution.note}</p>
+          <section className={`lens-section${loading ? " lens-dim" : ""}`} aria-labelledby="lens-attribution">
+            <h2 className="lens-h2" id="lens-attribution">Closed-deal attribution</h2>
+            <Attribution data={shown.attribution} />
           </section>
         </>
       )}
