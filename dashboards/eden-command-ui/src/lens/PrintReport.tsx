@@ -1,10 +1,18 @@
 import { createPortal } from "react-dom";
 import ChartsGrid from "./ChartsGrid";
 import RevenueByCampaign from "./RevenueByCampaign";
-import { cellText, ExportModel, ExportTable } from "./export-model";
+import { Step } from "./Attribution";
+import { cellText, ExportModel, ExportTable, headlineTiles } from "./export-model";
+import { NA } from "./format";
 import type { Report } from "./useLensReport";
 
-function Table({ table }: { table: ExportTable }) {
+/** Columns the PDF leaves out of a table (the CSV keeps them): long evidence text that a reader skims past. */
+const PDF_HIDDEN: Record<string, string[]> = { deals: ["Evidence", "Form", "Appointments"] };
+
+function Table({ table: full }: { table: ExportTable }) {
+  const hidden = PDF_HIDDEN[full.id] ?? [];
+  const keep = full.columns.map((c, i) => (hidden.includes(c) ? -1 : i)).filter((i) => i >= 0);
+  const table: ExportTable = hidden.length === 0 ? full : { ...full, columns: keep.map((i) => full.columns[i]), rows: full.rows.map((r) => keep.map((i) => r[i])), footer: full.footer ? keep.map((i) => full.footer![i]) : undefined };
   // A column is right-aligned when any cell in it is a number; text columns (names, evidence) stay left.
   const numeric = (i: number) => table.rows.some((r) => typeof r[i] !== "string") || (table.footer ? typeof table.footer[i] !== "string" : false);
   return (
@@ -14,7 +22,7 @@ function Table({ table }: { table: ExportTable }) {
       {table.rows.length === 0 && table.empty ? (
         <p className="lens-print-empty">{table.empty}</p>
       ) : (
-        <table className={`lens-print-table${table.id.startsWith("kpi-") ? " is-kpi" : ""}`}>
+        <table className={`lens-print-table is-${table.id}${table.id.startsWith("kpi-") ? " is-kpi" : ""}`}>
           <thead>
             <tr>
               {table.columns.map((c, i) => (
@@ -55,50 +63,78 @@ function Table({ table }: { table: ExportTable }) {
 export default function PrintReport({ model, report }: { model: ExportModel; report: Report }) {
   const kpiTables = model.tables.filter((t) => t.id.startsWith("kpi-"));
   const byId = (id: string) => model.tables.find((t) => t.id === id)!;
+  const tiles = headlineTiles(report);
   return createPortal(
     <div className="lens-print-root" aria-hidden="true">
       <header className="lens-print-header">
         <div className="lens-print-eyebrow">LENS · CLIENT PERFORMANCE REPORT</div>
         <h1>{model.client}</h1>
-        <dl>
-          {model.meta.filter(([k]) => k !== "Client").map(([k, v]) => (
-            <div key={k}>
-              <dt>{k}</dt>
-              <dd>{v}</dd>
-            </div>
-          ))}
-        </dl>
+        <p className="lens-print-sub">
+          {model.period.label}
+          {model.previousPeriod ? ` · compared with ${model.previousPeriod.label}` : ""} · report made {model.meta.find(([k]) => k === "Report made")?.[1]}
+        </p>
       </header>
 
-      {model.notes.length > 0 && (
-        <section className="lens-print-block lens-print-notes">
-          <h2>Read this with the numbers</h2>
-          <ul>
-            {model.notes.map((n) => (
-              <li key={n}>{n}</li>
-            ))}
-          </ul>
+      {tiles.length > 0 && (
+        <section className="lens-print-tiles" aria-label="Key numbers">
+          {tiles.map((t) => (
+            <div key={t.key} className="lens-print-tile">
+              <span className="lens-print-tile-label">{t.label}</span>
+              <span className={`lens-print-tile-value${t.text === NA ? " is-na" : ""}`}>{t.text}</span>
+              {t.change && <span className={`lens-print-tile-change tone-${t.tone}`}>{t.change}</span>}
+            </div>
+          ))}
         </section>
       )}
 
-      {kpiTables.map((t) => (
-        <Table key={t.id} table={t} />
-      ))}
+      <section className="lens-print-block">
+        <h2>From lead to revenue</h2>
+        <ol className="lens-chain">
+          {report.attribution.chain.map((s) => (
+            <Step key={s.id} step={s} />
+          ))}
+        </ol>
+      </section>
+
+      {model.notes.length > 0 && <p className="lens-print-strip">{model.notes.length} notes about how to read these numbers are on the last page. N/A means the number can't be worked out from the data we hold.</p>}
+
+      <section className="lens-print-block">
+        <RevenueByCampaign data={report.campaigns} />
+      </section>
+
+      <div className="lens-print-page">
+        <Table table={byId("deals")} />
+      </div>
 
       <section className="lens-print-block lens-print-page">
         <h2>Trends</h2>
         <ChartsGrid report={report} />
       </section>
 
-      <section className="lens-print-block lens-print-page">
-        <RevenueByCampaign data={report.campaigns} />
-      </section>
-      <Table table={byId("campaigns")} />
-      <Table table={byId("chain")} />
-      <Table table={byId("deals")} />
-      <Table table={byId("sources")} />
-      <Table table={byId("methodology")} />
-      <Table table={byId("definitions")} />
+      <div className="lens-print-page">
+        <Table table={byId("campaigns")} />
+        <Table table={byId("sources")} />
+      </div>
+
+      <div className="lens-print-page">
+        <h2 className="lens-print-part">All the numbers</h2>
+        {kpiTables.map((t) => (
+          <Table key={t.id} table={t} />
+        ))}
+      </div>
+
+      <div className="lens-print-page">
+        <h2 className="lens-print-part">Notes</h2>
+        <section className="lens-print-block lens-print-notes">
+          <ul>
+            {model.notes.map((n) => (
+              <li key={n}>{n}</li>
+            ))}
+          </ul>
+        </section>
+        <Table table={byId("methodology")} />
+        <Table table={byId("definitions")} />
+      </div>
     </div>,
     document.body
   );

@@ -274,3 +274,26 @@
 .lens-keyform p { margin: 0; color: var(--lens-text-dim); font-size: 14px; }
 .lens-keyrow { display: flex; gap: 8px; flex-wrap: wrap; }
 .lens-keyrow .lens-input { flex: 1 1 200px; min-width: 0; }
+
+/* ── PDF: visual first page ── */
+.lens-print-sub { margin: 2px 0 0; color: var(--lens-text-dim); font-size: 12px; }
+.lens-print-tiles { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; margin-top: 4px; }
+.lens-print-tile { border: 1px solid var(--lens-line); border-radius: 8px; padding: 10px 12px; display: flex; flex-direction: column; gap: 3px; break-inside: avoid; }
+.lens-print-tile-label { font-size: 10.5px; color: var(--lens-text-dim); font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em; }
+.lens-print-tile-value { font-size: 26px; font-weight: 700; color: #000; font-variant-numeric: tabular-nums; line-height: 1.1; }
+.lens-print-tile-value.is-na { color: var(--lens-text-dim); }
+.lens-print-tile-change { font-size: 10.5px; font-weight: 600; }
+.lens-print-tile-change.tone-good { color: var(--lens-green); }
+.lens-print-tile-change.tone-bad { color: var(--lens-bad); }
+.lens-print-tile-change.tone-neutral { color: var(--lens-text-dim); }
+.lens-print-strip { margin: 10px 0 0; padding: 6px 10px; border-left: 3px solid var(--lens-warn); background: var(--lens-panel-2); font-size: 10.5px; color: var(--lens-text-dim); }
+.lens-print-part { font-size: 18px; font-weight: 700; margin-bottom: 8px; }
+.lens-print-root .lens-chain { grid-template-columns: repeat(5, 1fr); gap: 14px; }
+.lens-print-root .lens-step { padding: 10px; break-inside: avoid; }
+.lens-print-root .lens-step-total { font-size: 22px; }
+.lens-print-root .lens-step + .lens-step::before { left: -12px; top: 14px; }
+.lens-print-table.is-deals td:last-child { font-weight: 700; }
+
+.lens-notes { display: block; }
+.lens-notes summary { cursor: pointer; font-weight: 600; color: var(--lens-text-dim); }
+.lens-notes[open] summary { margin-bottom: 6px; color: var(--lens-white); }
