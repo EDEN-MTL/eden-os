@@ -666,6 +666,7 @@ export function loadIrisConfig(clientId: string): IrisConfig | null {
         typeof raw.iris.followUpCohort?.notReadyStage === "string" && typeof raw.iris.followUpCohort?.notInterestedStage === "string"
           ? { notReadyStage: raw.iris.followUpCohort.notReadyStage, notInterestedStage: raw.iris.followUpCohort.notInterestedStage }
           : undefined,
+      dailySummary: typeof raw.iris.dailySummary?.channel === "string" && raw.iris.dailySummary.channel ? { channel: raw.iris.dailySummary.channel } : undefined,
       vapiCallUrlTemplate: typeof raw.iris.links?.vapiCallUrl === "string" && raw.iris.links.vapiCallUrl.includes("{callId}") ? raw.iris.links.vapiCallUrl : undefined,
       callAlerts: Array.isArray(raw.iris.callAlerts?.userIds) && raw.iris.callAlerts.userIds.length > 0 ? { userIds: raw.iris.callAlerts.userIds } : undefined,
       liveTransferSlack: raw.iris.liveTransferSlack?.channel
