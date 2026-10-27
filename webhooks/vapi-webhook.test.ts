@@ -35,6 +35,9 @@ vi.mock("../agents/iris/human-touch", () => humanTouch);
 const inbound = vi.hoisted(() => ({ handleInboundCall: vi.fn() }));
 vi.mock("../agents/iris/inbound", () => inbound);
 
+const smsModule = vi.hoisted(() => ({ hasActiveSmsConversation: vi.fn(async () => false) }));
+vi.mock("../agents/iris/sms", () => smsModule);
+
 const callSignals = vi.hoisted(() => ({ classifyMissedCallback: vi.fn(async () => ({ type: "none" })) }));
 vi.mock("../agents/iris/call-signals", () => callSignals);
 
@@ -945,12 +948,13 @@ describe("maybeReopenPendingCall — missed explicit callbacks", () => {
   });
 
   it("still uses the normal cadence for an ordinary (non-explicit) row", async () => {
-    db.query.mockResolvedValue([{ ...ROW, is_explicit_callback: false }]);
+    // First miss: no text yet (the text comes after the SECOND miss, see "the text after two missed calls").
+    db.query.mockResolvedValue([{ ...ROW, is_explicit_callback: false, attempts_made: 1 }]);
     dialPending.reopenForNextAttempt.mockResolvedValue(true);
 
     await maybeReopenPendingCall("3-percent-east-coast", "contact-1");
 
-    expect(dialPending.reopenForNextAttempt).toHaveBeenCalledWith(69, "3-percent-east-coast", 2, ROW.created_at);
+    expect(dialPending.reopenForNextAttempt).toHaveBeenCalledWith(69, "3-percent-east-coast", 1, ROW.created_at);
     expect(dialPending.reopenAfterMissedCallback).not.toHaveBeenCalled();
     expect(ghl.sendSMS).not.toHaveBeenCalled();
   });
@@ -961,6 +965,112 @@ describe("maybeReopenPendingCall — missed explicit callbacks", () => {
 
     await expect(maybeReopenPendingCall("3-percent-east-coast", "contact-1")).resolves.toBeUndefined();
     expect(dialPending.reopenAfterMissedCallback).toHaveBeenCalled();
+  });
+});
+
+/**
+ * Mark, 2026-10-27 (Eileen Hillier): a new lead's normal call sequence sent no text of its own, so two voicemails
+ * left only the intake automation's messages. One text now goes out after the second unanswered call.
+ */
+describe("maybeReopenPendingCall — the text after two missed calls", () => {
+  const ROW = (over: Record<string, unknown> = {}) => ({
+    id: 31,
+    attempts_made: 2,
+    created_at: new Date("2026-10-26T18:19:00.000Z"),
+    status: "placed",
+    is_explicit_callback: false,
+    source: null,
+    callback_misses: 0,
+    human_requested: false,
+    lead: { name: "Eileen Hillier", intent: "buyer" },
+    ...over,
+  });
+
+  beforeEach(() => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date("2026-10-27T12:31:00.000Z")); // 10:01 AM in St. John's
+    ghl.sendSMS.mockReset().mockResolvedValue({ messageId: "msg-1" });
+    ghl.getContact.mockResolvedValue({ contact: { tags: ["buyer lead"], dnd: false } });
+    slack.sendMessage.mockReset().mockResolvedValue({});
+    smsModule.hasActiveSmsConversation.mockResolvedValue(false);
+    iris.loadIrisConfig.mockReturnValue({ timezone: "America/St_Johns", smsFromNumber: "+17097013598" });
+    iris.loadClientBranding.mockReturnValue({ brandName: "3 Percent East Coast", city: "St. John's" });
+    ghl.getGhlConfig.mockResolvedValue({ locationId: "loc-1", apiKey: "key-1" });
+    dialPending.reopenForNextAttempt.mockResolvedValue(true);
+    humanTouch.checkHumanTouch.mockResolvedValue({ status: "none" } as any);
+    // the first SELECT is the row; the UPDATE ... RETURNING is the once-only claim
+    claimed = true;
+    db.query.mockImplementation(async (...args: unknown[]) => {
+      const sql = String(args[0]);
+      if (/SET missed_call_texted = true/.test(sql)) return claimed ? [{ id: 31 }] : [];
+      return [rowForTest];
+    });
+  });
+  afterEach(() => vi.useRealTimers());
+
+  let claimed = true;
+  let rowForTest: any = ROW();
+  const run = (over: Record<string, unknown> = {}) => {
+    rowForTest = ROW(over);
+    return maybeReopenPendingCall("3-percent-east-coast", "contact-1", "customer-did-not-answer");
+  };
+
+  it("texts the lead once after the second unanswered call, and says so in the log channel", async () => {
+    await run();
+    expect(ghl.sendSMS).toHaveBeenCalledTimes(1);
+    const [contactId, text] = ghl.sendSMS.mock.calls[0];
+    expect(contactId).toBe("contact-1");
+    expect(text).toBe("Hi Eileen, it's Iris from 3 Percent East Coast. I tried calling you about your home search but missed you. Is there a better time for a quick call, or would you rather just text? Reply STOP to opt out.");
+    expect(slack.sendMessage.mock.calls.some((c) => String((c[1] as any)?.text).includes("Texted *Eileen Hillier* after 2 unanswered calls"))).toBe(true);
+    // the next call is still lined up
+    expect(dialPending.reopenForNextAttempt).toHaveBeenCalled();
+  });
+
+  it("does not text after the first miss, or once the sequence is well along", async () => {
+    await run({ attempts_made: 1 });
+    await run({ attempts_made: 5 });
+    expect(ghl.sendSMS).not.toHaveBeenCalled();
+  });
+
+  it("never texts the same lead twice", async () => {
+    claimed = false;
+    await maybeReopenPendingCall("3-percent-east-coast", "contact-1", "customer-did-not-answer");
+    expect(ghl.sendSMS).not.toHaveBeenCalled();
+  });
+
+  it("stays quiet when the lead is already texting with Iris, has opted out, or it is outside calling hours", async () => {
+    smsModule.hasActiveSmsConversation.mockResolvedValue(true);
+    await run();
+    smsModule.hasActiveSmsConversation.mockResolvedValue(false);
+    ghl.getContact.mockResolvedValue({ contact: { tags: ["do not call"], dnd: false } });
+    await run();
+    ghl.getContact.mockResolvedValue({ contact: { tags: [], dnd: true } });
+    await run();
+    ghl.getContact.mockResolvedValue({ contact: { tags: [], dnd: false } });
+    vi.setSystemTime(new Date("2026-10-27T03:00:00.000Z")); // 12:30 AM NL
+    await run();
+    expect(ghl.sendSMS).not.toHaveBeenCalled();
+  });
+
+  it("does not text a call that failed technically, and never when a teammate is talking to the lead", async () => {
+    rowForTest = ROW();
+    await maybeReopenPendingCall("3-percent-east-coast", "contact-1", "assistant-error");
+    expect(ghl.sendSMS).not.toHaveBeenCalled();
+    iris.loadIrisConfig.mockReturnValue({ timezone: "America/St_Johns", smsFromNumber: "+17097013598", humanTextBlocksCalls: true });
+    humanTouch.checkHumanTouch.mockResolvedValue({ status: "human", kind: "call", at: "2026-10-27T14:40:00.000Z", userId: "u" } as any);
+    await run();
+    expect(ghl.sendSMS).not.toHaveBeenCalled();
+  });
+
+  it("uses the selling wording for a seller", async () => {
+    await run({ lead: { name: "Judy Dunne", intent: "seller" } });
+    expect(ghl.sendSMS.mock.calls[0][1]).toContain("about selling your home");
+  });
+
+  it("a failed text never stops the retry", async () => {
+    ghl.sendSMS.mockRejectedValue(new Error("boom"));
+    await expect(run()).resolves.toBeUndefined();
+    expect(dialPending.reopenForNextAttempt).toHaveBeenCalled();
   });
 });
 

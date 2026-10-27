@@ -826,3 +826,7 @@ CREATE TABLE IF NOT EXISTS daily_summaries (
     posted_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     PRIMARY KEY (client_id, day)
 );
+
+-- Set once Iris has texted a lead after the second unanswered call of the normal sequence
+-- (webhooks/vapi-webhook.ts maybeTextAfterMissedCalls), so that text can never go out twice.
+ALTER TABLE iris_pending_calls ADD COLUMN IF NOT EXISTS missed_call_texted BOOLEAN NOT NULL DEFAULT FALSE;
