@@ -43,6 +43,8 @@ export interface KpiResponse {
   previousPeriod: PeriodJson | null;
   generatedAt: string;
   appointmentBasis: "calendar" | "pipeline";
+  /** Every lead counts as from ads for this client. */
+  allLeadsFromAds: boolean;
   sections: SectionJson[];
   attribution: { confirmed: number; partial: number; unknown: number; note: string };
   notes: string[];
@@ -153,6 +155,7 @@ export interface SourceRow {
 export interface AttributionResponse {
   period: PeriodJson;
   basis: "calendar" | "pipeline";
+  allLeadsFromAds: boolean;
   ads: { spend: number | null; metaLeads: number | null };
   chain: ChainStep[];
   deals: DealRow[];

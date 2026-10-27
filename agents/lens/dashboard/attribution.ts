@@ -60,6 +60,8 @@ export interface MethodItem {
 
 export interface AttributionReport {
   basis: "calendar" | "pipeline";
+  /** Every lead counts as from ads for this client; confirmed / partial / unknown only says how many name a campaign. */
+  allLeadsFromAds: boolean;
   ads: { spend: number | null; metaLeads: number | null };
   chain: ChainStep[];
   deals: DealRow[];
@@ -90,7 +92,22 @@ export function attributionEvidence(lead: LeadRow, status: Attribution, campaign
 }
 
 /** The rules, in plain words, shared by the page and the PDF. */
-export function methodology(basis: "calendar" | "pipeline", metaHistoryStarts: string | null): MethodItem[] {
+export function methodology(basis: "calendar" | "pipeline", metaHistoryStarts: string | null, allLeadsFromAds = false): MethodItem[] {
+  const items = baseMethodology(basis, metaHistoryStarts);
+  if (!allLeadsFromAds) return items;
+  // The client's rule changes what "counted as from ads" means, so the two rules that spoke of leaving leads out are reworded.
+  return items.map((m) =>
+    m.title === "What confirms a lead came from an ad"
+      ? { title: "What counts as from ads, and what names the campaign", text: "For this client every lead counts as coming from ads, so every lead, appointment and closed deal is in the cards, ROAS and cost per closed deal. A lead is confirmed when its record carries a real Meta campaign ID, the long number Meta's own tracking writes onto the lead (with the ad set and ad IDs when present). Only confirmed leads can be placed on a campaign in the campaign table." }
+      : m.title === "Partial and unknown"
+        ? { title: "Partial and unknown", text: "Partial means the evidence points at Meta but does not name the campaign: a campaign label someone typed into a link, or a Facebook / paid-social source with no campaign ID kept. Unknown means nothing is recorded (phone calls, referrals, manual entries). Both still count as from ads for this client; they are shown in their own columns, and in the campaign table as one row of revenue not tied to a campaign." }
+        : m.title === "Known limits"
+          ? { title: m.title, text: m.text.replace("Leads with no campaign ID cannot be traced to an ad. ", "Leads with no campaign ID count as from ads but cannot be placed on a campaign. ") }
+          : m
+  );
+}
+
+function baseMethodology(basis: "calendar" | "pipeline", metaHistoryStarts: string | null): MethodItem[] {
   return [
     {
       title: "The chain",
@@ -229,6 +246,7 @@ export function computeAttribution(input: MetricsInput & { metaHistoryStarts?: s
       closedDealsNotConfirmed: deals.filter((d) => d.attribution !== "confirmed").length,
       metaHistoryStarts,
     },
-    methodology: methodology(basis, metaHistoryStarts),
+    allLeadsFromAds: total.detail.allLeadsFromAds,
+    methodology: methodology(basis, metaHistoryStarts, total.detail.allLeadsFromAds),
   };
 }

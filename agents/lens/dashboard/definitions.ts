@@ -26,7 +26,7 @@ export const METRIC_DEFINITIONS = {
 
   totalLeads: { label: "Total leads (GHL)", definition: "Contacts created in GoHighLevel during the period.", source: "GHL" },
   attributedLeads: { label: "Leads with confirmed ad attribution", definition: "GHL leads created in the period that carry a real Meta campaign ID (the long number Meta writes onto the lead). Leads with only a typed campaign name, a Facebook source without a campaign, or nothing are not counted.", source: "Meta + GHL" },
-  qualifiedLeads: { label: "Qualified leads", definition: "Leads created in the period whose pipeline stage is one of the client's qualified stages (set in config; provisional until the client confirms).", source: "GHL" },
+  qualifiedLeads: { label: "Qualified leads", definition: "Leads created in the period that have not been marked unqualified: every lead not in a Not Qualified stage. (A client that lists its own qualified stages counts only those.)", source: "GHL" },
   unqualifiedLeads: { label: "Unqualified leads", definition: "Leads created in the period whose pipeline stage is one of the client's unqualified stages.", source: "GHL" },
   leadToAppointment: {
     label: "Lead-to-appointment rate",
@@ -86,7 +86,25 @@ export type MetricKey = keyof typeof METRIC_DEFINITIONS;
  * appointment numbers mean something slightly different. This returns the full definition set with those
  * metrics reworded; anything else is unchanged.
  */
-export function definitionsForBasis(basis: "calendar" | "pipeline"): Record<MetricKey, MetricDefinition> {
+/**
+ * For a client whose rule is that every lead came from ads (config allLeadsFromAds), the definitions say so instead of
+ * "confirmed ad attribution", so the words on the page match the numbers.
+ */
+function forAllLeadsFromAds(defs: Record<MetricKey, MetricDefinition>): Record<MetricKey, MetricDefinition> {
+  const out = {} as Record<MetricKey, MetricDefinition>;
+  for (const key of Object.keys(defs) as MetricKey[]) {
+    out[key] = { ...defs[key], definition: defs[key].definition.replace(/leads with confirmed ad attribution/g, "leads (every lead counts as from ads for this client)") };
+  }
+  out.attributedLeads = { label: "Leads counted as from ads", definition: "All GHL leads created in the period. For this client every lead counts as coming from ads; the closed-deal attribution section shows how many can also be tied to an exact Meta campaign.", source: "Meta + GHL" };
+  return out;
+}
+
+export function definitionsForBasis(basis: "calendar" | "pipeline", allLeadsFromAds = false): Record<MetricKey, MetricDefinition> {
+  const defs = baseDefinitions(basis);
+  return allLeadsFromAds ? forAllLeadsFromAds(defs) : defs;
+}
+
+function baseDefinitions(basis: "calendar" | "pipeline"): Record<MetricKey, MetricDefinition> {
   if (basis === "calendar") return METRIC_DEFINITIONS;
   const cohort = "Counted from card stages and contact tags for leads that arrived in the period, by where they stand now (this client does not book on a GHL calendar).";
   return {

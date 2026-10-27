@@ -148,3 +148,14 @@ describe("campaign table", () => {
     expect(computeCampaignTable(input).find((r) => r.campaignId === "999999999999")).toBeUndefined();
   });
 });
+
+describe("trend series before the client's GHL data", () => {
+  it("leaves lead numbers as gaps (not zeros) for buckets before ghlDataStart, and keeps Meta numbers", () => {
+    const input = base({ range: { from: "2026-10-01", to: "2026-10-14" }, config: { closedStages: ["Deal Closed"], qualifiedStages: [], unqualifiedStages: [], ghlDataStart: "2026-10-10" } });
+    const { points } = computeSeries(input);
+    const day = (d: string) => points.find((p) => p.from === d)!;
+    expect(day("2026-10-05").totalLeads).toBeNull();
+    expect(day("2026-10-05").spend).toBe(300);
+    expect(day("2026-10-12").totalLeads).toBe(0);
+  });
+});

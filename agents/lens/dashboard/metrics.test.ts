@@ -336,3 +336,52 @@ describe("comparing with the previous period", () => {
     expect(compareMetrics(current, empty).cpl.change).toBeNull();
   });
 });
+
+describe("the client's own rules (Jacob, 2026-10-28)", () => {
+  const closedLead = (over: Partial<LeadRow> = {}) => lead({ stage: "Deal Closed", dealValue: 4000, closedAt: at("2026-10-20T15:00:00Z"), ...over });
+
+  it("qualified = every lead not in a Not Qualified stage when no qualified stages are listed", () => {
+    const config = { closedStages: ["Deal Closed"], qualifiedStages: [], unqualifiedStages: ["Not Qualified/Not Interested", "Appointment Set (Not qualified)"] };
+    const r = computeMetrics(input({ config, leads: [lead({ contactId: "a", stage: "Replied" }), lead({ contactId: "b", stage: "Not Qualified/Not Interested" }), lead({ contactId: "c", stage: "Appointment Set" }), lead({ contactId: "d", stage: "Appointment Set (Not qualified)" })] }));
+    expect(v(r, "qualifiedLeads")).toBe(2);
+    expect(v(r, "unqualifiedLeads")).toBe(2);
+    expect(r.kpis.qualifiedLeads.note).toBe("Every lead not in a Not Qualified stage.");
+  });
+
+  it("with allLeadsFromAds, every lead, booked lead and closed deal counts as from ads, so ROAS and cost per deal include them all", () => {
+    const config = { closedStages: ["Deal Closed"], qualifiedStages: [], unqualifiedStages: [], allLeadsFromAds: true };
+    const r = computeMetrics(input({ config, meta: [meta({ spend: 1000 })], leads: [closedLead({ contactId: "phone", campaignId: null }), lead({ contactId: "typed", campaignId: "Seller label" })], appointments: [appt({ contactId: "phone" })] }));
+    expect(v(r, "closedDealsAttributed")).toBe(1);
+    expect(v(r, "revenueAttributed")).toBe(4000);
+    expect(v(r, "roas")).toBe(4);
+    expect(v(r, "costPerClosedDeal")).toBe(1000);
+    expect(v(r, "attributedLeads")).toBe(2);
+    expect(v(r, "appointmentsBookedAttributed")).toBe(1);
+    expect(r.detail.allLeadsFromAds).toBe(true);
+    // what we can name is still reported exactly
+    expect(r.detail.leadsByAttribution).toEqual({ confirmed: 0, partial: 1, unknown: 1 });
+  });
+
+  it("without the rule, only a confirmed campaign counts as from ads (unchanged)", () => {
+    const r = computeMetrics(input({ meta: [meta({ spend: 1000 })], leads: [closedLead({ contactId: "phone", campaignId: null })] }));
+    expect(v(r, "closedDealsAttributed")).toBe(0);
+    expect(v(r, "roas")).toBe(0);
+    expect(r.detail.allLeadsFromAds).toBe(false);
+  });
+
+  it("makes lead, appointment and deal numbers N/A (not zero) for a period with no GHL data, and keeps the Meta ones", () => {
+    const r = computeMetrics(input({ sources: { meta: true, appointments: true, ghl: false } }));
+    expect(v(r, "totalLeads")).toBeNull();
+    expect(v(r, "closedDeals")).toBeNull();
+    expect(v(r, "roas")).toBeNull();
+    expect(v(r, "spend")).toBe(100);
+    expect(v(r, "cpl")).toBe(25);
+  });
+
+  it("says GHL data starts later when the period begins before it", () => {
+    const early = computeMetrics(input({ range: { from: "2026-01-01", to: "2026-01-31" }, config: { closedStages: [], qualifiedStages: [], unqualifiedStages: [], ghlDataStart: "2026-02-01" } }));
+    expect(early.notes.join(" ")).toMatch(/GHL data starts 2026-02-01/);
+    const later = computeMetrics(input({ config: { closedStages: [], qualifiedStages: [], unqualifiedStages: [], ghlDataStart: "2026-02-01" } }));
+    expect(later.notes.join(" ")).not.toMatch(/GHL data starts/);
+  });
+});

@@ -21,7 +21,7 @@ export function describeError(error: unknown): Failure {
   if (error instanceof LensApiError) {
     switch (error.status) {
       case 401:
-        return { message: "The dashboard key is missing or wrong. Set VITE_DASHBOARD_API_KEY to the server's DASHBOARD_API_KEY.", httpStatus: 401 };
+        return { message: "The access key is missing or was not accepted.", httpStatus: 401 };
       case 408:
         return { message: `The reporting service took too long to answer${where}. Try again, or pick a shorter period.`, httpStatus: 408 };
       case 429:

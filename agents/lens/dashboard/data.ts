@@ -182,7 +182,13 @@ export async function buildDashboardKpis(clientId: string, range: DateRange, opt
   // A previous period that starts before our Meta history has no spend to compare with: that is "unknown", and showing
   // it as $0 would make every ad number look like it grew from nothing. A day of slack, as in the loader.
   const metaCoversPrevious = historyCovers(inputs.metaHistoryStarts, inputs.previousRange.from);
-  const previous = computeMetrics({ ...inputs.base, range: inputs.previousRange, sources: { ...inputs.base.sources!, meta: inputs.base.sources!.meta && metaCoversPrevious } });
+  // The same for GHL: before the client started using it there are no leads, which is unknown, not zero.
+  const ghlStart = inputs.base.config.ghlDataStart ?? null;
+  const ghlCoversPrevious = ghlStart === null || historyCovers(ghlStart, inputs.previousRange.from);
+  const previous = computeMetrics({ ...inputs.base, range: inputs.previousRange, sources: { ...inputs.base.sources!, meta: inputs.base.sources!.meta && metaCoversPrevious, ghl: ghlCoversPrevious } });
+  if (!ghlCoversPrevious) {
+    current.notes.push(`Lead, appointment and deal numbers are not compared with the previous period: GHL data starts ${ghlStart}, which is after that period began.`);
+  }
   if (inputs.base.sources!.meta && !metaCoversPrevious) {
     current.notes.push(`Ad metrics are not compared with the previous period: we hold Meta data only from ${inputs.metaHistoryStarts ?? "(none)"}, which is after that period began.`);
   }

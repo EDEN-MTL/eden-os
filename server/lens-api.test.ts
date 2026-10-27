@@ -3,7 +3,7 @@ import express from "express";
 import type { AddressInfo } from "net";
 import type { Server } from "http";
 
-const clients = vi.hoisted(() => ({ listLensClients: vi.fn(), clientTimezone: vi.fn(async () => "America/St_Johns") }));
+const clients = vi.hoisted(() => ({ listLensClients: vi.fn(), clientTimezone: vi.fn(async () => "America/St_Johns"), loadDashboardConfig: vi.fn(() => ({ hiddenMetrics: [] as string[] })) }));
 vi.mock("../agents/lens/dashboard/clients", () => clients);
 const data = vi.hoisted(() => ({ buildDashboardKpis: vi.fn(), loadDashboardInputs: vi.fn() }));
 vi.mock("../agents/lens/dashboard/data", () => data);
@@ -121,6 +121,36 @@ describe("GET /:clientId/kpis", () => {
     expect(spend.definition).toMatch(/Total amount Meta spent/);
     expect(body.attribution.note).toMatch(/real Meta campaign ID/);
     expect(body.appointmentBasis).toBe("calendar");
+  });
+
+  it("leaves out the metrics a client's config hides (3%: ROI and other costs, 'for now just ROAS') and drops a section that ends up empty", async () => {
+    stub();
+    clients.loadDashboardConfig.mockReturnValue({ hiddenMetrics: ["roi", "otherCosts"] });
+    const body: any = await (await fetch(`${base}/3-percent-east-coast/kpis`)).json();
+    const keys = body.sections.flatMap((s: any) => s.metrics.map((m: any) => m.key));
+    expect(keys).not.toContain("roi");
+    expect(keys).not.toContain("otherCosts");
+    expect(keys).toContain("roas");
+    clients.loadDashboardConfig.mockReturnValue({ hiddenMetrics: ["roas", "roi", "otherCosts", "revenueAttributed", "spend", "costPerClosedDeal"] });
+    const sparse: any = await (await fetch(`${base}/3-percent-east-coast/kpis`)).json();
+    expect(sparse.sections.find((s: any) => s.id === "revenue")).toBeUndefined();
+    clients.loadDashboardConfig.mockReturnValue({ hiddenMetrics: [] });
+  });
+
+  it("says whether every lead counts as from ads, and words the definitions to match", async () => {
+    stub();
+    const normal: any = await (await fetch(`${base}/3-percent-east-coast/kpis`)).json();
+    expect(normal.allLeadsFromAds).toBe(false);
+    expect(normal.attribution.note).toMatch(/only when it carries a real Meta campaign ID/);
+    const range = { from: "2026-09-26", to: "2026-10-25" };
+    const current = computeMetrics({ ...baseInput(), range, config: { closedStages: ["Deal Closed"], qualifiedStages: [], unqualifiedStages: [], allLeadsFromAds: true } } as any);
+    data.buildDashboardKpis.mockResolvedValue({ client: CLIENT, timezone: "America/St_Johns", range, current });
+    const rule: any = await (await fetch(`${base}/3-percent-east-coast/kpis`)).json();
+    expect(rule.allLeadsFromAds).toBe(true);
+    expect(rule.attribution.note).toMatch(/every lead counts as coming from ads/);
+    const closedFromAds = rule.sections.flatMap((s: any) => s.metrics).find((m: any) => m.key === "closedDealsAttributed");
+    expect(closedFromAds.definition).toMatch(/every lead counts as from ads for this client/);
+    expect(closedFromAds.definition).not.toMatch(/confirmed ad attribution/);
   });
 
   it("a metric with a zero denominator comes back as null (N/A), never NaN or Infinity", async () => {

@@ -44,7 +44,14 @@ Read-only, per client and period, behind `x-dashboard-key`. `metrics.ts` is the 
 cards, charts, campaign table and attribution can't disagree. Rules that cost debugging time:
 
 - A lead is "from ads" only with a real Meta campaign ID (confirmed). A typed label or a Facebook source with no ID is
-  partial; nothing is unknown. Only confirmed leads count in ROAS, cost per deal and the campaign table.
+  partial; nothing is unknown. Only confirmed leads count in ROAS, cost per deal and the campaign table, UNLESS the client's
+  `lens.dashboard.allLeadsFromAds` is true (3%, Jacob 2026-10-28: "they all come from ads anyways"): then every lead,
+  booked lead and closed deal counts in the cards, ROAS and cost per deal, and confirmed only says which can be placed on
+  a campaign (the campaign table still shows the rest as one "not tied to a campaign" row).
+- Per-client Lens config (all in `lens.dashboard`, see 3%'s notes for the why): `qualifiedStages` empty means qualified =
+  everyone not in `unqualifiedStages`; `hiddenMetrics` leaves metric keys off the page and exports (3%: `roi`,
+  `otherCosts` until other marketing costs are entered); `ghlDataStart` makes periods before it N/A, not zero (3%:
+  2026-02-01, first lead in ad_leads is 2026-02-18).
 - Closed deal = Deal Closed stage, dated by the opportunity's `lastStageChangeAt`. Appointment-to-sale is a cohort rate.
 - Zero denominators and unconnected sources are N/A, never 0. A previous period that starts before our Meta history
   (`historyCovers`) shows N/A for ad metrics, not $0. GHL-side history has no such check yet: a previous period before

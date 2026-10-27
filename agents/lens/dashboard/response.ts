@@ -33,6 +33,8 @@ export interface KpiResponse {
   previousPeriod: { from: string; to: string; label: string } | null;
   generatedAt: string;
   appointmentBasis: "calendar" | "pipeline";
+  /** Every lead counts as from ads for this client, so the "from ads" numbers include them all. */
+  allLeadsFromAds: boolean;
   sections: SectionJson[];
   attribution: { confirmed: number; partial: number; unknown: number; note: string };
   notes: string[];
@@ -44,9 +46,15 @@ export const ATTRIBUTION_NOTE =
   "A lead counts as coming from ads only when it carries a real Meta campaign ID (confirmed). A lead with only a typed campaign label, or a Facebook source but no campaign ID, is partial; one with nothing is unknown. Neither is counted as from ads. " +
   "Closed deals and revenue are counted in the period the deal closed, whenever the lead arrived. Revenue is the deal value recorded in GHL; a closed deal with no value adds nothing and is flagged.";
 
-export function toKpiResponse(out: DashboardKpis, now: Date = new Date()): KpiResponse {
+export const ATTRIBUTION_NOTE_ALL_FROM_ADS =
+  "For this client every lead counts as coming from ads, so ROAS and cost per closed deal include every closed deal. A lead is confirmed when it also carries a real Meta campaign ID, which names its campaign; a lead with only a typed campaign label or a Facebook source is partial; one with nothing recorded is unknown. " +
+  "Closed deals and revenue are counted in the period the deal closed, whenever the lead arrived. Revenue is the deal value recorded in GHL; a closed deal with no value adds nothing and is flagged.";
+
+/** `hidden` are metric keys the client's config leaves off the page and the exports. */
+export function toKpiResponse(out: DashboardKpis, now: Date = new Date(), hidden: string[] = []): KpiResponse {
   const basis = out.current.detail.appointmentBasis;
-  const defs = definitionsForBasis(basis);
+  const allLeadsFromAds = out.current.detail.allLeadsFromAds;
+  const defs = definitionsForBasis(basis, allLeadsFromAds);
   const metric = (key: MetricKey): MetricJson => {
     const m = out.current.kpis[key];
     const d = defs[key];
@@ -75,8 +83,9 @@ export function toKpiResponse(out: DashboardKpis, now: Date = new Date()): KpiRe
     previousPeriod: out.previousRange ? labelled(out.previousRange) : null,
     generatedAt: now.toISOString(),
     appointmentBasis: basis,
-    sections: SECTIONS.map((s) => ({ id: s.id, title: s.title, metrics: s.keys.map(metric) })),
-    attribution: { ...out.current.detail.leadsByAttribution, note: ATTRIBUTION_NOTE },
+    allLeadsFromAds,
+    sections: SECTIONS.map((s) => ({ id: s.id, title: s.title, metrics: s.keys.filter((k) => !hidden.includes(k)).map(metric) })).filter((s) => s.metrics.length > 0),
+    attribution: { ...out.current.detail.leadsByAttribution, note: allLeadsFromAds ? ATTRIBUTION_NOTE_ALL_FROM_ADS : ATTRIBUTION_NOTE },
     notes: out.current.notes,
   };
 }

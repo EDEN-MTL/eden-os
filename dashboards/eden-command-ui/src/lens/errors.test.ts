@@ -11,7 +11,7 @@ const good = () => ({
 
 describe("describeError", () => {
   it("says what to do about a wrong key, a slow answer, a busy server and an unreachable one", () => {
-    expect(describeError(new LensApiError("x", 401)).message).toMatch(/dashboard key/);
+    expect(describeError(new LensApiError("x", 401)).message).toMatch(/access key/);
     expect(describeError(new LensApiError("x", 408)).message).toMatch(/took too long/);
     expect(describeError(new LensApiError("x", 429)).message).toMatch(/Too many requests/);
     expect(describeError(new LensApiError("x", 502)).message).toMatch(/not reachable/);

@@ -8,6 +8,7 @@ import CampaignTable from "./CampaignTable";
 import RevenueByCampaign from "./RevenueByCampaign";
 import Attribution from "./Attribution";
 import ExportMenu from "./ExportMenu";
+import KeyPrompt from "./KeyPrompt";
 import LensBoundary from "./LensBoundary";
 import { freshnessNotes } from "./freshness";
 import { Report, useLensClients, useLensReport } from "./useLensReport";
@@ -91,6 +92,10 @@ function LensDashboardInner() {
   const dim = loading || stale;
   const freshness = kpis ? freshnessNotes({ periodTo: kpis.period.to, metaConnected: kpis.client.meta.connected, metaLastDay: kpis.client.meta.lastDay }) : [];
 
+  // A 401 means the server wants the access key; ask for it here instead of showing a dead-end error.
+  const [triedKey, setTriedKey] = useState(false);
+  const needsKey = (clients.state.status === "error" && clients.state.httpStatus === 401) || (state.status === "error" && state.httpStatus === 401);
+
   // An export must match the client and period chosen, so it waits for the report that belongs to them.
   const exportBlocked = state.status === "loading" ? "Wait for the report to finish loading" : state.status === "error" ? "Reload the report first, then export" : state.status === "idle" ? "Choose a client and a period first" : null;
 
@@ -126,7 +131,18 @@ function LensDashboardInner() {
         {loading && <span className="lens-updating" role="status">{kpis ? "Updating…" : "Loading…"}</span>}
       </div>
 
-      {clients.state.status === "error" && (
+      {needsKey && (
+        <KeyPrompt
+          rejected={triedKey}
+          onSaved={() => {
+            setTriedKey(true);
+            clients.retry();
+            retry();
+          }}
+        />
+      )}
+
+      {!needsKey && clients.state.status === "error" && (
         <div className="lens-banner is-error" role="alert">
           <strong>Could not load the client list.</strong> {clients.state.message}
           <button type="button" className="lens-button" onClick={clients.retry}>Try again</button>
@@ -135,7 +151,7 @@ function LensDashboardInner() {
 
       {clients.state.status === "ready" && clients.state.clients.length === 0 && <div className="lens-empty">No clients are set up yet.</div>}
 
-      {state.status === "error" && (
+      {!needsKey && state.status === "error" && (
         <div className="lens-banner is-error" role="alert">
           <strong>Could not build this report.</strong> {state.message}
           {stale && kpis && <span>The numbers below are the last report that loaded ({kpis.client.name}, {kpis.period.label}), not what is selected above.</span>}

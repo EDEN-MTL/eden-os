@@ -1,10 +1,37 @@
 const API_BASE = import.meta.env.VITE_API_BASE_URL || "http://localhost:3000";
-const DASHBOARD_KEY = import.meta.env.VITE_DASHBOARD_API_KEY || "";
+const BUILD_KEY = import.meta.env.VITE_DASHBOARD_API_KEY || "";
+const KEY_STORAGE = "eden.dashboardKey";
+
+/**
+ * The access key for the server. A local build can bake it in (VITE_DASHBOARD_API_KEY); a hosted page must NOT, since
+ * anything in the page's code is readable by whoever opens it. A hosted page asks the person for the key and keeps it in
+ * this browser only.
+ */
+export function getDashboardKey(): string {
+  if (BUILD_KEY) return BUILD_KEY;
+  try {
+    return window.localStorage.getItem(KEY_STORAGE) || "";
+  } catch {
+    return "";
+  }
+}
+
+/** Saves the key typed by the person (empty clears it). Returns false when the browser will not store it. */
+export function setDashboardKey(key: string): boolean {
+  try {
+    if (key) window.localStorage.setItem(KEY_STORAGE, key.trim());
+    else window.localStorage.removeItem(KEY_STORAGE);
+    return true;
+  } catch {
+    return false;
+  }
+}
 
 function authHeaders(extra: Record<string, string> = {}) {
+  const key = getDashboardKey();
   return {
     ...extra,
-    ...(DASHBOARD_KEY ? { "x-dashboard-key": DASHBOARD_KEY } : {}),
+    ...(key ? { "x-dashboard-key": key } : {}),
   };
 }
 

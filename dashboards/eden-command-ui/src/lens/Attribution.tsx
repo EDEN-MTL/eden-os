@@ -55,7 +55,15 @@ export default function Attribution({ data }: { data: AttributionResponse }) {
         )}
         {closed && revenue && (
           <>
-            Of the <strong>{formatValue(closed.total, "count")}</strong> deals that closed in it, <strong>{formatValue(closed.confirmed, "count")}</strong> are confirmed from ads ({formatValue(revenue.confirmed, "currency")} of the {formatValue(revenue.total, "currency")} recorded).
+            {data.allLeadsFromAds ? (
+              <>
+                Of the <strong>{formatValue(closed.total, "count")}</strong> deals that closed in it ({formatValue(revenue.total, "currency")}), all count as from ads; <strong>{formatValue(closed.confirmed, "count")}</strong> ({formatValue(revenue.confirmed, "currency")}) can also be tied to an exact campaign.
+              </>
+            ) : (
+              <>
+                Of the <strong>{formatValue(closed.total, "count")}</strong> deals that closed in it, <strong>{formatValue(closed.confirmed, "count")}</strong> are confirmed from ads ({formatValue(revenue.confirmed, "currency")} of the {formatValue(revenue.total, "currency")} recorded).
+              </>
+            )}
           </>
         )}
       </p>
@@ -80,7 +88,15 @@ export default function Attribution({ data }: { data: AttributionResponse }) {
             )}
             {quality.closedDealsNotConfirmed > 0 && (
               <li>
-                {quality.closedDealsNotConfirmed} closed deal{quality.closedDealsNotConfirmed === 1 ? " is" : "s are"} not confirmed from ads (partial or unknown), so {quality.closedDealsNotConfirmed === 1 ? "it is" : "they are"} left out of ROAS and cost per closed deal.
+                {data.allLeadsFromAds ? (
+                  <>
+                    {quality.closedDealsNotConfirmed} closed deal{quality.closedDealsNotConfirmed === 1 ? " has" : "s have"} no exact campaign recorded (partial or unknown). {quality.closedDealsNotConfirmed === 1 ? "It still counts" : "They still count"} in ROAS and cost per closed deal, but cannot be placed on a campaign.
+                  </>
+                ) : (
+                  <>
+                    {quality.closedDealsNotConfirmed} closed deal{quality.closedDealsNotConfirmed === 1 ? " is" : "s are"} not confirmed from ads (partial or unknown), so {quality.closedDealsNotConfirmed === 1 ? "it is" : "they are"} left out of ROAS and cost per closed deal.
+                  </>
+                )}
               </li>
             )}
             {!quality.metaHistoryStarts && <li>No Meta spend history is held for this client.</li>}

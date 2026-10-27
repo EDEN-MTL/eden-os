@@ -4,7 +4,7 @@
  * never disagree with a card about what a metric means.
  */
 import { computeMetrics, MetricsInput } from "./metrics";
-import { addDays, DateRange, daysInRange, rangeLabel } from "./ranges";
+import { addDays, DateRange, daysInRange, historyCovers, rangeLabel } from "./ranges";
 
 export type Granularity = "day" | "week" | "month";
 
@@ -59,7 +59,10 @@ export interface SeriesPoint {
 export function computeSeries(input: MetricsInput): { granularity: Granularity; points: SeriesPoint[] } {
   const granularity = pickGranularity(input.range);
   const points = bucketRanges(input.range, granularity).map((range) => {
-    const k = computeMetrics({ ...input, range }).kpis;
+    // A bucket that starts before the client's GHL data has no lead numbers (unknown), so its chart points are gaps, not zeros.
+    const ghlStart = input.config.ghlDataStart ?? null;
+    const ghl = ghlStart === null || historyCovers(ghlStart, range.from);
+    const k = computeMetrics({ ...input, range, sources: { ...(input.sources ?? { meta: true, appointments: true }), ghl } }).kpis;
     return {
       from: range.from,
       to: range.to,
