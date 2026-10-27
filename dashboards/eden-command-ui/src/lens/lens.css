@@ -268,3 +268,9 @@
 .lens-print-root .lens-chart-wide { grid-column: 1 / -1; }
 .lens-print-root .lens-chart-data, .lens-print-root .lens-tooltip { display: none; }
 .lens-print-root .lens-revenue-bars { gap: 8px; }
+
+/* ── Access key form ── */
+.lens-keyform { max-width: 460px; margin: 28px auto; padding: 20px; background: var(--lens-panel); border: 1px solid var(--lens-line); border-radius: var(--lens-radius); display: flex; flex-direction: column; gap: 10px; }
+.lens-keyform p { margin: 0; color: var(--lens-text-dim); font-size: 14px; }
+.lens-keyrow { display: flex; gap: 8px; flex-wrap: wrap; }
+.lens-keyrow .lens-input { flex: 1 1 200px; min-width: 0; }

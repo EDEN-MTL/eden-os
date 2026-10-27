@@ -21,7 +21,7 @@ export type ReportState =
 
 /** Loads the client list once. */
 export function useLensClients() {
-  const [state, setState] = useState<{ status: "loading" } | { status: "ready"; clients: LensClient[] } | { status: "error"; message: string }>({ status: "loading" });
+  const [state, setState] = useState<{ status: "loading" } | { status: "ready"; clients: LensClient[] } | { status: "error"; message: string; httpStatus: number | null }>({ status: "loading" });
   const [attempt, setAttempt] = useState(0);
   useEffect(() => {
     const ctrl = new AbortController();
@@ -30,7 +30,7 @@ export function useLensClients() {
       .then((r) => setState({ status: "ready", clients: r.clients }))
       .catch((e) => {
         if (ctrl.signal.aborted) return;
-        setState({ status: "error", message: describeError(e).message });
+        setState({ status: "error", ...describeError(e) });
       });
     return () => ctrl.abort();
   }, [attempt]);
