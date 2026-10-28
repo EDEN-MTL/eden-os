@@ -6,6 +6,7 @@ vi.mock("../../../shared/db", () => ({ query: (...args: unknown[]) => queryMock(
 const getContactMock = vi.fn();
 let listedContacts: any[] = [];
 let opportunities: any[] = [];
+let stageOpportunities: any[] = [];
 vi.mock("../../../shared/ghl", () => ({
   getContact: (...args: unknown[]) => getContactMock(...args),
   getCustomFieldDefs: vi.fn(async () => []),
@@ -16,6 +17,8 @@ vi.mock("../../../shared/ghl", () => ({
   listOpportunitiesPaginated: async function* () {
     for (const o of opportunities) yield o;
   },
+  // What the stage-by-stage read returns: every card, including ones the broad listing misses.
+  listOpportunitiesInStage: vi.fn(async (_loc: string, _pipeline: string, stageId: string) => stageOpportunities.filter((o) => o.pipelineStageId === stageId)),
 }));
 
 import { resolveFullContact, syncLeads } from "./attribution";
@@ -42,6 +45,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   listedContacts = [];
   opportunities = [];
+  stageOpportunities = [];
 });
 
 describe("resolveFullContact", () => {
@@ -86,6 +90,33 @@ describe("syncLeads", () => {
     expect(params.slice(8, 11)).toEqual(["120247476389410259", "120248327399560259", "120248329090480259"]);
     expect(params[11]).toBe("Buyer Leads");
     expect(JSON.parse(params[15] as string).fullRecord).toBe(true);
+  });
+
+  it("attaches an opportunity the broad listing misses (Christine Thorne's Deal Closed card, found 2026-10-29)", async () => {
+    listedContacts = [{ id: "c1", dateUpdated: "2026-10-11T12:05:00Z", dateAdded: "2026-10-11T12:00:00Z" }];
+    opportunities = []; // the broad listing returned nothing for this contact
+    stageOpportunities = [{ id: "o2", contactId: "c1", pipelineStageId: "s1", status: "open", monetaryValue: 15000, updatedAt: "2026-10-07" }];
+    getContactMock.mockResolvedValueOnce({ contact: fullRecord("c1", "2026-10-11T12:05:00Z") });
+    queryMock.mockResolvedValue([]);
+
+    await syncLeads("loc", {}, { clientId: "3-percent-east-coast", apiKey: "key" });
+
+    const params = queryMock.mock.calls.find(([sql]) => String(sql).includes("INSERT INTO ad_leads"))![1] as unknown[];
+    expect(params[11]).toBe("Buyer Leads");
+    expect(params[12]).toBe(15000);
+  });
+
+  it("when both listings return a contact, the most recently updated opportunity wins", async () => {
+    listedContacts = [{ id: "c1", dateUpdated: "2026-10-11T12:05:00Z", dateAdded: "2026-10-11T12:00:00Z" }];
+    opportunities = [{ id: "old", contactId: "c1", pipelineStageId: "s1", status: "open", monetaryValue: 100, updatedAt: "2026-09-01" }];
+    stageOpportunities = [{ id: "new", contactId: "c1", pipelineStageId: "s1", status: "open", monetaryValue: 200, updatedAt: "2026-10-01" }];
+    getContactMock.mockResolvedValueOnce({ contact: fullRecord("c1", "2026-10-11T12:05:00Z") });
+    queryMock.mockResolvedValue([]);
+
+    await syncLeads("loc", {}, { clientId: "3-percent-east-coast", apiKey: "key" });
+
+    const params = queryMock.mock.calls.find(([sql]) => String(sql).includes("INSERT INTO ad_leads"))![1] as unknown[];
+    expect(params[12]).toBe(200);
   });
 
   it("only re-reads the contacts that changed", async () => {
