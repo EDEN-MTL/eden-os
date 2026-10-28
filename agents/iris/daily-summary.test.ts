@@ -24,6 +24,7 @@ const base = (over: Partial<SummaryData> = {}): SummaryData => ({
   waitingOnText: 0,
   cohortActive: 0,
   watchdogAlerts: 0,
+  review: null,
   ...over,
 });
 const call = (name: string, endedReason: string, transcript = "", flags: string[] = []) => ({ name, endedReason, transcript, durationSeconds: 20, flags });
@@ -57,6 +58,15 @@ describe("formatDailySummary", () => {
     expect(flagged).toContain("watchdog raised 2 alerts");
     expect(flagged).not.toContain("Nothing flagged");
   });
+  it("quotes the top of last night's lead review, and says nothing when there is none", () => {
+    const text = formatDailySummary(base({ review: { total: 7, top: [{ name: "Sabrina Marie", stageName: "Replied", headline: "Was promised a call or follow-up 7d ago and nobody has tried since" }] } }));
+    expect(text).toContain("*Worth checking in on* (7 from last night's review)");
+    expect(text).toContain("*Sabrina Marie* (Replied): Was promised a call");
+    expect(text).toContain("full list with the evidence");
+    expect(formatDailySummary(base({ review: { total: 0, top: [] } }))).not.toContain("Worth checking in on");
+    expect(formatDailySummary(base())).not.toContain("Worth checking in on");
+  });
+
   it("handles a quiet day", () => {
     expect(formatDailySummary(base())).toContain("No calls were placed.");
     expect(formatDailySummary(base())).toContain("No calls lined up yet.");

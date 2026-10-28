@@ -1,4 +1,5 @@
 import { SlackIncomingMessage } from "../../shared/types";
+import { latestReview, reviewForLens, snoozeByName } from "./lead-review";
 import { handleCommandReply, listTeammateCalls, prepareCallCommand, prepareFollowUpCommand, prepareStopCommand, SettingsLoader } from "./slack-commands";
 import { upcomingCalls, recentLeads, leadOverview } from "./slack-reports";
 import { readFileSync } from "fs";
@@ -118,6 +119,26 @@ const IRIS_TOOLS: ToolDef[] = [
         daysAgo: { type: "number", description: "0 = today (default), 1 = yesterday." },
       },
       required: ["person"],
+    },
+  },
+  {
+    name: "iris_leads_worth_checking",
+    description:
+      "The lead review: leads Iris found while reading every lead's conversation and notes who are worth checking in on, with the evidence. For example a lead who was promised a call and nobody has tried since, a lead whose last text went unanswered, or a lead qualified in the notes that nobody has contacted in days. Use for \"who's worth checking in on?\", \"which leads got dropped?\", \"who was promised a call and never got one?\". It's the nightly review's latest result.",
+    input_schema: { type: "object", properties: { max: { type: "number", description: "How many to show (default 10)." } } },
+  },
+  {
+    name: "iris_snooze_lead_review",
+    description:
+      "Stops the lead review flagging one lead for a while, when Mark or Jacob says someone is handling them (\"don't flag Samir for two weeks\", \"Justin has Roxane\"). Only works on a lead currently in the review. Mark and Jacob only.",
+    input_schema: {
+      type: "object",
+      properties: {
+        name: { type: "string", description: "The lead's name as flagged." },
+        days: { type: "number", description: "How long (default 14, max 120)." },
+        reason: { type: "string", description: "Why, in a few words." },
+      },
+      required: ["name"],
     },
   },
   {
@@ -273,6 +294,23 @@ class IrisAgent extends BaseAgent {
     switch (name) {
       case "iris_request_call":
         return JSON.stringify(await prepareCallCommand(String(input?.clientId ?? DEFAULT_CLIENT_ID), input ?? {}, ctx, loadSlackCommandSettings));
+
+      case "iris_leads_worth_checking": {
+        const clientId = String(input?.clientId ?? DEFAULT_CLIENT_ID);
+        const review = await latestReview(clientId);
+        if (!review) return JSON.stringify({ status: "no_review_yet", note: "The nightly review hasn't run yet; it runs at 7:30 AM St. John's time." });
+        const max = typeof input?.max === "number" && input.max > 0 ? Math.min(input.max, 25) : 10;
+        const view = reviewForLens(review, "iris", [], max);
+        return JSON.stringify({ status: "ok", count: view.findings.length, instruction: "Show the post below as is.", post: view.text });
+      }
+
+      case "iris_snooze_lead_review": {
+        const clientId = String(input?.clientId ?? DEFAULT_CLIENT_ID);
+        const settings = loadSlackCommandSettings(clientId);
+        if (!ctx?.userId || !settings || !settings.allowedUserIds.includes(ctx.userId)) return JSON.stringify({ status: "refused", reason: "I only take that from Mark or Jacob." });
+        const result = await snoozeByName(clientId, String(input?.name ?? ""), Number(input?.days ?? 14), String(input?.reason ?? "").slice(0, 200), ctx.userId);
+        return JSON.stringify(result);
+      }
 
       case "iris_teammate_calls":
         return JSON.stringify(await listTeammateCalls(String(input?.clientId ?? DEFAULT_CLIENT_ID), input ?? {}, ctx, loadSlackCommandSettings));
@@ -531,7 +569,7 @@ to the buyer/seller ring groups, the works. If asked whether you're live,
 say yes plainly — don't hedge or undersell it.
 
 ## Calling and stopping leads when Mark or Jacob asks in Slack
-They can tell you "call Koren Pye now", "call her at 3pm", or "stop calling Matthew Power". They can also ask who a teammate called ("who did Jacob call today?" → iris_teammate_calls, which lists them and who was reached) and to follow up on the ones the teammate did not reach ("follow up on them" → iris_request_followup, one summary for the whole list). Use iris_request_call / iris_request_stop / iris_request_followup — they only PREPARE the action and return a summary. Show that summary to them and ask them to reply "yes" to confirm or "no" to cancel. The action happens only when they reply yes (handled outside you); until then NOTHING has been done, so never say a call is placed, scheduled or stopped. If a tool says refused, ambiguous, not found or nothing to do, tell them plainly and follow its instruction. Anyone else asking gets a polite no.
+They can tell you "call Koren Pye now", "call her at 3pm", or "stop calling Matthew Power". They can also ask who a teammate called ("who did Jacob call today?" → iris_teammate_calls, which lists them and who was reached) and to follow up on the ones the teammate did not reach ("follow up on them" → iris_request_followup, one summary for the whole list). They can ask "who's worth checking in on?" (iris_leads_worth_checking, the nightly lead review) and tell you to stop flagging someone (iris_snooze_lead_review). Use iris_request_call / iris_request_stop / iris_request_followup — they only PREPARE the action and return a summary. Show that summary to them and ask them to reply "yes" to confirm or "no" to cancel. The action happens only when they reply yes (handled outside you); until then NOTHING has been done, so never say a call is placed, scheduled or stopped. If a tool says refused, ambiguous, not found or nothing to do, tell them plainly and follow its instruction. Anyone else asking gets a polite no.
 
 ## Answering questions in Slack
 You have real tools — use them, never answer from memory or guesswork. Pick the one that fits:
@@ -666,6 +704,12 @@ export function loadIrisConfig(clientId: string): IrisConfig | null {
         typeof raw.iris.followUpCohort?.notReadyStage === "string" && typeof raw.iris.followUpCohort?.notInterestedStage === "string"
           ? { notReadyStage: raw.iris.followUpCohort.notReadyStage, notInterestedStage: raw.iris.followUpCohort.notInterestedStage }
           : undefined,
+      leadReview: raw.iris.leadReview
+        ? {
+            excludeEmailDomains: Array.isArray(raw.iris.leadReview.excludeEmailDomains) ? raw.iris.leadReview.excludeEmailDomains.filter((d: unknown) => typeof d === "string") : [],
+            excludeContactIds: Array.isArray(raw.iris.leadReview.excludeContactIds) ? raw.iris.leadReview.excludeContactIds.filter((d: unknown) => typeof d === "string") : [],
+          }
+        : undefined,
       dailySummary: typeof raw.iris.dailySummary?.channel === "string" && raw.iris.dailySummary.channel ? { channel: raw.iris.dailySummary.channel } : undefined,
       vapiCallUrlTemplate: typeof raw.iris.links?.vapiCallUrl === "string" && raw.iris.links.vapiCallUrl.includes("{callId}") ? raw.iris.links.vapiCallUrl : undefined,
       callAlerts: Array.isArray(raw.iris.callAlerts?.userIds) && raw.iris.callAlerts.userIds.length > 0 ? { userIds: raw.iris.callAlerts.userIds } : undefined,
