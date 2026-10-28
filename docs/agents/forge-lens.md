@@ -68,3 +68,10 @@ cards, charts, campaign table and attribution can't disagree. Rules that cost de
   off. `freshness.ts` warns when the period runs past the last Meta day. Custom periods are checked before any request
   (`validate-period.ts`: real dates, start before end, at most 366 days, future dates warned). The server returns 400 for
   a repeated query option rather than quietly using the default.
+- The lead sync (`syncLeads`, agents/forge/ads/attribution.ts) attaches a stage and deal value to each lead from the
+  contact's opportunity. `listOpportunitiesPaginated` alone misses about a third of them (2026-10-29, 3%: 199 of 300
+  returned, 99 of 301 leads had no stage, so Lens showed 4 closed deals / $21.5k against GHL's 5 / $36.5k, and
+  appointments, attended and qualified counts were low too). The sync now also reads every stage with
+  `listOpportunitiesInStage` (GHL's own cursor), the same fix Ember's scan already had. If a Lens number disagrees with
+  the GHL pipeline view, first check `SELECT count(*) FROM ad_leads WHERE pipeline_stage IS NULL`: it should be near zero.
+
