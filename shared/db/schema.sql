@@ -738,7 +738,7 @@ CREATE TABLE IF NOT EXISTS iris_slack_commands (
     requested_by TEXT NOT NULL,        -- Slack user id
     channel_id TEXT NOT NULL,
     thread_ts TEXT,
-    kind TEXT NOT NULL,                -- call | stop
+    kind TEXT NOT NULL,                -- call | stop | followup | review
     contact_id TEXT NOT NULL,
     contact_name TEXT NOT NULL,
     call_at TIMESTAMPTZ,               -- for kind = call

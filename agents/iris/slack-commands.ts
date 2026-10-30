@@ -22,6 +22,7 @@ import { ToolContext } from "../base-agent";
 import { clampToLegalCallingWindow, formatLocal } from "./cadence";
 import { queueColdLeadSweep, scheduleExplicitCallback } from "./dial-pending";
 import { findTeammateCalls } from "./teammate-calls";
+import { latestReview } from "./lead-review";
 import { checkHumanTouch, DEFAULT_HUMAN_HANDS_OFF_DAYS } from "./human-touch";
 import { linkLineFor } from "./links";
 
@@ -97,7 +98,7 @@ async function resolveOne(clientId: string, nameOrPhone: string): Promise<{ cont
 async function storePending(
   clientId: string,
   ctx: ToolContext,
-  kind: "call" | "stop" | "followup",
+  kind: "call" | "stop" | "followup" | "review",
   contact: { id: string; name: string },
   summary: string,
   callAt: Date | null,
@@ -319,6 +320,93 @@ export async function prepareFollowUpCommand(
   };
 }
 
+/** A review is a day old at most when someone says yes to it; older than this and the facts may have moved on. */
+const REVIEW_MAX_AGE_MS = 36 * 3_600_000;
+/** CASL: an inquiry older than this is outside implied consent, so Jacob decides (Mark, 2026-10-22). */
+const STALE_INQUIRY_MS = 180 * 86_400_000;
+
+/**
+ * Prepares "act on the leads the review flagged": takes the nightly review's findings, re-reads every lead LIVE
+ * (the review is up to a day old) and keeps only those still safe to contact, then stores ONE pending command for
+ * the list. Nothing is queued until the same person replies yes (handleCommandReply). Names in `skip` are left out;
+ * names in `only` narrow it to those leads.
+ */
+export async function prepareReviewActionCommand(
+  clientId: string,
+  input: { only?: unknown; skip?: unknown },
+  ctx: ToolContext | undefined,
+  loadSettings: SettingsLoader,
+  now: Date = new Date()
+): Promise<PreparedCommand> {
+  const settings = loadSettings(clientId);
+  const denied = authorise(settings, ctx);
+  if (denied || !settings || !ctx) return refused(denied ?? "Not allowed.");
+  const names = (v: unknown): string[] => (Array.isArray(v) ? v : []).map((x) => String(x).trim().toLowerCase()).filter(Boolean);
+  const only = names(input.only);
+  const skip = names(input.skip);
+
+  const review = await latestReview(clientId);
+  if (!review) return { status: "nothing_to_do", reason: "The review hasn't run yet.", instruction: "Tell them the nightly lead review hasn't run yet; it runs at 7:30 AM St. John's time." };
+  if (now.getTime() - review.ranAt.getTime() > REVIEW_MAX_AGE_MS) {
+    return { status: "nothing_to_do", reason: "The latest review is over a day and a half old.", instruction: "Tell them the latest review is too old to act on safely and the next one runs at 7:30 AM St. John's time." };
+  }
+  const ghl = await getGhlConfig(clientId);
+  if (!ghl) return refused(`I couldn't reach the CRM for ${clientId}.`);
+
+  const wanted = review.findings.filter((f) => {
+    const n = f.name.toLowerCase();
+    return (only.length === 0 || only.some((o) => n.includes(o))) && !skip.some((o) => n.includes(o));
+  });
+  if (wanted.length === 0) return { status: "nothing_to_do", reason: "No flagged leads to act on.", instruction: "Tell them there is nobody flagged in the latest review to follow up on." };
+
+  const eligible: { id: string; name: string }[] = [];
+  const left: string[] = [];
+  for (const f of wanted) {
+    if (eligible.some((e) => e.id === f.contactId)) continue;
+    const raw = await getContact(f.contactId, ghl.locationId, ghl.apiKey).catch(() => null);
+    const contact = raw?.contact ?? raw;
+    const tags: string[] = (contact?.tags ?? []).map((t: string) => String(t).toLowerCase());
+    const added = contact?.dateAdded ? new Date(contact.dateAdded).getTime() : NaN;
+    if (!contact) left.push(`${f.name} (couldn't read their record)`);
+    else if (contact.dnd || tags.includes("do not call")) left.push(`${f.name} (do not call)`);
+    else if (!contact.phone) left.push(`${f.name} (no phone)`);
+    else if (tags.includes("appt booked") || tags.includes("live transferred")) left.push(`${f.name} (already ${tags.includes("appt booked") ? "booked" : "live transferred"})`);
+    // They wrote to us, so an old inquiry is not the issue; otherwise an inquiry over six months old needs Jacob's OK.
+    else if (f.kind !== "unanswered_reply" && Number.isFinite(added) && now.getTime() - added > STALE_INQUIRY_MS) left.push(`${f.name} (inquiry over 6 months old — needs Jacob's OK)`);
+    else {
+      // Calls count here: a teammate who has called or texted since the review ran is working this lead.
+      const touch = await checkHumanTouch(f.contactId, ghl.locationId, ghl.apiKey, settings.humanHandsOffDays, now);
+      if (touch.status !== "none") left.push(`${f.name} (a teammate has been in touch)`);
+      else {
+        // Iris or Ember already dealt with them since the review ran.
+        const recent = await query<{ n: string }>(
+          `SELECT (SELECT count(*) FROM iris_pending_calls WHERE client_id = $1 AND contact_id = $2 AND status = 'pending')
+                + (SELECT count(*) FROM iris_call_log WHERE client_id = $1 AND contact_id = $2 AND created_at > $3) AS n`,
+          [clientId, f.contactId, review.ranAt]
+        );
+        if (Number(recent[0]?.n ?? 0) > 0) left.push(`${f.name} (Iris already has them in hand)`);
+        else eligible.push({ id: f.contactId, name: f.name });
+      }
+    }
+  }
+  if (eligible.length === 0) {
+    return { status: "nothing_to_do", reason: "Nobody safe to follow up.", instruction: `Tell them none of the flagged leads can be followed up right now, and why: ${left.join("; ")}.` };
+  }
+
+  const startAt = clampToLegalCallingWindow(new Date(now.getTime() + 2 * 60_000), settings.timezone);
+  const summary =
+    `Follow up on ${eligible.length} lead${eligible.length === 1 ? "" : "s"} from the lead review: ${eligible.map((e) => `*${e.name}*`).join(", ")}.\n` +
+    `Iris calls them one at a time starting ${formatLocal(startAt.toISOString(), settings.timezone)}; anyone who doesn't pick up gets one text.` +
+    (left.length ? `\nLeaving out: ${left.join("; ")}.` : "");
+  const commandId = await storePending(clientId, ctx, "review", eligible[0], summary, startAt, eligible);
+  return {
+    status: "needs_confirmation",
+    commandId,
+    summary,
+    instruction: `Show them this summary exactly, then ask them to reply "yes" to confirm or "no" to cancel. Nothing is queued yet. Never say anyone is lined up until after their yes.`,
+  };
+}
+
 /**
  * Runs BEFORE the model (the agent's handleCustom hook). Returns the reply
  * text when this message was a yes/no to a pending command of the sender's —
@@ -331,7 +419,7 @@ export async function handleCommandReply(message: SlackIncomingMessage, loadSett
 
   const rows = await query<{
     id: string;
-    kind: "call" | "stop" | "followup";
+    kind: "call" | "stop" | "followup" | "review";
     contact_id: string;
     contact_name: string;
     call_at: Date | null;
@@ -362,14 +450,15 @@ export async function handleCommandReply(message: SlackIncomingMessage, loadSett
     return "Okay — cancelled, nothing was done.";
   }
 
-  if (cmd.kind === "followup") {
+  if (cmd.kind === "followup" || cmd.kind === "review") {
+    const fromReview = cmd.kind === "review";
     const leads = cmd.batch ?? [];
     const startAt = cmd.call_at && new Date(cmd.call_at).getTime() > Date.now() ? new Date(cmd.call_at) : clampToLegalCallingWindow(new Date(Date.now() + 60_000), settings.timezone);
     const queued = await queueColdLeadSweep(clientId, leads.map((l) => l.id), startAt);
     await resolve("executed");
     const names = queued.map((q) => q.name);
     const missed = leads.filter((l) => !queued.some((q) => q.contactId === l.id)).map((l) => l.name);
-    await audit(`📣 <@${message.userId}> asked me to follow up on ${queued.length} lead${queued.length === 1 ? "" : "s"} a teammate called and didn't reach — ${names.join(", ") || "none queued"}.`);
+    await audit(`📣 <@${message.userId}> asked me to follow up on ${queued.length} lead${queued.length === 1 ? "" : "s"} ${fromReview ? "flagged by the lead review" : "a teammate called and didn't reach"} — ${names.join(", ") || "none queued"}.`);
     return (
       `Done — lined up ${queued.length}: ${names.join(", ")}. I'll call them one at a time from ${formatLocal(startAt.toISOString(), settings.timezone)}, and text anyone who doesn't pick up.` +
       (missed.length ? `\nCouldn't queue (no readable record, phone or name): ${missed.join(", ")}.` : "")
