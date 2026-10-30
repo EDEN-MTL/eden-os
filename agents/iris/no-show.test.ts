@@ -102,11 +102,12 @@ describe("naming the missed day", () => {
 });
 
 describe("the first text", () => {
-  it("is short, names the agent and day without blame, and carries the opt-out line", () => {
+  it("is short, names the agent and day without blame, and has no STOP line", () => {
     const text = buildNoShowText("Jesse", "3% Realty", { agentName: "Chantelle English", missedDay: "Thursday", missedWhen: "Thursday, October 15 at 11:00 AM" });
     expect(text).toBe(
-      "Hi Jesse, it's Iris from 3% Realty. Looks like we missed each other for your appointment with Chantelle on Thursday. No worries, it happens! Want me to find you another time? Reply STOP to opt out."
+      "Hi Jesse, it's Iris from 3% Realty. Looks like we missed each other for your appointment with Chantelle on Thursday. No worries, it happens! Want me to find you another time?"
     );
+    expect(text).not.toMatch(/stop|opt out/i);
     expect(buildNoShowText("Jesse", "3% Realty", { agentName: null, missedDay: "yesterday", missedWhen: "x" })).toContain("your appointment yesterday.");
     expect(buildNoShowText("Jesse", "3% Realty", { agentName: null, missedDay: "recently", missedWhen: "x" })).toContain("your appointment recently.");
   });

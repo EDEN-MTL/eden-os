@@ -774,13 +774,14 @@ const MISSED_CALL_TEXT_ATTEMPTS = [2, 3];
 
 export function buildMissedCallFollowUpText(leadName: string | null | undefined, brandName: string, intent: string | null | undefined): string {
   const subject = intent === "seller" || intent === "downsize" || intent === "upgrading" ? "selling your home" : "your home search";
-  return `Hi ${extractFirstName(leadName)}, it's Iris from ${brandName}. I tried calling you about ${subject} but missed you. Is there a better time for a quick call, or would you rather just text? Reply STOP to opt out.`;
+  return `Hi ${extractFirstName(leadName)}, it's Iris from ${brandName}. I tried calling you about ${subject} but missed you. Is there a better time for a quick call, or would you rather just text?`;
 }
 
 /**
  * Mark, 2026-10-27 (Eileen Hillier: two voicemails and nothing in between but the intake automation): a new lead's
  * normal call sequence sent no text of its own. After the second unanswered call Iris now texts once, so the lead
  * has an easy way to name a time or reply. The lead's reply is handled by her text flow (booking included).
+ * No "Reply STOP" line (Jacob, 2026-10-29); a STOP reply is still honored by GHL and Iris's opt-out check.
  * Skipped when: the lead is already texting with Iris, opted out, outside calling hours, or a teammate is in touch
  * (sendIrisText checks that too). Claimed in the database first, so it can never go out twice.
  */
