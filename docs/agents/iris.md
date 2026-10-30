@@ -106,6 +106,12 @@ It only gates the dial — it has no effect on whether leads get queued.
   under Slack's **resolved** channel id + `ts`, so thread replies have context. Posts made
   before 2026-09-23 have no seeded history.
 - Iris's Slack tools: `iris_lookup_lead`, `iris_pipeline_stats`.
+- Acting on the nightly lead review (`iris_act_on_review`, `prepareReviewActionCommand` in slack-commands.ts):
+  Mark or Jacob says "act on the flagged leads", Iris re-reads every flagged lead LIVE (the review is up to a day
+  old) and drops anyone do-not-call, booked, without a phone, touched by a teammate (calls count), already queued
+  or called since the review, or whose inquiry is over 180 days old (unless they texted last). One summary, one
+  yes, then the same sweep as "follow up on Jacob's calls" (one call at a time, one text after a miss). A review
+  older than 36h is refused. Stored as `iris_slack_commands.kind = 'review'`.
 
 ## Per-client setup for a new client going live
 

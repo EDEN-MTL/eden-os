@@ -14,13 +14,16 @@ vi.mock("../../shared/ghl", () => ghl);
 const slack = vi.hoisted(() => ({ sendMessage: vi.fn(async () => ({})) }));
 vi.mock("../../shared/slack", () => slack);
 
-const dialPending = vi.hoisted(() => ({ scheduleExplicitCallback: vi.fn(async () => true) }));
+const dialPending = vi.hoisted(() => ({ scheduleExplicitCallback: vi.fn(async () => true), queueColdLeadSweep: vi.fn(async (_c: string, ids: string[]) => ids.map((id) => ({ contactId: id, name: `Lead ${id}`, callAfter: new Date() }))) }));
 vi.mock("./dial-pending", () => dialPending);
+
+const review = vi.hoisted(() => ({ latestReview: vi.fn() }));
+vi.mock("./lead-review", () => review);
 
 const humanTouch = vi.hoisted(() => ({ checkHumanTouch: vi.fn(async () => ({ status: "none" })), DEFAULT_HUMAN_HANDS_OFF_DAYS: 7 }));
 vi.mock("./human-touch", () => humanTouch);
 
-import { handleCommandReply, isNo, isYes, prepareCallCommand, prepareStopCommand, SettingsLoader } from "./slack-commands";
+import { handleCommandReply, isNo, isYes, prepareCallCommand, prepareReviewActionCommand, prepareStopCommand, SettingsLoader } from "./slack-commands";
 
 const MARK = "U07H26WUGP5";
 const JACOB = "U06SA9782HW";
@@ -256,5 +259,79 @@ describe("handleCommandReply — the only thing that ever acts", () => {
     expect((close?.[1] as unknown[])[2]).toBe(`stopped in Slack by ${MARK}`);
     expect(reply).toMatch(/I've stopped/);
     expect(dialPending.scheduleExplicitCallback).not.toHaveBeenCalled();
+  });
+});
+
+describe("prepareReviewActionCommand", () => {
+  const finding = (id: string, name: string, kind = "owed_contact") => ({ kind, contactId: id, name, stageName: "Day 2", score: 90, headline: "", evidence: [], lastContact: "", suggested: "", assignedTo: null });
+  const ranAt = new Date(NOW.getTime() - 4 * 3_600_000);
+  const reviewOf = (...findings: any[]) => review.latestReview.mockResolvedValue({ ranAt, scanned: 100, findings });
+  const contact = (over: any = {}) => ({ contact: { phone: "+17095550101", tags: [], dnd: false, dateAdded: new Date(NOW.getTime() - 20 * 86_400_000).toISOString(), ...over } });
+
+  it("re-checks each flagged lead live and stores ONE pending review command; queues nothing", async () => {
+    reviewOf(finding("a", "Ann Lee"), finding("b", "Bo Chan"));
+    // per lead: the recent-activity count; then cancel-older update and the insert
+    db.query.mockResolvedValueOnce([{ n: "0" }]).mockResolvedValueOnce([{ n: "0" }]).mockResolvedValueOnce([]).mockResolvedValueOnce([{ id: "9" }]);
+    ghl.getContact.mockResolvedValue(contact());
+    const out = await prepareReviewActionCommand("3pc", {}, CTX, loader, NOW);
+    expect(out.status).toBe("needs_confirmation");
+    expect(out.summary).toContain("*Ann Lee*");
+    expect(out.summary).toContain("*Bo Chan*");
+    expect(dialPending.queueColdLeadSweep).not.toHaveBeenCalled();
+    const insert = db.query.mock.calls.find((c) => String(c[0]).includes("INSERT INTO iris_slack_commands"))!;
+    expect(insert[1][4]).toBe("review");
+    expect(JSON.parse(insert[1][9])).toEqual([{ id: "a", name: "Ann Lee" }, { id: "b", name: "Bo Chan" }]);
+  });
+
+  it("leaves out do-not-call, booked, no-phone, teammate-touched, already-in-hand and old-inquiry leads, with the reason", async () => {
+    reviewOf(finding("dnd", "D"), finding("bk", "B"), finding("np", "N"), finding("tm", "T"), finding("ih", "I"), finding("old", "O"), finding("ok", "Fine"));
+    ghl.getContact.mockImplementation(async (id: string) => {
+      if (id === "dnd") return contact({ dnd: true });
+      if (id === "bk") return contact({ tags: ["appt booked"] });
+      if (id === "np") return contact({ phone: "" });
+      if (id === "old") return contact({ dateAdded: new Date(NOW.getTime() - 200 * 86_400_000).toISOString() });
+      return contact();
+    });
+    humanTouch.checkHumanTouch.mockImplementation(async (id: string) => ({ status: id === "tm" ? "human" : "none" }));
+    // ih -> 1 recent row, ok -> 0, then cancel-older and insert
+    db.query.mockResolvedValueOnce([{ n: "1" }]).mockResolvedValueOnce([{ n: "0" }]).mockResolvedValueOnce([]).mockResolvedValueOnce([{ id: "3" }]);
+    const out = await prepareReviewActionCommand("3pc", {}, CTX, loader, NOW);
+    expect(out.status).toBe("needs_confirmation");
+    expect(out.summary).toContain("*Fine*");
+    expect(out.summary).not.toContain("*D*");
+    for (const why of ["do not call", "already booked", "no phone", "a teammate has been in touch", "Iris already has them in hand", "over 6 months old"]) expect(out.summary).toContain(why);
+  });
+
+  it("an old inquiry is fine when the lead is the one who wrote last", async () => {
+    reviewOf(finding("r", "Rae", "unanswered_reply"));
+    ghl.getContact.mockResolvedValue(contact({ dateAdded: new Date(NOW.getTime() - 300 * 86_400_000).toISOString() }));
+    db.query.mockResolvedValueOnce([{ n: "0" }]).mockResolvedValueOnce([]).mockResolvedValueOnce([{ id: "4" }]);
+    expect((await prepareReviewActionCommand("3pc", {}, CTX, loader, NOW)).status).toBe("needs_confirmation");
+  });
+
+  it("honours skip and only", async () => {
+    reviewOf(finding("a", "Ann Lee"), finding("b", "Bo Chan"));
+    db.query.mockResolvedValueOnce([{ n: "0" }]).mockResolvedValueOnce([]).mockResolvedValueOnce([{ id: "5" }]);
+    const out = await prepareReviewActionCommand("3pc", { skip: ["bo"] }, CTX, loader, NOW);
+    expect(out.summary).toContain("*Ann Lee*");
+    expect(out.summary).not.toContain("Bo Chan");
+    const none = await prepareReviewActionCommand("3pc", { only: ["zed"] }, CTX, loader, NOW);
+    expect(none.status).toBe("nothing_to_do");
+  });
+
+  it("refuses a stranger, and won't act on a review more than a day and a half old", async () => {
+    expect((await prepareReviewActionCommand("3pc", {}, { channelId: "C", userId: "U-stranger" }, loader, NOW)).status).toBe("refused");
+    review.latestReview.mockResolvedValue({ ranAt: new Date(NOW.getTime() - 40 * 3_600_000), scanned: 1, findings: [finding("a", "Ann Lee")] });
+    expect((await prepareReviewActionCommand("3pc", {}, CTX, loader, NOW)).status).toBe("nothing_to_do");
+  });
+
+  it("only a yes queues the call-and-text sweep, and the audit line says it came from the review", async () => {
+    db.query
+      .mockResolvedValueOnce([{ id: "9", kind: "review", contact_id: "a", contact_name: "Ann Lee", call_at: null, created_at: new Date(NOW.getTime() - 60_000), batch: [{ id: "a", name: "Ann Lee" }] }])
+      .mockResolvedValue([]);
+    const reply = await handleCommandReply({ text: "yes", userId: MARK, channelId: "C-calls" } as any, loader, "3pc");
+    expect(dialPending.queueColdLeadSweep).toHaveBeenCalledWith("3pc", ["a"], expect.any(Date));
+    expect(reply).toContain("lined up 1");
+    expect(slack.sendMessage).toHaveBeenCalledWith("iris", expect.objectContaining({ text: expect.stringContaining("flagged by the lead review") }));
   });
 });

@@ -1,6 +1,6 @@
 import { SlackIncomingMessage } from "../../shared/types";
 import { latestReview, reviewForLens, snoozeByName } from "./lead-review";
-import { handleCommandReply, listTeammateCalls, prepareCallCommand, prepareFollowUpCommand, prepareStopCommand, SettingsLoader } from "./slack-commands";
+import { handleCommandReply, listTeammateCalls, prepareCallCommand, prepareFollowUpCommand, prepareReviewActionCommand, prepareStopCommand, SettingsLoader } from "./slack-commands";
 import { upcomingCalls, recentLeads, leadOverview } from "./slack-reports";
 import { readFileSync } from "fs";
 import { join } from "path";
@@ -119,6 +119,18 @@ const IRIS_TOOLS: ToolDef[] = [
         daysAgo: { type: "number", description: "0 = today (default), 1 = yesterday." },
       },
       required: ["person"],
+    },
+  },
+  {
+    name: "iris_act_on_review",
+    description:
+      "PREPARES following up on the leads the lead review flagged (\"yes, act on them\", \"follow up on the flagged leads\"). Re-checks every flagged lead live, keeps only those still safe to contact (not do-not-call, not already booked, no teammate in touch, nothing in hand), and returns one summary; it does NOT queue anything. Show the summary and ask them to reply yes; it only happens after their yes, handled outside you. Never say anyone is lined up or called yourself.",
+    input_schema: {
+      type: "object",
+      properties: {
+        only: { type: "array", items: { type: "string" }, description: "Only these leads (names as flagged), when they name some." },
+        skip: { type: "array", items: { type: "string" }, description: "Leave these leads out (names as flagged)." },
+      },
     },
   },
   {
@@ -303,6 +315,9 @@ class IrisAgent extends BaseAgent {
         const view = reviewForLens(review, "iris", [], max);
         return JSON.stringify({ status: "ok", count: view.findings.length, instruction: "Show the post below as is.", post: view.text });
       }
+
+      case "iris_act_on_review":
+        return JSON.stringify(await prepareReviewActionCommand(String(input?.clientId ?? DEFAULT_CLIENT_ID), input ?? {}, ctx, loadSlackCommandSettings));
 
       case "iris_snooze_lead_review": {
         const clientId = String(input?.clientId ?? DEFAULT_CLIENT_ID);
@@ -569,7 +584,7 @@ to the buyer/seller ring groups, the works. If asked whether you're live,
 say yes plainly — don't hedge or undersell it.
 
 ## Calling and stopping leads when Mark or Jacob asks in Slack
-They can tell you "call Koren Pye now", "call her at 3pm", or "stop calling Matthew Power". They can also ask who a teammate called ("who did Jacob call today?" → iris_teammate_calls, which lists them and who was reached) and to follow up on the ones the teammate did not reach ("follow up on them" → iris_request_followup, one summary for the whole list). They can ask "who's worth checking in on?" (iris_leads_worth_checking, the nightly lead review) and tell you to stop flagging someone (iris_snooze_lead_review). Use iris_request_call / iris_request_stop / iris_request_followup — they only PREPARE the action and return a summary. Show that summary to them and ask them to reply "yes" to confirm or "no" to cancel. The action happens only when they reply yes (handled outside you); until then NOTHING has been done, so never say a call is placed, scheduled or stopped. If a tool says refused, ambiguous, not found or nothing to do, tell them plainly and follow its instruction. Anyone else asking gets a polite no.
+They can tell you "call Koren Pye now", "call her at 3pm", or "stop calling Matthew Power". They can also ask who a teammate called ("who did Jacob call today?" → iris_teammate_calls, which lists them and who was reached) and to follow up on the ones the teammate did not reach ("follow up on them" → iris_request_followup, one summary for the whole list). They can ask "who's worth checking in on?" (iris_leads_worth_checking, the nightly lead review) and tell you to stop flagging someone (iris_snooze_lead_review). When they say to act on or follow up on the flagged leads, use iris_act_on_review. Use iris_request_call / iris_request_stop / iris_request_followup / iris_act_on_review — they only PREPARE the action and return a summary. Show that summary to them and ask them to reply "yes" to confirm or "no" to cancel. The action happens only when they reply yes (handled outside you); until then NOTHING has been done, so never say a call is placed, scheduled or stopped. If a tool says refused, ambiguous, not found or nothing to do, tell them plainly and follow its instruction. Anyone else asking gets a polite no.
 
 ## Answering questions in Slack
 You have real tools — use them, never answer from memory or guesswork. Pick the one that fits:
