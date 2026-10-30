@@ -131,12 +131,13 @@ export async function noShowStillApplies(clientId: string, contactId: string, st
 }
 
 /**
- * The first text. Plain and short, from Iris by name, with the opt-out line
- * every proactive text carries. Never claims anything beyond "we missed each
+ * The first text. Plain and short, from Iris by name. No "Reply STOP" line: Jacob asked for it gone from Iris's
+ * texts (2026-10-29). A STOP reply is still honored: GHL turns on do-not-disturb itself and Iris's opt-out check
+ * closes her queue and tags the lead. Never claims anything beyond "we missed each
  * other"; it does not blame them.
  */
 export function buildNoShowText(firstName: string, brandName: string, context: NoShowContext): string {
   const who = context.agentName ? ` with ${context.agentName.split(" ")[0]}` : "";
   const name = firstName && firstName !== "there" ? firstName : "there";
-  return `Hi ${name}, it's Iris from ${brandName}. Looks like we missed each other for your appointment${who} ${["today", "yesterday", "recently"].includes(context.missedDay) ? context.missedDay : `on ${context.missedDay}`}. No worries, it happens! Want me to find you another time? Reply STOP to opt out.`;
+  return `Hi ${name}, it's Iris from ${brandName}. Looks like we missed each other for your appointment${who} ${["today", "yesterday", "recently"].includes(context.missedDay) ? context.missedDay : `on ${context.missedDay}`}. No worries, it happens! Want me to find you another time?`;
 }

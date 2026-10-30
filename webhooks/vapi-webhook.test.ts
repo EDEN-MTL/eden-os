@@ -1020,7 +1020,7 @@ describe("maybeReopenPendingCall — the text after two missed calls", () => {
     expect(ghl.sendSMS).toHaveBeenCalledTimes(1);
     const [contactId, text] = ghl.sendSMS.mock.calls[0];
     expect(contactId).toBe("contact-1");
-    expect(text).toBe("Hi Eileen, it's Iris from 3 Percent East Coast. I tried calling you about your home search but missed you. Is there a better time for a quick call, or would you rather just text? Reply STOP to opt out.");
+    expect(text).toBe("Hi Eileen, it's Iris from 3 Percent East Coast. I tried calling you about your home search but missed you. Is there a better time for a quick call, or would you rather just text?");
     expect(slack.sendMessage.mock.calls.some((c) => String((c[1] as any)?.text).includes("Texted *Eileen Hillier* after 2 unanswered calls"))).toBe(true);
     // the next call is still lined up
     expect(dialPending.reopenForNextAttempt).toHaveBeenCalled();
