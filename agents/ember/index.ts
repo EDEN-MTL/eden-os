@@ -6,6 +6,7 @@ import { EmberDisabledError, sendPendingForClient } from "./send";
 import { getHealth, getLead, getStats, listLeads, updateLead } from "./store";
 import { resumeHealth } from "./health";
 import { NurtureStatus } from "./types";
+import { latestReview, reviewForLens } from "../iris/lead-review";
 
 const CLIENT_ID_PROP = {
   type: "string",
@@ -14,6 +15,12 @@ const CLIENT_ID_PROP = {
 };
 
 const TOOLS: ToolDef[] = [
+  {
+    name: "ember_leads_worth_checking",
+    description:
+      "The lead review for Ember's stages (Replied, Long Term Nurturing, Not Ready): old leads worth checking in on, with the evidence, such as a lead who replied and nobody answered, or who was promised a follow-up and never got one. It's the nightly review's latest result. Use for \"which of the nurture leads are worth a check-in?\".",
+    input_schema: { type: "object", properties: { clientId: CLIENT_ID_PROP } },
+  },
   {
     name: "ember_pipeline_stats",
     description:
@@ -172,6 +179,14 @@ plainly. Respond concisely, like a teammate texting a quick update.`;
 
   protected async executeTool(name: string, input: any, _attachment?: Attachment, _ctx?: ToolContext): Promise<string> {
     switch (name) {
+      case "ember_leads_worth_checking": {
+        const clientId = resolveClientId(input);
+        const review = await latestReview(clientId);
+        if (!review) return JSON.stringify({ status: "no_review_yet", note: "The nightly review hasn't run yet; it runs at 7:30 AM St. John's time." });
+        const view = reviewForLens(review, "ember", loadEmberConfig(clientId)?.includeStages ?? []);
+        return JSON.stringify({ status: "ok", count: view.findings.length, instruction: "Show the post below as is.", post: view.text });
+      }
+
       case "ember_pipeline_stats": {
         const clientId = resolveClientId(input);
         const stats = await getStats(clientId);

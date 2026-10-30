@@ -155,6 +155,8 @@ export interface IrisConfig {
    * -> notReadyStage; opted out -> notInterestedStage. Stage NAMES, resolved against the live pipeline.
    */
   followUpCohort?: { notReadyStage: string; notInterestedStage: string };
+  /** The lead review (lead-review.ts): contacts to never flag. */
+  leadReview?: { excludeEmailDomains?: string[]; excludeContactIds?: string[] };
   /** Where Iris posts her morning summary (a channel id; the bot must be a member). */
   dailySummary?: { channel: string };
   /** Local dates (YYYY-MM-DD, client timezone) Iris places no calls — holidays. Due calls roll to the next open day. */

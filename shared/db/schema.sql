@@ -866,3 +866,24 @@ CREATE TABLE IF NOT EXISTS lens_other_costs (
     created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 CREATE INDEX IF NOT EXISTS idx_lens_other_costs ON lens_other_costs(client_id, cost_date);
+
+-- The lead review (agents/iris/lead-review.ts): each nightly run's findings, and leads someone asked it to stop
+-- flagging for a while ("snoozed", e.g. a lead a teammate is handling off the system).
+CREATE TABLE IF NOT EXISTS lead_review_runs (
+    id BIGSERIAL PRIMARY KEY,
+    client_id TEXT NOT NULL,
+    ran_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    scanned INTEGER NOT NULL,
+    findings JSONB NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_lead_review_runs ON lead_review_runs(client_id, ran_at DESC);
+CREATE TABLE IF NOT EXISTS lead_review_snoozes (
+    client_id TEXT NOT NULL,
+    contact_id TEXT NOT NULL,
+    contact_name TEXT NOT NULL,
+    until TIMESTAMPTZ NOT NULL,
+    reason TEXT,
+    requested_by TEXT,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    PRIMARY KEY (client_id, contact_id)
+);

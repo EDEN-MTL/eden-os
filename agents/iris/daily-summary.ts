@@ -12,6 +12,7 @@ import { formatLocal } from "./cadence";
 import { localDayBounds } from "./teammate-calls";
 import { reviewCall } from "./call-review";
 import { callAnswered } from "./followup-cohort";
+import { latestReview } from "./lead-review";
 
 export interface SummaryCall {
   name: string;
@@ -34,6 +35,8 @@ export interface SummaryData {
   waitingOnText: number;
   cohortActive: number;
   watchdogAlerts: number;
+  /** The lead review's top findings (name, stage, headline) and how many there are in all; null when there is no fresh review. */
+  review: { total: number; top: { name: string; stageName: string; headline: string }[] } | null;
 }
 
 const names = (list: string[], max = 6): string => (list.length <= max ? list.join(", ") : `${list.slice(0, max).join(", ")} and ${list.length - max} more`);
@@ -62,6 +65,12 @@ export function formatDailySummary(d: SummaryData): string {
   else lines.push(`• Calls lined up: ${d.todayCalls.length} — ${names(d.todayCalls.map((c) => `${c.name} ${c.at}`), 8)}`);
   if (d.waitingOnText > 0) lines.push(`• Waiting on a text reply: ${d.waitingOnText}`);
   if (d.cohortActive > 0) lines.push(`• In this week's follow-up group: ${d.cohortActive}`);
+
+  if (d.review && d.review.total > 0) {
+    lines.push("", `*Worth checking in on* (${d.review.total} from last night's review)`);
+    for (const r of d.review.top) lines.push(`• *${r.name}* (${r.stageName}): ${r.headline}`);
+    if (d.review.total > d.review.top.length) lines.push(`• …ask me "who's worth checking in on?" for the full list with the evidence`);
+  }
 
   const flagged = d.calls.filter((c) => c.flags.length > 0);
   if (flagged.length > 0 || d.watchdogAlerts > 0) {
@@ -128,7 +137,11 @@ export async function gatherSummary(clientId: string, now: Date, timeZone: strin
   const cohort = await query<{ n: number }>(`SELECT count(*)::int AS n FROM iris_followup_cohort WHERE client_id = $1 AND status = 'active'`, [clientId]).catch(() => [{ n: 0 }]);
   const alerts = await query<{ n: number }>(`SELECT count(*)::int AS n FROM watchdog_alerts WHERE last_alert_at > now() - interval '24 hours'`).catch(() => [{ n: 0 }]);
 
+  const review = await latestReview(clientId).catch(() => null);
+  const freshReview = review && now.getTime() - review.ranAt.getTime() < 36 * 3_600_000 ? review : null;
+
   return {
+    review: freshReview ? { total: freshReview.findings.length, top: freshReview.findings.slice(0, 5).map((f) => ({ name: f.name, stageName: f.stageName, headline: f.headline })) } : null,
     dayLabel: new Intl.DateTimeFormat("en-US", { timeZone, weekday: "long", month: "long", day: "numeric" }).format(now),
     calls,
     appointments: nameOf(appts),

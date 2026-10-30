@@ -168,6 +168,12 @@
     },
     "links": { "vapiCallUrl": "https://dashboard.vapi.ai/logs?callId={callId}&datePreset=last7d" },
     "linksNote": "Mark, 2026-10-15: the address of one call on Vapi's dashboard, copied from a real link (opens the Logs page filtered to that call; click the row to open it). {callId} is replaced with the call's id. datePreset=last7d is what Vapi showed — a call older than 7 days won't appear under that filter. Needs a Vapi login, like the dashboard itself. GHL links go to the contact page.",
+    "leadReview": {
+      "excludeEmailDomains": ["edenmtl.com"],
+      "excludeContactIds": ["S6Bojyhw3GQK5UssVLcy"],
+      "excludeContactIdsNote": "S6Bojyhw3GQK5UssVLcy = 'Mark Buyer', Mark's own test lead.",
+      "note": "Mark, 2026-10-29: the lead review flags leads worth checking in on (agents/iris/lead-review.ts). Eden's own test contacts (email at these domains) are never flagged."
+    },
     "dailySummary": {
       "channel": "C0BLPMHNXL1",
       "note": "Mark, 2026-10-27: Iris posts a morning summary to #backend-ops at 8:15 AM NL (yesterday's calls, who was reached, appointments, what's lined up today, anything flagged)."

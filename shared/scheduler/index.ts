@@ -29,6 +29,7 @@ import { runAppointmentSync } from "../../agents/lens/dashboard/appointments-syn
 import { runFollowUpCohortCheck } from "../../agents/iris/followup-cohort";
 import { recordHeartbeat, runWatchdog } from "../../agents/iris/watchdog";
 import { runDailySummary } from "../../agents/iris/daily-summary";
+import { runNightlyLeadReview } from "../../agents/iris/lead-review";
 import { sendBlocks, sendMessage } from "../slack";
 import { canApproveFromSlack, flagBlocks, runApprovalNudges } from "../../agents/forge/ads/approval";
 import { listEmberClientIds, loadEmberConfig } from "../../agents/ember/config";
@@ -370,6 +371,9 @@ export function startScheduler(): void {
   cron.schedule("*/5 * * * *", () => runWatchdog(), { timezone: TIMEZONE });
   // 8:15 AM St. John's time: Iris's morning summary in #backend-ops, before the 10:00 AM calls.
   cron.schedule("15 8 * * *", () => runDailySummary(), { timezone: "America/St_Johns" });
+  // 7:30 AM St. John's time, ahead of the summary that quotes it: Iris and Ember read every lead's conversation and notes
+  // and list who is worth checking in on. About two minutes; read-only. See agents/iris/lead-review.ts.
+  cron.schedule("30 7 * * *", () => runNightlyLeadReview(), { timezone: "America/St_Johns" });
   // Every 10 minutes: one nudge in the thread of any Forge flag still unanswered after 2 hours (agents/forge/ads/approval.ts).
   cron.schedule("*/10 * * * *", () => runApprovalNudges().catch((e) => console.error("[SCHEDULER] Approval nudges failed:", e instanceof Error ? e.message : e)), { timezone: TIMEZONE });
   // Every 5 minutes: finds cards the team just moved to No-Show and starts Iris's follow-up (text now,
