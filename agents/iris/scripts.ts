@@ -774,6 +774,22 @@ The point of this call is that an agent can pick this lead up right after it (a 
 - Narrowing doesn't change the rest of the call. Once the questions are done, go straight to the transfer or the booking as described below.`;
 }
 
+/**
+ * The text version of specificAnswersRule (Mark, 2026-11-03: "make the texts ask for specific budget and timeline
+ * too"). Same goal: whoever picks the lead up should have a real number and a real month, not the form's bucket.
+ */
+export function specificAnswersSmsRule(intent: CallIntent): string {
+  const budget = intent === "seller" ? "" : `
+- BUDGET: ask what specific budget they have in mind, not just a range. If they reply with a range ("300-600k"), "around" or "flexible", ask ONE more time for a number, e.g. "If you had to pick one number to stay under, what would it be?". A rough single figure counts.`;
+  return `
+## Get specific answers
+The aim is that an agent can pick this lead up straight after this chat already knowing their real numbers, so wherever an answer is a range or a bucket, narrow it instead of accepting it.${budget}
+- TIMELINE: for "3-6 months" or "as soon as possible", ask whether they have a particular timeline in mind: a month, a season, or an event they're working around.
+- ONE follow-up per topic, never two. If they still can't or won't say, accept it kindly and move on; drop it if they sound annoyed. Still one question per text.
+- Narrow by building on what they told you ("You put 3-6 months, any particular month in mind?"), never by repeating the question cold.
+- Their specific figure or month is the real answer: use it, not the range, in save_qualification_notes.`;
+}
+
 function noShowCallBlock(ctx: NoShowPromptContext): string {
   return `## Why you're calling — a missed appointment, not a new lead
 This person booked an appointment${noShowAgentPhrase(ctx)} for ${ctx.missedWhen} and did not make it. The team marked it a no-show, and you are following up to get them rebooked. They were already qualified when they booked, so:
@@ -2025,9 +2041,9 @@ export function buildSmsQualificationPrompt(
   const known: string[] = [];
   if (lead.propertyInterest) known.push(`property type: ${lead.propertyInterest}`);
   if (lead.bedrooms) known.push(`bedrooms: ${lead.bedrooms}`);
-  if (lead.timeline) known.push(`timeline: ${lead.timeline}`);
+  if (lead.timeline) known.push(`timeline: ${lead.timeline}${isTimelineBucket(lead.timeline) ? " (a rough bucket from the form: ask for something more particular)" : ""}`);
   if (lead.intent !== "seller" && lead.financing) known.push(`financing: ${lead.financing}`);
-  if (lead.intent !== "seller" && lead.budget) known.push(`budget: ${expandBudgetShorthand(lead.budget)}`);
+  if (lead.intent !== "seller" && lead.budget) known.push(`budget: ${expandBudgetShorthand(lead.budget)}${isBudgetRange(lead.budget) ? " (a range from the form: ask for a specific number)" : ""}`);
   if (lead.workingWithRealtor !== null) known.push(`working with a realtor: ${lead.workingWithRealtor ? "yes" : "no"}`);
 
   const knownBlock =
@@ -2092,6 +2108,7 @@ ${knownBlock}
 
 ## What you still need to find out — ask one at a time, in your own words
 ${questionsToAsk.map((q) => `- ${q}`).join("\n")}
+${specificAnswersSmsRule(lead.intent)}
 
 ## Common situations — approved wording, use as-is or adapt naturally
 - If they say they're already working with an agent (buyer) or already listed/represented (seller): "${EDGE_CASE_RESPONSES.buyerHasAgent[0]}" or similar.

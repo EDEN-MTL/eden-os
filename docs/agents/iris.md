@@ -112,6 +112,8 @@ It only gates the dial — it has no effect on whether leads get queued.
   rule: one follow-up per topic, accept "I don't know", the specific figure replaces the range in the recap and in
   `save_isa_notes`. A single figure or a specific date is still just confirmed (`isBudgetRange`, `isTimelineBucket`).
   Not on no-show calls. Checked with scripts/check-iris-call-prompt.ts (the four "vague budget" cases).
+  Text qualification does the same (`specificAnswersSmsRule` + the "ask for a specific number" tags in the Already-known
+  block of `buildSmsQualificationPrompt`); no-show texts are untouched.
 - Daylight saving and the scheduler: all crons run in `SCHEDULER_TIMEZONE` (America/Toronto). When the clocks go back,
   node-cron skips the repeated hour for jobs pinned to a zone: on 2026-11-01 the every-minute call job paused 06:00-07:00
   UTC and the watchdog posted a false "scheduler stalled". The watchdog now ignores a quiet scheduler for 3 hours after
