@@ -503,8 +503,29 @@ const FINANCING_PHRASES: Record<Exclude<Financing, null>, string> = {
  * instruction (see verifyingBlock) tells her to pick a different one than
  * she used last, not just repeat option 1 every time.
  */
+/**
+ * Mark, 2026-11-03: the form only ever gives a bucket ("3-6 months", "ASAP", "4+ months"), and Iris used to just
+ * confirm the bucket. The agent who picks the lead up needs a particular month, so a bucket gets narrowed instead.
+ */
+export function isTimelineBucket(timeline: string): boolean {
+  return /\d\s*(?:-|–|to)\s*\d|\d\s*\+|\b(?:within|under|over|less than|more than|about|around|next|few|asap|flexible|soon)\b/i.test(timeline);
+}
+
 function verifyTimelineLines(intent: CallIntent, timeline: string): string[] {
   const verb = intent === "seller" || intent === "downsize" ? "sell" : "make a move";
+  if (isTimelineBucket(timeline)) {
+    if (/asap|soon/i.test(timeline)) {
+      return [
+        `I see you're hoping to ${verb} as soon as possible — is there a particular month or date you'd like to be in by?`,
+        `You mentioned wanting to ${verb} quickly — do you have a particular timeline in mind?`,
+      ];
+    }
+    return [
+      `I see you're thinking ${timeline} to ${verb} — do you have any particular timeline in mind?`,
+      `You put down ${timeline} to ${verb} — is there a particular month you're aiming for?`,
+      `And for ${timeline}, is there a specific time frame you're working toward?`,
+    ];
+  }
   return [
     `You mentioned you're looking to ${verb} within ${timeline} — does that still sound right?`,
     `Timeline-wise, still hoping to ${verb} within ${timeline}?`,
@@ -641,8 +662,20 @@ export function expandBudgetShorthand(budget: string): string {
   return `${lead}${joined}${/dollar|cad|\$/i.test(budget) || found.some((f) => f.unit || f.value >= 1000) ? " dollars" : ""}`;
 }
 
+/** A budget that is a span or a one-sided bound ("$299K-$600K", ">$500K"), not one figure the lead picked. */
+export function isBudgetRange(budget: string): boolean {
+  return /^\s*[<>]/.test(budget) || /\+\s*$/.test(budget) || (budget.match(/\d[\d,.]*\s*[kKmM]?\b/g) ?? []).length >= 2;
+}
+
 function verifyBudgetLines(budget: string): string[] {
   const spoken = expandBudgetShorthand(budget);
+  if (isBudgetRange(budget)) {
+    return [
+      `I see a budget of ${spoken} — what specific budget do you have in mind?`,
+      `You put down ${spoken} for a budget — where in there are you really hoping to land?`,
+      `On budget, the form says ${spoken} — what specific number do you have in mind?`,
+    ];
+  }
   return [
     `I also see you mentioned a budget around ${spoken} — does that still sound right?`,
     `Budget-wise, still around ${spoken}?`,
@@ -723,6 +756,24 @@ export function noShowCallContextLines(ctx: NoShowPromptContext): string[] {
   ];
 }
 
+/**
+ * Mark, 2026-11-03: Iris was confirming the form's broad answers (a budget span, a 3-6 month bucket) and moving on.
+ * The goal of the first call is that the agent can pick the lead up straight after it (live transfer or a booked
+ * call) with specific answers, so Iris narrows what is vague. One follow-up per topic: this is a conversation,
+ * not an interrogation, and a lead who truly doesn't know is a fine answer.
+ */
+export function specificAnswersRule(intent: CallIntent): string {
+  const budget = intent === "seller" ? "" : `
+- BUDGET: a span ("two hundred ninety-nine thousand to six hundred thousand dollars") is not an answer the agent can use. Ask what specific budget they have in mind. If they answer with another span, "around", "flexible" or "not sure", ask ONE more time for a number, e.g. "If you had to pick one number you'd be comfortable staying under, what would it be?" A rough single figure counts.`;
+  return `\n\n## Get specific answers — the goal of this call
+The point of this call is that an agent can pick this lead up right after it (a live transfer, or a booked call) already knowing their real numbers. Broad answers don't get them there, so wherever an answer is a range or a bucket, narrow it down instead of just accepting it.${budget}
+- TIMELINE: a bucket ("three to six months", "as soon as possible") is not an answer either. Ask whether they have a particular timeline in mind: a month, a season, or an event they're working around (a lease ending, school starting). If they say "flexible" or "not sure", ask once what would make it ${intent === "seller" ? "the right time to list" : "the right time to move"}.
+- ONE follow-up per topic, never two. If they still can't or won't give a specific answer, accept it kindly ("No problem, that's helpful") and move on. A lead who feels grilled hangs up, so drop it the moment they sound irritated.
+- Narrow in a way that builds on what they already told you ("you put down three to six months, so is there a particular month..."), never as a cold repeat of the question.
+- Whatever specific figure or month they give is the real answer: it replaces the form's range everywhere, including your recap and the note you save with save_isa_notes (use their number, not the range). All of it still has to be said in words.
+- Narrowing doesn't change the rest of the call. Once the questions are done, go straight to the transfer or the booking as described below.`;
+}
+
 function noShowCallBlock(ctx: NoShowPromptContext): string {
   return `## Why you're calling — a missed appointment, not a new lead
 This person booked an appointment${noShowAgentPhrase(ctx)} for ${ctx.missedWhen} and did not make it. The team marked it a no-show, and you are following up to get them rebooked. They were already qualified when they booked, so:
@@ -798,7 +849,7 @@ export function buildLeadQualificationPrompt(
     // conversation until now — confirmed live, 2026-09-06: a real lead's
     // known $450k budget was still asked cold on every test call.
     if (lead.budget) verifying.push(verifyBudgetLines(lead.budget));
-    else stillNeeded.push("What's your budget range?");
+    else stillNeeded.push("What specific budget do you have in mind?");
   }
 
   if (lead.workingWithRealtor !== null) verifying.push(verifyWorkingWithRealtorLines(lead.workingWithRealtor));
@@ -843,6 +894,8 @@ The moment the lead actually answers one of these — confirms it, or gives you 
    * two blocks above each one lands in (verified vs. still-needed), since
    * either can be known or unknown independently.
    */
+  const specificAnswersBlock = noShow ? "" : specificAnswersRule(lead.intent);
+
   const propertyTypeOrderingRule = noShow ? "" : `\n\n## Ordering rule — property type, then bedrooms/bathrooms, always back to back
 The moment the type of home is settled (confirmed if known, answered if you had to ask), your VERY NEXT question — before timeline, budget, area, financing, or anything else — must be how many bedrooms and bathrooms they need. Never let another topic land between these two.`;
 
@@ -1412,7 +1465,7 @@ need to work out an exact date/time from something relative the lead says
 ("tomorrow afternoon", "Friday morning") — never guess or invent a time that
 doesn't map back to this.
 
-${verifyingBlock}${stillNeededBlock}${propertyTypeOrderingRule}
+${verifyingBlock}${stillNeededBlock}${specificAnswersBlock}${propertyTypeOrderingRule}
 
 ## How you open the call
 NOTHING is spoken for you. The call connects and you stay silent until you have
