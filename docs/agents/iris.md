@@ -106,6 +106,10 @@ It only gates the dial — it has no effect on whether leads get queued.
   under Slack's **resolved** channel id + `ts`, so thread replies have context. Posts made
   before 2026-09-23 have no seeded history.
 - Iris's Slack tools: `iris_lookup_lead`, `iris_pipeline_stats`.
+- Daylight saving and the scheduler: all crons run in `SCHEDULER_TIMEZONE` (America/Toronto). When the clocks go back,
+  node-cron skips the repeated hour for jobs pinned to a zone: on 2026-11-01 the every-minute call job paused 06:00-07:00
+  UTC and the watchdog posted a false "scheduler stalled". The watchdog now ignores a quiet scheduler for 3 hours after
+  the zone's offset changes (`clockChangedRecently`). Calls are unaffected in practice (the hour is the middle of the night).
 - Acting on the nightly lead review (`iris_act_on_review`, `prepareReviewActionCommand` in slack-commands.ts):
   Mark or Jacob says "act on the flagged leads", Iris re-reads every flagged lead LIVE (the review is up to a day
   old) and drops anyone do-not-call, booked, without a phone, touched by a teammate (calls count), already queued

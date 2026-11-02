@@ -22,17 +22,29 @@ import { loadIrisConfig } from "./index";
 /** #backend-ops */
 const BACKEND_OPS_CHANNEL = process.env.WATCHDOG_CHANNEL || "C0BLPMHNXL1";
 
+/** The zone every scheduler cron runs in (shared/scheduler/index.ts). */
+export const SCHEDULER_TIMEZONE = "America/Toronto";
+
 export const DUE_CALL_LATE_MINUTES = 30;
 export const CALL_NO_REPORT_MINUTES = 20;
 export const HEARTBEAT_STALE_MINUTES = 10;
 /** A fresh deploy has not had a minute to write its first heartbeat. */
 const STARTUP_GRACE_MINUTES = 10;
+/**
+ * How long after a clock change a quiet scheduler is put down to the change. When the clocks go back, node-cron
+ * skips the repeated hour for jobs pinned to a time zone. On 2026-11-01 the every-minute call job stopped from
+ * 06:00 to 07:00 UTC, exactly Toronto's fall-back, and the watchdog raised a false "scheduler stalled" alarm.
+ * Calls were not affected (it was the middle of the night) and the job resumed by itself.
+ */
+const CLOCK_CHANGE_WINDOW_HOURS = 3;
 
 export interface WatchdogSnapshot {
   /** Minutes since the call scheduler last ran, or null when it never has. */
   heartbeatAgeMinutes: number | null;
   /** Minutes this server process has been up. */
   uptimeMinutes: number;
+  /** The scheduler's time zone changed its UTC offset (daylight saving) within the last few hours. */
+  clockChangedRecently?: boolean;
   lateCalls: { name: string; minutesLate: number }[];
   silentCalls: { name: string; minutesAgo: number }[];
 }
@@ -43,10 +55,22 @@ export interface Problem {
   cooldownHours: number;
 }
 
+/** The zone's UTC offset in minutes at an instant. */
+function offsetMinutes(at: Date, timeZone: string): number {
+  const parts = new Intl.DateTimeFormat("en-US", { timeZone, hourCycle: "h23", year: "numeric", month: "numeric", day: "numeric", hour: "numeric", minute: "numeric", second: "numeric" }).formatToParts(at);
+  const get = (type: string) => Number(parts.find((p) => p.type === type)?.value);
+  return (Date.UTC(get("year"), get("month") - 1, get("day"), get("hour"), get("minute"), get("second")) - Math.floor(at.getTime() / 1000) * 1000) / 60_000;
+}
+
+/** True when daylight saving started or ended in `timeZone` within the last few hours. */
+export function clockChangedRecently(now: Date, timeZone: string = SCHEDULER_TIMEZONE, hours: number = CLOCK_CHANGE_WINDOW_HOURS): boolean {
+  return offsetMinutes(now, timeZone) !== offsetMinutes(new Date(now.getTime() - hours * 3_600_000), timeZone);
+}
+
 /** The whole judgement, pure. */
 export function findProblems(s: WatchdogSnapshot): Problem[] {
   const out: Problem[] = [];
-  if (s.uptimeMinutes >= STARTUP_GRACE_MINUTES && s.heartbeatAgeMinutes !== null && s.heartbeatAgeMinutes > HEARTBEAT_STALE_MINUTES) {
+  if (!s.clockChangedRecently && s.uptimeMinutes >= STARTUP_GRACE_MINUTES && s.heartbeatAgeMinutes !== null && s.heartbeatAgeMinutes > HEARTBEAT_STALE_MINUTES) {
     out.push({
       key: "scheduler-stalled",
       text: `🛑 *Iris's call scheduler has not run for ${Math.round(s.heartbeatAgeMinutes)} minutes.* No calls are going out. The server is up, so the scheduled job is stuck — it needs a look (or a restart).`,
@@ -132,6 +156,7 @@ async function takeSnapshot(): Promise<WatchdogSnapshot> {
   return {
     heartbeatAgeMinutes: beat[0] ? Number(beat[0].minutes) : null,
     uptimeMinutes: process.uptime() / 60,
+    clockChangedRecently: clockChangedRecently(new Date()),
     lateCalls: late.map((r) => ({ name: r.name ?? r.contact_id, minutesLate: Number(r.minutes) })),
     silentCalls: silent.map((r) => ({ name: r.name ?? r.contact_id, minutesAgo: Number(r.minutes) })),
   };

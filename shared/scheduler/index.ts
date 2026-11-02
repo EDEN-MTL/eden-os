@@ -27,7 +27,7 @@ import { runDialPendingCalls } from "../../agents/iris/dial-pending";
 import { runNoShowScan } from "../../agents/iris/no-show";
 import { runAppointmentSync } from "../../agents/lens/dashboard/appointments-sync";
 import { runFollowUpCohortCheck } from "../../agents/iris/followup-cohort";
-import { recordHeartbeat, runWatchdog } from "../../agents/iris/watchdog";
+import { recordHeartbeat, runWatchdog, SCHEDULER_TIMEZONE } from "../../agents/iris/watchdog";
 import { runDailySummary } from "../../agents/iris/daily-summary";
 import { runNightlyLeadReview } from "../../agents/iris/lead-review";
 import { sendBlocks, sendMessage } from "../slack";
@@ -37,7 +37,7 @@ import { runEmberScanForClient } from "../../agents/ember/scan";
 import { sendPendingForClient } from "../../agents/ember/send";
 import { pollRepliesForClient } from "../../agents/ember/replies";
 
-const TIMEZONE = "America/Toronto";
+const TIMEZONE = SCHEDULER_TIMEZONE;
 
 async function listMetaClientIds(): Promise<string[]> {
   const rows = await query<{ client_id: string }>(`SELECT DISTINCT client_id FROM meta_credentials`);
