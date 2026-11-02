@@ -8,7 +8,7 @@ const idx = vi.hoisted(() => ({ loadIrisConfig: vi.fn() }));
 vi.mock("./index", () => idx);
 
 import { assertSendableText, BlockedTextError } from "../../shared/ghl/outbound-guard";
-import { alertOnce, announceStartup, findProblems, runWatchdog, type WatchdogSnapshot } from "./watchdog";
+import { alertOnce, announceStartup, clockChangedRecently, findProblems, runWatchdog, type WatchdogSnapshot } from "./watchdog";
 
 const healthy = (over: Partial<WatchdogSnapshot> = {}): WatchdogSnapshot => ({ heartbeatAgeMinutes: 1, uptimeMinutes: 600, lateCalls: [], silentCalls: [], ...over });
 
@@ -21,11 +21,31 @@ describe("findProblems", () => {
     expect(findProblems(healthy({ heartbeatAgeMinutes: 25, uptimeMinutes: 2 }))).toEqual([]);
     expect(findProblems(healthy({ heartbeatAgeMinutes: null }))).toEqual([]);
   });
+  it("puts a quiet scheduler down to a clock change instead of alarming", () => {
+    expect(findProblems(healthy({ heartbeatAgeMinutes: 61, clockChangedRecently: true }))).toEqual([]);
+    expect(findProblems(healthy({ heartbeatAgeMinutes: 61, clockChangedRecently: false }))[0]).toMatchObject({ key: "scheduler-stalled" });
+  });
   it("names the overdue calls and the calls that never reported back", () => {
     const p = findProblems(healthy({ lateCalls: [{ name: "Sabrina Marie", minutesLate: 44 }], silentCalls: [{ name: "Soyemi Damilola", minutesAgo: 31 }] }));
     expect(p.map((x) => x.key)).toEqual(["calls-overdue", "calls-no-report"]);
     expect(p[0].text).toContain("Sabrina Marie (44 min late)");
     expect(p[1].text).toContain("Soyemi Damilola (31 min ago)");
+  });
+});
+
+describe("clockChangedRecently", () => {
+  const toronto = "America/Toronto";
+  it("is true just after the clocks go back (2026-11-01 06:00 UTC), when the false alarm fired at 07:00", () => {
+    expect(clockChangedRecently(new Date("2026-11-01T07:00:00Z"), toronto)).toBe(true);
+    expect(clockChangedRecently(new Date("2026-11-01T08:30:00Z"), toronto)).toBe(true);
+  });
+  it("is true just after the clocks go forward (2027-03-14 07:00 UTC)", () => {
+    expect(clockChangedRecently(new Date("2027-03-14T08:00:00Z"), toronto)).toBe(true);
+  });
+  it("is false once the window has passed and on ordinary days", () => {
+    expect(clockChangedRecently(new Date("2026-11-01T10:00:00Z"), toronto)).toBe(false);
+    expect(clockChangedRecently(new Date("2026-10-20T15:00:00Z"), toronto)).toBe(false);
+    expect(clockChangedRecently(new Date("2026-07-04T15:00:00Z"), toronto)).toBe(false);
   });
 });
 
