@@ -58,6 +58,17 @@ async function main() {
     "Yeah, still the plan.",
     (o) => /budget/i.test(o) ? /thousand|hundred|million/i.test(o) : true,
   ]);
+  // Specific answers (Mark, 2026-11-03): a budget span / timeline bucket is narrowed once, and only once.
+  const QH = [{ role: "user", content: "Hello?" }, { role: "assistant", content: OPENER }, { role: "user", content: "Yes." }, { role: "assistant", content: "How are you doing today?" }, { role: "user", content: "Good." }];
+  const BUDGET_Q = { role: "assistant", content: "I see a budget of three hundred thousand to six hundred thousand dollars. What specific budget do you have in mind?" };
+  // Asking for a number, or putting a figure back to them in words to confirm ("so around four fifty then?"), both pin it down.
+  const ASKS_NUMBER = /(number|figure|specific|comfortable|stay under|land|ballpark|top end|ceiling|max|thousand|hundred|million)/i;
+  cases.push(["vague budget answer gets ONE follow-up for a number", [...QH, BUDGET_Q], "Somewhere in the middle I guess.", (o) => ASKS_NUMBER.test(o) && /\?/.test(o)]);
+  cases.push(["a specific budget is accepted, not re-asked", [...QH, BUDGET_Q], "About four fifty.", (o) => !/budget|number|specific/i.test(o) || /\b(got it|great|perfect|awesome|sounds good|thanks)\b/i.test(o) && !/what specific budget/i.test(o)]);
+  cases.push(["still vague after the follow-up: accepted, no second ask", [...QH, BUDGET_Q, { role: "user", content: "Somewhere in the middle I guess." }, { role: "assistant", content: "Totally fair. If you had to pick one number you'd be comfortable staying under, what would it be?" }], "Honestly I don't know yet.", (o) => !/(budget|number|figure|specific)[^.?]*\?/i.test(o)]);
+  // Iris may take another known item first (working with a realtor, etc.), so this only checks she keeps qualifying
+  // rather than transferring early; the narrowed-timeline wording itself shows in the samples.
+  cases.push(["after a budget she keeps qualifying (timeline narrowed or next item), no early transfer", [...QH, { role: "assistant", content: "I see a budget of three hundred thousand to six hundred thousand dollars. What specific budget do you have in mind?" }, { role: "user", content: "About four fifty." }], "Yep.", (o) => /\?/.test(o) && !/transfer|connect you|put you through/i.test(o)]);
   const starters = NOSHOW ? [] : ["Hello", "Hi", "Yeah?", "Hello, this is Amanda", "Hello? Who's this?", "Hello? Hello?", "Hello? Can you hear me?", "Hello? Hello? Hello? Hello? Hello?", "Hello?? Anybody there?"];
   for (const st of starters) cases.push(["real person: " + st, [], st, (o) => norm(o).includes(norm(OPENER))]);
   // After "How are you doing today?" is answered, Iris gives the reason for the call.
@@ -74,7 +85,7 @@ async function main() {
   const only = process.env.ONLY === "opener";
   for (const [name, hist, input, ok] of cases.filter((c) => !only || c[0].startsWith("real person"))) {
     let pass = 0; const samples: string[] = [];
-    for (let i = 0; i < N; i++) { const o = await turn(hist, input); if (ok(o) && !SPOKEN_FIGURE_PROBLEM.test(o)) pass++; if (samples.length < 2) samples.push(o.slice(0, 130)); }
+    for (let i = 0; i < N; i++) { const o = await turn(hist, input); if (ok(o) && !SPOKEN_FIGURE_PROBLEM.test(o)) pass++; else if (samples.length < 3) samples.push("FAILED: " + o.slice(0, 200)); if (samples.length < 2) samples.push(o.slice(0, 130)); }
     console.log(`${pass}/${N}  ${name}   e.g. ${JSON.stringify(samples)}`);
   }
   process.exit(0);

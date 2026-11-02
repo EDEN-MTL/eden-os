@@ -17,10 +17,13 @@ import {
   expandBudgetShorthand,
   extractFirstName,
   IDLE_NUDGE_VARIATIONS,
+  isBudgetRange,
+  isTimelineBucket,
   LIVE_TRANSFER_LINES,
   liveTransferLineForIntent,
   NATURAL_TRANSITIONS,
   SELLER_QUESTIONS,
+  specificAnswersRule,
 } from "./scripts";
 import { IrisConfig } from "./qualification";
 import { NormalisedLead } from "../scout/intake";
@@ -339,7 +342,7 @@ describe("buildLeadQualificationPrompt", () => {
     expect(prompt).toContain("How many bedrooms and bathrooms do you need?");
     expect(prompt).toContain(IRIS_CONFIG.questions[3]); // timeline unknown
     expect(prompt).toContain("Are you preapproved for a mortgage yet?");
-    expect(prompt).toContain("What's your budget range?");
+    expect(prompt).toContain("What specific budget do you have in mind?");
   });
 
   /**
@@ -356,7 +359,9 @@ describe("buildLeadQualificationPrompt", () => {
     const lead: NormalisedLead = { ...BLANK_LEAD, intent: "seller", propertyInterest: "bungalow", timeline: "3-6 months" };
     const prompt = buildLeadQualificationPrompt(IRIS_CONFIG, lead, "3 Percent East Coast", "St. John's", false, true, false);
     expect(prompt).toContain("You mentioned you're looking for a bungalow — is that still what you're after?");
-    expect(prompt).toContain("You mentioned you're looking to sell within 3-6 months — does that still sound right?");
+    // "3-6 months" is a bucket: it gets narrowed, not just confirmed (Mark, 2026-11-03).
+    expect(prompt).toContain("I see you're thinking 3-6 months to sell — do you have any particular timeline in mind?");
+    expect(prompt).not.toContain("You mentioned you're looking to sell within 3-6 months — does that still sound right?");
     expect(prompt).not.toContain(IRIS_CONFIG.questions[0]);
     expect(prompt).not.toContain("What type of home are you looking for?");
     expect(prompt).not.toContain(IRIS_CONFIG.questions[3]);
@@ -385,10 +390,10 @@ describe("buildLeadQualificationPrompt", () => {
   it("verifies budget when known, asks it fresh when not", () => {
     const known = buildLeadQualificationPrompt(IRIS_CONFIG, { ...BLANK_LEAD, intent: "buyer", budget: "$450k" }, "3 Percent East Coast", "St. John's", false, true, false);
     expect(known).toContain("I also see you mentioned a budget around four hundred fifty thousand dollars — does that still sound right?");
-    expect(known).not.toContain("What's your budget range?");
+    expect(known).not.toContain("What specific budget do you have in mind?");
 
     const unknown = buildLeadQualificationPrompt(IRIS_CONFIG, { ...BLANK_LEAD, intent: "buyer" }, "3 Percent East Coast", "St. John's", false, true, false);
-    expect(unknown).toContain("What's your budget range?");
+    expect(unknown).toContain("What specific budget do you have in mind?");
   });
 
   /**
@@ -425,7 +430,7 @@ describe("buildLeadQualificationPrompt", () => {
     const lead: NormalisedLead = { ...BLANK_LEAD, intent: "seller" };
     const prompt = buildLeadQualificationPrompt(IRIS_CONFIG, lead, "3 Percent East Coast", "St. John's", false, true, false);
     expect(prompt).not.toContain("Are you preapproved for a mortgage yet?");
-    expect(prompt).not.toContain("What's your budget range?");
+    expect(prompt).not.toContain("What specific budget do you have in mind?");
   });
 
   /**
@@ -1644,5 +1649,65 @@ describe("budgets always reach Iris as plain words, whatever was typed", () => {
       const line = prompt.split("\\n").filter((l) => /budget/i.test(l) && /still|around|mentioned/i.test(l) && !/WRITE every amount/.test(l));
       for (const l of line) expect(l, `budget "${budget}"`).not.toMatch(/\\$\\s?\\d|\\d{4,}/);
     }
+  });
+});
+
+
+describe("getting specific answers (Mark, 2026-11-03)", () => {
+  const build = (lead: Partial<NormalisedLead>, noShow?: any) =>
+    buildLeadQualificationPrompt(IRIS_CONFIG, { ...BLANK_LEAD, ...lead }, "3 Percent East Coast", "St. John's", false, true, false, "form", noShow);
+
+  it.each([
+    ["$299K-$600K", true],
+    ["$300,000 - $500,000", true],
+    [">$500K", true],
+    ["<$300K", true],
+    ["$1M+", true],
+    ["$450k", false],
+    ["450000", false],
+  ])("reads the budget %s as a range: %s", (budget, range) => expect(isBudgetRange(budget)).toBe(range));
+
+  it.each([
+    ["3-6 months", true],
+    ["0 to 3 months", true],
+    ["4+ months", true],
+    ["ASAP", true],
+    ["within 3 months", true],
+    ["January 2027", false],
+    ["next spring", true],
+    ["March", false],
+  ])("reads the timeline %s as a bucket: %s", (timeline, bucket) => expect(isTimelineBucket(timeline)).toBe(bucket));
+
+  it("asks a buyer who has a budget span for a specific number, in words, instead of confirming the span", () => {
+    const prompt = build({ intent: "buyer", budget: "$299K-$600K", timeline: "3-6 months" });
+    expect(prompt).toContain("I see a budget of two hundred ninety-nine thousand to six hundred thousand dollars — what specific budget do you have in mind?");
+    expect(prompt).not.toContain("a budget around two hundred ninety-nine");
+    expect(prompt).toContain("do you have any particular timeline in mind?");
+    expect(prompt).toContain("Get specific answers");
+    expect(prompt).toContain("ONE follow-up per topic");
+  });
+
+  it("still confirms a single figure and a specific date instead of narrowing them", () => {
+    const prompt = build({ intent: "buyer", budget: "$450k", timeline: "January 2027" });
+    expect(prompt).toContain("I also see you mentioned a budget around four hundred fifty thousand dollars — does that still sound right?");
+    expect(prompt).toContain("You mentioned you're looking to make a move within January 2027 — does that still sound right?");
+  });
+
+  it("asks ASAP leads for a month rather than 'within ASAP'", () => {
+    const prompt = build({ intent: "buyer", timeline: "ASAP" });
+    expect(prompt).toContain("as soon as possible — is there a particular month or date");
+    expect(prompt).not.toContain("within ASAP");
+  });
+
+  it("gives a seller the timeline push but no budget push", () => {
+    const rule = specificAnswersRule("seller");
+    expect(rule).toContain("TIMELINE");
+    expect(rule).not.toContain("BUDGET");
+    expect(rule).toContain("right time to list");
+  });
+
+  it("leaves the no-show call alone: no qualifying there at all", () => {
+    const prompt = build({ intent: "buyer", budget: "$299K-$600K" }, { agentName: "Chantelle English", missedDay: "yesterday", missedWhen: "Monday, October 19 at 11:00 AM" });
+    expect(prompt).not.toContain("Get specific answers");
   });
 });

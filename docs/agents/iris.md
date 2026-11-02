@@ -106,6 +106,12 @@ It only gates the dial — it has no effect on whether leads get queued.
   under Slack's **resolved** channel id + `ts`, so thread replies have context. Posts made
   before 2026-09-23 have no seeded history.
 - Iris's Slack tools: `iris_lookup_lead`, `iris_pipeline_stats`.
+- Specific answers (Mark, 2026-11-03): the form only gives buckets ("$299K-$600K", "3-6 months", "ASAP"). Iris used
+  to confirm the bucket; now `verifyBudgetLines` / `verifyTimelineLines` narrow a range or bucket ("what specific
+  budget do you have in mind?", "any particular timeline in mind?") and `specificAnswersRule` (scripts.ts) adds the
+  rule: one follow-up per topic, accept "I don't know", the specific figure replaces the range in the recap and in
+  `save_isa_notes`. A single figure or a specific date is still just confirmed (`isBudgetRange`, `isTimelineBucket`).
+  Not on no-show calls. Checked with scripts/check-iris-call-prompt.ts (the four "vague budget" cases).
 - Daylight saving and the scheduler: all crons run in `SCHEDULER_TIMEZONE` (America/Toronto). When the clocks go back,
   node-cron skips the repeated hour for jobs pinned to a zone: on 2026-11-01 the every-minute call job paused 06:00-07:00
   UTC and the watchdog posted a false "scheduler stalled". The watchdog now ignores a quiet scheduler for 3 hours after
