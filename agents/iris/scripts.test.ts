@@ -6,6 +6,7 @@ import {
   TRANSFER_ATTEMPT_LINES,
   TRANSFER_REINFORM_LINES,
   buildLeadQualificationPrompt,
+  buildNoShowSmsPrompt,
   buildSmsQualificationPrompt,
   BUYER_QUESTIONS,
   buildCallOpeningLine,
@@ -24,6 +25,7 @@ import {
   NATURAL_TRANSITIONS,
   SELLER_QUESTIONS,
   specificAnswersRule,
+  specificAnswersSmsRule,
 } from "./scripts";
 import { IrisConfig } from "./qualification";
 import { NormalisedLead } from "../scout/intake";
@@ -1708,6 +1710,36 @@ describe("getting specific answers (Mark, 2026-11-03)", () => {
 
   it("leaves the no-show call alone: no qualifying there at all", () => {
     const prompt = build({ intent: "buyer", budget: "$299K-$600K" }, { agentName: "Chantelle English", missedDay: "yesterday", missedWhen: "Monday, October 19 at 11:00 AM" });
+    expect(prompt).not.toContain("Get specific answers");
+  });
+});
+
+describe("text qualification asks for specific answers too", () => {
+  const sms = (lead: Partial<NormalisedLead>, options: any = {}) =>
+    buildSmsQualificationPrompt(IRIS_CONFIG, { ...BLANK_LEAD, ...lead }, "3 Percent East Coast", "St. John's", options);
+
+  it("flags a budget span and a timeline bucket from the form as things to narrow", () => {
+    const prompt = sms({ intent: "buyer", budget: "$299K-$600K", timeline: "3-6 months" });
+    expect(prompt).toContain("(a range from the form: ask for a specific number)");
+    expect(prompt).toContain("(a rough bucket from the form: ask for something more particular)");
+    expect(prompt).toContain("## Get specific answers");
+    expect(prompt).toContain("ONE follow-up per topic");
+  });
+
+  it("does not flag a single figure or a specific date", () => {
+    const prompt = sms({ intent: "buyer", budget: "$450k", timeline: "January 2027" });
+    expect(prompt).not.toContain("a range from the form");
+    expect(prompt).not.toContain("a rough bucket from the form");
+  });
+
+  it("gives sellers the timeline push but no budget push", () => {
+    const rule = specificAnswersSmsRule("seller");
+    expect(rule).toContain("TIMELINE");
+    expect(rule).not.toContain("BUDGET");
+  });
+
+  it("keeps the no-show text conversation free of it", () => {
+    const prompt = buildNoShowSmsPrompt(BLANK_LEAD, "3 Percent East Coast", "St. John's", { agentName: "Chantelle English", missedDay: "yesterday", missedWhen: "Monday, October 19 at 11:00 AM" });
     expect(prompt).not.toContain("Get specific answers");
   });
 });
