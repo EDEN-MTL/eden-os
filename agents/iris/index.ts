@@ -719,6 +719,17 @@ export function loadIrisConfig(clientId: string): IrisConfig | null {
         typeof raw.iris.followUpCohort?.notReadyStage === "string" && typeof raw.iris.followUpCohort?.notInterestedStage === "string"
           ? { notReadyStage: raw.iris.followUpCohort.notReadyStage, notInterestedStage: raw.iris.followUpCohort.notInterestedStage }
           : undefined,
+      asapWatch: raw.iris.asapWatch
+        ? {
+            enabled: raw.iris.asapWatch.enabled === true,
+            skipStages: Array.isArray(raw.iris.asapWatch.skipStages) ? raw.iris.asapWatch.skipStages.filter((s: unknown) => typeof s === "string") : [],
+            ...(typeof raw.iris.asapWatch.minHoursBetweenTexts === "number" ? { minHoursBetweenTexts: raw.iris.asapWatch.minHoursBetweenTexts } : {}),
+            ...(typeof raw.iris.asapWatch.maxTexts === "number" ? { maxTexts: raw.iris.asapWatch.maxTexts } : {}),
+            ...(typeof raw.iris.asapWatch.maxDays === "number" ? { maxDays: raw.iris.asapWatch.maxDays } : {}),
+            ...(typeof raw.iris.asapWatch.sendFromHour === "number" ? { sendFromHour: raw.iris.asapWatch.sendFromHour } : {}),
+            ...(typeof raw.iris.asapWatch.sendToHour === "number" ? { sendToHour: raw.iris.asapWatch.sendToHour } : {}),
+          }
+        : undefined,
       leadReview: raw.iris.leadReview
         ? {
             excludeEmailDomains: Array.isArray(raw.iris.leadReview.excludeEmailDomains) ? raw.iris.leadReview.excludeEmailDomains.filter((d: unknown) => typeof d === "string") : [],

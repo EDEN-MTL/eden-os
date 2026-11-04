@@ -887,3 +887,14 @@ CREATE TABLE IF NOT EXISTS lead_review_snoozes (
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     PRIMARY KEY (client_id, contact_id)
 );
+
+-- Follow-up texts the ASAP watch (agents/iris/asap-watch.ts) sent, so it can space them out and stop after a few.
+CREATE TABLE IF NOT EXISTS asap_watch_texts (
+    id BIGSERIAL PRIMARY KEY,
+    client_id TEXT NOT NULL,
+    contact_id TEXT NOT NULL,
+    text TEXT NOT NULL,
+    outcome TEXT NOT NULL,
+    sent_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_asap_watch_texts_contact ON asap_watch_texts(client_id, contact_id, sent_at);
