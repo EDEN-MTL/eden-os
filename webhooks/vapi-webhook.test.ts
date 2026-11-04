@@ -896,7 +896,7 @@ describe("maybeReopenPendingCall — missed explicit callbacks", () => {
 
     await maybeReopenPendingCall("3-percent-east-coast", "contact-1");
 
-    expect(dialPending.reopenAfterMissedCallback).toHaveBeenCalledWith(69, "3-percent-east-coast", 2, ROW.created_at, 0);
+    expect(dialPending.reopenAfterMissedCallback).toHaveBeenCalledWith(69, "3-percent-east-coast", 2, ROW.created_at, 0, null);
     expect(dialPending.reopenForNextAttempt).not.toHaveBeenCalled();
     expect(ghl.sendSMS).toHaveBeenCalledTimes(1);
     const [contactId, text] = ghl.sendSMS.mock.calls[0];

@@ -719,10 +719,11 @@ export async function maybeReopenPendingCall(clientId: string, contactId: string
       status: string;
       source: string | null;
       callback_misses: number;
+      callback_time_of_day: string | null;
       human_requested: boolean;
       lead: { name?: string | null; intent?: string | null } | null;
     }>(
-      `SELECT id, attempts_made, created_at, is_explicit_callback, status, source, callback_misses, human_requested, lead FROM iris_pending_calls
+      `SELECT id, attempts_made, created_at, is_explicit_callback, status, source, callback_misses, callback_time_of_day, human_requested, lead FROM iris_pending_calls
        WHERE client_id = $1 AND contact_id = $2`,
       [clientId, contactId]
     );
@@ -840,9 +841,9 @@ async function maybeTextAfterMissedCalls(
 async function handleMissedExplicitCallback(
   clientId: string,
   contactId: string,
-  pending: { id: number; attempts_made: number; created_at: Date; callback_misses: number; lead: { name?: string | null } | null }
+  pending: { id: number; attempts_made: number; created_at: Date; callback_misses: number; callback_time_of_day?: string | null; lead: { name?: string | null } | null }
 ): Promise<void> {
-  const outcome = await reopenAfterMissedCallback(pending.id, clientId, pending.attempts_made, pending.created_at, pending.callback_misses);
+  const outcome = await reopenAfterMissedCallback(pending.id, clientId, pending.attempts_made, pending.created_at, pending.callback_misses, pending.callback_time_of_day ?? null);
   if (!outcome.reopened) {
     console.log(`[VAPI] Contact ${contactId} missed their callback and the cadence is exhausted — not requeuing.`);
     await tagSequenceExhausted(clientId, contactId);

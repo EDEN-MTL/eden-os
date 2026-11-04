@@ -27,7 +27,7 @@ import { NormalisedLead } from "../scout/intake";
 import { loadIrisConfig, loadClientBranding } from "./index";
 import { buildLeadQualificationPrompt, extractFirstName } from "./scripts";
 import { placeCall, CallingDisabledError } from "./calling";
-import { decideNextAttempt, nextAttemptTime, nextFirstSlotTime, nextSlotAfter, clampToLegalCallingWindow, nextOpenCallDay } from "./cadence";
+import { applyPreferredTime, decideNextAttempt, isStatedCallbackTime, nextAttemptTime, nextFirstSlotTime, nextSlotAfter, clampToLegalCallingWindow, nextOpenCallDay, timeOfDayLocal } from "./cadence";
 import { transferNumberForIntent, callbackCalendarForIntent } from "./qualification";
 import { classifyInboundText, lastInboundText } from "./text-signals";
 import { checkHumanTouch, DEFAULT_HUMAN_HANDS_OFF_DAYS } from "./human-touch";
@@ -221,7 +221,9 @@ export async function reopenAfterMissedCallback(
   clientId: string,
   attemptsMade: number,
   createdAt: Date,
-  priorMisses: number
+  priorMisses: number,
+  /** "16:30": the clock time the lead asked for. Later retries keep to it instead of the cadence's 10 AM / 2 PM. */
+  preferredTime: string | null = null
 ): Promise<MissedCallbackOutcome> {
   const config = loadIrisConfig(clientId);
   if (!config) return { reopened: false };
@@ -242,6 +244,7 @@ export async function reopenAfterMissedCallback(
     const slot = nextAttemptTime(config.outreachCadence, attemptsMade + 1, createdAt, timeZone);
     const floor = nextFirstSlotTime(config.outreachCadence, timeZone, now);
     callAfter = slot && slot.getTime() > floor.getTime() ? slot : floor;
+    if (preferredTime) callAfter = applyPreferredTime(callAfter, preferredTime, timeZone, now);
   }
 
   await query(
@@ -631,14 +634,20 @@ export async function scheduleExplicitCallback(clientId: string, contactId: stri
   const lead = await refreshLead(contactId, clientId);
   if (!lead) return false;
 
+  // A clock time the lead named is remembered so missed-callback retries keep to it (see isStatedCallbackTime).
+  const preferredTime =
+    !requestedByTeammate && isStatedCallbackTime(callbackTime)
+      ? timeOfDayLocal(callbackTime, loadIrisConfig(clientId)?.timezone || CLIENT_TIMEZONE)
+      : null;
+
   await query(
-    `INSERT INTO iris_pending_calls (client_id, contact_id, lead, call_after, status, is_explicit_callback, human_requested)
-     VALUES ($1, $2, $3, $4, 'pending', true, $5)
+    `INSERT INTO iris_pending_calls (client_id, contact_id, lead, call_after, status, is_explicit_callback, human_requested, callback_time_of_day)
+     VALUES ($1, $2, $3, $4, 'pending', true, $5, $6)
      ON CONFLICT (client_id, contact_id) DO UPDATE
      SET lead = EXCLUDED.lead, call_after = EXCLUDED.call_after, status = 'pending',
          is_explicit_callback = true, callback_misses = 0, resolution_reason = 'lead requested callback', resolved_at = NULL,
-         human_requested = $5`,
-    [clientId, contactId, JSON.stringify(lead), callbackTime, requestedByTeammate]
+         human_requested = $5, callback_time_of_day = $6`,
+    [clientId, contactId, JSON.stringify(lead), callbackTime, requestedByTeammate, preferredTime]
   );
   return true;
 }

@@ -532,6 +532,8 @@ ALTER TABLE iris_pending_calls ADD COLUMN IF NOT EXISTS sms_scheduled BOOLEAN NO
 -- time. 1st miss = one quick retry + a text; 2nd+ = back onto the normal
 -- cadence slots. See agents/iris/dial-pending.ts reopenAfterMissedCallback.
 ALTER TABLE iris_pending_calls ADD COLUMN IF NOT EXISTS callback_misses INTEGER NOT NULL DEFAULT 0;
+-- The local clock time ("16:30") the lead asked to be called back at; missed-callback retries keep to it (agents/iris/cadence.ts applyPreferredTime).
+ALTER TABLE iris_pending_calls ADD COLUMN IF NOT EXISTS callback_time_of_day TEXT;
 
 -- One stable, revocable link per client for Scout's bi-weekly team
 -- check-in page (webhooks/checkin-api.ts). Not per-send: the page always

@@ -277,3 +277,39 @@ export function formatLocal(iso: string, timeZone: string = "America/St_Johns"):
     minute: "2-digit",
   });
 }
+
+
+/**
+ * Retries should land near the time the lead asked for (Maame S. Afriyie, 2026-11-05: she said she was at work in
+ * the mornings and asked for 4:30 PM; after that callback was missed, every later retry went to 10:00 AM, when she
+ * had already told us she can't talk). A time the lead named is a "clock time": a multiple of 15 minutes and well
+ * ahead of the moment it was asked. "Call me in 20 minutes" is not a preference for 2:17 PM every day.
+ */
+export function isStatedCallbackTime(callbackTime: Date, now: Date = new Date()): boolean {
+  return callbackTime.getMinutes() % 15 === 0 && callbackTime.getTime() - now.getTime() >= 90 * 60_000;
+}
+
+/** "16:30" — the local clock time of an instant in the client's zone. */
+export function timeOfDayLocal(at: Date, timeZone: string): string {
+  const inZone = new Date(at.toLocaleString("en-US", { timeZone }));
+  return `${String(inZone.getHours()).padStart(2, "0")}:${String(inZone.getMinutes()).padStart(2, "0")}`;
+}
+
+/**
+ * Moves a candidate retry to the lead's preferred clock time ("16:30") on the same local day, or the next day when
+ * that moment is less than an hour away, then keeps it inside legal calling hours.
+ */
+export function applyPreferredTime(candidate: Date, preferred: string, timeZone: string, now: Date = new Date()): Date {
+  const m = preferred.match(/^(\d{1,2}):(\d{2})$/);
+  if (!m) return candidate;
+  const hour = Number(m[1]);
+  const minute = Number(m[2]);
+  const day = new Date(candidate.toLocaleString("en-US", { timeZone }));
+  const at = (d: Date) => new Date(zonedHourToUtc(d.getFullYear(), d.getMonth(), d.getDate(), hour, timeZone).getTime() + minute * 60_000);
+  let result = at(day);
+  if (result.getTime() < now.getTime() + 60 * 60_000) {
+    day.setDate(day.getDate() + 1);
+    result = at(day);
+  }
+  return clampToLegalCallingWindow(result, timeZone);
+}
