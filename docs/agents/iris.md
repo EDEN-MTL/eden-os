@@ -106,6 +106,15 @@ It only gates the dial — it has no effect on whether leads get queued.
   under Slack's **resolved** channel id + `ts`, so thread replies have context. Posts made
   before 2026-09-23 have no seeded history.
 - Iris's Slack tools: `iris_lookup_lead`, `iris_pipeline_stats`.
+- ASAP watch (Mark, 2026-11-05; `asap-watch.ts`, config `iris.asapWatch`, off until `enabled`): three passes a day
+  (10:15, 1:15, 4:15 St. John's) over active cards NOT in `skipStages` (booked, with an agent, finished, No-Show, the weekend
+  cohort's Not Ready). For every lead whose timeline reads ASAP it reads the GHL thread plus Iris's own call transcripts,
+  decides if a text is due (`decideAsapText`: not DND, nothing booked, no teammate in touch, not texted in 24h, no call
+  due within 6h, lead didn't text last, under 6 texts / 14 days), has the model write ONE text from that history
+  (`composeAsapText`; checked: one question, under 320 chars, no emoji/links/opt-out line, one retry), sends it with
+  `sendIrisText`, and opens the lead's queue row (source `asap`, call_after infinity) so a reply reaches Iris's text
+  handling. A lead who texted last, hit the text cap, or had 14 days of nothing is posted as "needs a person".
+  Dry run, never sends: `COMPOSE=1 npx tsx --env-file=.env scripts/asap-watch.ts` (NOW=… to pretend it is later).
 - Specific answers (Mark, 2026-11-03): the form only gives buckets ("$299K-$600K", "3-6 months", "ASAP"). Iris used
   to confirm the bucket; now `verifyBudgetLines` / `verifyTimelineLines` narrow a range or bucket ("what specific
   budget do you have in mind?", "any particular timeline in mind?") and `specificAnswersRule` (scripts.ts) adds the
