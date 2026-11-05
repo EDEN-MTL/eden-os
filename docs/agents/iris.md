@@ -90,6 +90,12 @@ It only gates the dial — it has no effect on whether leads get queued.
   check-ins, `triggerMaxCount: 3`), plus a second hook with `endCall` at 30s. Widening the
   timer three times didn't help. An `assistant-ended-call` from that hook must not count
   as answered — see `genuinelyAnswered` in `vapi-webhook.ts`.
+  **Never give the `say` hook a `prompt`** (tried Oct 12 to tell a screener's hold from a quiet lead):
+  Vapi generates that line without Iris's prompt, and on Magar Bhuma's two calls (2026-11-05) and
+  once on Oct 18 the model answered "I'm Claude, an AI assistant, I'm not actually on a phone call"
+  into a live conversation, then the endCall hook hung up. It speaks a fixed `exact` line again.
+  Chat-testing can't reproduce this (the chat gives the model Iris's prompt); the proof is in the
+  call's gzip log (`artifact.presignedLogUrl`): the hook's line never appears as a model request.
 - **Voicemail**: keep `voicemailDetection` on; "no voicemail message" means omitting
   `voicemailMessage` (Vapi then hangs up). False positives on live pickups: backoff is at
   5s/5s; the next step is provider `google`, which changes behaviour and possibly cost —
