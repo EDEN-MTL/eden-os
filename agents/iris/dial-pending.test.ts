@@ -341,3 +341,18 @@ describe("resolveOne — a lead who asked for no calls is never dialled", () => 
     expect(db.query.mock.calls.find((c) => String(c[0]).includes("lead opted out"))).toBeUndefined();
   });
 });
+
+describe("resolveOne — a text that only MIGHT mean stop (reversible by default)", () => {
+  it("holds the dial and closes nothing, instead of ending the cadence and tagging 'do not call'", async () => {
+    textSignals.lastInboundText.mockResolvedValue({ text: "Not interested right now", precedingOutbound: null, dateAdded: new Date(Date.now() - 60_000).toISOString() });
+    textSignals.classifyInboundText.mockResolvedValue({ type: "unsure_stop" });
+    calling.placeCall.mockResolvedValue({ id: "call-1" });
+
+    await runDialPendingCalls();
+
+    expect(calling.placeCall).not.toHaveBeenCalled();
+    expect(ghl.addContactTags).not.toHaveBeenCalled();
+    expect(db.query.mock.calls.find((c) => String(c[0]).includes("lead opted out"))).toBeUndefined();
+    expect(db.query.mock.calls.find((c) => String(c[0]).includes("may have asked to stop"))).toBeDefined();
+  });
+});

@@ -23,9 +23,25 @@ const TIMEZONE = "America/St_Johns";
  */
 describe("classifyInboundText", () => {
   it("classifies a clear opt-out request", async () => {
-    claude.ask.mockResolvedValue('{"type": "opt_out"}');
+    claude.ask.mockResolvedValue('{"type": "opt_out", "certainty": "clear", "quote": "I\'m not interested"}');
     const result = await classifyInboundText("Please stop calling me, I'm not interested", NOW, TIMEZONE);
-    expect(result).toEqual({ type: "opt_out" });
+    expect(result).toEqual({ type: "opt_out", quote: "I'm not interested" });
+  });
+
+  // Reversible by default (Mark, 2026-11-06): a stop is only acted on when it is clear AND the quoted words are really in the message.
+  it("treats an opt-out the model is unsure about as unsure_stop, not a stop", async () => {
+    claude.ask.mockResolvedValue('{"type": "opt_out", "certainty": "unsure", "quote": "not interested right now"}');
+    expect(await classifyInboundText("Not interested right now", NOW, TIMEZONE)).toEqual({ type: "unsure_stop" });
+  });
+
+  it("treats an opt-out with no certainty at all as unsure_stop", async () => {
+    claude.ask.mockResolvedValue('{"type": "opt_out"}');
+    expect(await classifyInboundText("ok bye", NOW, TIMEZONE)).toEqual({ type: "unsure_stop" });
+  });
+
+  it("does not trust a 'clear' opt-out whose quote is not in the message", async () => {
+    claude.ask.mockResolvedValue('{"type": "opt_out", "certainty": "clear", "quote": "remove me from your list"}');
+    expect(await classifyInboundText("Maybe later, thanks", NOW, TIMEZONE)).toEqual({ type: "unsure_stop" });
   });
 
   it("classifies a refusal of phone calls alone as no_calls, not as an opt-out", async () => {
@@ -103,9 +119,9 @@ describe("classifyInboundText", () => {
   });
 
   it("tolerates a markdown-fenced JSON response", async () => {
-    claude.ask.mockResolvedValue('```json\n{"type": "opt_out"}\n```');
+    claude.ask.mockResolvedValue('```json\n{"type": "opt_out", "certainty": "clear", "quote": "stop texting me"}\n```');
     const result = await classifyInboundText("stop texting me", NOW, TIMEZONE);
-    expect(result).toEqual({ type: "opt_out" });
+    expect(result).toEqual({ type: "opt_out", quote: "stop texting me" });
   });
 
   /**

@@ -1408,6 +1408,14 @@ describe("IDLE_NUDGE_VARIATIONS", () => {
  * written for texting rather than talking.
  */
 describe("buildSmsQualificationPrompt", () => {
+  it("when the lead may have asked to stop: checks what they mean, never says goodbye or qualifies, and uses no tools", () => {
+    const prompt = buildSmsQualificationPrompt(IRIS_CONFIG, BLANK_LEAD, "3 Percent East Coast", "St. John's", { stopCheck: true });
+    expect(prompt).toMatch(/may mean they want us to stop/);
+    expect(prompt).toMatch(/do not use any tool/);
+    expect(prompt).toMatch(/Never say "we won't reach out again"/);
+    expect(buildSmsQualificationPrompt(IRIS_CONFIG, BLANK_LEAD, "3 Percent East Coast", "St. John's")).not.toMatch(/may mean they want us to stop/);
+  });
+
   it("for a lead who asked for no calls: keeps qualifying by text, never offers an Iris call, and asks when an agent can talk to them", () => {
     const prompt = buildSmsQualificationPrompt(IRIS_CONFIG, BLANK_LEAD, "3 Percent East Coast", "St. John's", { noCalls: true, callHandoff: true });
     expect(prompt).toMatch(/does NOT want phone calls/);

@@ -114,7 +114,7 @@ describe("irisHandleInboundSms — not Iris's contact", () => {
 describe("irisHandleInboundSms — opt-out", () => {
   it("tags 'do not call', ends the sequence, and sends an acknowledgment without ever starting the qualification loop", async () => {
     db.query.mockResolvedValueOnce([{ client_id: "3-percent-east-coast", contact_id: "contact-1", lead: LEAD, status: "pending" }]);
-    vi.mocked(classifyInboundText).mockResolvedValueOnce({ type: "opt_out" });
+    vi.mocked(classifyInboundText).mockResolvedValueOnce({ type: "opt_out", quote: "stop texting me" });
 
     const handled = await irisHandleInboundSms("contact-1", "stop texting me", { wait: async () => {} });
 
@@ -125,6 +125,37 @@ describe("irisHandleInboundSms — opt-out", () => {
 
     const updateCall = db.query.mock.calls.find((c) => String(c[0]).includes("UPDATE iris_pending_calls"));
     expect(updateCall?.[1]).toEqual(["3-percent-east-coast", "contact-1", "lead opted out via text — cadence stopped"]);
+  });
+});
+
+/** Reversible by default (Mark, 2026-11-06): a message that only MIGHT mean stop is checked with the lead, never acted on. */
+describe("irisHandleInboundSms — unsure whether the lead wants to stop", () => {
+  it("closes nothing, tags nothing, holds the dial, and asks what they mean (with no tools)", async () => {
+    db.query.mockResolvedValue([{ client_id: "3-percent-east-coast", contact_id: "contact-1", lead: LEAD, status: "pending" }]);
+    vi.mocked(classifyInboundText).mockResolvedValueOnce({ type: "unsure_stop" });
+    vi.mocked(chatWithTools).mockResolvedValueOnce(endTurn("No problem. Would you like me to stop reaching out, or would a different time be better?"));
+
+    const handled = await irisHandleInboundSms("contact-1", "Not interested right now", { wait: async () => {} });
+
+    expect(handled).toBe(true);
+    expect(ghl.addContactTags).not.toHaveBeenCalled();
+    expect(db.query.mock.calls.find((c) => String(c[0]).includes("lead opted out"))).toBeUndefined();
+    const hold = db.query.mock.calls.find((c) => String(c[0]).includes("may have asked to stop"));
+    expect(String(hold?.[0])).toContain("call_after = 'infinity'");
+    expect(String(hold?.[0])).toContain("status = 'pending'");
+    expect(String(vi.mocked(chatWithTools).mock.calls[0][0])).toMatch(/may mean they want us to stop/);
+    expect(vi.mocked(sendMessage).mock.calls.some((c) => /might mean "stop"/.test(String((c[1] as any).text)))).toBe(true);
+    expect(ghl.sendSMS).toHaveBeenCalledWith("contact-1", expect.stringMatching(/stop reaching out/i), "loc-1", "key-1");
+    expect(ghl.sendSMS).not.toHaveBeenCalledWith("contact-1", expect.stringMatching(/won't reach out again/i), expect.anything(), expect.anything());
+  });
+
+  it("posts the lead's exact words to Slack when a clear opt-out does close them", async () => {
+    db.query.mockResolvedValueOnce([{ client_id: "3-percent-east-coast", contact_id: "contact-1", lead: LEAD, status: "pending" }]);
+    vi.mocked(classifyInboundText).mockResolvedValueOnce({ type: "opt_out", quote: "stop texting me" });
+
+    await irisHandleInboundSms("contact-1", "stop texting me", { wait: async () => {} });
+
+    expect(vi.mocked(sendMessage).mock.calls.some((c) => /Their words: "stop texting me"/.test(String((c[1] as any).text)))).toBe(true);
   });
 });
 

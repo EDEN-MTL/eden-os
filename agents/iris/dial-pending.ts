@@ -502,7 +502,25 @@ async function resolveOne(row: PendingCallRow): Promise<void> {
     const textTime = inbound?.dateAdded ? new Date(inbound.dateAdded) : new Date();
     const signal = await classifyInboundText(inbound?.text ?? "", Number.isNaN(textTime.getTime()) ? new Date() : textTime, timezone, inbound?.precedingOutbound ?? null);
 
+    // Might be a stop, might not (temporary, about one thing, a mood): don't close or tag anyone on a maybe. Hold the
+    // dial, and say so, so a person or Iris's next text exchange can check with the lead.
+    if (signal.type === "unsure_stop") {
+      await query(
+        `UPDATE iris_pending_calls SET call_after = 'infinity', status = 'pending', resolution_reason = 'lead may have asked to stop — held, not closed', resolved_at = NULL WHERE id = $1`,
+        [row.id]
+      );
+      await sendMessage("iris", {
+        channel: CALL_LOG_CHANNEL,
+        text: `❓ *${row.lead?.name ?? row.contact_id}* texted something that might mean "stop": "${String(inbound?.text ?? "").slice(0, 200)}". I did not call, close or tag them. A teammate should read it and decide.`,
+      }).catch(() => {});
+      return;
+    }
+
     if (signal.type === "opt_out") {
+      await sendMessage("iris", {
+        channel: CALL_LOG_CHANNEL,
+        text: `🚫 *${row.lead?.name ?? row.contact_id}* opted out by text — closed, tagged "do not call". Their words: "${signal.quote}". If that was a misread, reopen them.`,
+      }).catch(() => {});
       await finish(row.id, "skipped", "lead opted out via text — cadence stopped");
       await addContactTags(row.contact_id, ["do not call"], ghlConfig.locationId, ghlConfig.apiKey).catch((error) => {
         console.error(`[IRS] Failed to tag contact ${row.contact_id} as "do not call":`, error instanceof Error ? error.message : error);

@@ -152,6 +152,15 @@ agents can talk to them to send listings (book_appointment, or request_human_fol
 `dial-pending.ts` checks the tag live before EVERY dial (sweeps, cohort and retries create fresh rows that don't know the old
 text), and Slack "call X" refuses a "no calls" lead. The classifier itself can only be checked on Render (no local Anthropic key).
 
+### Reversible by default (Mark, 2026-11-06)
+
+The mistakes that cost leads were misreads acted on irreversibly (Kelly "Please no Calls", Angela's July reply). Rule for any
+classifier-driven action: when the message is ambiguous, take the action a person can undo and keep talking. A text stop
+(`opt_out` in `text-signals.ts`) is only acted on when the model says `certainty: "clear"` AND the `quote` it gives is
+really in the message; anything else is `unsure_stop`: nothing is closed or tagged, the dial is held (`call_after =
+infinity`), Iris asks what they mean (`stopCheck` prompt, no tools) and Slack shows the words. A clear stop still closes
+the lead but now posts the exact words to the call-log channel. New irreversible actions should follow the same pattern.
+
 ### Texting after a missed call (Mark, 2026-11-05 — Melanie Petten)
 
 - After Iris's FIRST unanswered call (a normal new-lead sequence) she texts once (`maybeTextAfterMissedCalls` in

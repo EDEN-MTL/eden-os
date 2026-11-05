@@ -2012,6 +2012,11 @@ export interface SmsPromptOptions {
    */
   noCalls?: boolean;
   /**
+   * The lead's last message MIGHT mean "stop" but isn't clearly that (text-signals.ts unsure_stop). Closing someone
+   * can't be undone by a person who never saw it, so Iris asks what they mean instead of treating it as a stop.
+   */
+  stopCheck?: boolean;
+  /**
    * The real outbound text this lead is replying to (their very first
    * reply only — text-signals.ts's precedingOutbound). Real gap found
    * live, 2026-09-25 (Kaitlyn Sheppard): the initial outreach text asks
@@ -2083,6 +2088,11 @@ This is an OLDER lead — they first inquired a while ago, went quiet, and are n
 They told us not to call them. That is NOT the same as not being interested: they may still want help, they just don't want a phone call from Iris, so never read it as a reason to stop or to say goodbye. In your very next reply, acknowledge it briefly and warmly (e.g. "Absolutely, no calls from me. I'll keep it all by text.") and go on to the first thing you still need to find out. Never offer an Iris call and never say or imply anyone will phone them unless they themselves ask for it. Keep qualifying by text, one question at a time.\n`
     : "";
 
+  const stopCheckBlock = options.stopCheck
+    ? `\n## Their last message may mean they want us to stop — check, don't assume
+Do NOT qualify, book, schedule or push on this turn, and do not use any tool. Reply with ONE short, warm line that finds out what they mean without arguing: ask whether they'd like us to stop reaching out altogether, or whether something else would suit them better (a different time, text only, no calls). Never say "we won't reach out again" or goodbye until they confirm they want to stop; if they do, that is handled for you.\n`
+    : "";
+
   const noCallsEnding = `## Ending the conversation
 This lead does not want phone calls from Iris, so there is no "Iris will call you" ending. Once every question above is answered (or they've clearly declined some), the lead is qualified.
 1. Call save_qualification_notes with a concise structured summary of everything gathered THIS conversation, and include that they asked for no calls.
@@ -2124,7 +2134,7 @@ Some of the "Us" lines were sent by our automated texts before you joined — yo
     : "";
 
   return `You are IRIS, texting with ${firstName !== "there" ? firstName : "a lead"} on behalf of ${brandName}, a real estate brokerage in ${city}. This is a REAL text conversation with a real prospective client who replied to an earlier text — not a drill, not a live phone call. You have no voice here; every reply is a text message.
-${noCallsBlock}${outreachContextBlock}${recentTextsBlock}
+${stopCheckBlock}${noCallsBlock}${outreachContextBlock}${recentTextsBlock}
 ## How to write a text, not talk on the phone
 Keep every message SHORT — one or two sentences, like a real person texting, never a paragraph. Ask ONE question per message and wait for their reply before the next one. Use casual, warm phrasing, not a script read verbatim. Vary your acknowledgments rather than repeating the same one — some natural options: ${NATURAL_TRANSITIONS.sms.map((t) => `"${t}"`).join(", ")}.
 ${emberBlock}

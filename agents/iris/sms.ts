@@ -498,6 +498,11 @@ async function handleInboundSms(contactId: string, text: string, options: Inboun
     await addContactTags(contactId, ["do not call"], ghlConfig.locationId, ghlConfig.apiKey).catch((error) => {
       console.error(`[IRS-SMS] Failed to tag contact ${contactId} as "do not call":`, error instanceof Error ? error.message : error);
     });
+    // Closing a lead can't be undone by someone who never saw it, so the exact words go to the team right away.
+    await sendMessage(AGENT_ID, {
+      channel: CALL_LOG_CHANNEL,
+      text: `🚫 *${(row.lead as any)?.name ?? contactId}* opted out by text — closed, tagged "do not call". Their words: "${signal.quote}". If that was a misread, reopen them.${await linkSuffix(clientId, contactId)}`,
+    }).catch(() => {});
     const reply = "No problem — we won't reach out again. Take care!";
     await pauseLikeAHuman(reply);
     await sendSMS(contactId, reply, ghlConfig.locationId, ghlConfig.apiKey).catch((error) => {
@@ -506,6 +511,21 @@ async function handleInboundSms(contactId: string, text: string, options: Inboun
     await appendHistory(AGENT_ID, key, "user", text).catch(() => {});
     await appendHistory(AGENT_ID, key, "assistant", reply).catch(() => {});
     return true;
+  }
+
+  // A message that MIGHT be a stop (temporary, about one thing, a mood). Reversible by default: nothing is closed or tagged,
+  // nothing dials, Iris asks what they mean, and the team sees the words in Slack. A plain "stop" next turn closes them.
+  const stopCheck = signal.type === "unsure_stop";
+  if (stopCheck) {
+    await query(
+      `UPDATE iris_pending_calls SET call_after = 'infinity', status = 'pending', resolution_reason = 'lead may have asked to stop — checking with them, no calls meanwhile', resolved_at = NULL
+       WHERE client_id = $1 AND contact_id = $2`,
+      [clientId, contactId]
+    );
+    await sendMessage(AGENT_ID, {
+      channel: CALL_LOG_CHANNEL,
+      text: `❓ *${(row.lead as any)?.name ?? contactId}* sent something that might mean "stop": "${text.slice(0, 200)}". I did NOT close them or tag them. No calls will go out, and Iris is asking what they mean.${await linkSuffix(clientId, contactId)}`,
+    }).catch(() => {});
   }
 
   // No calls, but still a prospect: stay on text, qualify, and ask when an agent can talk to them.
@@ -581,6 +601,7 @@ async function handleInboundSms(contactId: string, text: string, options: Inboun
     ? buildNoShowSmsPrompt(row.lead, branding.brandName, branding.city, noShowContext, { recentTexts: recent, nowLocal, timezoneName: timezone })
     : buildSmsQualificationPrompt(config, row.lead, branding.brandName, branding.city, {
         noCalls,
+        stopCheck,
         recentTexts: recent,
         origin: "form",
         callHandoff: config.smsCallHandoff,
@@ -621,7 +642,9 @@ async function handleInboundSms(contactId: string, text: string, options: Inboun
         let content: string;
         try {
           content =
-            noCalls && call.name === "schedule_transfer_call"
+            stopCheck
+              ? "Error: no tools on this turn — just ask the lead what they mean."
+              : noCalls && call.name === "schedule_transfer_call"
               ? "Error: this lead asked for no phone calls — do not schedule one. Ask when an agent can reach them, or use request_human_followup."
               : await executeSmsTool(clientId, contactId, config, ghlConfig, call.name, call.input, timezone, row.source);
         } catch (error) {
