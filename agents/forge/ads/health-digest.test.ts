@@ -115,4 +115,25 @@ describe("formatHealthDigest", () => {
     const text = formatHealthDigest("3%", report([entity({})], { liveStateError: "rate limited" }));
     expect(text).toContain("Couldn't read live status from Meta (rate limited)");
   });
+
+  describe("launch dates", () => {
+    const created = { campaign: Date.parse("2026-09-26T12:00:00Z"), adset: Date.parse("2026-10-20T12:00:00Z"), ad: Date.parse("2026-11-03T12:00:00Z") };
+    const now = new Date("2026-11-06T15:00:00Z");
+
+    it("ends with when each listed ad, ad set and campaign first launched, after the targets", () => {
+      const text = formatHealthDigest("3%", report([entity({ created })], { funnels: [sellerFunnel] }), now);
+      expect(text).toContain("*When each was first launched*");
+      expect(text).toContain("• Ad *Seller - AI image 10* — Campaign: launched Sep 26 · Ad set: launched Oct 20 · Ad: launched Nov 3");
+      expect(text.indexOf("*When each was first launched*")).toBeGreaterThan(text.indexOf("*Targets*"));
+    });
+
+    it("leaves the section out when Meta gave no launch dates", () => {
+      expect(formatHealthDigest("3%", report([entity({})]), now)).not.toContain("first launched");
+    });
+
+    it("does not list ads that are only counted as healthy", () => {
+      const text = formatHealthDigest("3%", report([entity({ verdict: "healthy", name: "Quiet ad", created })]), now);
+      expect(text).not.toContain("Quiet ad");
+    });
+  });
 });

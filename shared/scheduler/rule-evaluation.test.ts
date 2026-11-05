@@ -87,6 +87,26 @@ describe("runRuleEvaluation: reading what is running on Meta", () => {
     expect(text).toContain("<https://adsmanager.facebook.com/adsmanager/manage/adsets?act=999&selected_campaign_ids=777&selected_adset_ids=120247|");
   });
 
+  it("ends the flag with when the campaign and ad set first launched", async () => {
+    queryMock.mockResolvedValueOnce([{ client_id: "eden" }]);
+    vi.mocked(getMetaConfig).mockResolvedValueOnce({ accessToken: "t", adAccountId: "act_999" } as any);
+    fetchLiveStateMock.mockResolvedValueOnce(
+      new Map([
+        ["777", { campaignId: "777", createdAt: Date.parse("2026-09-26T12:00:00Z"), effectiveStatus: "ACTIVE" }],
+        ["120247", { campaignId: "777", createdAt: Date.parse("2026-10-20T12:00:00Z"), effectiveStatus: "ACTIVE" }],
+      ])
+    );
+    getCampaignHealthMock.mockRejectedValueOnce(new Error("none"));
+    evaluateMock.mockResolvedValueOnce([{ ...proposedAction, entityId: "120247" }]);
+    enqueueMock.mockResolvedValueOnce(42);
+    sendMessageMock.mockResolvedValueOnce({ ts: "1.2" });
+
+    await runRuleEvaluation();
+
+    const text = (sendMessageMock.mock.calls[0][1] as { text: string }).text;
+    expect(text.trim().endsWith("🗓️ Campaign: launched Sep 26 · Ad set: launched Oct 20")).toBe(true);
+  });
+
   it("keeps the flat CPL threshold when the health check can't give verdicts (no target for the client)", async () => {
     const live = new Map();
     queryMock.mockResolvedValueOnce([{ client_id: "eden" }]);

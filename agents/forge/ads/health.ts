@@ -24,6 +24,7 @@ import { join } from "path";
 import { MetaClient } from "../../../shared/meta";
 import { computeMetrics, runningOnly } from "./metrics";
 import { adsManagerUrl } from "./links";
+import { createdChain, type CreatedChain } from "./age";
 import { EntityMetrics, RuleScope } from "./types";
 
 export type HealthVerdict = "kill" | "refresh_creative" | "scale" | "watch" | "healthy" | "too_early";
@@ -202,6 +203,8 @@ export interface LiveEntityState {
   kind?: "campaign" | "adset" | "ad";
   /** When Meta last recorded a change to it (an edit, a pause, a new creative), epoch ms. */
   updatedAt?: number;
+  /** When it was first launched (Meta's created_time), epoch ms. Unlike updatedAt, editing it never changes this. */
+  createdAt?: number;
   /** Daily budget in account currency (Meta returns minor units; already converted). */
   dailyBudget?: number | null;
   /** Ad sets only. */
@@ -220,6 +223,8 @@ export interface EntityHealth {
   adsetId?: string;
   /** Direct link to it in Ads Manager, when the client's ad account is known. */
   url?: string | null;
+  /** When it (and the campaign / ad set above it) first launched, epoch ms: the basis for judging its results. */
+  created?: CreatedChain;
   funnel: string | null;
   targetCpl: number;
   verdict: HealthVerdict;
@@ -409,9 +414,9 @@ const centsToUnits = (v: unknown) => (v === undefined || v === null || v === "" 
  */
 export async function fetchLiveState(client: MetaClient): Promise<Map<string, LiveEntityState>> {
   const [campaigns, adsets, ads] = await Promise.all([
-    client.listCampaigns(["id", "name", "effective_status", "daily_budget", "lifetime_budget", "updated_time"]),
-    client.listAdsets(undefined, ["id", "name", "effective_status", "campaign_id", "daily_budget", "learning_stage_info", "updated_time"]),
-    client.listAds(undefined, ["id", "effective_status", "campaign_id", "adset_id", "updated_time"]),
+    client.listCampaigns(["id", "name", "effective_status", "daily_budget", "lifetime_budget", "updated_time", "created_time"]),
+    client.listAdsets(undefined, ["id", "name", "effective_status", "campaign_id", "daily_budget", "learning_stage_info", "updated_time", "created_time"]),
+    client.listAds(undefined, ["id", "effective_status", "campaign_id", "adset_id", "updated_time", "created_time"]),
   ]);
 
   const out = new Map<string, LiveEntityState>();
@@ -419,7 +424,7 @@ export async function fetchLiveState(client: MetaClient): Promise<Map<string, Li
   const nowSec = Date.now() / 1000;
 
   for (const c of campaigns) {
-    out.set(c.id, { kind: "campaign", updatedAt: parseMetaTime(c.updated_time), effectiveStatus: c.effective_status, campaignId: c.id, campaignName: c.name, dailyBudget: centsToUnits(c.daily_budget) });
+    out.set(c.id, { kind: "campaign", updatedAt: parseMetaTime(c.updated_time), createdAt: parseMetaTime(c.created_time), effectiveStatus: c.effective_status, campaignId: c.id, campaignName: c.name, dailyBudget: centsToUnits(c.daily_budget) });
   }
   for (const s of adsets) {
     const parent = campaignById.get(s.campaign_id);
@@ -427,6 +432,7 @@ export async function fetchLiveState(client: MetaClient): Promise<Map<string, Li
     out.set(s.id, {
       kind: "adset",
       updatedAt: parseMetaTime(s.updated_time),
+      createdAt: parseMetaTime(s.created_time),
       effectiveStatus: s.effective_status,
       campaignId: s.campaign_id,
       campaignName: parent?.name,
@@ -443,7 +449,7 @@ export async function fetchLiveState(client: MetaClient): Promise<Map<string, Li
   }
   for (const a of ads) {
     const parent = campaignById.get(a.campaign_id);
-    out.set(a.id, { kind: "ad", updatedAt: parseMetaTime(a.updated_time), effectiveStatus: a.effective_status, campaignId: a.campaign_id, campaignName: parent?.name, adsetId: a.adset_id });
+    out.set(a.id, { kind: "ad", updatedAt: parseMetaTime(a.updated_time), createdAt: parseMetaTime(a.created_time), effectiveStatus: a.effective_status, campaignId: a.campaign_id, campaignName: parent?.name, adsetId: a.adset_id });
   }
   return out;
 }
@@ -618,5 +624,7 @@ export async function getCampaignHealth(clientId: string, client: MetaClient | n
   const report = client
     ? { ...built, entities: built.entities.map((e) => ({ ...e, url: adsManagerUrl(client.adAccountId, e.scope, e.id, { campaignId: e.campaignId, adsetId: e.adsetId }) })) }
     : built;
+  // How long each has been running, from Meta's launch dates (digest footer, chat answers).
+  if (live) report.entities = report.entities.map((e) => ({ ...e, created: createdChain(live, e.scope, e.id) }));
   return liveStateError ? { ...report, liveStateError } : report;
 }
