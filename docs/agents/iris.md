@@ -134,6 +134,24 @@ It only gates the dial — it has no effect on whether leads get queued.
   yes, then the same sweep as "follow up on Jacob's calls" (one call at a time, one text after a miss). A review
   older than 36h is refused. Stored as `iris_slack_commands.kind = 'review'`.
 
+### Texting after a missed call (Mark, 2026-11-05 — Melanie Petten)
+
+- After Iris's FIRST unanswered call (a normal new-lead sequence) she texts once (`maybeTextAfterMissedCalls` in
+  `webhooks/vapi-webhook.ts`; attempts 2 and 3 are the fallback when the first text could not go). The text is
+  `buildMissedCallQualifyText` (`agents/iris/qualify-text.ts`): sorry I missed you, and ONE qualifying question — a form
+  range or bucket is narrowed to a specific answer, a missing budget/timeline is asked, and when everything is specific
+  she asks for a call with an agent. The lead's reply is handled by the text qualification, which books the call or
+  schedules the live transfer. The GHL intake automation still sends its own two texts first; Iris never texts at intake.
+- A lead who RINGS BACK and is not picked up gets the same kind of text (`agents/iris/callback-watch.ts`, cron every
+  5 minutes, `iris.callbackWatch`). GHL sends no webhook for calls, so it polls the location's recent conversations,
+  keeps leads Iris has worked in the last 30 days, and looks for an inbound call under 30 s with nothing after it from
+  Iris, a teammate or the lead. One text per call (`callback_texts`, claimed before sending); calls Iris answered
+  herself through Vapi (`iris_call_log.triggered_by = 'inbound'`), booked leads, opted-out leads, leads texting with
+  Iris and leads a teammate is working are skipped. Overnight calls wait for 8 AM (18 h lookback). Dry run:
+  `npx tsx --env-file=.env scripts/callback-watch.ts`.
+- `checkHumanTouch` no longer counts a lead's OWN inbound call under 30 s as a teammate's call: GHL stamps the user it
+  rang, which made Melanie's call-back look like a teammate had phoned her and would have kept Iris from texting.
+
 ## Per-client setup for a new client going live
 
 `iris.liveTransferStageId`, `iris.appointmentSetStageIds`, `iris.followUpStageIds`

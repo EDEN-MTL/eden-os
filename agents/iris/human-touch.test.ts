@@ -94,4 +94,12 @@ describe("checkHumanTouch", () => {
     ghl.getConversations.mockRejectedValue(new Error("boom"));
     expect(await checkHumanTouch("c", "loc", "key", 7, NOW)).toEqual({ status: "unknown" });
   });
+
+  /** Melanie Petten, 2026-11-05: she rang back, the call rang a teammate's line for 6 seconds, and Iris took it for a teammate's call. */
+  it("does not count a lead's own short inbound call, but does count one a teammate talked on", async () => {
+    thread([sms({ messageType: "TYPE_CALL", direction: "inbound", userId: "user-jacob", dateAdded: "2026-10-09T10:00:00.000Z", meta: { call: { duration: 6, status: "completed" } } })]);
+    expect(await checkHumanTouch("c", "loc", "key", 7, NOW)).toEqual({ status: "none" });
+    thread([sms({ messageType: "TYPE_CALL", direction: "inbound", userId: "user-jacob", dateAdded: "2026-10-09T10:00:00.000Z", meta: { call: { duration: 240, status: "completed" } } })]);
+    expect(await checkHumanTouch("c", "loc", "key", 7, NOW)).toMatchObject({ status: "human", kind: "call" });
+  });
 });
