@@ -23,6 +23,7 @@ import { readFileSync } from "fs";
 import { join } from "path";
 import { MetaClient } from "../../../shared/meta";
 import { computeMetrics, runningOnly } from "./metrics";
+import { adsManagerUrl } from "./links";
 import { EntityMetrics, RuleScope } from "./types";
 
 export type HealthVerdict = "kill" | "refresh_creative" | "scale" | "watch" | "healthy" | "too_early";
@@ -214,6 +215,11 @@ export interface EntityHealth {
   id: string;
   name: string | null;
   campaignName: string | null;
+  /** The campaign it sits in (itself, for a campaign) and, for an ad, its ad set: what a direct link needs. */
+  campaignId?: string;
+  adsetId?: string;
+  /** Direct link to it in Ads Manager, when the client's ad account is known. */
+  url?: string | null;
   funnel: string | null;
   targetCpl: number;
   verdict: HealthVerdict;
@@ -318,6 +324,8 @@ export function assessEntity(
     id: row.entity_id,
     name: row.entity_name,
     campaignName: live.campaignName ?? null,
+    ...(live.campaignId ? { campaignId: live.campaignId } : {}),
+    ...(live.adsetId ? { adsetId: live.adsetId } : {}),
     funnel,
     targetCpl,
     verdict,
@@ -605,6 +613,10 @@ export async function getCampaignHealth(clientId: string, client: MetaClient | n
         ad: runningOnly(ad, "ad", ad, live),
       }
     : raw;
-  const report = buildHealthReport(clientId, playbook, raw, live, days, assess);
+  const built = buildHealthReport(clientId, playbook, raw, live, days, assess);
+  // Every entity gets a direct Ads Manager link (Slack digest, chat answers).
+  const report = client
+    ? { ...built, entities: built.entities.map((e) => ({ ...e, url: adsManagerUrl(client.adAccountId, e.scope, e.id, { campaignId: e.campaignId, adsetId: e.adsetId }) })) }
+    : built;
   return liveStateError ? { ...report, liveStateError } : report;
 }

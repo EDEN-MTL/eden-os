@@ -19,6 +19,7 @@ import { applyOperator, holdAfterChangeHours, loadRules } from "./engine";
 import { computeMetrics, holdRecentlyChanged, runningOnly } from "./metrics";
 import { ActionExecutor } from "./executor";
 import { MetaActions } from "./actions";
+import { adsManagerUrl, slackLink } from "./links";
 import * as queue from "./queue";
 import { PendingAction } from "./queue";
 
@@ -89,6 +90,8 @@ export interface ApprovalDeps {
    * (someone may have turned the costly ad off since). true when it can't tell. Optional so tests can omit it.
    */
   stillApplies?: (row: PendingAction) => Promise<boolean>;
+  /** Direct Ads Manager link to the flagged entity, when known. Optional so tests can omit it. */
+  entityUrl?: (row: PendingAction) => Promise<string | null>;
   now?: () => Date;
 }
 
@@ -116,8 +119,18 @@ async function ruleStillTrips(row: PendingAction): Promise<boolean> {
   }
 }
 
+async function entityUrlFor(row: PendingAction): Promise<string | null> {
+  try {
+    const cfg = await getMetaConfig(row.client_id);
+    return cfg && PAUSABLE.has(row.entity_type) ? adsManagerUrl(cfg.adAccountId, row.entity_type as "campaign" | "adset" | "ad", row.entity_id) : null;
+  } catch {
+    return null;
+  }
+}
+
 export const realDeps: ApprovalDeps = {
   stillApplies: ruleStillTrips,
+  entityUrl: entityUrlFor,
   executorFor: async (clientId) => new ActionExecutor(new MetaActions(await metaClientFor(clientId)), clientId),
   liveStatus: async (clientId, entityId) => {
     try {
@@ -136,8 +149,8 @@ export interface ClickOutcome {
   replace: boolean;
 }
 
-function flagSummary(row: PendingAction): string {
-  return `*${row.entity_name ?? row.entity_id}* (${entityLabel(row.entity_type)})\n${row.reasoning}`;
+function flagSummary(row: PendingAction, url: string | null = null): string {
+  return `*${slackLink(url, row.entity_name ?? row.entity_id)}* (${entityLabel(row.entity_type)})\n${row.reasoning}`;
 }
 
 /** Someone pressed Pause or Keep running. Refuses anyone who isn't an approver, and anything already handled. */
@@ -150,6 +163,7 @@ export async function handleApprovalClick(
   const row = await queue.get(pendingId);
   if (!row) return { text: "That flag no longer exists.", replace: false };
 
+  const url = (await deps.entityUrl?.(row).catch(() => null)) ?? null;
   const approvers = loadApprovers(row.client_id);
   if (!approvers.includes(slackUserId)) {
     return { text: `Only ${approvers.map((a) => `<@${a}>`).join(" and ") || "the approvers"} can do that.`, replace: false };
@@ -164,7 +178,7 @@ export async function handleApprovalClick(
   if (claimed.length === 0) {
     const fresh = (await queue.get(pendingId)) ?? row;
     const who = fresh.decided_by?.startsWith("slack:") ? ` by <@${fresh.decided_by.slice(6)}>` : "";
-    return { text: `${flagSummary(row)}\n_Already ${fresh.status}${who}._`, replace: true };
+    return { text: `${flagSummary(row, url)}\n_Already ${fresh.status}${who}._`, replace: true };
   }
 
   const executor = await deps.executorFor(row.client_id).catch(() => null);
@@ -172,27 +186,27 @@ export async function handleApprovalClick(
   if (actionId === KEEP_ACTION_ID) {
     // Already claimed above, so reject() only writes the audit row.
     if (executor) await executor.reject(pendingId, by, "Kept running (Slack)").catch((e) => console.error("[FORGE] Could not audit the keep-running choice:", e));
-    return { text: `${flagSummary(row)}\n✅ <@${slackUserId}> is keeping it running.`, replace: true };
+    return { text: `${flagSummary(row, url)}\n✅ <@${slackUserId}> is keeping it running.`, replace: true };
   }
 
   // Pause
   const live = await deps.liveStatus(row.client_id, row.entity_id);
   if (live && NOT_RUNNING.has(live)) {
     await queue.markExecuted(pendingId);
-    return { text: `${flagSummary(row)}\n⏸️ Already paused, so nothing to do.`, replace: true };
+    return { text: `${flagSummary(row, url)}\n⏸️ Already paused, so nothing to do.`, replace: true };
   }
   if (!executor) {
     await queue.markFailed(pendingId);
-    return { text: `${flagSummary(row)}\n⚠️ I couldn't reach Meta, so nothing was paused. Pause it in Ads Manager.`, replace: true };
+    return { text: `${flagSummary(row, url)}\n⚠️ I couldn't reach Meta, so nothing was paused. Pause it in Ads Manager.`, replace: true };
   }
   try {
     await executor.executeManual("pause", row.entity_type, row.entity_id, row.entity_name, {}, by, "Slack");
     await queue.markExecuted(pendingId);
-    return { text: `${flagSummary(row)}\n⏸️ Paused by <@${slackUserId}>. It stops spending right away; turn it back on in Ads Manager if needed.`, replace: true };
+    return { text: `${flagSummary(row, url)}\n⏸️ Paused by <@${slackUserId}>. It stops spending right away; turn it back on in Ads Manager if needed.`, replace: true };
   } catch (error) {
     await queue.markFailed(pendingId);
     const reason = error instanceof Error ? error.message : String(error);
-    return { text: `${flagSummary(row)}\n⚠️ Couldn't pause it: ${reason}. Nothing changed, so please pause it in Ads Manager.`, replace: true };
+    return { text: `${flagSummary(row, url)}\n⚠️ Couldn't pause it: ${reason}. Nothing changed, so please pause it in Ads Manager.`, replace: true };
   }
 }
 
@@ -234,9 +248,10 @@ export async function runApprovalNudges(
       const claim = await query<{ id: number }>(`UPDATE ad_pending_actions SET nudged_at = now() WHERE id = $1 AND nudged_at IS NULL RETURNING id`, [row.id]);
       if (claim.length === 0) continue;
 
+      const url = (await deps.entityUrl?.(row).catch(() => null)) ?? null;
       const text =
         `⏰ ${approvers.map((a) => `<@${a}>`).join(" ")} this is still running ${NUDGE_AFTER_HOURS} hours after Forge flagged it:\n` +
-        `${flagSummary(row)}\nPause it, or keep it running?`;
+        `${flagSummary(row, url)}\nPause it, or keep it running?`;
       await post(row.slack_channel!, text, flagBlocks(text, row.id, row.entity_type), row.slack_message_ts!);
       sent++;
     } catch (error) {

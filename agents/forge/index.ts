@@ -38,6 +38,7 @@ import * as queue from "./ads/queue";
 import { MetaActions } from "./ads/actions";
 import { ActionExecutor } from "./ads/executor";
 import { getCampaignHealth } from "./ads/health";
+import { adsManagerUrl } from "./ads/links";
 import { RuleScope } from "./ads/types";
 
 interface ClientSummary {
@@ -361,6 +362,7 @@ class ForgeAgent extends BaseAgent {
         "- Health first. For \"how are the ads doing\", \"what should I turn off\" or \"what can we scale\", call get_campaign_health and lead with the verdicts: what to kill, what to refresh, what to scale, each with its numbers. Then offer to make the changes. Don't make them unasked; this is the one place where you wait for Jacob to say go.",
         "- Volume is low. A $50/day realtor account gets well under one lead per ad set per day, so judge on spend against target CPL, not on a few days of CPL. An ad hasn't failed until it has spent about 2–3 target CPLs with nothing, and hasn't won until it has several leads under target. One lead more or less in a week is noise; say so instead of overreacting.",
         "- Targets come from the account itself. There's no outside CPL goal: a funnel's target is its own average CPL over the last ~60 days, so 'efficient' means beating what the account already does, and every kill or scale is relative to that. When you give a verdict, say what the target is and what it's based on (e.g. \"buyers average $57 a lead over 60 days, 29 leads\"). Tie the numbers to the budget too: at the current daily budget, how many leads a week that target buys, and how many days of spend the kill line is. If the source is \"fallback\", say there wasn't enough history to calibrate.",
+        "- Whenever you name a specific campaign, ad set or ad, link it: get_campaign_health and list_pending_actions give each one a `url` straight to it in Ads Manager, so write it as a Slack link, <url|name>, and Mark and Jacob can open it in one tap. Never make up a link; if an entity has no url, just give the name.",
         "- Buyers and sellers are separate funnels. Seller leads are fewer, cost more and are worth more (a listing), so never compare a seller ad's CPL against a buyer target or the other way round. get_campaign_health already applies each funnel's own target.",
         "- Protect learning. Every significant edit (budget changes over ~20%, targeting, new creative in the ad set, pause/resume) restarts Meta's learning phase. Scale in ~20% steps with 3–4 days between them, batch edits together instead of tweaking daily, and expect \"Learning Limited\" on small budgets: the fix is fewer, consolidated ad sets, not more edits.",
         "- Kill ads before ad sets. Pausing a losing ad inside a working ad set is cheap; pausing the ad set throws away its learning. Kill a whole ad set only when its targeting itself is failing across creatives.",
@@ -460,8 +462,16 @@ class ForgeAgent extends BaseAgent {
         return JSON.stringify({ totalAds: rows.length, shown: top.length, rows: top });
       }
 
-      case "list_pending_actions":
-        return JSON.stringify(await queue.listPending(input.clientId));
+      case "list_pending_actions": {
+        const pending = await queue.listPending(input.clientId);
+        const metaConfig = await getMetaConfig(input.clientId).catch(() => null);
+        return JSON.stringify(
+          pending.map((p) => ({
+            ...p,
+            url: ["campaign", "adset", "ad"].includes(p.entity_type) ? adsManagerUrl(metaConfig?.adAccountId, p.entity_type as "campaign" | "adset" | "ad", p.entity_id) : null,
+          }))
+        );
+      }
 
       case "pause_entity": {
         const executor = await requireExecutor(input.clientId);
