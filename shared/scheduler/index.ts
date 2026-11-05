@@ -34,6 +34,7 @@ import { runAsapWatchAll } from "../../agents/iris/asap-watch";
 import { sendBlocks, sendMessage } from "../slack";
 import { canApproveFromSlack, flagBlocks, runApprovalNudges } from "../../agents/forge/ads/approval";
 import { adsManagerUrl, slackLink } from "../../agents/forge/ads/links";
+import { ageFooter, createdChain } from "../../agents/forge/ads/age";
 import { listEmberClientIds, loadEmberConfig } from "../../agents/ember/config";
 import { runEmberScanForClient } from "../../agents/ember/scan";
 import { sendPendingForClient } from "../../agents/ember/send";
@@ -251,11 +252,13 @@ export async function runRuleEvaluation(): Promise<void> {
         const buttons = canApproveFromSlack(clientId, action.entityType);
         const parents = liveForLinks?.get(action.entityId);
         const entityUrl = adsManagerUrl(adAccountId, action.entityType, action.entityId, { campaignId: parents?.campaignId, adsetId: parents?.adsetId });
+        const launched = ageFooter(action.entityType, createdChain(liveForLinks, action.entityType, action.entityId), new Date());
         const text =
           `🔔 *Forge flagged something* — ${clientName}\n` +
           `${slackLink(entityUrl, action.entityName ?? action.entityId)} (${action.entityType})\n` +
           `${action.reasoning}\n` +
-          (buttons ? "Pause it, or keep it running?" : "Review in the dashboard's pending actions, or ask Forge in chat.");
+          (buttons ? "Pause it, or keep it running?" : "Review in the dashboard's pending actions, or ask Forge in chat.") +
+          (launched ? `\n${launched}` : "");
         const { ts } = buttons
           ? await sendBlocks("forge", opsChannel, flagBlocks(text, pendingId, action.entityType), text)
           : await sendMessage("forge", { channel: opsChannel, text });

@@ -20,6 +20,8 @@ import { computeMetrics, holdRecentlyChanged, runningOnly } from "./metrics";
 import { ActionExecutor } from "./executor";
 import { MetaActions } from "./actions";
 import { adsManagerUrl, slackLink } from "./links";
+import { ageFooter, type CreatedChain } from "./age";
+import { parseMetaTime } from "./health";
 import * as queue from "./queue";
 import { PendingAction } from "./queue";
 
@@ -92,6 +94,8 @@ export interface ApprovalDeps {
   stillApplies?: (row: PendingAction) => Promise<boolean>;
   /** Direct Ads Manager link to the flagged entity, when known. Optional so tests can omit it. */
   entityUrl?: (row: PendingAction) => Promise<string | null>;
+  /** The "when it first launched" line for the flagged entity and what sits above it, or null. Optional so tests can omit it. */
+  launchLine?: (row: PendingAction) => Promise<string | null>;
   now?: () => Date;
 }
 
@@ -128,9 +132,33 @@ async function entityUrlFor(row: PendingAction): Promise<string | null> {
   }
 }
 
+async function launchLineFor(row: PendingAction): Promise<string | null> {
+  try {
+    if (!PAUSABLE.has(row.entity_type)) return null;
+    const client = await metaClientFor(row.client_id);
+    const me = await client.getObject(row.entity_id, ["created_time", "campaign_id", "adset_id"]);
+    const launched = async (id: unknown) => (id ? parseMetaTime((await client.getObject(String(id), ["created_time"]))?.created_time) : undefined);
+    const chain: CreatedChain = {};
+    const own = parseMetaTime(me?.created_time);
+    if (row.entity_type === "campaign") chain.campaign = own;
+    else {
+      chain.campaign = await launched(me?.campaign_id);
+      if (row.entity_type === "adset") chain.adset = own;
+      else {
+        chain.adset = await launched(me?.adset_id);
+        chain.ad = own;
+      }
+    }
+    return ageFooter(row.entity_type, chain, new Date());
+  } catch {
+    return null;
+  }
+}
+
 export const realDeps: ApprovalDeps = {
   stillApplies: ruleStillTrips,
   entityUrl: entityUrlFor,
+  launchLine: launchLineFor,
   executorFor: async (clientId) => new ActionExecutor(new MetaActions(await metaClientFor(clientId)), clientId),
   liveStatus: async (clientId, entityId) => {
     try {
@@ -249,9 +277,11 @@ export async function runApprovalNudges(
       if (claim.length === 0) continue;
 
       const url = (await deps.entityUrl?.(row).catch(() => null)) ?? null;
+      const launched = (await deps.launchLine?.(row).catch(() => null)) ?? null;
       const text =
         `⏰ ${approvers.map((a) => `<@${a}>`).join(" ")} this is still running ${NUDGE_AFTER_HOURS} hours after Forge flagged it:\n` +
-        `${flagSummary(row, url)}\nPause it, or keep it running?`;
+        `${flagSummary(row, url)}\nPause it, or keep it running?` +
+        (launched ? `\n${launched}` : "");
       await post(row.slack_channel!, text, flagBlocks(text, row.id, row.entity_type), row.slack_message_ts!);
       sent++;
     } catch (error) {

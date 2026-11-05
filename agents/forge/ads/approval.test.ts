@@ -130,6 +130,17 @@ describe("the 2-hour nudge", () => {
     expect(blocks[1].elements[0].action_id).toBe(PAUSE_ACTION_ID);
   });
 
+  it("ends the nudge with when the entity first launched", async () => {
+    db.query.mockImplementation(async (...a: unknown[]) => {
+      const sql = String(a[0]);
+      if (/SELECT \* FROM ad_pending_actions/.test(sql)) return [{ ...ROW }];
+      if (/SET nudged_at/.test(sql)) return [{ id: 7 }];
+      return [];
+    });
+    await runApprovalNudges({ ...deps("ACTIVE"), launchLine: async () => "🗓️ Ad set: launched Oct 20" }, post);
+    expect((post.mock.calls[0] as unknown as [string, string])[1].trim().endsWith("🗓️ Ad set: launched Oct 20")).toBe(true);
+  });
+
   it("closes the flag quietly, with no nudge, when the ad was paused some other way", async () => {
     db.query.mockImplementation(async (...a: unknown[]) => (/SELECT \* FROM ad_pending_actions/.test(String(a[0])) ? [{ ...ROW }] : []));
     expect(await runApprovalNudges(deps("PAUSED"), post)).toBe(0);
