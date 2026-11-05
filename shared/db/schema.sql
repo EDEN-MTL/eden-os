@@ -898,3 +898,18 @@ CREATE TABLE IF NOT EXISTS asap_watch_texts (
     sent_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 CREATE INDEX IF NOT EXISTS idx_asap_watch_texts_contact ON asap_watch_texts(client_id, contact_id, sent_at);
+
+-- Texts Iris sent a lead who rang the number back and was not picked up (agents/iris/callback-watch.ts).
+-- One row per inbound call (the GHL message id), claimed BEFORE sending so a call is never answered twice.
+CREATE TABLE IF NOT EXISTS callback_texts (
+    id BIGSERIAL PRIMARY KEY,
+    client_id TEXT NOT NULL,
+    contact_id TEXT NOT NULL,
+    call_message_id TEXT NOT NULL,
+    call_at TIMESTAMPTZ NOT NULL,
+    text TEXT,
+    outcome TEXT,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    UNIQUE (client_id, call_message_id)
+);
+CREATE INDEX IF NOT EXISTS idx_callback_texts_contact ON callback_texts(client_id, contact_id, created_at);

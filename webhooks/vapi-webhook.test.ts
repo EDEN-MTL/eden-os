@@ -948,7 +948,7 @@ describe("maybeReopenPendingCall — missed explicit callbacks", () => {
   });
 
   it("still uses the normal cadence for an ordinary (non-explicit) row", async () => {
-    // First miss: no text yet (the text comes after the SECOND miss, see "the text after two missed calls").
+    // The qualifying text after a miss is covered in "the text after a missed call"; this is about the schedule.
     db.query.mockResolvedValue([{ ...ROW, is_explicit_callback: false, attempts_made: 1 }]);
     dialPending.reopenForNextAttempt.mockResolvedValue(true);
 
@@ -956,7 +956,6 @@ describe("maybeReopenPendingCall — missed explicit callbacks", () => {
 
     expect(dialPending.reopenForNextAttempt).toHaveBeenCalledWith(69, "3-percent-east-coast", 1, ROW.created_at);
     expect(dialPending.reopenAfterMissedCallback).not.toHaveBeenCalled();
-    expect(ghl.sendSMS).not.toHaveBeenCalled();
   });
 
   it("still retries even if the text fails to send", async () => {
@@ -972,7 +971,7 @@ describe("maybeReopenPendingCall — missed explicit callbacks", () => {
  * Mark, 2026-10-27 (Eileen Hillier): a new lead's normal call sequence sent no text of its own, so two voicemails
  * left only the intake automation's messages. One text now goes out after the second unanswered call.
  */
-describe("maybeReopenPendingCall — the text after two missed calls", () => {
+describe("maybeReopenPendingCall — the text after a missed call", () => {
   const ROW = (over: Record<string, unknown> = {}) => ({
     id: 31,
     attempts_made: 2,
@@ -982,7 +981,7 @@ describe("maybeReopenPendingCall — the text after two missed calls", () => {
     source: null,
     callback_misses: 0,
     human_requested: false,
-    lead: { name: "Eileen Hillier", intent: "buyer" },
+    lead: { name: "Eileen Hillier", intent: "buyer", budget: "$299K-$600K", timeline: "3-6 Months" },
     ...over,
   });
 
@@ -1020,16 +1019,18 @@ describe("maybeReopenPendingCall — the text after two missed calls", () => {
     expect(ghl.sendSMS).toHaveBeenCalledTimes(1);
     const [contactId, text] = ghl.sendSMS.mock.calls[0];
     expect(contactId).toBe("contact-1");
-    expect(text).toBe("Hi Eileen, it's Iris from 3 Percent East Coast. I tried calling you about your home search but missed you. Is there a better time for a quick call, or would you rather just text?");
+    expect(text).toBe("Hi Eileen, it's Iris from 3 Percent East Coast. Sorry I missed you! I'd love to match you with the right agent. I see $299K-$600K on your form. What specific budget do you have in mind?");
     expect(slack.sendMessage.mock.calls.some((c) => String((c[1] as any)?.text).includes("Texted *Eileen Hillier* after 2 unanswered calls"))).toBe(true);
     // the next call is still lined up
     expect(dialPending.reopenForNextAttempt).toHaveBeenCalled();
   });
 
-  it("does not text after the first miss, or once the sequence is well along", async () => {
-    await run({ attempts_made: 1 });
+  it("texts after the FIRST miss too (Melanie Petten, 2026-11-05), but not once the sequence is well along", async () => {
     await run({ attempts_made: 5 });
     expect(ghl.sendSMS).not.toHaveBeenCalled();
+    await run({ attempts_made: 1 });
+    expect(ghl.sendSMS).toHaveBeenCalledTimes(1);
+    expect(slack.sendMessage.mock.calls.some((c) => String((c[1] as any)?.text).includes("after 1 unanswered call "))).toBe(true);
   });
 
   it("never texts the same lead twice", async () => {
@@ -1062,9 +1063,12 @@ describe("maybeReopenPendingCall — the text after two missed calls", () => {
     expect(ghl.sendSMS).not.toHaveBeenCalled();
   });
 
-  it("uses the selling wording for a seller", async () => {
+  it("asks the timeline of a seller, and for a call with an agent once everything is specific", async () => {
     await run({ lead: { name: "Judy Dunne", intent: "seller" } });
-    expect(ghl.sendSMS.mock.calls[0][1]).toContain("about selling your home");
+    expect(ghl.sendSMS.mock.calls[0][1]).toContain("When are you hoping to sell?");
+    ghl.sendSMS.mockClear();
+    await run({ lead: { name: "Judy Dunne", intent: "buyer", budget: "$450,000", timeline: "June 2027" } });
+    expect(ghl.sendSMS.mock.calls[0][1]).toContain("Would a quick call with one of our agents work for you?");
   });
 
   it("a failed text never stops the retry", async () => {

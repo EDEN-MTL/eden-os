@@ -25,6 +25,19 @@ import { getConversationMessages, getConversations } from "../../shared/ghl";
 
 export const DEFAULT_HUMAN_HANDS_OFF_DAYS = 7;
 
+/** An inbound call shorter than this was a ring or a voicemail, not a conversation with a teammate. */
+const MIN_INBOUND_CALL_SECONDS = 30;
+
+/**
+ * GHL stamps a userId on a lead's own inbound call too (the user it rang), so a lead calling BACK — 6 seconds,
+ * nobody picked up — looked like a teammate had called them and kept Iris from ever texting them (Melanie Petten,
+ * 2026-11-05). A call the team placed always counts; one the lead placed counts only if it was a real conversation.
+ */
+function isConversation(call: any): boolean {
+  if (call?.direction !== "inbound") return true;
+  return Number(call?.meta?.call?.duration ?? 0) >= MIN_INBOUND_CALL_SECONDS;
+}
+
 export type HumanTouch =
   | { status: "human"; at: string; userId: string; kind: "text" | "call" }
   | { status: "none" }
@@ -73,7 +86,7 @@ export async function checkHumanTouch(
     );
     // A call a teammate placed or answered from GHL (Iris's own calls go through Vapi and never appear here).
     const call = includeCalls
-      ? messages.find((m) => m?.messageType === "TYPE_CALL" && typeof m?.userId === "string" && m.userId !== "" && inWindow(m))
+      ? messages.find((m) => m?.messageType === "TYPE_CALL" && typeof m?.userId === "string" && m.userId !== "" && inWindow(m) && isConversation(m))
       : undefined;
     const newest = [human && { m: human, kind: "text" as const }, call && { m: call, kind: "call" as const }]
       .filter((x): x is { m: any; kind: "text" | "call" } => Boolean(x))

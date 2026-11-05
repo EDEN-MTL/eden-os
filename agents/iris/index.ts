@@ -730,6 +730,12 @@ export function loadIrisConfig(clientId: string): IrisConfig | null {
             ...(typeof raw.iris.asapWatch.sendToHour === "number" ? { sendToHour: raw.iris.asapWatch.sendToHour } : {}),
           }
         : undefined,
+      callbackWatch: raw.iris.callbackWatch
+        ? {
+            enabled: raw.iris.callbackWatch.enabled === true,
+            ...(typeof raw.iris.callbackWatch.lookbackHours === "number" ? { lookbackHours: raw.iris.callbackWatch.lookbackHours } : {}),
+          }
+        : undefined,
       leadReview: raw.iris.leadReview
         ? {
             excludeEmailDomains: Array.isArray(raw.iris.leadReview.excludeEmailDomains) ? raw.iris.leadReview.excludeEmailDomains.filter((d: unknown) => typeof d === "string") : [],

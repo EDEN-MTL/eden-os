@@ -295,7 +295,7 @@ async function pool<T, R>(items: T[], size: number, fn: (item: T) => Promise<R>)
 }
 
 /** Makes sure a reply to the text we just sent is answered by Iris: her text handling only answers leads whose queue row is pending. */
-export async function openRowForReplies(clientId: string, contactId: string, lead: unknown): Promise<void> {
+export async function openRowForReplies(clientId: string, contactId: string, lead: unknown, options: { source?: string; reason?: string } = {}): Promise<void> {
   const rows = await query<{ id: number; status: string }>(`SELECT id, status FROM iris_pending_calls WHERE client_id = $1 AND contact_id = $2`, [clientId, contactId]);
   if (rows[0]) {
     if (rows[0].status !== "pending") await holdForTextReply(rows[0].id);
@@ -303,9 +303,9 @@ export async function openRowForReplies(clientId: string, contactId: string, lea
   }
   await query(
     `INSERT INTO iris_pending_calls (client_id, contact_id, lead, call_after, status, is_explicit_callback, source, sms_scheduled, resolution_reason)
-     VALUES ($1, $2, $3, 'infinity', 'pending', true, $4, false, 'ASAP watch: texted, waiting for a reply')
+     VALUES ($1, $2, $3, 'infinity', 'pending', true, $4, false, $5)
      ON CONFLICT (client_id, contact_id) DO NOTHING`,
-    [clientId, contactId, JSON.stringify(lead), ASAP_SOURCE]
+    [clientId, contactId, JSON.stringify(lead), options.source ?? ASAP_SOURCE, options.reason ?? "ASAP watch: texted, waiting for a reply"]
   );
 }
 

@@ -31,6 +31,7 @@ import { recordHeartbeat, runWatchdog, SCHEDULER_TIMEZONE } from "../../agents/i
 import { runDailySummary } from "../../agents/iris/daily-summary";
 import { runNightlyLeadReview } from "../../agents/iris/lead-review";
 import { runAsapWatchAll } from "../../agents/iris/asap-watch";
+import { runCallbackWatchAll } from "../../agents/iris/callback-watch";
 import { sendBlocks, sendMessage } from "../slack";
 import { canApproveFromSlack, flagBlocks, runApprovalNudges } from "../../agents/forge/ads/approval";
 import { adsManagerUrl, slackLink } from "../../agents/forge/ads/links";
@@ -389,6 +390,19 @@ export function startScheduler(): void {
   // 10:15, 1:15 and 4:15 St. John's time: Iris reviews every ASAP lead's calls and texts and texts a follow-up where one is due
   // (agents/iris/asap-watch.ts). Off per client unless iris.asapWatch.enabled.
   cron.schedule("15 10,13,16 * * *", () => runAsapWatchAll(), { timezone: "America/St_Johns" });
+
+  // Every 5 minutes: a lead who rang the number back and was not picked up gets one text from Iris
+  // (agents/iris/callback-watch.ts). GHL sends no webhook for calls, so this polls. Off per client unless iris.callbackWatch.enabled.
+  let callbackWatchRunning = false;
+  cron.schedule("*/5 * * * *", async () => {
+    if (callbackWatchRunning) return;
+    callbackWatchRunning = true;
+    try {
+      await runCallbackWatchAll();
+    } finally {
+      callbackWatchRunning = false;
+    }
+  }, { timezone: "America/St_Johns" });
   // Every 10 minutes: one nudge in the thread of any Forge flag still unanswered after 2 hours (agents/forge/ads/approval.ts).
   cron.schedule("*/10 * * * *", () => runApprovalNudges().catch((e) => console.error("[SCHEDULER] Approval nudges failed:", e instanceof Error ? e.message : e)), { timezone: TIMEZONE });
   // Every 5 minutes: finds cards the team just moved to No-Show and starts Iris's follow-up (text now,
