@@ -33,6 +33,7 @@ import { runNightlyLeadReview } from "../../agents/iris/lead-review";
 import { runAsapWatchAll } from "../../agents/iris/asap-watch";
 import { sendBlocks, sendMessage } from "../slack";
 import { canApproveFromSlack, flagBlocks, runApprovalNudges } from "../../agents/forge/ads/approval";
+import { adsManagerUrl, slackLink } from "../../agents/forge/ads/links";
 import { listEmberClientIds, loadEmberConfig } from "../../agents/ember/config";
 import { runEmberScanForClient } from "../../agents/ember/scan";
 import { sendPendingForClient } from "../../agents/ember/send";
@@ -196,6 +197,9 @@ export async function runRuleEvaluation(): Promise<void> {
 
   for (const clientId of clientIds) {
     let proposed: Awaited<ReturnType<typeof ruleEngine.evaluate>>;
+    // Kept outside the try below: the flag text needs them to link straight to the entity in Ads Manager.
+    let adAccountId: string | null = null;
+    let liveForLinks: Awaited<ReturnType<typeof fetchLiveState>> | null = null;
     try {
       // Read what is running on Meta right now, so a flag stops coming back once the ad is turned off.
       // If Meta can't be read, judge on the snapshots as before rather than skip the check.
@@ -204,8 +208,10 @@ export async function runRuleEvaluation(): Promise<void> {
       try {
         const metaConfig = await getMetaConfig(clientId);
         if (metaConfig) {
+          adAccountId = metaConfig.adAccountId;
           metaClient = new MetaClient(metaConfig);
           live = await fetchLiveState(metaClient);
+          liveForLinks = live;
         }
       } catch (e) {
         console.warn(`[SCHEDULER] Couldn't read live ad status for ${clientId}; judging on snapshots only:`, e instanceof Error ? e.message : e);
@@ -243,9 +249,11 @@ export async function runRuleEvaluation(): Promise<void> {
         }
         // With approvers named for this client the flag carries Pause / Keep running buttons; without, it is the plain flag as before.
         const buttons = canApproveFromSlack(clientId, action.entityType);
+        const parents = liveForLinks?.get(action.entityId);
+        const entityUrl = adsManagerUrl(adAccountId, action.entityType, action.entityId, { campaignId: parents?.campaignId, adsetId: parents?.adsetId });
         const text =
           `🔔 *Forge flagged something* — ${clientName}\n` +
-          `${action.entityName ?? action.entityId} (${action.entityType})\n` +
+          `${slackLink(entityUrl, action.entityName ?? action.entityId)} (${action.entityType})\n` +
           `${action.reasoning}\n` +
           (buttons ? "Pause it, or keep it running?" : "Review in the dashboard's pending actions, or ask Forge in chat.");
         const { ts } = buttons

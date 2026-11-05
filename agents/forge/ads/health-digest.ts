@@ -11,6 +11,7 @@
  * Pure, so the exact wording is unit-testable without Slack.
  */
 import type { CampaignHealthReport, EntityHealth, FunnelSummary } from "./health";
+import { slackLink } from "./links";
 
 function money(n: number): string {
   return `$${n.toLocaleString("en-CA", { maximumFractionDigits: 0 })}`;
@@ -50,7 +51,8 @@ function mainReason(e: EntityHealth): string {
 
 function itemLine(e: EntityHealth, withRecommendation: boolean): string {
   const nearLine = e.reasons.find((r) => r.startsWith("Close to the kill line"));
-  let line = `• ${SCOPE_LABEL[e.scope]} *${e.name ?? e.id}*: ${mainReason(e)}`;
+  // The name is the link: one tap from the report to the exact campaign, ad set or ad in Ads Manager.
+  let line = `• ${SCOPE_LABEL[e.scope]} *${slackLink(e.url ?? null, e.name ?? e.id)}*: ${mainReason(e)}`;
   if (nearLine) line += ` ${nearLine}`;
   if (withRecommendation) line += `\n   → ${e.recommendation}`;
   return line;
