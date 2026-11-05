@@ -2007,6 +2007,11 @@ export interface SmsPromptOptions {
   /** IANA name of that timezone, for the prompt only. */
   timezoneName?: string;
   /**
+   * The lead told us not to phone them ("Please no Calls", Kelly Joseph, 2026-11-06) — which is not the same as
+   * not being interested. Iris keeps qualifying by text and asks when a talk with an agent would suit them.
+   */
+  noCalls?: boolean;
+  /**
    * The real outbound text this lead is replying to (their very first
    * reply only — text-signals.ts's precedingOutbound). Real gap found
    * live, 2026-09-25 (Kaitlyn Sheppard): the initial outreach text asks
@@ -2073,7 +2078,27 @@ This is an OLDER lead — they first inquired a while ago, went quiet, and are n
     ? `I'm the ${brandName} team's virtual assistant — happy to get one of our agents on the phone with you.`
     : EDGE_CASE_RESPONSES.isRealPerson(brandName)[0];
 
-  const endingBlock = options.callHandoff
+  const noCallsBlock = options.noCalls
+    ? `\n## This lead does NOT want phone calls
+They told us not to call them. That is NOT the same as not being interested: they may still want help, they just don't want a phone call from Iris, so never read it as a reason to stop or to say goodbye. In your very next reply, acknowledge it briefly and warmly (e.g. "Absolutely, no calls from me. I'll keep it all by text.") and go on to the first thing you still need to find out. Never offer an Iris call and never say or imply anyone will phone them unless they themselves ask for it. Keep qualifying by text, one question at a time.\n`
+    : "";
+
+  const noCallsEnding = `## Ending the conversation
+This lead does not want phone calls from Iris, so there is no "Iris will call you" ending. Once every question above is answered (or they've clearly declined some), the lead is qualified.
+1. Call save_qualification_notes with a concise structured summary of everything gathered THIS conversation, and include that they asked for no calls.
+2. Ask ONE short question: when would be a good time for one of our agents to connect with them to send over listings that fit what they're looking for? Offer that they can say a day and time, and that text is fine if they prefer. Then wait for their answer.
+3. Read their answer:${
+    options.callHandoff
+      ? `
+   - A specific day/time they're happy to talk → right now it is ${options.nowLocal ?? "(time unknown)"}${options.timezoneName ? ` (${options.timezoneName})` : ""}; call check_availability with that moment (local time, no offset, e.g. 2026-10-16T14:00:00). If it's available, call book_appointment with the isoTime it gave, copied verbatim, then send the one confirmation text it tells you to. If it isn't open, offer the real open times it lists (never invent one).`
+      : ""
+  }
+   - They'd rather only be texted, or won't commit to a time → call request_human_followup, say briefly that one of our agents will message them with listings, and stop.
+Texts are plain text: no asterisks, bold or other formatting. Never say or imply an appointment is booked until book_appointment has confirmed it. Call each tool at most once for the same request, and book only ONE appointment per lead.`;
+
+  const endingBlock = options.noCalls
+    ? noCallsEnding
+    : options.callHandoff
     ? `## Ending the conversation
 The goal is a quick call with one of our agents. Once every question above is answered (or they've clearly declined some), the lead is qualified.
 Right now it is ${options.nowLocal ?? "(time unknown)"}${options.timezoneName ? ` (${options.timezoneName})` : ""} — use that to turn any day/time the lead names into a real timestamp.
@@ -2099,7 +2124,7 @@ Some of the "Us" lines were sent by our automated texts before you joined — yo
     : "";
 
   return `You are IRIS, texting with ${firstName !== "there" ? firstName : "a lead"} on behalf of ${brandName}, a real estate brokerage in ${city}. This is a REAL text conversation with a real prospective client who replied to an earlier text — not a drill, not a live phone call. You have no voice here; every reply is a text message.
-${outreachContextBlock}${recentTextsBlock}
+${noCallsBlock}${outreachContextBlock}${recentTextsBlock}
 ## How to write a text, not talk on the phone
 Keep every message SHORT — one or two sentences, like a real person texting, never a paragraph. Ask ONE question per message and wait for their reply before the next one. Use casual, warm phrasing, not a script read verbatim. Vary your acknowledgments rather than repeating the same one — some natural options: ${NATURAL_TRANSITIONS.sms.map((t) => `"${t}"`).join(", ")}.
 ${emberBlock}
@@ -2128,7 +2153,7 @@ ${endingBlock}
 
 If they clearly ask to stop being contacted, do not try to keep qualifying them — a separate system handles opt-outs before you ever see the message, so if you're seeing this at all, treat it as a genuine reply to respond to normally.
 
-Never invent availability, pricing, or legal/financial advice — that's what "${EDGE_CASE_RESPONSES.dontKnowAnswer}" is for. Never claim to have booked an appointment or transferred a call unless a tool confirmed it; ${options.callHandoff ? "the only ways this ends are an appointment book_appointment confirmed, a call schedule_transfer_call confirmed, or the human-followup handoff" : "the human-followup handoff above is the only way this ends — texting can't book or transfer"}.`;
+Never invent availability, pricing, or legal/financial advice — that's what "${EDGE_CASE_RESPONSES.dontKnowAnswer}" is for. Never claim to have booked an appointment or transferred a call unless a tool confirmed it; ${options.callHandoff ? `the only ways this ends are an appointment book_appointment confirmed, ${options.noCalls ? "" : "a call schedule_transfer_call confirmed, "}or the human-followup handoff` : "the human-followup handoff above is the only way this ends — texting can't book or transfer"}.`;
 }
 
 export interface NoShowSmsOptions {

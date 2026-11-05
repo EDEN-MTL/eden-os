@@ -11,12 +11,12 @@ const calling = vi.hoisted(() => ({ placeCall: vi.fn(async () => ({ id: "call-1"
 vi.mock("./calling", () => ({ ...calling, CallingDisabledError: class extends Error {} }));
 vi.mock("./qualification", () => ({ transferNumberForIntent: vi.fn(), callbackCalendarForIntent: vi.fn() }));
 vi.mock("./text-signals", () => ({ classifyInboundText: vi.fn(async () => ({ type: "none" })), lastInboundText: vi.fn(async () => null) }));
-vi.mock("./sms", () => ({ hasActiveSmsConversation: vi.fn(async () => false) }));
+vi.mock("./sms", () => ({ hasActiveSmsConversation: vi.fn(async () => false), markLeadNoCalls: vi.fn(async () => {}), NO_CALLS_TAG: "no calls" }));
 const touch = vi.hoisted(() => ({ checkHumanTouch: vi.fn(), DEFAULT_HUMAN_HANDS_OFF_DAYS: 7 }));
 vi.mock("./human-touch", () => touch);
 const slack = vi.hoisted(() => ({ sendMessage: vi.fn(async () => ({})) }));
 vi.mock("../../shared/slack", () => slack);
-vi.mock("../../shared/ghl", () => ({ getGhlConfig: vi.fn(async () => ({ locationId: "loc", apiKey: "k" })), getLocationTimezone: vi.fn(async () => "America/St_Johns"), addContactTags: vi.fn() }));
+vi.mock("../../shared/ghl", () => ({ getGhlConfig: vi.fn(async () => ({ locationId: "loc", apiKey: "k" })), getLocationTimezone: vi.fn(async () => "America/St_Johns"), addContactTags: vi.fn(), getContact: vi.fn(async () => ({ tags: [] })) }));
 
 import { runDialPendingCalls } from "./dial-pending";
 

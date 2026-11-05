@@ -129,6 +129,44 @@ describe("irisHandleInboundSms — opt-out", () => {
 });
 
 /**
+ * Kelly Joseph, 2026-11-06: replied "Please no Calls" to the intake text and was told "we won't reach out
+ * again" and closed out. No calls is not no interest — she stays on text and is still qualified.
+ */
+describe("irisHandleInboundSms — no calls", () => {
+  it("keeps the lead open for text, tags 'no calls' (never 'do not call'), pushes the dial to infinity and qualifies by text", async () => {
+    db.query.mockResolvedValue([{ client_id: "3-percent-east-coast", contact_id: "contact-1", lead: LEAD, status: "pending" }]);
+    vi.mocked(classifyInboundText).mockResolvedValueOnce({ type: "no_calls" });
+    vi.mocked(chatWithTools).mockResolvedValueOnce(endTurn("Absolutely, no calls from me. Are you looking to buy or sell?"));
+
+    const handled = await irisHandleInboundSms("contact-1", "Please no Calls", { wait: async () => {} });
+
+    expect(handled).toBe(true);
+    expect(ghl.addContactTags).toHaveBeenCalledWith("contact-1", ["no calls"], "loc-1", "key-1");
+    expect(ghl.addContactTags).not.toHaveBeenCalledWith("contact-1", ["do not call"], expect.anything(), expect.anything());
+    const hold = db.query.mock.calls.find((c) => String(c[0]).includes("noCalls"));
+    expect(String(hold?.[0])).toContain("call_after = 'infinity'");
+    expect(String(hold?.[0])).toContain("status = 'pending'");
+    expect(db.query.mock.calls.find((c) => String(c[0]).includes("lead opted out"))).toBeUndefined();
+    // The model runs, told not to offer a call, and the reply goes out.
+    const systemPrompt = String(vi.mocked(chatWithTools).mock.calls[0][0]);
+    expect(systemPrompt).toMatch(/does NOT want phone calls/);
+    expect(systemPrompt).toMatch(/when would be a good time for one of our agents/);
+    expect(ghl.sendSMS).toHaveBeenCalledWith("contact-1", expect.stringMatching(/no calls from me/i), "loc-1", "key-1");
+    expect(ghl.sendSMS).not.toHaveBeenCalledWith("contact-1", expect.stringMatching(/won't reach out again/i), expect.anything(), expect.anything());
+  });
+
+  it("remembers the flag on later texts without needing the classifier to say it again", async () => {
+    db.query.mockResolvedValue([{ client_id: "3-percent-east-coast", contact_id: "contact-1", lead: { ...LEAD, noCalls: true }, status: "pending" }]);
+    vi.mocked(chatWithTools).mockResolvedValueOnce(endTurn("Got it. What area are you looking in?"));
+
+    await irisHandleInboundSms("contact-1", "buying", { wait: async () => {} });
+
+    expect(String(vi.mocked(chatWithTools).mock.calls[0][0])).toMatch(/does NOT want phone calls/);
+    expect(ghl.addContactTags).not.toHaveBeenCalled();
+  });
+});
+
+/**
  * Real mistake found live, 2026-09-25 (Kaitlyn Sheppard): dial-pending.ts's
  * pre-dial recheck already reads and acts on a lead's first reply to the
  * initial "you'll get a call from Iris — what time works?" text (scheduling

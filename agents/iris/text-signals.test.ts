@@ -28,6 +28,15 @@ describe("classifyInboundText", () => {
     expect(result).toEqual({ type: "opt_out" });
   });
 
+  it("classifies a refusal of phone calls alone as no_calls, not as an opt-out", async () => {
+    claude.ask.mockResolvedValue('{"type": "no_calls"}');
+    const result = await classifyInboundText("Please no Calls", NOW, TIMEZONE);
+    expect(result).toEqual({ type: "no_calls" });
+    // Kelly Joseph, 2026-11-06: this exact reply was read as an opt-out. The prompt must carry the case.
+    expect(claude.ask.mock.calls[0][0]).toMatch(/Please no Calls/);
+    expect(claude.ask.mock.calls[0][0]).toMatch(/never use opt_out for this/);
+  });
+
   it("classifies a specific callback time request and passes it through unchanged when already within the legal calling window", async () => {
     // 2026-09-22T20:30:00.000Z is 6:00 PM in America/St_Johns (UTC-2:30) —
     // within the 8am-9pm legal window, so clampToLegalCallingWindow should

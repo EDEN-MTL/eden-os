@@ -19,7 +19,7 @@ import { ask } from "../../shared/claude";
 import { getConversationMessages, getConversations } from "../../shared/ghl";
 import { clampToLegalCallingWindow } from "./cadence";
 
-export type TextSignal = { type: "opt_out" } | { type: "schedule_for"; when: Date } | { type: "call_consent" } | { type: "none" };
+export type TextSignal = { type: "opt_out" } | { type: "no_calls" } | { type: "schedule_for"; when: Date } | { type: "call_consent" } | { type: "none" };
 
 // Same bounds webhooks/vapi-tools.ts's handleScheduleCallback already
 // enforces for a live-call-requested callback (MIN_CALLBACK_MINUTES_OUT /
@@ -55,13 +55,15 @@ Current date/time: ${nowIso} (timezone: ${timezone}). Use this as the reference 
 ${contextLine}
 Classify the message into exactly ONE of these shapes:
 
-{"type": "opt_out"} — the lead is clearly asking not to be called, to stop contacting them, or is declining any further contact. Examples: "stop calling me", "please don't call", "not interested, remove me", "quit texting/calling this number".
+{"type": "opt_out"} — the lead is clearly declining ALL further contact: calls and texts both, or says they are not interested. Examples: "not interested, remove me", "stop texting me", "leave me alone", "take me off your list", "quit contacting me".
+
+{"type": "no_calls"} — the lead refuses PHONE CALLS only and says nothing about texts or about no longer being interested. Real example (2026-11-06, Kelly Joseph, replying to our first text): "Please no Calls". Others: "don't call me", "no phone calls please", "text only", "text me instead", "I can't take calls". Someone who just doesn't want a call is still a prospect we can help by text, so never use opt_out for this — but if the message ALSO says they're not interested or don't want texts ("don't call or text me"), it is opt_out.
 
 {"type": "schedule_for", "when": "<ISO 8601 timestamp with timezone offset>"} — the lead is asking to be called back at a SPECIFIC time. Examples: "call me at 6pm", "can you call after 5 today", "call me tomorrow morning around 9". Resolve any relative/vague time against the current date/time above, in the ${timezone} timezone. A bare time of day with no date means the NEXT upcoming occurrence (today if it hasn't passed yet, otherwise tomorrow).
 ${callConsentLine}
 {"type": "none"} — anything else, including an unclear/ambiguous reply, a "no"/"not today"/"not right now", or no clear signal either way. This is the default for MOST messages: a correction ("I'm not selling, I want X instead"), a question, general info, or anything that doesn't clearly request an opt-out, a specific callback time, or give clear consent to an offered call.
 
-Be conservative — only use opt_out, schedule_for, or call_consent when the lead's intent is unambiguous. When in doubt, use none.`;
+Be conservative — only use opt_out, no_calls, schedule_for, or call_consent when the lead's intent is unambiguous. When in doubt, use none.`;
 }
 
 function extractJsonObject(raw: string): unknown {
@@ -81,7 +83,7 @@ function extractJsonObject(raw: string): unknown {
  * out-of-bounds or invalid date) degrades to {type: "none"}, same
  * fail-toward-no-change philosophy as wasAnswered's own design: the cost
  * of missing a real signal once is far smaller than the cost of acting on
- * a misread one (wrongly opting out a real lead, or scheduling a call for
+ * a misread one (wrongly opting out a real lead, or wrongly treating "no calls" as "no contact" and dropping someone who still wanted help, or scheduling a call for
  * a nonsense time).
  */
 export async function classifyInboundText(
@@ -104,6 +106,7 @@ export async function classifyInboundText(
   if (!parsed || typeof parsed.type !== "string") return { type: "none" };
 
   if (parsed.type === "opt_out") return { type: "opt_out" };
+  if (parsed.type === "no_calls") return { type: "no_calls" };
 
   // Defensive, code-level backstop (same philosophy as schedule_for's
   // MIN_MINUTES_OUT bound below) — call_consent only means anything when

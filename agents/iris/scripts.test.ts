@@ -1408,6 +1408,17 @@ describe("IDLE_NUDGE_VARIATIONS", () => {
  * written for texting rather than talking.
  */
 describe("buildSmsQualificationPrompt", () => {
+  it("for a lead who asked for no calls: keeps qualifying by text, never offers an Iris call, and asks when an agent can talk to them", () => {
+    const prompt = buildSmsQualificationPrompt(IRIS_CONFIG, BLANK_LEAD, "3 Percent East Coast", "St. John's", { noCalls: true, callHandoff: true });
+    expect(prompt).toMatch(/does NOT want phone calls/);
+    expect(prompt).toMatch(/NOT the same as not being interested/);
+    expect(prompt).toMatch(/when would be a good time for one of our agents to connect with them to send over listings/);
+    expect(prompt).not.toMatch(/call schedule_transfer_call confirmed/);
+    expect(prompt).not.toMatch(/Iris will give them a call shortly/);
+    const normal = buildSmsQualificationPrompt(IRIS_CONFIG, BLANK_LEAD, "3 Percent East Coast", "St. John's", { callHandoff: true });
+    expect(normal).not.toMatch(/does NOT want phone calls/);
+  });
+
   it("asks every config question when intent is unknown", () => {
     const prompt = buildSmsQualificationPrompt(IRIS_CONFIG, BLANK_LEAD, "3 Percent East Coast", "St. John's");
     for (const q of IRIS_CONFIG.questions) expect(prompt).toContain(q);

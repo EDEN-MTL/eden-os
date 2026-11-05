@@ -29,13 +29,14 @@ const textSignals = vi.hoisted(() => ({
 }));
 vi.mock("./text-signals", () => textSignals);
 
-const smsModule = vi.hoisted(() => ({ hasActiveSmsConversation: vi.fn(async () => false) }));
+const smsModule = vi.hoisted(() => ({ hasActiveSmsConversation: vi.fn(async () => false), markLeadNoCalls: vi.fn(async () => {}), NO_CALLS_TAG: "no calls" }));
 vi.mock("./sms", () => smsModule);
 
 const ghl = vi.hoisted(() => ({
   getGhlConfig: vi.fn(async () => ({ locationId: "loc-1", apiKey: "key-1" })),
   getLocationTimezone: vi.fn(async () => "America/St_Johns"),
   addContactTags: vi.fn(async () => ({})),
+  getContact: vi.fn(async () => ({ tags: [] as string[] })),
 }));
 vi.mock("../../shared/ghl", () => ghl);
 
@@ -309,5 +310,34 @@ describe("resolveOne — an explicit callback is not paused by the lead texting 
 
     expect(calling.placeCall).toHaveBeenCalledTimes(1);
     expect(db.query.mock.calls.find((c) => String(c[0]).includes("texting with lead — call paused"))).toBeUndefined();
+  });
+});
+
+/**
+ * Kelly Joseph, 2026-11-06: "Please no Calls" means no phone calls, not no interest. Whatever path queued the
+ * row, nothing dials her, and she is not closed out as an opt-out.
+ */
+describe("resolveOne — a lead who asked for no calls is never dialled", () => {
+  it("holds a row whose contact carries the 'no calls' tag, without placing a call", async () => {
+    ghl.getContact.mockResolvedValueOnce({ tags: ["buyer lead", "no calls"] });
+    calling.placeCall.mockResolvedValue({ id: "call-1" });
+
+    await runDialPendingCalls();
+
+    expect(calling.placeCall).not.toHaveBeenCalled();
+    expect(smsModule.markLeadNoCalls).toHaveBeenCalledTimes(1);
+  });
+
+  it("holds the row, and does not tag 'do not call', when the latest text says no calls", async () => {
+    textSignals.lastInboundText.mockResolvedValue({ text: "Please no Calls", precedingOutbound: null, dateAdded: new Date(Date.now() - 60_000).toISOString() });
+    textSignals.classifyInboundText.mockResolvedValue({ type: "no_calls" });
+    calling.placeCall.mockResolvedValue({ id: "call-1" });
+
+    await runDialPendingCalls();
+
+    expect(calling.placeCall).not.toHaveBeenCalled();
+    expect(smsModule.markLeadNoCalls).toHaveBeenCalledTimes(1);
+    expect(ghl.addContactTags).not.toHaveBeenCalledWith("contact-1", ["do not call"], expect.anything(), expect.anything());
+    expect(db.query.mock.calls.find((c) => String(c[0]).includes("lead opted out"))).toBeUndefined();
   });
 });

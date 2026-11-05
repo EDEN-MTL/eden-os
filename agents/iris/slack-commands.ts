@@ -142,6 +142,7 @@ export async function prepareCallCommand(
 
   // Hard stops — never offer these.
   if (c?.dnd || tags.includes("do not call")) return refused(`${contact.name} is flagged do-not-disturb / "do not call" — I won't call them.`);
+  if (tags.includes("no calls")) return refused(`${contact.name} asked not to be phoned (tagged "no calls"). I can text them instead.`);
   if (!c?.phone) return refused(`${contact.name} has no phone number on file.`);
   if (![c?.firstName, c?.lastName].some(Boolean) && !c?.name) return refused(`${contact.name} has no confirmed name on file.`);
 
@@ -293,6 +294,7 @@ export async function prepareFollowUpCommand(
     const tags: string[] = (contact?.tags ?? []).map((t: string) => String(t).toLowerCase());
     if (!contact) left.push(`${c.name} (couldn't read their record)`);
     else if (contact.dnd || tags.includes("do not call")) left.push(`${c.name} (do not call)`);
+    else if (tags.includes("no calls")) left.push(`${c.name} (no calls)`);
     else if (!contact.phone) left.push(`${c.name} (no phone)`);
     else if (tags.includes("appt booked") || tags.includes("live transferred")) left.push(`${c.name} (already ${tags.includes("appt booked") ? "booked" : "live transferred"})`);
     else {
@@ -369,6 +371,7 @@ export async function prepareReviewActionCommand(
     const added = contact?.dateAdded ? new Date(contact.dateAdded).getTime() : NaN;
     if (!contact) left.push(`${f.name} (couldn't read their record)`);
     else if (contact.dnd || tags.includes("do not call")) left.push(`${f.name} (do not call)`);
+    else if (tags.includes("no calls")) left.push(`${f.name} (no calls)`);
     else if (!contact.phone) left.push(`${f.name} (no phone)`);
     else if (tags.includes("appt booked") || tags.includes("live transferred")) left.push(`${f.name} (already ${tags.includes("appt booked") ? "booked" : "live transferred"})`);
     // They wrote to us, so an old inquiry is not the issue; otherwise an inquiry over six months old needs Jacob's OK.
