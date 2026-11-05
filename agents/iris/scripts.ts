@@ -1961,14 +1961,13 @@ export const IDLE_NUDGE_VARIATIONS = [
  */
 export const SILENT_MARKER = "[silent]";
 
-/**
- * The idle check-in, model-judged rather than a fixed line. A fixed "can you
- * still hear me?" fired into a call screener's silent hold (same Koren call);
- * the hook can't tell a hold from a quiet lead, the model can.
+/*
+ * There used to be a model-judged IDLE_NUDGE_PROMPT here (commit ead8984, after a fixed line was spoken into a call
+ * screener's silent hold). It was removed 2026-11-06: Vapi's `say` hook with a `prompt` does not generate the line
+ * with Iris's own prompt, so on Magar Bhuma's two calls (and once on Oct 18) the model answered as a bare assistant —
+ * "I appreciate the instructions, but I should clarify. I'm Claude, an AI assistant..." — into a live conversation,
+ * then ended the call. The hook now speaks one of IDLE_NUDGE_VARIATIONS, which cannot go wrong that way.
  */
-export const IDLE_NUDGE_PROMPT =
-  `The line has gone quiet for a few seconds. If you are still waiting on a call screener, a hold message, a phone menu or any other recording — or no real person has spoken to you yet — reply with exactly ${SILENT_MARKER} and nothing else. ` +
-  `Only if you are mid-conversation with a real person, say ONE short, natural check-in in your own words, for example: ${IDLE_NUDGE_VARIATIONS.map((v) => `"${v}"`).join(", ")}. Vary it if you already checked in earlier.`;
 
 /**
  * Text-channel qualification prompt — agents/iris/sms.ts, Mark's confirmed

@@ -23,7 +23,7 @@ import { createCall, getVapiEnvConfig, CreateCallPayload, VapiAssistantConfig, V
 import { query } from "../../shared/db";
 import { isCallingEnabled } from "./calling-settings";
 import { CallIntent } from "./qualification";
-import { AGENT_UNAVAILABLE_LINE, buildCallOpeningLine, CallOrigin, expandBudgetShorthand, IDLE_NUDGE_PROMPT, SILENT_MARKER } from "./scripts";
+import { AGENT_UNAVAILABLE_LINE, buildCallOpeningLine, CallOrigin, expandBudgetShorthand, IDLE_NUDGE_VARIATIONS, SILENT_MARKER } from "./scripts";
 
 export class CallingDisabledError extends Error {}
 
@@ -829,8 +829,15 @@ export function buildCallPayload(
       // customer silence ANYWHERE in the call. Widening the number alone
       // has diminishing returns (a real person can easily pause 15-20s+
       // mid-thought answering an open-ended question), so as of
-      // 2026-09-21 the actual fix is WHAT gets said (IDLE_NUDGE_PROMPT,
+      // 2026-09-21 the actual fix is WHAT gets said (IDLE_NUDGE_VARIATIONS,
       // scripts.ts), not just when — see that constant's own doc comment.
+      //
+      // 2026-11-06: a fixed line again, not a `prompt`. A `say` hook with a prompt is generated
+      // WITHOUT Iris's prompt, and on two live calls to Magar Bhuma (and once on Oct 18) it
+      // answered as a bare assistant ("I'm Claude, an AI assistant, I'm not actually on a phone
+      // call") into a real conversation and then the endCall hook hung up. A call screener's
+      // silent hold can now hear "are you still there?" (the Koren Pye case, 2026-10-12) — a
+      // harmless line next to losing a lead mid-qualification.
       //
       // triggerResetMode fixed "onUserSpeech" → "never", 2026-09-15:
       // confirmed live (real transcript, timestamps) and via Vapi's own
@@ -851,7 +858,7 @@ export function buildCallPayload(
       hooks: [
         {
           on: "customer.speech.timeout",
-          do: [{ type: "say", prompt: IDLE_NUDGE_PROMPT }],
+          do: [{ type: "say", exact: IDLE_NUDGE_VARIATIONS }],
           options: { timeoutSeconds: 15, triggerMaxCount: 3, triggerResetMode: "never" },
         },
         // Mark's spec, 2026-09-22: if the lead still hasn't responded even

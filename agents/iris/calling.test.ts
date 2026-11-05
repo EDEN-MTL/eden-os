@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { bookingConfirmationLines, rescheduleConfirmationLines, buildCallPayload, PlaceCallParams } from "./calling";
-import { IDLE_NUDGE_PROMPT, SILENT_MARKER } from "./scripts";
+import { IDLE_NUDGE_VARIATIONS, SILENT_MARKER } from "./scripts";
 import { SPEECH_REPLACEMENTS } from "./calling";
 
 /**
@@ -91,7 +91,7 @@ describe("buildCallPayload", () => {
     const hooks = payload.assistant.hooks;
     expect(hooks?.[0]).toEqual({
       on: "customer.speech.timeout",
-      do: [{ type: "say", prompt: IDLE_NUDGE_PROMPT }],
+      do: [{ type: "say", exact: IDLE_NUDGE_VARIATIONS }],
       options: { timeoutSeconds: 15, triggerMaxCount: 3, triggerResetMode: "never" },
     });
   });
@@ -147,10 +147,12 @@ describe("buildCallPayload", () => {
     expect(spoken("Thanks so much for your time, have a great day. Goodbye.")).toBe("Thanks so much for your time, have a great day. Goodbye.");
   });
 
-  it("makes the idle check-in say nothing while a screener, hold or menu is on the line", () => {
-    expect(IDLE_NUDGE_PROMPT).toContain(SILENT_MARKER);
-    expect(IDLE_NUDGE_PROMPT).toMatch(/call screener, a hold message, a phone menu/);
-    expect(IDLE_NUDGE_PROMPT).toMatch(/are you still there/);
+  /** Magar Bhuma, 2026-11-05: a `say` hook with a `prompt` made the model answer as "Claude, an AI assistant" mid-call and the call ended. */
+  it("speaks a fixed check-in line, never a model-generated one", () => {
+    const hook = buildCallPayload(BASE_PARAMS, VAPI_CONFIG).assistant.hooks?.[0] as any;
+    expect(hook.do[0].prompt).toBeUndefined();
+    expect(hook.do[0].exact).toEqual(IDLE_NUDGE_VARIATIONS);
+    expect(IDLE_NUDGE_VARIATIONS.join(" ")).toMatch(/are you still there/);
   });
 
   it("reads numbers as numbers — Vapi's digit-by-digit cutoff is raised past any price or street number", () => {
