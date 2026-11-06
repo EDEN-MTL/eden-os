@@ -140,6 +140,27 @@ It only gates the dial — it has no effect on whether leads get queued.
   yes, then the same sweep as "follow up on Jacob's calls" (one call at a time, one text after a miss). A review
   older than 36h is refused. Stored as `iris_slack_commands.kind = 'review'`.
 
+### "Please no Calls" is not an opt-out (Mark, 2026-11-06 — Kelly Joseph)
+
+A new lead answered the intake text with "Please no Calls". The old classifier called that `opt_out`: row closed, "do not call"
+tag (which every watcher reads as stop-everything), "we won't reach out again" sent. Mark: don't assume they no longer want
+to talk to us. `classifyInboundText` now has `no_calls` (refuses phone calls only; "don't call or text me" and "not
+interested" stay `opt_out`). `markLeadNoCalls` (`agents/iris/sms.ts`) keeps the row `pending` with `call_after = infinity`
+(nothing dials), sets `lead.noCalls`, tags the contact **"no calls"**, and Iris qualifies by text: `buildSmsQualificationPrompt`
+with `noCalls` acknowledges it, asks the missing questions, drops `schedule_transfer_call`, and ends by asking when one of the
+agents can talk to them to send listings (book_appointment, or request_human_followup if they only want text).
+`dial-pending.ts` checks the tag live before EVERY dial (sweeps, cohort and retries create fresh rows that don't know the old
+text), and Slack "call X" refuses a "no calls" lead. The classifier itself can only be checked on Render (no local Anthropic key).
+
+### Reversible by default (Mark, 2026-11-06)
+
+The mistakes that cost leads were misreads acted on irreversibly (Kelly "Please no Calls", Angela's July reply). Rule for any
+classifier-driven action: when the message is ambiguous, take the action a person can undo and keep talking. A text stop
+(`opt_out` in `text-signals.ts`) is only acted on when the model says `certainty: "clear"` AND the `quote` it gives is
+really in the message; anything else is `unsure_stop`: nothing is closed or tagged, the dial is held (`call_after =
+infinity`), Iris asks what they mean (`stopCheck` prompt, no tools) and Slack shows the words. A clear stop still closes
+the lead but now posts the exact words to the call-log channel. New irreversible actions should follow the same pattern.
+
 ### Texting after a missed call (Mark, 2026-11-05 — Melanie Petten)
 
 - After Iris's FIRST unanswered call (a normal new-lead sequence) she texts once (`maybeTextAfterMissedCalls` in

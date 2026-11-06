@@ -65,6 +65,28 @@ async function loadIrisLeadRow(contactId: string): Promise<IrisLeadRow | null> {
   return rows[0] ?? null;
 }
 
+/**
+ * "Please no Calls" (Kelly Joseph, 2026-11-06, replying to the intake text) means no PHONE calls — not "I'm
+ * not interested". The old handling closed her row, tagged her "do not call" (which every other watcher reads
+ * as stop-everything) and told her we would never reach out again. Now the row stays open for text with its
+ * call time pushed to infinity so nothing dials her, the lead is flagged noCalls so the text prompt qualifies
+ * by text and asks when an agent can talk to her, and the tag is "no calls" — checked before every dial
+ * (dial-pending.ts) and by Slack call requests, but not a reason to stop texting.
+ */
+export const NO_CALLS_TAG = "no calls";
+
+export async function markLeadNoCalls(clientId: string, contactId: string, ghl: { locationId: string; apiKey: string }, reason = "lead asked for no calls — text only"): Promise<void> {
+  await query(
+    `UPDATE iris_pending_calls
+     SET lead = lead || '{"noCalls": true}'::jsonb, call_after = 'infinity', status = 'pending', resolution_reason = $3, resolved_at = NULL
+     WHERE client_id = $1 AND contact_id = $2`,
+    [clientId, contactId, reason]
+  );
+  await addContactTags(contactId, [NO_CALLS_TAG], ghl.locationId, ghl.apiKey).catch((error) => {
+    console.error(`[IRS-SMS] Failed to tag contact ${contactId} as "${NO_CALLS_TAG}":`, error instanceof Error ? error.message : error);
+  });
+}
+
 /** Ends the calling sequence outright — a concluded text exchange (opted out or handed off) is not "gone cold," it's actually done. */
 async function finishIrisLead(clientId: string, contactId: string, reason: string): Promise<void> {
   await query(
@@ -476,6 +498,11 @@ async function handleInboundSms(contactId: string, text: string, options: Inboun
     await addContactTags(contactId, ["do not call"], ghlConfig.locationId, ghlConfig.apiKey).catch((error) => {
       console.error(`[IRS-SMS] Failed to tag contact ${contactId} as "do not call":`, error instanceof Error ? error.message : error);
     });
+    // Closing a lead can't be undone by someone who never saw it, so the exact words go to the team right away.
+    await sendMessage(AGENT_ID, {
+      channel: CALL_LOG_CHANNEL,
+      text: `🚫 *${(row.lead as any)?.name ?? contactId}* opted out by text — closed, tagged "do not call". Their words: "${signal.quote}". If that was a misread, reopen them.${await linkSuffix(clientId, contactId)}`,
+    }).catch(() => {});
     const reply = "No problem — we won't reach out again. Take care!";
     await pauseLikeAHuman(reply);
     await sendSMS(contactId, reply, ghlConfig.locationId, ghlConfig.apiKey).catch((error) => {
@@ -484,6 +511,33 @@ async function handleInboundSms(contactId: string, text: string, options: Inboun
     await appendHistory(AGENT_ID, key, "user", text).catch(() => {});
     await appendHistory(AGENT_ID, key, "assistant", reply).catch(() => {});
     return true;
+  }
+
+  // A message that MIGHT be a stop (temporary, about one thing, a mood). Reversible by default: nothing is closed or tagged,
+  // nothing dials, Iris asks what they mean, and the team sees the words in Slack. A plain "stop" next turn closes them.
+  const stopCheck = signal.type === "unsure_stop";
+  if (stopCheck) {
+    await query(
+      `UPDATE iris_pending_calls SET call_after = 'infinity', status = 'pending', resolution_reason = 'lead may have asked to stop — checking with them, no calls meanwhile', resolved_at = NULL
+       WHERE client_id = $1 AND contact_id = $2`,
+      [clientId, contactId]
+    );
+    await sendMessage(AGENT_ID, {
+      channel: CALL_LOG_CHANNEL,
+      text: `❓ *${(row.lead as any)?.name ?? contactId}* sent something that might mean "stop": "${text.slice(0, 200)}". I did NOT close them or tag them. No calls will go out, and Iris is asking what they mean.${await linkSuffix(clientId, contactId)}`,
+    }).catch(() => {});
+  }
+
+  // No calls, but still a prospect: stay on text, qualify, and ask when an agent can talk to them.
+  let noCalls = (row.lead as any)?.noCalls === true;
+  if (signal.type === "no_calls" && !noCalls) {
+    noCalls = true;
+    await markLeadNoCalls(clientId, contactId, ghlConfig);
+    await appendNoteToContact(clientId, contactId, "Iris: lead asked not to be called — keeping to text and still qualifying.").catch(() => {});
+    await sendMessage(AGENT_ID, {
+      channel: CALL_LOG_CHANNEL,
+      text: `📵 *${(row.lead as any)?.name ?? contactId}* texted "no calls". Not treating that as an opt-out: no calls will go out, and Iris is qualifying by text and asking when an agent can talk to them.${await linkSuffix(clientId, contactId)}`,
+    }).catch(() => {});
   }
 
   // Real mistake found live, 2026-09-25 (Kaitlyn Sheppard): dial-pending.ts's
@@ -546,6 +600,8 @@ async function handleInboundSms(contactId: string, text: string, options: Inboun
   const systemPrompt = noShowContext
     ? buildNoShowSmsPrompt(row.lead, branding.brandName, branding.city, noShowContext, { recentTexts: recent, nowLocal, timezoneName: timezone })
     : buildSmsQualificationPrompt(config, row.lead, branding.brandName, branding.city, {
+        noCalls,
+        stopCheck,
         recentTexts: recent,
         origin: "form",
         callHandoff: config.smsCallHandoff,
@@ -561,7 +617,7 @@ async function handleInboundSms(contactId: string, text: string, options: Inboun
   const tools = noShowContext
     ? [requestHumanFollowup, CHECK_AVAILABILITY_SMS_TOOL, BOOK_APPOINTMENT_SMS_TOOL]
     : config.smsCallHandoff
-      ? [...SMS_TOOLS, SCHEDULE_TRANSFER_CALL_TOOL, CHECK_AVAILABILITY_SMS_TOOL, BOOK_APPOINTMENT_SMS_TOOL]
+      ? [...SMS_TOOLS, ...(noCalls ? [] : [SCHEDULE_TRANSFER_CALL_TOOL]), CHECK_AVAILABILITY_SMS_TOOL, BOOK_APPOINTMENT_SMS_TOOL]
       : SMS_TOOLS;
 
   let working: ChatMessage[] = [...history, { role: "user", content: text }];
@@ -585,7 +641,12 @@ async function handleInboundSms(contactId: string, text: string, options: Inboun
         const call = tu as { id: string; name: string; input: any };
         let content: string;
         try {
-          content = await executeSmsTool(clientId, contactId, config, ghlConfig, call.name, call.input, timezone, row.source);
+          content =
+            stopCheck
+              ? "Error: no tools on this turn — just ask the lead what they mean."
+              : noCalls && call.name === "schedule_transfer_call"
+              ? "Error: this lead asked for no phone calls — do not schedule one. Ask when an agent can reach them, or use request_human_followup."
+              : await executeSmsTool(clientId, contactId, config, ghlConfig, call.name, call.input, timezone, row.source);
         } catch (error) {
           content = `Error: ${error instanceof Error ? error.message : String(error)}`;
         }

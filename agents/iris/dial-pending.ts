@@ -31,11 +31,11 @@ import { applyPreferredTime, decideNextAttempt, isStatedCallbackTime, nextAttemp
 import { transferNumberForIntent, callbackCalendarForIntent } from "./qualification";
 import { classifyInboundText, lastInboundText } from "./text-signals";
 import { checkHumanTouch, DEFAULT_HUMAN_HANDS_OFF_DAYS } from "./human-touch";
-import { hasActiveSmsConversation } from "./sms";
+import { hasActiveSmsConversation, markLeadNoCalls, NO_CALLS_TAG } from "./sms";
 import { sendMessage } from "../../shared/slack";
 import { CALL_LOG_CHANNEL } from "./channels";
 import { NO_SHOW_SOURCE, noShowStillApplies } from "./no-show-state";
-import { getGhlConfig, getLocationTimezone, addContactTags } from "../../shared/ghl";
+import { getGhlConfig, getLocationTimezone, addContactTags, getContact } from "../../shared/ghl";
 
 /**
  * Mark's confirmed design, 2026-09-23 (two-way SMS qualification): while a
@@ -477,6 +477,16 @@ async function resolveOne(row: PendingCallRow): Promise<void> {
   }
 
   if (ghlConfig) {
+    // A lead who asked for no calls ("Please no Calls", Kelly Joseph, 2026-11-06) is never dialled, whichever
+    // path queued this row — the sweeps, the follow-up cohort and the retry cadence all land here, and the
+    // new row they create knows nothing about the old text. The tag is the lasting record of it.
+    const contactNow: any = await getContact(row.contact_id, ghlConfig.locationId, ghlConfig.apiKey).catch(() => null);
+    const tagsNow: string[] = (contactNow?.contact ?? contactNow)?.tags ?? [];
+    if ((row.lead as any)?.noCalls === true || tagsNow.some((t) => String(t).toLowerCase() === NO_CALLS_TAG)) {
+      await markLeadNoCalls(row.client_id, row.contact_id, ghlConfig, "lead asked for no calls — not dialling");
+      return;
+    }
+
     // Only a RECENT text can say "don't call" or "call at 6". Angela Marie,
     // 2026-10-13: a July reply about pausing a new-build search was read as an
     // opt-out, closing her queue and tagging her "do not call" the day she
@@ -492,11 +502,40 @@ async function resolveOne(row: PendingCallRow): Promise<void> {
     const textTime = inbound?.dateAdded ? new Date(inbound.dateAdded) : new Date();
     const signal = await classifyInboundText(inbound?.text ?? "", Number.isNaN(textTime.getTime()) ? new Date() : textTime, timezone, inbound?.precedingOutbound ?? null);
 
+    // Might be a stop, might not (temporary, about one thing, a mood): don't close or tag anyone on a maybe. Hold the
+    // dial, and say so, so a person or Iris's next text exchange can check with the lead.
+    if (signal.type === "unsure_stop") {
+      await query(
+        `UPDATE iris_pending_calls SET call_after = 'infinity', status = 'pending', resolution_reason = 'lead may have asked to stop — held, not closed', resolved_at = NULL WHERE id = $1`,
+        [row.id]
+      );
+      await sendMessage("iris", {
+        channel: CALL_LOG_CHANNEL,
+        text: `❓ *${row.lead?.name ?? row.contact_id}* texted something that might mean "stop": "${String(inbound?.text ?? "").slice(0, 200)}". I did not call, close or tag them. A teammate should read it and decide.`,
+      }).catch(() => {});
+      return;
+    }
+
     if (signal.type === "opt_out") {
+      await sendMessage("iris", {
+        channel: CALL_LOG_CHANNEL,
+        text: `🚫 *${row.lead?.name ?? row.contact_id}* opted out by text — closed, tagged "do not call". Their words: "${signal.quote}". If that was a misread, reopen them.`,
+      }).catch(() => {});
       await finish(row.id, "skipped", "lead opted out via text — cadence stopped");
       await addContactTags(row.contact_id, ["do not call"], ghlConfig.locationId, ghlConfig.apiKey).catch((error) => {
         console.error(`[IRS] Failed to tag contact ${row.contact_id} as "do not call":`, error instanceof Error ? error.message : error);
       });
+      return;
+    }
+
+    // The same "Please no Calls" text, caught here when Iris's text handler never saw it. Holds the row so
+    // nothing dials; she answers the lead's next text, or the team follows up from the Slack post.
+    if (signal.type === "no_calls") {
+      await markLeadNoCalls(row.client_id, row.contact_id, ghlConfig);
+      await sendMessage("iris", {
+        channel: CALL_LOG_CHANNEL,
+        text: `📵 *${row.lead?.name ?? row.contact_id}* texted that they don't want calls. I did not call and did not treat it as an opt-out. They still need a text from Iris or a teammate.`,
+      }).catch(() => {});
       return;
     }
 

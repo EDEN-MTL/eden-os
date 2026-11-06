@@ -1408,6 +1408,25 @@ describe("IDLE_NUDGE_VARIATIONS", () => {
  * written for texting rather than talking.
  */
 describe("buildSmsQualificationPrompt", () => {
+  it("when the lead may have asked to stop: checks what they mean, never says goodbye or qualifies, and uses no tools", () => {
+    const prompt = buildSmsQualificationPrompt(IRIS_CONFIG, BLANK_LEAD, "3 Percent East Coast", "St. John's", { stopCheck: true });
+    expect(prompt).toMatch(/may mean they want us to stop/);
+    expect(prompt).toMatch(/do not use any tool/);
+    expect(prompt).toMatch(/Never say "we won't reach out again"/);
+    expect(buildSmsQualificationPrompt(IRIS_CONFIG, BLANK_LEAD, "3 Percent East Coast", "St. John's")).not.toMatch(/may mean they want us to stop/);
+  });
+
+  it("for a lead who asked for no calls: keeps qualifying by text, never offers an Iris call, and asks when an agent can talk to them", () => {
+    const prompt = buildSmsQualificationPrompt(IRIS_CONFIG, BLANK_LEAD, "3 Percent East Coast", "St. John's", { noCalls: true, callHandoff: true });
+    expect(prompt).toMatch(/does NOT want phone calls/);
+    expect(prompt).toMatch(/NOT the same as not being interested/);
+    expect(prompt).toMatch(/when would be a good time for one of our agents to connect with them to send over listings/);
+    expect(prompt).not.toMatch(/call schedule_transfer_call confirmed/);
+    expect(prompt).not.toMatch(/Iris will give them a call shortly/);
+    const normal = buildSmsQualificationPrompt(IRIS_CONFIG, BLANK_LEAD, "3 Percent East Coast", "St. John's", { callHandoff: true });
+    expect(normal).not.toMatch(/does NOT want phone calls/);
+  });
+
   it("asks every config question when intent is unknown", () => {
     const prompt = buildSmsQualificationPrompt(IRIS_CONFIG, BLANK_LEAD, "3 Percent East Coast", "St. John's");
     for (const q of IRIS_CONFIG.questions) expect(prompt).toContain(q);
