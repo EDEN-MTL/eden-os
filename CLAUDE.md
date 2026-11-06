@@ -110,6 +110,9 @@ Per-agent architecture, lessons and open items — read the relevant one before
 changing that agent:
 
 - `docs/agents/iris.md` — Vapi calling, live-call debugging, Vapi lessons
+- `docs/agents/iris-corrections.md` — every time Iris was corrected, and the test that pins it. When someone says
+  "this should not happen" about Iris, fix it, add the failing test, and add a row there (a misread text is a case in
+  `agents/iris/corrections.ts`).
 - `docs/agents/ember.md` — nurture rules, CASL, self-pause
 - `docs/agents/forge-lens.md` — campaign health, lead attribution, Lens funnel
 

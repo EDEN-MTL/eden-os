@@ -152,6 +152,12 @@ agents can talk to them to send listings (book_appointment, or request_human_fol
 `dial-pending.ts` checks the tag live before EVERY dial (sweeps, cohort and retries create fresh rows that don't know the old
 text), and Slack "call X" refuses a "no calls" lead. The classifier itself can only be checked on Render (no local Anthropic key).
 
+### Corrections become tests (Mark, 2026-11-06)
+
+`docs/agents/iris-corrections.md` is the ledger of every time Iris was corrected and the test that pins it. A misread text
+becomes a case in `agents/iris/corrections.ts` (checked by `corrections.test.ts`, and against the real model by
+`npx tsx --env-file=.env scripts/check-iris-corrections.ts` on Render before any change to `text-signals.ts` ships).
+
 ### Reversible by default (Mark, 2026-11-06)
 
 The mistakes that cost leads were misreads acted on irreversibly (Kelly "Please no Calls", Angela's July reply). Rule for any
