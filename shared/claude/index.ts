@@ -126,7 +126,8 @@ export async function chatWithTools(
     max_tokens: maxTokens,
     temperature,
     system: systemPrompt,
-    tools: tools.map((t) => ({ name: t.name, description: t.description, input_schema: t.input_schema })),
+    // An empty list is omitted: a plain text-only call must not send `tools: []`.
+    tools: tools.length ? tools.map((t) => ({ name: t.name, description: t.description, input_schema: t.input_schema })) : undefined,
     messages: messages.map((m) => ({ role: m.role, content: m.content }) as Anthropic.MessageParam),
   });
 }

@@ -113,5 +113,43 @@
   },
   "slack": {
     "clientChannel": "matama-floors-eden"
+  },
+  "irisHomeServices": {
+    "_comment": "Iris's text flow for estimate requests (agents/iris/home-services). Pedro's GHL automation ('2) ... Floor Sanding Initial Nurture', English and French, in the Matama workflow folder) sends the introduction and the size question; Iris picks up when the lead REPLIES, asks when they're free (morning / afternoon / evening) and for the address, files the card in Loose Appointment Day (morning/afternoon) or Night (evening), writes the notes and fills the contact field ISA Notes, which a GHL workflow texts to Pedro. Columns are stage NAMES, resolved against the live pipeline on every run (read from Pedro's account 2026-11-05) — a renamed column stops the jobs and logs why instead of moving a lead somewhere wrong. mode stays dry_run (drafts and intended actions go to Slack, nothing reaches a lead or GHL) until someone explicitly sets live. enrollNotBefore is when the introduction text started going out; older cards are backlog and are never touched (CASL consent for them is an unmade decision). outreach.firstTouch / followups are off because the GHL automation already does both. Pedro's text alert is a GHL workflow, not code: trigger = pipeline stage changed to Loose Appointment Day / Night (and a second one for tag 'Needs Pedro' added), action = SMS to Pedro with the custom field ISA Notes. The field must exist (multi-line text, named exactly isaNotesField) before going live; Iris writes it BEFORE moving the card. notify.slackChannel is only a team mirror. UNCONFIRMED with Pedro: large-job size, when new work can start.",
+    "enabled": true,
+    "mode": "dry_run",
+    "timezone": "America/Toronto",
+    "ownerName": "Pedro",
+    "columns": {
+      "day1": "Day 1",
+      "day2": "Day 2",
+      "day3": "Day 3",
+      "looseDay": "Loose Appointment Day",
+      "looseNight": "Loose Appointment Night"
+    },
+    "intakeStages": [
+      "New Lead",
+      "Day 1",
+      "Day 2",
+      "Day 3"
+    ],
+    "outreach": {
+      "firstTouch": false,
+      "followups": false
+    },
+    "enrollNotBefore": "2026-11-04T23:30:00Z",
+    "quietHours": {
+      "startHour": 9,
+      "endHour": 20
+    },
+    "approvedPricingLine": null,
+    "bookingFrom": null,
+    "largeJobSqFt": null,
+    "isaNotesField": "ISA Notes",
+    "notify": {
+      "language": "fr",
+      "slackChannel": null
+    },
+    "languageFieldKey": null
   }
 }

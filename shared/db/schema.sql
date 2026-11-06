@@ -887,3 +887,37 @@ CREATE TABLE IF NOT EXISTS lead_review_snoozes (
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     PRIMARY KEY (client_id, contact_id)
 );
+
+-- Iris's home-services text flow (agents/iris/home-services, Matama Floors first). One row per lead the flow
+-- owns; the outbox holds every text it wants to send so quiet hours, the human-sized delay and dry-run mode
+-- all apply in one place and nothing is lost if a deploy lands between "decided to reply" and "sent".
+CREATE TABLE IF NOT EXISTS iris_hs_leads (
+    client_id TEXT NOT NULL,
+    contact_id TEXT NOT NULL,
+    opportunity_id TEXT,
+    status TEXT NOT NULL DEFAULT 'active',
+    column_key TEXT,
+    info JSONB NOT NULL DEFAULT '{}'::jsonb,
+    followup_step INTEGER NOT NULL DEFAULT 0,
+    next_followup_at TIMESTAMPTZ,
+    last_inbound_seen_at TIMESTAMPTZ,
+    last_outbound_at TIMESTAMPTZ,
+    resolution_reason TEXT,
+    enrolled_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    PRIMARY KEY (client_id, contact_id)
+);
+CREATE INDEX IF NOT EXISTS idx_iris_hs_leads_status ON iris_hs_leads(client_id, status);
+CREATE TABLE IF NOT EXISTS iris_hs_outbox (
+    id BIGSERIAL PRIMARY KEY,
+    client_id TEXT NOT NULL,
+    contact_id TEXT NOT NULL,
+    body TEXT NOT NULL,
+    kind TEXT NOT NULL,
+    send_after TIMESTAMPTZ NOT NULL,
+    status TEXT NOT NULL DEFAULT 'pending',
+    error TEXT,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    sent_at TIMESTAMPTZ
+);
+CREATE INDEX IF NOT EXISTS idx_iris_hs_outbox_due ON iris_hs_outbox(client_id, status, send_after);

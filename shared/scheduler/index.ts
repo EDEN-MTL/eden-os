@@ -28,6 +28,7 @@ import { runNoShowScan } from "../../agents/iris/no-show";
 import { runAppointmentSync } from "../../agents/lens/dashboard/appointments-sync";
 import { runFollowUpCohortCheck } from "../../agents/iris/followup-cohort";
 import { recordHeartbeat, runWatchdog, SCHEDULER_TIMEZONE } from "../../agents/iris/watchdog";
+import { runHomeServicesDigest, runHomeServicesFollowups, runHomeServicesIntake, runHomeServicesOutbox, runHomeServicesReplyPoll, runnableClients } from "../../agents/iris/home-services/jobs";
 import { runDailySummary } from "../../agents/iris/daily-summary";
 import { runNightlyLeadReview } from "../../agents/iris/lead-review";
 import { sendBlocks, sendMessage } from "../slack";
@@ -342,6 +343,17 @@ export async function runEmberReplyPoll(): Promise<void> {
   }
 }
 
+/** One home-services job across every enabled, complete client; one client failing never stops the others. */
+async function forEachHomeServicesClient(name: string, job: (config: ReturnType<typeof runnableClients>[number]) => Promise<void>): Promise<void> {
+  for (const config of runnableClients()) {
+    try {
+      await job(config);
+    } catch (e) {
+      console.error(`[SCHEDULER] Iris home-services ${name} failed for ${config.clientId}:`, e instanceof Error ? e.message : e);
+    }
+  }
+}
+
 /** Call once at server startup, after initDb() and initSlackClients(). */
 export function startScheduler(): void {
   // Hourly rather than daily so Lens and the dashboard aren't reading
@@ -396,6 +408,14 @@ export function startScheduler(): void {
   // Every 2 minutes: a lead texting back expects an answer in minutes, not
   // half an hour. Cheap — two GHL reads per lead Ember has texted.
   cron.schedule("*/2 * * * *", runEmberReplyPoll, { timezone: TIMEZONE });
+  // Iris's home-services text flow (Matama Floors). Every job is a no-op until a client has
+  // irisHomeServices.enabled AND a complete block (columns, intake stages, go-live time).
+  cron.schedule("* * * * *", () => forEachHomeServicesClient("intake", runHomeServicesIntake), { timezone: TIMEZONE });
+  cron.schedule("* * * * *", () => forEachHomeServicesClient("outbox", runHomeServicesOutbox), { timezone: TIMEZONE });
+  cron.schedule("*/2 * * * *", () => forEachHomeServicesClient("reply poll", runHomeServicesReplyPoll), { timezone: TIMEZONE });
+  cron.schedule("*/10 * * * *", () => forEachHomeServicesClient("follow-ups", runHomeServicesFollowups), { timezone: TIMEZONE });
+  // Weekdays 07:30 — the owner's morning list of open loose appointments, grouped by area.
+  cron.schedule("30 7 * * 1-5", () => forEachHomeServicesClient("digest", runHomeServicesDigest), { timezone: TIMEZONE });
   console.log(
     "[SCHEDULER] hourly Meta sync, rule evaluation (5 past), GHL lead sync (50 past), weekly Lens report (Mon 08:00), monthly Lens report (1st, 08:00), daily Forge health report (08:15), per-minute Iris dial queue, " +
       "and Ember scan (20 past) / sends (10 & 40 past) / reply poll (every 2 min), enabled clients only, scheduled"

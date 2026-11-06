@@ -132,6 +132,65 @@ It only gates the dial — it has no effect on whether leads get queued.
 verified live with `listPipelines`, never guessed. `VAPI_PHONE_NUMBER_ID` is still a
 single global env var; it moves into client config when a second client needs Iris.
 
+## Home-services text flow (Matama Floors) — `agents/iris/home-services/`
+
+A separate, text-only path for estimate requests (floor sanding), not part of the Vapi/real-estate pipeline above.
+It never touches `iris_pending_calls`, Vapi, or the `iris` config block; a client opts in with an
+`irisHomeServices` block in `config/clients/<id>.json` and `enabled: true`.
+
+**How it runs at Matama.** Pedro's GHL automation ("1) ... Survey Submission ... Create Opportunity in New Lead
+stage" then "2) English/French Floor Sanding Initial Nurture", both in the Matama workflow folder) creates the card
+and sends the introduction, the "$500 off" text and the "my virtual assistant Iris will ask a few quick questions,
+roughly how many square feet or rooms?" text. **Iris starts when the lead replies**: she acknowledges the size, asks
+when they are free (morning / afternoon / evening), then the address (street, neighbourhood, postal code), files the
+card in Loose Appointment Day (morning/afternoon/anytime) or Night (evening), writes the contact note and alerts
+Pedro with name, address, phone, size, availability and notes. Anything specific the lead says about timing
+("after 6pm", "Tuesday the 18th") goes in the note as written; Iris never confirms a time.
+
+- **Ships off and in `dry_run`.** In dry-run nothing reaches a lead or GHL: drafts, would-be stage moves, tags,
+  notes and owner alerts are posted to `IRIS_CALL_LOG_CHANNEL` prefixed "DRY RUN". `mode: "live"` must be set explicitly.
+- **No GHL workflow needed.** Intake polls the intake stages every minute; replies are polled every 2 minutes
+  (same approach as Ember's reply poll). A card's replies count from the moment the card was created. Only cards
+  created at/after `enrollNotBefore` are ever enrolled — older ones are backlog, and texting them is a CASL consent
+  decision nobody has made (Ember's rule is 6 months from the latest inquiry). `readinessProblem()` refuses to run a
+  half-filled block.
+- **Columns are stage names, resolved live** (`config.ts` `resolveStageRefs`) against the pipeline on every run
+  (cached 10 min). A renamed or deleted column makes the jobs stop and log once, rather than move a lead somewhere wrong.
+- **Iris sees the real thread** (`recentTexts`), including what the automation already sent, so a bare "885 ft2"
+  makes sense. She is told not to re-introduce herself, and not to confirm the terms of the $500 offer.
+- **Guardrails are in code, not just the prompt** (`engine.ts`): `move_to_column` refuses until name, address,
+  size, availability and phone are collected (`lead-info.ts` `missingRequired`); a lead already in a Loose column is
+  never moved out (only the owner does that); the note and alerts are built from collected facts with "unknown"
+  for gaps (`lead-info.ts`, `notify.ts`), never composed by the model; STOP/ARRÊT/unsubscribe is caught by regex
+  before the model sees the text (`messages.ts` `isOptOut`); a teammate texting the lead keeps Iris out
+  (`checkHumanTouch`).
+- **Pedro's text alert is a GHL workflow, not code.** Before moving a card (and before adding the "Needs Pedro"
+  tag) Iris fills the contact custom field named by `isaNotesField` ("ISA Notes", multi-line text, must already
+  exist) with a plain-text summary: name, address, phone, job, availability, photos, notes (`notify.ts`
+  `formatIsaNotes`, built only from collected facts). A workflow in Pedro's sub-account triggers on "pipeline stage
+  changed to Loose Appointment Day / Night" (and a second one on tag "Needs Pedro" added) and texts him
+  `{{contact.isa_notes}}`. If the field cannot be written the card is not moved, so nothing sits in a Loose column
+  unannounced. A card Pedro drags into a Loose column by hand carries stale or empty notes. Slack
+  (`notify.slackChannel`) is only a team-visible mirror. In dry-run the would-be field value goes to the Iris log
+  channel.
+- **Texts are kept short and human in code, not just in the prompt** (`reply-style.ts`): one paragraph, no dashes,
+  emoji only if the lead used one first, and a reply over ~230 characters / 3 sentences gets one "say it shorter"
+  model retry before it is queued (if that fails the tidied original goes out). A closed lead (not interested,
+  out of area, photo-quote) who texts "thanks" gets a short courtesy reply but stays closed and is not re-tagged.
+- **Everything outbound goes through `iris_hs_outbox`**: human-sized delay, quiet hours (default 9:00-20:00,
+  `America/Toronto`), dry-run and restart safety in one place. Unsent first touches/follow-ups older than 12h are
+  cancelled, never sent late.
+- **Optional outreach, off at Matama.** `outreach.firstTouch` / `outreach.followups` make Iris send the first text
+  and the Day 1-3 cadence herself (`messages.ts` templates, then tag "Long-term Nurture" and stop). Matama's
+  automation already does this, so both stay off — turning them on would double-text leads.
+- **Known gaps / decisions still open:** backlog enrolment is not wired; no calendar booking (a specific time
+  stays in the notes for Pedro to confirm); a photo-only MMS is invisible to the reply poll; two texts sent in quick
+  succession are answered as one (the newest wins); the lead-facing templates
+  name Pedro / Planchers Matama directly, so a second client means moving those strings into config; whether the GHL
+  automation stops its own later reminders once a lead replies is unverified.
+- Offline check of the conversation behaviour: `scripts/simulate-matama-iris.ts` (ten scenarios, a second model
+  plays the lead, in-memory fakes — costs real model calls, so confirm the budget first).
+
 ## Known open items
 
 - `placeCall` ignores `concurrencyBlocked`.
