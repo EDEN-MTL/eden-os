@@ -436,6 +436,8 @@
       "Listing Active",
       "International Numbers"
     ],
+    "bookingCalendarIds": { "buyer": "4Eyz51DOI7TY78gRgBU3", "seller": "vbsoYjk2Q6nI66q8u8to" },
+    "bookingCalendarIdsNote": "Mark, 2026-11-11: when a lead isn't free right now, Ember books the call on 3%'s round-robin consultation calendars (verified live: '3% REC - Buyer Consultation Calendar', 9 members; '3% REC - Seller Consultation Calendar', 3 members). Same ids as scout.calendars.",
     "includeStages": [
       "Not Ready - [Endless Loop]",
       "Long Term Nurturing",
