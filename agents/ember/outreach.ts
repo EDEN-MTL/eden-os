@@ -148,7 +148,7 @@ export async function planTouch(input: {
     firstName: firstNameOf(lead, contact),
     brandName: config.outreach.senderName,
     intent: lead.intent,
-    stopLine: STOP_LINE,
+    stopLine: config.outreach.sms.optOutLine ?? STOP_LINE,
     now,
     lead: context,
     priorDecline: decline,

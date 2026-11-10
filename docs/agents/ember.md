@@ -20,6 +20,9 @@ Turning a client on or off = `ember.enabled` in `config/clients/<id>.json` + dep
 - "Are you a bot?" → it's the team's virtual assistant. Never names an individual agent.
 - **CASL**: re-approach only within 6 months of the lead's latest inquiry unless express
   consent is confirmed.
+- **Opt-out line**: `ember.outreach.sms.optOutLine` — unset = "Reply STOP to opt out." (CASL);
+  `""` = none. 3% and the test account use none since 2026-11-11 (Jacob accepted the CASL risk).
+  A STOP reply still opts the lead out either way.
 - SMS must fit one segment: `smsSafe` drops emoji and folds accents; openers ≤160
   characters including the STOP line; replies trimmed to 160.
 - Sends from a pinned number (`ember.outreach.sms.fromNumber`, required). Team members
