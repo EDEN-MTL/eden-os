@@ -9,7 +9,8 @@ Turning a client on or off = `ember.enabled` in `config/clients/<id>.json` + dep
 
 ## Product rules (decided with Mark and Jacob, Sep–Oct 2026)
 
-- **Who**: only `ember.includeStages`. Dormancy per stage via `stageDormancyDays`
+- **Who**: only `ember.includeStages` (Not Ready and Replied — Long Term Nurturing was removed
+  2026-10-24; leads already being worked in a stage taken off the list are dropped quietly). Dormancy per stage via `stageDormancyDays`
   (e.g. Replied after 14 quiet days) and `dormancyThresholdDays`.
 - **Stop for good** on clear evidence — asked to stop, bought/sold, working with another
   agent, no longer looking: move to `ember.notInterestedStage`, never contact again

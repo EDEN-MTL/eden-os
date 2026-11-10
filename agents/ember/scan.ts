@@ -172,6 +172,19 @@ export function detectChange(
   if (won === true) return { kind: "exited", reason: `deal won (${stageName})` };
   if (won === false) return { kind: "exited", reason: `marked lost (${stageName})` };
 
+  // A stage taken OFF ember.includeStages: leads still sitting there stop
+  // being worked, quietly (Mark, 2026-10-24: "Ember should not touch those
+  // leads in the Long Term Nurturing stage"). Only when the card hasn't
+  // moved — a card moved somewhere else is the reactivation check below.
+  const included = ctx.config.includeStages;
+  if (
+    included?.length &&
+    opp.pipelineStageId === lead.enrolledStageId &&
+    !included.some((s) => s.trim().toLowerCase() === stageName.trim().toLowerCase())
+  ) {
+    return { kind: "exited", reason: `"${stageName}" is no longer a stage Ember works` };
+  }
+
   const tag = hasRenewedInterestTag(opp.contact?.tags, ctx.config);
   if (tag) return { kind: "reactivated", reason: `tagged "${tag}"` };
 
