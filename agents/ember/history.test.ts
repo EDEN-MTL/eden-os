@@ -110,6 +110,12 @@ describe("reviewHistory", () => {
     expect(d).toEqual({ action: "personalized", reason: "east end 3 bed", message: "Hi Sarah, it's Mark's Realty - still hoping for that 3 bed in the east end this fall? Reply STOP to opt out." });
   });
 
+  it("adds no opt-out line when the client has none, and allows the full 160", async () => {
+    const msg = "Hi Sarah, it's Mark's Realty - still hoping for that 3 bed in the east end this fall?";
+    const ask = vi.fn(async () => JSON.stringify({ action: "personalized", reason: "r", message: msg }));
+    expect(await reviewHistory([inb("3 bed east end")], { ...CTX, stopLine: "" }, ask)).toEqual({ action: "personalized", reason: "r", message: msg });
+  });
+
   it("does not double the STOP line, and doesn't mistake 'stop by' for one", async () => {
     const withLine = vi.fn(async () => `{"action":"personalized","reason":"r","message":"Hi Sarah, it's Mark's Realty. Still looking? Reply STOP to opt out."}`);
     expect((await reviewHistory([inb("hi")], CTX, withLine) as any).message).toBe("Hi Sarah, it's Mark's Realty. Still looking? Reply STOP to opt out.");
