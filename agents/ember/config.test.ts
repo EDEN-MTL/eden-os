@@ -73,3 +73,20 @@ describe("the real test-account config", () => {
     expect(validateForSending(c)).toEqual([]);
   });
 });
+
+describe("optOutLine (Mark/Jacob, 2026-11-11)", () => {
+  it("scripts need a STOP line by default, but not when the client turned it off", () => {
+    const c = config();
+    c.outreach.sms.scripts.buyer = ["Hi {{firstName}}, still looking?"];
+    expect(validateForSending(c).join()).toMatch(/no STOP opt-out line/);
+    c.outreach.sms.optOutLine = "";
+    expect(validateForSending({ ...c, outreach: { ...c.outreach, sms: { ...c.outreach.sms, fromNumber: "+17095550100" } } }).join()).not.toMatch(/STOP/);
+  });
+  it("3% sends with no opt-out line and still passes the send check", () => {
+    const c = loadEmberConfig("3-percent-east-coast")!;
+    expect(c.outreach.sms.optOutLine).toBe("");
+    expect(Object.values(c.outreach.sms.scripts).flat().some((t) => /stop/i.test(t))).toBe(false);
+    expect(validateForSending(c)).toEqual([]);
+  });
+});
+

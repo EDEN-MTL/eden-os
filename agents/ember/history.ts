@@ -249,7 +249,7 @@ Respond with ONLY one JSON object, no markdown:
 - Start from where they left off: reference ONE specific real thing (what they were looking for, their timing, that they spoke with our team, or — if they declined before — acknowledge it lightly, e.g. that it's been a while). Never invent anything not in the record.
 - End with one easy question about whether their plans have changed or are still on.
 - No links, no prices or market claims, no promises, no pressure, no guilt.
-- Do not add an opt-out line — it's added automatically.`;
+- Do not add an opt-out line (one is added automatically when the client uses one).`;
 }
 
 function transcript(messages: HistoryMessage[]): string {
@@ -282,8 +282,8 @@ function hasContextWorthReading(messages: HistoryMessage[], ctx: ReviewContext):
 /** Why a personalized opener can't go out as written, or null if it can. */
 function openerProblem(message: string, ctx: ReviewContext): string | null {
   if (!message) return "it was empty";
-  const room = MAX_TOTAL_CHARS - 1 - ctx.stopLine.length;
-  if (smsLength(message) > room) return `it is ${smsLength(message)} characters; it must be ${room} or fewer so the opt-out line still fits one SMS`;
+  const room = ctx.stopLine ? MAX_TOTAL_CHARS - 1 - ctx.stopLine.length : MAX_TOTAL_CHARS;
+  if (smsLength(message) > room) return `it is ${smsLength(message)} characters; it must be ${room} or fewer${ctx.stopLine ? " so the opt-out line still fits" : ""} to fit one SMS`;
   if (/https?:|www\./i.test(message)) return "it contains a link; no links";
   if (/\$\s?\d/.test(message)) return "it mentions a price or budget figure; no numbers with $";
   // CASL: a commercial message must identify who sent it. Mark, 2026-10-09:
@@ -350,7 +350,7 @@ export async function reviewHistory(
     // back to the approved script rather than sending the risky text.
     if (problem) return { action: "script", reason: `personal opener rejected by guardrails: ${problem} (${reason})` };
     // "Reply STOP", not a bare "stop" — "feel free to stop by" is not an opt-out line.
-    if (!/reply\s+stop/i.test(message)) message = `${message} ${ctx.stopLine}`;
+    if (ctx.stopLine && !/reply\s+stop/i.test(message)) message = `${message} ${ctx.stopLine}`;
     return { action: "personalized", reason, message };
   }
   return { action: "retry", reason: "history review returned something unreadable" };

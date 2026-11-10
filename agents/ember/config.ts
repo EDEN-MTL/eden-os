@@ -171,6 +171,14 @@ export interface EmberConfig {
        * 3-percent-east-coast: +17097013598 (Mark confirmed).
        */
       fromNumber?: string;
+      /**
+       * Line appended to AI-written openers, and required in every script.
+       * Unset = "Reply STOP to opt out." (CASL's unsubscribe mechanism).
+       * "" = no opt-out line at all — only with the client's explicit
+       * acceptance of the CASL risk (3%: Jacob approved, 2026-11-11). STOP
+       * replies are still honoured either way: GHL sets DND, Ember stops.
+       */
+      optOutLine?: string;
     };
     email: {
       enabled: boolean;
@@ -225,10 +233,13 @@ export function validateForSending(config: EmberConfig): string[] {
       if (!list.length) problems.push(`sms.scripts.${kind} is empty`);
       // CASL requires an unsubscribe mechanism in every commercial message.
       // GHL honours STOP replies natively (it sets the contact's DND), but
-      // only if the text tells people they can.
-      list.forEach((t, i) => {
-        if (!/\bstop\b/i.test(t)) problems.push(`sms.scripts.${kind}[${i}] has no STOP opt-out line`);
-      });
+      // only if the text tells people they can. Skipped only when the client
+      // has explicitly opted out of the line (sms.optOutLine === "").
+      if (sms.optOutLine !== "") {
+        list.forEach((t, i) => {
+          if (!/\bstop\b/i.test(t)) problems.push(`sms.scripts.${kind}[${i}] has no STOP opt-out line`);
+        });
+      }
     }
   }
   if (email.enabled) {
