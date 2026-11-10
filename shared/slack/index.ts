@@ -159,17 +159,18 @@ export async function sendBlocks(
   blocks: any[],
   text: string = "",
   threadTs?: string
-): Promise<void> {
+): Promise<{ ts?: string; channel?: string }> {
   const client = getClient(agentId);
 
   try {
-    await client.chat.postMessage({
+    const response = await client.chat.postMessage({
       channel,
       text, // fallback for notifications
       blocks,
       thread_ts: threadTs,
       unfurl_links: false,
     });
+    return { ts: response.ts, channel: response.channel };
   } catch (error) {
     console.error(`[SLACK] Error sending blocks as ${agentId}:`, error);
     throw error;

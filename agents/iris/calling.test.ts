@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { bookingConfirmationLines, rescheduleConfirmationLines, buildCallPayload, PlaceCallParams } from "./calling";
-import { IDLE_NUDGE_VARIATIONS } from "./scripts";
+import { IDLE_NUDGE_VARIATIONS, SILENT_MARKER } from "./scripts";
+import { SPEECH_REPLACEMENTS } from "./calling";
 
 /**
  * Only buildCallPayload is tested here — it's the pure part. placeCall()
@@ -46,14 +47,11 @@ describe("buildCallPayload", () => {
    * "Hi!" firstMessage was the exact bug. Fixed by making firstMessage the
    * full canonical opening line (buildCallOpeningLine) instead.
    */
-  it("uses the full canonical opening line as firstMessage, not a bare greeting", () => {
+  it("sends NO firstMessage on a normal outbound call, and waits for the other side to speak — so the model can tell a screener from a person", () => {
     const payload = buildCallPayload(BASE_PARAMS, VAPI_CONFIG);
-    expect(payload.assistant.firstMessage).toBe("Hi, this is Iris with 3 Percent East Coast. Am I speaking with Sam?");
-  });
 
-  it("falls back to the generic identify question when no lead name is known", () => {
-    const payload = buildCallPayload({ ...BASE_PARAMS, firstName: "there" }, VAPI_CONFIG);
-    expect(payload.assistant.firstMessage).toBe("Hi, this is Iris with 3 Percent East Coast. Who do I have the pleasure of speaking with?");
+    expect(payload.assistant.firstMessage).toBeUndefined();
+    expect(payload.assistant.firstMessageMode).toBe("assistant-waits-for-user");
   });
 
   /**
@@ -123,13 +121,43 @@ describe("buildCallPayload", () => {
     expect(hooks![1].options!.timeoutSeconds).toBeGreaterThan(hooks![0].options!.timeoutSeconds);
   });
 
-  it("never mentions the calling-about reason or 'how are you' in the opening line, regardless of intent", () => {
-    const unknownIntent = buildCallPayload(BASE_PARAMS, VAPI_CONFIG);
-    const knownIntent = buildCallPayload({ ...BASE_PARAMS, intent: "seller", leadSource: "facebook" }, VAPI_CONFIG);
-    for (const payload of [unknownIntent, knownIntent]) {
-      expect(payload.assistant.firstMessage).not.toMatch(/calling about/i);
-      expect(payload.assistant.firstMessage).not.toMatch(/how are you/i);
-    }
+  /**
+   * Mark, 2026-10-14: Koren Pye's call (2026-10-12) had Iris speak "I'll stay
+   * silent and wait for a real person to join." into a call screener, then a
+   * fixed idle line ("can you still hear me okay?") into its silent hold.
+   * Silence is now a marker stripped before the voice; the idle check-in is
+   * model-judged and told to stay silent on a hold.
+   */
+  it("strips the silence marker and narration about staying silent before the voice speaks it", () => {
+    const payload = buildCallPayload(BASE_PARAMS, VAPI_CONFIG);
+    expect(payload.assistant.voice.chunkPlan?.formatPlan?.replacements).toEqual(SPEECH_REPLACEMENTS);
+    const spoken = (text: string) => SPEECH_REPLACEMENTS.reduce((t, r) => t.replace(new RegExp(r.regex, "gi"), r.value), text).trim();
+    expect(spoken(SILENT_MARKER)).toBe("");
+    expect(spoken("I'll stay silent and wait for a real person to join.")).toBe("");
+    expect(spoken("Hi, this is Iris with 3 percent East Coast. Am I speaking with Koren?")).toBe(
+      "Hi, this is Iris with 3 percent East Coast. Am I speaking with Koren?"
+    );
+    expect(spoken("I'll wait for the right time to call back.")).toBe("I'll wait for the right time to call back.");
+    // Every price is Canadian dollars — a stray "euro" is spoken as "dollars" (Noeleen Gray, 2026-10-18).
+    expect(spoken("budget around 299 thousand euro dollars")).toBe("budget around 299 thousand dollars");
+    expect(spoken("about 300 euros")).toBe("about 300 dollars");
+    // A turn that is only "Goodbye." (said into screeners and voicemail greetings) is dropped; a real goodbye inside a sentence is not.
+    expect(spoken("Goodbye.")).toBe("");
+    expect(spoken("Bye!")).toBe("");
+    expect(spoken("Thanks so much for your time, have a great day. Goodbye.")).toBe("Thanks so much for your time, have a great day. Goodbye.");
+  });
+
+  /** Magar Bhuma, 2026-11-05: a `say` hook with a `prompt` made the model answer as "Claude, an AI assistant" mid-call and the call ended. */
+  it("speaks a fixed check-in line, never a model-generated one", () => {
+    const hook = buildCallPayload(BASE_PARAMS, VAPI_CONFIG).assistant.hooks?.[0] as any;
+    expect(hook.do[0].prompt).toBeUndefined();
+    expect(hook.do[0].exact).toEqual(IDLE_NUDGE_VARIATIONS);
+    expect(IDLE_NUDGE_VARIATIONS.join(" ")).toMatch(/are you still there/);
+  });
+
+  it("reads numbers as numbers — Vapi's digit-by-digit cutoff is raised past any price or street number", () => {
+    const payload = buildCallPayload(BASE_PARAMS, VAPI_CONFIG);
+    expect(payload.assistant.voice.chunkPlan?.formatPlan?.numberToDigitsCutoff).toBe(10_000_000);
   });
 
   it("carries the system prompt through as the model's only system message", () => {
@@ -718,7 +746,7 @@ describe("buildCallPayload", () => {
       expect(summary).toContain("Jason");
       expect(summary).toContain("condo");
       expect(summary).toContain("2 bedrooms");
-      expect(summary).toContain("$500 thousand");
+      expect(summary).toContain("five hundred thousand dollars");
       expect(summary).toContain("3 months");
       expect(summary).toContain("not working with a realtor");
     });

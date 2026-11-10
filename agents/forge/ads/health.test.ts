@@ -236,6 +236,19 @@ describe("buildHealthReport", () => {
     expect(report.funnels.find((f) => f.funnel === "buyer")!.dailyBudget).toBeNull();
   });
 
+  it("judges an ad set on the ads still running, but account totals keep all the money spent", () => {
+    // s1 spent 300 for 5 leads, but 250 of it (and 4 leads) was one ad since paused.
+    const assess = {
+      campaign: rows.campaign,
+      adset: [makeRow({ entity_id: "s1", entity_name: "Static Seller", spend: 50, lead_count: 1 })],
+      ad: rows.ad,
+    };
+    const report = buildHealthReport("3-percent-east-coast", playbook, rows, live, 14, assess);
+    expect(report.entities.find((e) => e.id === "s1")!.metrics.spend).toBe(50);
+    expect(report.totals.spend).toBe(300);
+    expect(report.totals.leads).toBe(5);
+  });
+
   it("totals from campaign rows only, so nothing is counted three times", () => {
     const report = buildHealthReport("3-percent-east-coast", playbook, rows, live, 14);
     expect(report.totals).toEqual({ spend: 300, leads: 5, cpl: 60, leadSource: "meta" });

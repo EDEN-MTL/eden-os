@@ -7,7 +7,7 @@
  * than throwing, so leads quietly score as if the answer were "no".
  */
 
-import { Financing, parseIsaNotes } from "./isa-notes";
+import { Financing, humanNotes, parseIsaNotes } from "./isa-notes";
 
 /**
  * A field can be a single key or a list tried in priority order.
@@ -64,14 +64,6 @@ export interface ScoutConfig {
   returningLeadSlackChannel?: string;
   /** A contact younger than this is brand new regardless of what's on it. Default 60. */
   returningMinAgeMinutes?: number;
-  /**
-   * Old GHL user codes still sitting on leads, mapped to the agent's CURRENT
-   * user id. Mark, 2026-10-11: 102 of 289 cards in 3%'s pipeline carry an
-   * older code for Genna Hickey, Charlene Harnum or Stephanie McGrath — the
-   * same people, an earlier user record. Without this they read as "not an
-   * active user" and the returning-lead text has nobody to go to.
-   */
-  legacyUserIds?: Record<string, string>;
   calendars: { buyer: string; seller: string };
   fields: ScoutFieldMap;
 }
@@ -314,8 +306,11 @@ export function isFirstTouch(input: {
   if (list.length === 0) return false;
   if (tags.map((t) => String(t).trim().toLowerCase()).some((t) => list.includes(t))) return false;
 
-  // Notes exist only because someone had a conversation worth writing down.
-  if (isaNotes && String(isaNotes).trim() !== "") return false;
+  // Notes exist only because someone had a conversation worth writing down —
+  // but not Iris's own call-status lines ("Iris call … No answer"): those are
+  // written after every unanswered attempt, and counting them stopped Iris
+  // retrying the very lead it had just missed.
+  if (humanNotes(isaNotes) !== "") return false;
 
   // A live-transferred or appointment-booked opportunity is done even if
   // the matching tag never got applied — see currentStageId's doc comment.

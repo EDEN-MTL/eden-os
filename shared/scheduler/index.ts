@@ -19,18 +19,29 @@ import { getGhlConfig } from "../ghl";
 import { syncGhl, syncMetaPerformance } from "../../agents/forge/ads/sync";
 import * as ruleEngine from "../../agents/forge/ads/engine";
 import * as ruleQueue from "../../agents/forge/ads/queue";
-import { getCampaignHealth } from "../../agents/forge/ads/health";
+import { fetchLiveState, getCampaignHealth } from "../../agents/forge/ads/health";
 import { formatHealthDigest } from "../../agents/forge/ads/health-digest";
 import { computeTotals, computeWeeklyTotals, formatAllClientsReport, previousMonth, ReportEntry } from "../../agents/lens/report";
 import { computeFunnel, formatFunnelLines, loadFunnelConfig } from "../../agents/lens/funnel";
 import { runDialPendingCalls } from "../../agents/iris/dial-pending";
-import { sendMessage } from "../slack";
+import { runNoShowScan } from "../../agents/iris/no-show";
+import { runAppointmentSync } from "../../agents/lens/dashboard/appointments-sync";
+import { runFollowUpCohortCheck } from "../../agents/iris/followup-cohort";
+import { recordHeartbeat, runWatchdog, SCHEDULER_TIMEZONE } from "../../agents/iris/watchdog";
+import { runDailySummary } from "../../agents/iris/daily-summary";
+import { runNightlyLeadReview } from "../../agents/iris/lead-review";
+import { runAsapWatchAll } from "../../agents/iris/asap-watch";
+import { runCallbackWatchAll } from "../../agents/iris/callback-watch";
+import { sendBlocks, sendMessage } from "../slack";
+import { canApproveFromSlack, flagBlocks, runApprovalNudges } from "../../agents/forge/ads/approval";
+import { adsManagerUrl, slackLink } from "../../agents/forge/ads/links";
+import { ageFooter, createdChain } from "../../agents/forge/ads/age";
 import { listEmberClientIds, loadEmberConfig } from "../../agents/ember/config";
 import { runEmberScanForClient } from "../../agents/ember/scan";
 import { sendPendingForClient } from "../../agents/ember/send";
 import { pollRepliesForClient } from "../../agents/ember/replies";
 
-const TIMEZONE = "America/Toronto";
+const TIMEZONE = SCHEDULER_TIMEZONE;
 
 async function listMetaClientIds(): Promise<string[]> {
   const rows = await query<{ client_id: string }>(`SELECT DISTINCT client_id FROM meta_credentials`);
@@ -188,8 +199,37 @@ export async function runRuleEvaluation(): Promise<void> {
 
   for (const clientId of clientIds) {
     let proposed: Awaited<ReturnType<typeof ruleEngine.evaluate>>;
+    // Kept outside the try below: the flag text needs them to link straight to the entity in Ads Manager.
+    let adAccountId: string | null = null;
+    let liveForLinks: Awaited<ReturnType<typeof fetchLiveState>> | null = null;
     try {
-      proposed = await ruleEngine.evaluate(clientId);
+      // Read what is running on Meta right now, so a flag stops coming back once the ad is turned off.
+      // If Meta can't be read, judge on the snapshots as before rather than skip the check.
+      let live: Awaited<ReturnType<typeof fetchLiveState>> | null = null;
+      let metaClient: MetaClient | null = null;
+      try {
+        const metaConfig = await getMetaConfig(clientId);
+        if (metaConfig) {
+          adAccountId = metaConfig.adAccountId;
+          metaClient = new MetaClient(metaConfig);
+          live = await fetchLiveState(metaClient);
+          liveForLinks = live;
+        }
+      } catch (e) {
+        console.warn(`[SCHEDULER] Couldn't read live ad status for ${clientId}; judging on snapshots only:`, e instanceof Error ? e.message : e);
+      }
+      // The CPL-threshold flag follows the health check: only what it calls a kill (see engine.gateByHealth).
+      // No health target for this client, or Meta unreadable: the flat threshold rule works as before.
+      let healthVerdicts: Map<string, { verdict: string; reasons: string[]; recommendation: string }> | null = null;
+      if (live && metaClient) {
+        try {
+          const report = await getCampaignHealth(clientId, metaClient);
+          healthVerdicts = new Map(report.entities.map((e) => [e.id, { verdict: e.verdict, reasons: e.reasons, recommendation: e.recommendation }]));
+        } catch (e) {
+          console.warn(`[SCHEDULER] No health verdicts for ${clientId}; CPL flags use the flat threshold:`, e instanceof Error ? e.message : e);
+        }
+      }
+      proposed = await ruleEngine.evaluate(clientId, live, { healthVerdicts });
     } catch (e) {
       console.error(`[SCHEDULER] Rule evaluation failed for ${clientId}:`, e instanceof Error ? e.message : e);
       continue;
@@ -209,12 +249,20 @@ export async function runRuleEvaluation(): Promise<void> {
           console.warn("[SCHEDULER] LENS_OPS_CHANNEL not set, skipping Slack notification for queued action");
           continue;
         }
+        // With approvers named for this client the flag carries Pause / Keep running buttons; without, it is the plain flag as before.
+        const buttons = canApproveFromSlack(clientId, action.entityType);
+        const parents = liveForLinks?.get(action.entityId);
+        const entityUrl = adsManagerUrl(adAccountId, action.entityType, action.entityId, { campaignId: parents?.campaignId, adsetId: parents?.adsetId });
+        const launched = ageFooter(action.entityType, createdChain(liveForLinks, action.entityType, action.entityId), new Date());
         const text =
           `🔔 *Forge flagged something* — ${clientName}\n` +
-          `${action.entityName ?? action.entityId} (${action.entityType})\n` +
+          `${slackLink(entityUrl, action.entityName ?? action.entityId)} (${action.entityType})\n` +
           `${action.reasoning}\n` +
-          `Review in the dashboard's pending actions, or ask Forge in chat.`;
-        const { ts } = await sendMessage("forge", { channel: opsChannel, text });
+          (buttons ? "Pause it, or keep it running?" : "Review in the dashboard's pending actions, or ask Forge in chat.") +
+          (launched ? `\n${launched}` : "");
+        const { ts } = buttons
+          ? await sendBlocks("forge", opsChannel, flagBlocks(text, pendingId, action.entityType), text)
+          : await sendMessage("forge", { channel: opsChannel, text });
         if (ts) await ruleQueue.recordSlackMessage(pendingId, opsChannel, ts);
       } catch (e) {
         console.error(`[SCHEDULER] Failed to queue/notify proposed action for ${clientId}:`, e instanceof Error ? e.message : e);
@@ -330,7 +378,42 @@ export function startScheduler(): void {
   // Every minute, not hourly — this is resolving a 5-minute wait
   // (agents/iris/index.ts's CALL_DELAY_MINUTES), so it needs to actually
   // catch rows close to when they become due, not up to an hour late.
-  cron.schedule("* * * * *", runDialPendingCalls, { timezone: TIMEZONE });
+  // The heartbeat is written AFTER each run, so the watchdog can tell "the job stopped" from "nothing was due".
+  cron.schedule("* * * * *", async () => { await runDialPendingCalls(); await recordHeartbeat("dial-pending"); }, { timezone: TIMEZONE });
+  // Every 5 minutes: looks for trouble (stalled scheduler, overdue calls, calls that never reported) and DMs once.
+  cron.schedule("*/5 * * * *", () => runWatchdog(), { timezone: TIMEZONE });
+  // 8:15 AM St. John's time: Iris's morning summary in #backend-ops, before the 10:00 AM calls.
+  cron.schedule("15 8 * * *", () => runDailySummary(), { timezone: "America/St_Johns" });
+  // 7:30 AM St. John's time, ahead of the summary that quotes it: Iris and Ember read every lead's conversation and notes
+  // and list who is worth checking in on. About two minutes; read-only. See agents/iris/lead-review.ts.
+  cron.schedule("30 7 * * *", () => runNightlyLeadReview(), { timezone: "America/St_Johns" });
+  // 10:15, 1:15 and 4:15 St. John's time: Iris reviews every ASAP lead's calls and texts and texts a follow-up where one is due
+  // (agents/iris/asap-watch.ts). Off per client unless iris.asapWatch.enabled.
+  cron.schedule("15 10,13,16 * * *", () => runAsapWatchAll(), { timezone: "America/St_Johns" });
+
+  // Every 5 minutes: a lead who rang the number back and was not picked up gets one text from Iris
+  // (agents/iris/callback-watch.ts). GHL sends no webhook for calls, so this polls. Off per client unless iris.callbackWatch.enabled.
+  let callbackWatchRunning = false;
+  cron.schedule("*/5 * * * *", async () => {
+    if (callbackWatchRunning) return;
+    callbackWatchRunning = true;
+    try {
+      await runCallbackWatchAll();
+    } finally {
+      callbackWatchRunning = false;
+    }
+  }, { timezone: "America/St_Johns" });
+  // Every 10 minutes: one nudge in the thread of any Forge flag still unanswered after 2 hours (agents/forge/ads/approval.ts).
+  cron.schedule("*/10 * * * *", () => runApprovalNudges().catch((e) => console.error("[SCHEDULER] Approval nudges failed:", e instanceof Error ? e.message : e)), { timezone: TIMEZONE });
+  // Every 5 minutes: finds cards the team just moved to No-Show and starts Iris's follow-up (text now,
+  // calls later). The first scan only records what is already in the column. See agents/iris/no-show.ts.
+  cron.schedule("*/5 * * * *", runNoShowScan, { timezone: TIMEZONE });
+  // Hourly at :25, after the lead sync: copies each client's GHL appointments (with their showed / no-show outcomes)
+  // into our database for the Lens dashboard. See agents/lens/dashboard/appointments-sync.ts.
+  cron.schedule("25 * * * *", () => runAppointmentSync(), { timezone: TIMEZONE });
+  // Hourly at :35: the week-long follow-up on a hand-picked group (next call rounds, and the final move to
+  // Not Ready / Not Interested). Does nothing while no group is enrolled. See agents/iris/followup-cohort.ts.
+  cron.schedule("35 * * * *", () => runFollowUpCohortCheck(), { timezone: TIMEZONE });
   // 20 past, clear of the Meta sync (:00) and rule evaluation (:05) — the
   // scan paginates a whole pipeline through GHL and shouldn't compete.
   cron.schedule("20 * * * *", runEmberScan, { timezone: TIMEZONE });

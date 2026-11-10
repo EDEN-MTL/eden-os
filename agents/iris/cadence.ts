@@ -164,6 +164,26 @@ export function isWithinLegalCallingWindow(candidate: Date, timeZone: string): b
 }
 
 /**
+ * Mark, 2026-10-12 (Canadian Thanksgiving): "Iris must not call today."
+ * If `now` falls on one of `noCallDates` (YYYY-MM-DD, in the client's own
+ * timezone), returns the first slot hour (10am) of the next day that isn't
+ * also listed; null when calling is allowed today.
+ */
+export function nextOpenCallDay(noCallDates: string[] | undefined, timeZone: string, now: Date = new Date(), hour = 10): Date | null {
+  if (!noCallDates || noCallDates.length === 0) return null;
+  const key = (d: Date) =>
+    `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+  const local = new Date(now.toLocaleString("en-US", { timeZone }));
+  if (!noCallDates.includes(key(local))) return null;
+  const day = new Date(local);
+  for (let i = 0; i < 366; i++) {
+    day.setDate(day.getDate() + 1);
+    if (!noCallDates.includes(key(day))) break;
+  }
+  return zonedHourToUtc(day.getFullYear(), day.getMonth(), day.getDate(), hour, timeZone);
+}
+
+/**
  * Wall-clock time for a given attempt, in the client's timezone. Attempt 1
  * always returns null — it's the immediate ~5-minute-after-intake dial
  * (agents/iris/index.ts's CALL_DELAY_MINUTES), not a fixed clock slot, so
@@ -215,6 +235,27 @@ export function nextFirstSlotTime(cadence: OutreachCadenceConfig, timeZone: stri
 }
 
 /**
+ * The first cadence slot (10am / 2pm for the current 2/day config) at or after
+ * `notBefore`, in the client's timezone — today's if one is still ahead, else
+ * tomorrow's. Used when a retry's own slot has already passed: the next real slot,
+ * never "a few minutes from now" (Cody Kennie, 2026-10-18: three calls six minutes
+ * apart, each one a missed slot being made up).
+ */
+export function nextSlotAfter(cadence: OutreachCadenceConfig, timeZone: string, notBefore: Date): Date {
+  const hours = slotHours(cadence.attemptsPerDay);
+  const inZone = new Date(notBefore.toLocaleString("en-US", { timeZone }));
+  for (let dayOffset = 0; dayOffset < 3; dayOffset++) {
+    for (const hour of hours) {
+      const day = new Date(inZone);
+      day.setDate(day.getDate() + dayOffset);
+      const candidate = zonedHourToUtc(day.getFullYear(), day.getMonth(), day.getDate(), hour, timeZone);
+      if (candidate.getTime() >= notBefore.getTime()) return candidate;
+    }
+  }
+  return zonedHourToUtc(inZone.getFullYear(), inZone.getMonth(), inZone.getDate() + 3, hours[0], timeZone);
+}
+
+/**
  * Full-precision local time, e.g. "Tuesday, September 22 at 6:30 PM" — for
  * a human reading a record later (a GHL contact note, or a Slack answer to
  * "what time was the last attempt"), not something Iris speaks aloud on a
@@ -235,4 +276,40 @@ export function formatLocal(iso: string, timeZone: string = "America/St_Johns"):
     hour: "numeric",
     minute: "2-digit",
   });
+}
+
+
+/**
+ * Retries should land near the time the lead asked for (Maame S. Afriyie, 2026-11-05: she said she was at work in
+ * the mornings and asked for 4:30 PM; after that callback was missed, every later retry went to 10:00 AM, when she
+ * had already told us she can't talk). A time the lead named is a "clock time": a multiple of 15 minutes and well
+ * ahead of the moment it was asked. "Call me in 20 minutes" is not a preference for 2:17 PM every day.
+ */
+export function isStatedCallbackTime(callbackTime: Date, now: Date = new Date()): boolean {
+  return callbackTime.getMinutes() % 15 === 0 && callbackTime.getTime() - now.getTime() >= 90 * 60_000;
+}
+
+/** "16:30" — the local clock time of an instant in the client's zone. */
+export function timeOfDayLocal(at: Date, timeZone: string): string {
+  const inZone = new Date(at.toLocaleString("en-US", { timeZone }));
+  return `${String(inZone.getHours()).padStart(2, "0")}:${String(inZone.getMinutes()).padStart(2, "0")}`;
+}
+
+/**
+ * Moves a candidate retry to the lead's preferred clock time ("16:30") on the same local day, or the next day when
+ * that moment is less than an hour away, then keeps it inside legal calling hours.
+ */
+export function applyPreferredTime(candidate: Date, preferred: string, timeZone: string, now: Date = new Date()): Date {
+  const m = preferred.match(/^(\d{1,2}):(\d{2})$/);
+  if (!m) return candidate;
+  const hour = Number(m[1]);
+  const minute = Number(m[2]);
+  const day = new Date(candidate.toLocaleString("en-US", { timeZone }));
+  const at = (d: Date) => new Date(zonedHourToUtc(d.getFullYear(), d.getMonth(), d.getDate(), hour, timeZone).getTime() + minute * 60_000);
+  let result = at(day);
+  if (result.getTime() < now.getTime() + 60 * 60_000) {
+    day.setDate(day.getDate() + 1);
+    result = at(day);
+  }
+  return clampToLegalCallingWindow(result, timeZone);
 }

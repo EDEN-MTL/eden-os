@@ -65,6 +65,12 @@ export interface EmberConfig {
    */
   includeStages?: string[];
   /**
+   * Calendars Ember books a call with an agent on, when a lead isn't free
+   * right now (Mark, 2026-11-11). Falls back to iris.callbacks.calendarIds.
+   * Neither set = Ember can't book and hands the lead to a person instead.
+   */
+  bookingCalendarIds?: { buyer?: string; seller?: string };
+  /**
    * Phone numbers (E.164) Ember never enrolls, on top of every GHL user on
    * the location (team members are matched automatically by their GHL user
    * phone and email). For our own numbers that show up as contacts: the

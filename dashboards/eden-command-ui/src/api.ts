@@ -1,10 +1,37 @@
 const API_BASE = import.meta.env.VITE_API_BASE_URL || "http://localhost:3000";
-const DASHBOARD_KEY = import.meta.env.VITE_DASHBOARD_API_KEY || "";
+const BUILD_KEY = import.meta.env.VITE_DASHBOARD_API_KEY || "";
+const KEY_STORAGE = "eden.dashboardKey";
+
+/**
+ * The access key for the server. A local build can bake it in (VITE_DASHBOARD_API_KEY); a hosted page must NOT, since
+ * anything in the page's code is readable by whoever opens it. A hosted page asks the person for the key and keeps it in
+ * this browser only.
+ */
+export function getDashboardKey(): string {
+  if (BUILD_KEY) return BUILD_KEY;
+  try {
+    return window.localStorage.getItem(KEY_STORAGE) || "";
+  } catch {
+    return "";
+  }
+}
+
+/** Saves the key typed by the person (empty clears it). Returns false when the browser will not store it. */
+export function setDashboardKey(key: string): boolean {
+  try {
+    if (key) window.localStorage.setItem(KEY_STORAGE, key.trim());
+    else window.localStorage.removeItem(KEY_STORAGE);
+    return true;
+  } catch {
+    return false;
+  }
+}
 
 function authHeaders(extra: Record<string, string> = {}) {
+  const key = getDashboardKey();
   return {
     ...extra,
-    ...(DASHBOARD_KEY ? { "x-dashboard-key": DASHBOARD_KEY } : {}),
+    ...(key ? { "x-dashboard-key": key } : {}),
   };
 }
 
@@ -226,5 +253,44 @@ export async function decidePendingAction(
   if (!res.ok) {
     const data = await res.json().catch(() => ({}));
     throw new Error(data.error || `Failed to ${decision} action: ${res.status}`);
+  }
+}
+
+/** An error from the Lens API with the HTTP status, so the page can say "wrong key" differently from "server error". */
+export class LensApiError extends Error {
+  constructor(message: string, public status: number) {
+    super(message);
+  }
+}
+
+const LENS_TIMEOUT_MS = 30_000;
+
+/**
+ * GET a Lens endpoint (read-only). `signal` lets a newer request cancel an older one. A request that gets no answer
+ * in 30 seconds fails with status 408 instead of leaving the page on "Loading…" forever, and a reply that is not
+ * JSON (a gateway's HTML error page) is reported as a bad gateway rather than crashing the page that reads it.
+ */
+export async function lensGet<T>(path: string, signal?: AbortSignal): Promise<T> {
+  const ctrl = new AbortController();
+  let timedOut = false;
+  const onAbort = () => ctrl.abort();
+  if (signal?.aborted) ctrl.abort();
+  else signal?.addEventListener("abort", onAbort, { once: true });
+  const timer = setTimeout(() => {
+    timedOut = true;
+    ctrl.abort();
+  }, LENS_TIMEOUT_MS);
+  try {
+    const res = await fetch(`${API_BASE}/api/lens${path}`, { headers: authHeaders(), signal: ctrl.signal });
+    const body = await res.json().catch(() => null);
+    if (!res.ok) throw new LensApiError(body && typeof body.error === "string" ? body.error : `Request failed: ${res.status}`, res.status);
+    if (body === null || typeof body !== "object") throw new LensApiError("The reporting service sent a reply this page could not read.", 502);
+    return body as T;
+  } catch (error) {
+    if (timedOut) throw new LensApiError("The reporting service took too long to answer.", 408);
+    throw error;
+  } finally {
+    clearTimeout(timer);
+    signal?.removeEventListener("abort", onAbort);
   }
 }

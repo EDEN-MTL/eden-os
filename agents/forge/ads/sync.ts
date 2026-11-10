@@ -30,12 +30,18 @@ import { loadOutcomeStages } from "./client-config";
  * re-sync would just append another full copy on top, and spend/CPL/ROAS
  * would silently multiply by however many times sync has run.
  */
-export async function syncMetaPerformance(client: MetaClient, datePreset = "last_7d", clientId = "eden"): Promise<number> {
+export async function syncMetaPerformance(
+  client: MetaClient,
+  datePreset = "last_7d",
+  clientId = "eden",
+  /** An exact date range (YYYY-MM-DD) instead of the preset, for backfilling history (scripts/lens-backfill-meta.ts). */
+  range?: { since: string; until: string }
+): Promise<number> {
   const now = new Date();
   let count = 0;
 
   for (const level of ["campaign", "adset", "ad"] as const) {
-    const rows = await client.getInsights({ level, datePreset });
+    const rows = await client.getInsights(range ? { level, since: range.since, until: range.until } : { level, datePreset });
     const days = [...new Set(rows.map((r: any) => r.date_start).filter(Boolean))];
 
     if (days.length > 0) {
@@ -68,7 +74,7 @@ export async function syncMetaPerformance(client: MetaClient, datePreset = "last
       count++;
     }
   }
-  console.log(`[FORGE] Synced ${count} Meta insight rows (campaign+adset+ad, ${datePreset}).`);
+  console.log(`[FORGE] Synced ${count} Meta insight rows (campaign+adset+ad, ${range ? `${range.since} to ${range.until}` : datePreset}).`);
   return count;
 }
 

@@ -33,7 +33,7 @@
  * since it doesn't depend on any per-client setup at all, and falling back
  * to (b) only for the fields it doesn't cover.
  */
-import { getContact, getCustomFieldDefs, listContactsPaginated, listOpportunitiesPaginated, listPipelines } from "../../../shared/ghl";
+import { getContact, getCustomFieldDefs, listContactsPaginated, listOpportunitiesPaginated, listPipelines, listOpportunitiesInStage } from "../../../shared/ghl";
 import { query } from "../../../shared/db";
 import { loadOutcomeStages } from "./client-config";
 
@@ -281,15 +281,23 @@ export async function syncLeads(
     }
   }
 
+  // A contact's opportunity is how a lead gets its stage and deal value, so a missed opportunity means a lead with no
+  // stage and a closed deal that never counts as revenue. listOpportunitiesPaginated alone misses a third of them
+  // (found 2026-10-29 on 3-percent-east-coast: 199 of 300 returned; 99 of 301 leads had no stage, and Christine
+  // Thorne's CA$15,000 Deal Closed card was one of them, so Lens showed $21.5k against GHL's $36.5k). Reading each stage
+  // with GHL's own cursor returns every card (see listOpportunitiesInStage). The broad listing is kept as well, so a
+  // card sitting in a stage that is not in the pipeline's stage list is still seen.
   const oppsByContact = new Map<string, any>();
+  const consider = (opp: any) => {
+    if (!opp?.contactId) return;
+    const existing = oppsByContact.get(opp.contactId);
+    if (!existing || (opp.updatedAt || "") > (existing.updatedAt || "")) oppsByContact.set(opp.contactId, opp);
+  };
   for (const pipeline of targetPipelines) {
-    for await (const opp of listOpportunitiesPaginated(locationId, { pipelineId: pipeline.id, apiKey })) {
-      if (!opp.contactId) continue;
-      const existing = oppsByContact.get(opp.contactId);
-      if (!existing || (opp.updatedAt || "") > (existing.updatedAt || "")) {
-        oppsByContact.set(opp.contactId, opp);
-      }
+    for (const stage of pipeline.stages || []) {
+      for (const opp of await listOpportunitiesInStage(locationId, pipeline.id, stage.id, apiKey)) consider(opp);
     }
+    for await (const opp of listOpportunitiesPaginated(locationId, { pipelineId: pipeline.id, apiKey })) consider(opp);
   }
 
   const stored = await loadStoredFullContacts(clientId);

@@ -22,7 +22,7 @@
 import { serviceAreaRule } from "../iris/service-area";
 import { ChatMessage, chatWithTools, ToolDef } from "../../shared/claude";
 import { appendHistory, loadHistory } from "../../shared/conversation-memory";
-import { IrisConfig, qualify, QualificationAnswers } from "../iris/qualification";
+import { callbackCalendarForIntent, IrisConfig, qualify, QualificationAnswers } from "../iris/qualification";
 import { clampToLegalCallingWindow } from "../iris/cadence";
 import { EDGE_CASE_RESPONSES, NATURAL_TRANSITIONS, expandBudgetShorthand } from "../iris/scripts";
 import { AlertFn, formatReactivationAlert } from "./alerts";
@@ -53,7 +53,12 @@ export interface ConversationDeps {
   chat: typeof chatWithTools;
   loadHistory(key: string): Promise<ChatMessage[]>;
   appendHistory(key: string, role: "user" | "assistant", content: string): Promise<void>;
-  sendSMS(contactId: string, text: string): Promise<unknown>;
+  /**
+   * Sends one text to the lead this conversation is with. Takes ONLY the text: the dependency is already bound
+   * to the lead. It used to take (contactId, text) while the real one took just (text), so every Ember reply
+   * went out with the lead's contact id as its body (Marcia Wiseman, 2026-10-23: "oTCjDHG2AP4okGSGUsYs").
+   */
+  sendSMS(text: string): Promise<unknown>;
   /** Waits the human-like gap before a reply (iris/sms humanReplyDelayMs). */
   pauseLikeAHuman(reply: string): Promise<void>;
   /** Writes the qualification summary to the contact's notes field. */
@@ -62,6 +67,10 @@ export interface ConversationDeps {
   queueIrisCall(lead: NurtureLead, answers: QualificationAnswers, when: Date): Promise<void>;
   /** Ember-row state changes (store.updateLead). */
   updateLead(id: number, patch: Record<string, unknown>): Promise<void>;
+  /** Real open times on an agent calendar (webhooks/vapi-tools handleCheckAvailability — same as Iris). */
+  checkAvailability(calendarId: string, requestedTime: unknown): Promise<string>;
+  /** Books a real appointment (handleBookAppointment — same as Iris). */
+  bookAppointment(calendarId: string, intent: string, isoTime: unknown, notes: string): Promise<{ success: boolean; result: string }>;
   alert: AlertFn;
 }
 
@@ -88,7 +97,7 @@ const TOOLS: ToolDef[] = [
   {
     name: "schedule_transfer_call",
     description:
-      "Queues a phone call to this lead from our team so they can be connected live with an agent. Call ONCE, after save_qualification_notes and after they've said when they can talk. It checks whether they're ready for an agent call and tells you exactly what to text next.",
+      "ONLY when they're free to talk RIGHT NOW: queues an immediate call from our team that connects them live with an agent. Call ONCE, after save_qualification_notes. If they're not free right now, use check_availability and book_appointment instead.",
     input_schema: {
       type: "object",
       properties: {
@@ -97,8 +106,8 @@ const TOOLS: ToolDef[] = [
         propertyDetails: { type: ["string", "null"], description: "Home type + beds/baths, or null." },
         timeline: { type: ["string", "null"], description: "Their timeline in their own words, or null." },
         budget: { type: ["string", "null"] },
-        financing: { type: ["string", "null"], enum: ["cash", "pre-approved", "in-progress", "not-approved", null] },
-        when: { type: "string", description: 'Either "now", or an ISO 8601 timestamp WITH timezone offset for the time they asked for.' },
+        financing: { type: ["string", "null"], enum: ["cash", "pre-approved", "in-progress", "not-approved", null], description: '"cash" also covers paying with savings or the money from selling their current home.' },
+        when: { type: "string", enum: ["now"], description: 'Always "now" — a later time is booked with book_appointment.' },
       },
       required: ["intent", "when"],
     },
@@ -120,6 +129,37 @@ const TOOLS: ToolDef[] = [
     },
   },
 ];
+
+const CHECK_AVAILABILITY_TOOL: ToolDef = {
+  name: "check_availability",
+  description:
+    "Real open times for a call with one of our agents. Read-only — never books. Use as soon as they're not free right now: pass the day/time they mentioned, or if they didn't name one, tomorrow at 10:00. Returns that exact time if open, or the nearest real open times.",
+  input_schema: {
+    type: "object",
+    properties: {
+      intent: { type: "string", enum: ["buyer", "seller", "downsize", "upgrading"] },
+      requestedTime: { type: "string", description: 'In THEIR local time, ISO 8601 WITHOUT an offset (e.g. "2026-11-12T14:30:00"), worked out from the current date/time at the top of your instructions.' },
+    },
+    required: ["intent", "requestedTime"],
+  },
+};
+
+const BOOK_APPOINTMENT_TOOL: ToolDef = {
+  name: "book_appointment",
+  description:
+    "Books the call with an agent as a real calendar appointment, for a time check_availability returned and they picked — pass its isoTime VERBATIM. Returns whether it was really booked.",
+  input_schema: {
+    type: "object",
+    properties: {
+      intent: { type: "string", enum: ["buyer", "seller", "downsize", "upgrading"] },
+      isoTime: { type: "string", description: "The exact isoTime check_availability gave, copied verbatim." },
+      notes: { type: "string", description: "One line for the agent: home type, area, timeline, budget, financing — only what they told you." },
+    },
+    required: ["intent", "isoTime"],
+  },
+};
+
+TOOLS.push(CHECK_AVAILABILITY_TOOL, BOOK_APPOINTMENT_TOOL);
 
 export function buildEmberSmsPrompt(ctx: ConversationContext): string {
   const k = ctx.known;
@@ -156,10 +196,11 @@ ${ctx.irisConfig.questions.map((q) => `- ${q}`).join("\n")}
 ## Ending
 Once the questions are answered (or they've declined some):
 1. save_qualification_notes.
-2. Ask if now is a good time for a quick call with one of our agents — or when works better today or tomorrow.
-3. When they answer, schedule_transfer_call with their answers and "now" or the time they gave. It decides whether they're ready for an agent and tells you what to text — follow it exactly.
-4. If they aren't ready for a call or don't want one: request_human_followup, tell them someone from the team will follow up, and stop.
-Never call a tool twice, never promise a call before schedule_transfer_call confirms it.`;
+2. Ask if now is a good time for a quick call with one of our agents.
+3. Free RIGHT NOW: schedule_transfer_call with "now", and follow what it tells you to text.
+4. NOT free right now, for any reason (busy, out, at work, "tomorrow"): don't hand off — right away offer to book a call with one of our agents. Call check_availability (the day/time they mentioned, or tomorrow 10:00 if they didn't say), then text them 2-3 of the real open times it returns as a short choice ("I can book you with one of our agents - Tue 2:30pm or 3:00pm?"). When they pick one, book_appointment with its exact isoTime and send one short confirmation.
+5. If none of the times work, check_availability again for what they suggest. If there's no calendar, the booking fails twice, or they don't want a call at all: request_human_followup, tell them someone from the team will follow up, and stop.
+Once booked, never book again — if they want a different time, request_human_followup. Never offer a time check_availability didn't give you, never say they're booked before book_appointment confirms it, never call schedule_transfer_call for a later time.`;
 }
 
 function str(v: unknown): string | null {
@@ -177,22 +218,14 @@ async function scheduleTransferCall(lead: NurtureLead, input: any, ctx: Conversa
     budget: str(input?.budget),
     financing: ["cash", "pre-approved", "in-progress", "not-approved"].includes(input?.financing) ? input.financing : null,
   };
+  // No score bar (Mark, 2026-11-11): a lead still buying or selling who's
+  // free to talk now gets the call. The score is kept for the alert and Iris.
   const result = qualify(ctx.irisConfig, answers);
-  if (result.outcome !== "transfer") {
-    return (
-      `NOT scheduled — they aren't ready for an agent call yet (score ${result.score}, needs ${ctx.irisConfig.warmScoreThreshold}). ` +
-      `Do not promise a call. Call request_human_followup, and tell them someone from the team will follow up.`
-    );
-  }
-
-  let when = new Date(now.getTime() + CALL_MIN_DELAY_MINUTES * 60_000);
   const asked = str(input?.when);
   if (asked && asked.toLowerCase() !== "now") {
-    const t = new Date(asked);
-    if (Number.isNaN(t.getTime())) return 'NOT scheduled — that time could not be read. Ask again, then call this with "now" or a full ISO 8601 timestamp.';
-    if (t.getTime() - now.getTime() > CALL_MAX_DAYS_OUT * DAY_MS) return `NOT scheduled — more than ${CALL_MAX_DAYS_OUT} days out. Ask for a time in the next few days.`;
-    if (t.getTime() > when.getTime()) when = t;
+    return "NOT scheduled — this is only for a call right now. For a later time, use check_availability and book_appointment.";
   }
+  let when = new Date(now.getTime() + CALL_MIN_DELAY_MINUTES * 60_000);
   when = clampToLegalCallingWindow(when, ctx.timezone);
 
   await deps.queueIrisCall(lead, answers, when);
@@ -209,6 +242,39 @@ async function scheduleTransferCall(lead: NurtureLead, input: any, ctx: Conversa
     : `Scheduled for ${local} their time. Confirm that time in one short text, then stop.`;
 }
 
+/** Which agent calendar a lead is booked on: ember.bookingCalendarIds, else Iris's callback calendars. */
+export function bookingCalendarFor(ctx: ConversationContext, intent: string): string | null {
+  const own = ctx.config.bookingCalendarIds;
+  if (intent === "seller" || intent === "downsize") return own?.seller || callbackCalendarForIntent(ctx.irisConfig, "seller");
+  if (intent === "buyer" || intent === "upgrading") return own?.buyer || callbackCalendarForIntent(ctx.irisConfig, "buyer");
+  return null;
+}
+
+/**
+ * Booking a call with an agent for a lead who isn't free right now (Mark,
+ * 2026-11-11 — Eileen Hillier said "not now, tomorrow around 2:30" and got
+ * only "someone will follow up"). Same live-calendar check and booking Iris
+ * uses on calls and by text.
+ */
+async function bookingTool(name: string, lead: NurtureLead, input: any, ctx: ConversationContext, deps: ConversationDeps): Promise<string> {
+  const intent = ["buyer", "seller", "downsize", "upgrading"].includes(input?.intent) ? input.intent : lead.intent;
+  const calendarId = bookingCalendarFor(ctx, intent);
+  if (!calendarId) return "There's no agent calendar set up to book on — don't offer times. Call request_human_followup so a teammate books them.";
+  if (name === "check_availability") return deps.checkAvailability(calendarId, input?.requestedTime);
+
+  const notes = str(input?.notes) ?? "";
+  const outcome = await deps.bookAppointment(calendarId, intent, input?.isoTime, notes);
+  if (!outcome.success) return outcome.result.replace(/Do not tell the lead there's a technical issue\.?/g, "");
+  const when = outcome.result.match(/^Booked for (.+?)\. /)?.[1] ?? "the time you agreed";
+  await deps.updateLead(lead.id, { status: "handed_off", statusReason: `booked a call with an agent for ${when}`, nextTouchAt: null });
+  try {
+    await deps.alert(formatReactivationAlert(lead, `booked a call with an agent over text for ${when}`, ctx.brandName, ctx.now ?? new Date(), "human"));
+  } catch (error) {
+    console.error(`[EMB] booking alert failed for lead ${lead.id}:`, error);
+  }
+  return `Booked for ${when} — a real appointment. Send ONE short text confirming it ("You're all set for ${when} - one of our agents will call you then.") and stop. Never mention a different time.`;
+}
+
 async function runTool(name: string, input: any, lead: NurtureLead, ctx: ConversationContext, deps: ConversationDeps): Promise<string> {
   const now = ctx.now ?? new Date();
   switch (name) {
@@ -219,6 +285,9 @@ async function runTool(name: string, input: any, lead: NurtureLead, ctx: Convers
     }
     case "schedule_transfer_call":
       return scheduleTransferCall(lead, input, ctx, deps);
+    case "check_availability":
+    case "book_appointment":
+      return bookingTool(name, lead, input, ctx, deps);
     case "request_human_followup": {
       const summary = str(input?.summary) ?? "(no summary)";
       await deps.updateLead(lead.id, { status: "replied", statusReason: `needs a human: ${summary.slice(0, 160)}`, nextTouchAt: null });
@@ -309,7 +378,7 @@ export async function emberConverse(
   }
   reply = fitOneSegment(smsSafe(reply));
   await deps.pauseLikeAHuman(reply);
-  await deps.sendSMS(lead.ghlContactId, reply);
+  await deps.sendSMS(reply);
   await deps.appendHistory(key, "user", text).catch(() => {});
   await deps.appendHistory(key, "assistant", reply).catch(() => {});
   return reply;

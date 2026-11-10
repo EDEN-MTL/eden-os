@@ -8,6 +8,7 @@ import {
   totalAttempts,
   clampToLegalCallingWindow,
   isWithinLegalCallingWindow,
+  nextOpenCallDay,
 } from "./cadence";
 import { OutreachCadenceConfig } from "./qualification";
 
@@ -244,5 +245,34 @@ describe("nextFirstSlotTime", () => {
     const oneADay = { attemptsPerDay: 1, days: 4, recheckBeforeEachAttempt: true };
     const now = new Date("2026-09-24T10:00:00Z"); // 07:30 local
     expect(localHourAndDate(nextFirstSlotTime(oneADay, TZ, now)).hour).toBe(10);
+  });
+});
+
+describe("nextOpenCallDay (no-call dates)", () => {
+  const TZ = "America/St_Johns";
+
+  it("allows calling when there are no no-call dates", () => {
+    expect(nextOpenCallDay(undefined, TZ, new Date("2026-10-12T15:00:00Z"))).toBeNull();
+    expect(nextOpenCallDay([], TZ, new Date("2026-10-12T15:00:00Z"))).toBeNull();
+  });
+
+  it("allows calling on a day that isn't listed", () => {
+    expect(nextOpenCallDay(["2026-10-12"], TZ, new Date("2026-10-13T15:00:00Z"))).toBeNull();
+  });
+
+  it("rolls a listed day to 10am local the next day", () => {
+    // Oct 12 12:40 local (NDT, UTC-02:30) -> Oct 13 10:00 local = 12:30Z.
+    expect(nextOpenCallDay(["2026-10-12"], TZ, new Date("2026-10-12T15:10:00Z"))).toEqual(new Date("2026-10-13T12:30:00Z"));
+  });
+
+  it("skips consecutive listed days", () => {
+    expect(nextOpenCallDay(["2026-10-12", "2026-10-13"], TZ, new Date("2026-10-12T15:10:00Z"))).toEqual(new Date("2026-10-14T12:30:00Z"));
+  });
+
+  it("uses the client's local date, not UTC: 11pm local on the 12th is still the 12th", () => {
+    // 2026-10-13T01:30Z = Oct 12 23:00 local.
+    expect(nextOpenCallDay(["2026-10-12"], TZ, new Date("2026-10-13T01:30:00Z"))).toEqual(new Date("2026-10-13T12:30:00Z"));
+    // 2026-10-13T03:00Z = Oct 13 00:30 local: no longer the 12th.
+    expect(nextOpenCallDay(["2026-10-12"], TZ, new Date("2026-10-13T03:00:00Z"))).toBeNull();
   });
 });

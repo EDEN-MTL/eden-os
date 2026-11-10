@@ -20,6 +20,8 @@
  * no tags, no human notes) is deliberately treated as new — Mark's call.
  */
 
+import { humanNotes } from "./isa-notes";
+
 export type HistoryReason =
   | { kind: "assigned"; userId: string }
   | { kind: "worked_stage"; stageId: string }
@@ -62,21 +64,6 @@ export interface HistoryConfig {
   historyStageIds: string[];
   /** A contact younger than this is brand new, whatever else is on it (e.g. auto-assignment at creation). */
   returningMinAgeMinutes: number;
-  /** Old user code -> the agent's current user id. See ScoutConfig.legacyUserIds. */
-  legacyUserIds?: Record<string, string>;
-}
-
-// GHL ids are easy to mistranscribe by eye (l/I/1, O/0), so a code typed or
-// copied from a screenshot still matches. Exact match always wins first.
-const looseKey = (id: string) => id.toLowerCase().replace(/[il1]/g, "l").replace(/[o0]/g, "o");
-
-/** The agent's current user id for a (possibly old) assigned id — or the id itself when it isn't a known old code. */
-export function resolveAssignee(id: string, legacyUserIds: Record<string, string> | undefined): string {
-  if (!legacyUserIds) return id;
-  if (legacyUserIds[id]) return legacyUserIds[id];
-  const wanted = looseKey(id);
-  const hit = Object.entries(legacyUserIds).find(([legacy]) => looseKey(legacy) === wanted);
-  return hit ? hit[1] : id;
 }
 
 export interface LeadHistory {
@@ -88,21 +75,6 @@ export interface LeadHistory {
   firstSeen: string | null;
   /** Which contact carried the history — the lead's own id, or a duplicate record of the same person. */
   historyContactId: string | null;
-}
-
-/**
- * Iris writes its own status lines into the same notes field a human ISA
- * uses ("Iris call Thursday... — No answer", "Iris scheduled a callback...",
- * "Iris: lead asked to be called back..."). Those prove Iris tried, not that
- * an agent did anything, so they never count as human history.
- */
-function humanNotes(isaNotes: string | null | undefined): string {
-  if (!isaNotes) return "";
-  return String(isaNotes)
-    .split(/\n|<br\s*\/?>/i)
-    .map((line) => line.replace(/^ISA NOTES\s*:\s*/i, "").trim())
-    .filter((line) => line !== "" && !/^iris\b/i.test(line))
-    .join("\n");
 }
 
 function evidenceFor(subject: HistorySubject, config: HistoryConfig, now: Date): { reasons: HistoryReason[]; assignedUserId: string | null } | null {
@@ -128,9 +100,6 @@ function evidenceFor(subject: HistorySubject, config: HistoryConfig, now: Date):
   for (const opp of opportunities) {
     if (opp.assignedTo && !assignedUserId) assignedUserId = opp.assignedTo;
   }
-  // An old user code on the card or contact is the same agent under their
-  // earlier user record — translate it so the alert reaches them.
-  if (assignedUserId) assignedUserId = resolveAssignee(assignedUserId, config.legacyUserIds);
   if (assignedUserId) reasons.push({ kind: "assigned", userId: assignedUserId });
 
   for (const opp of older) {

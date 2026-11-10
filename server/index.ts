@@ -1,4 +1,5 @@
 // Side-effect import, NOT `import dotenv` + `dotenv.config()`.
+import { announceStartup } from "../agents/iris/watchdog";
 // TypeScript emits every `require` above the first statement in the CJS
 // output, so `dotenv.config()` used to run AFTER shared/db had already been
 // loaded — and shared/db builds its Pool at module scope from
@@ -23,6 +24,7 @@ import { createClientsRouter } from "./clients-api";
 import { createQuarryRouter } from "./quarry-api";
 import { createEmberRouter } from "./ember-api";
 import { createCheckinRouter } from "./checkin-api";
+import { createLensRouter } from "./lens-api";
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -39,7 +41,15 @@ app.use(
     },
   })
 );
-app.use(express.urlencoded({ extended: true }));
+app.use(
+  express.urlencoded({
+    extended: true,
+    // Slack signs the exact bytes of a button press, which arrives form-encoded (webhooks/slack-events.ts).
+    verify: (req, _res, buf) => {
+      (req as express.Request & { rawBody: Buffer }).rawBody = buf;
+    },
+  })
+);
 
 // ─── Health Check ───
 app.get("/", (_req, res) => {
@@ -68,6 +78,7 @@ app.use("/api/chat", createChatRouter());
 app.use("/api/tts", createTtsRouter());
 app.use("/api/settings", createSettingsRouter());
 app.use("/api/clients", createClientsRouter());
+app.use("/api/lens", createLensRouter());
 app.use("/api/quarry", createQuarryRouter());
 app.use("/api/ember", createEmberRouter());
 app.use(createCheckinRouter());
@@ -101,6 +112,8 @@ async function start() {
     console.log(`  Server online: port ${PORT}`);
     console.log("  All systems nominal.");
     console.log("");
+    // Tell #backend-ops a deploy landed (a few seconds in, once the Slack clients are ready).
+    setTimeout(() => void announceStartup(), 5000);
   });
 }
 

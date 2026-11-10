@@ -24,6 +24,9 @@ const ghl = vi.hoisted(() => ({
 }));
 vi.mock("../../shared/ghl", () => ghl);
 
+const vapiTools = vi.hoisted(() => ({ handleCheckAvailability: vi.fn(), handleBookAppointment: vi.fn() }));
+vi.mock("../../webhooks/vapi-tools", () => vapiTools);
+
 vi.mock("./human-touch", () => ({ checkHumanTouch: vi.fn(async () => ({ status: "none" })), DEFAULT_HUMAN_HANDS_OFF_DAYS: 7 }));
 vi.mock("../ember/store", () => ({ lastEmberTouchText: vi.fn(async () => "Hi Catherine, still on the hunt? Reply STOP to opt out.") }));
 
@@ -83,7 +86,10 @@ const LEAD = {
 };
 
 
-const HANDOFF_CONFIG = JSON.stringify({ ...JSON.parse(CLIENT_CONFIG), iris: { ...JSON.parse(CLIENT_CONFIG).iris, sms: { callHandoff: true } } });
+const HANDOFF_CONFIG = JSON.stringify({
+  ...JSON.parse(CLIENT_CONFIG),
+  iris: { ...JSON.parse(CLIENT_CONFIG).iris, sms: { callHandoff: true }, callbacks: { notesFieldKey: "contact.isa_notes", calendarIds: { buyer: "cal-buy", seller: "cal-sell" } } },
+});
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -130,18 +136,42 @@ describe("text-qualification ending — call handoff", () => {
     expect(ghl.sendSMS).toHaveBeenCalledWith("contact-1", "Perfect — expect a call from us in a couple of minutes!", "loc-1", "key-1");
   });
 
-  it("refuses to queue a call for a lead who doesn't qualify — the model is told to hand to a human", async () => {
+  /**
+   * Samir Benslimane, 2026-10-15: took every question by text (seller, $450K, address given) but
+   * scored 25 against a bar of 40, so the call was refused and he got a vague "someone will
+   * reach out". Anyone Iris takes through the questions is qualified and gets the call.
+   */
+  it("queues the call even when the numeric score is low — a lead who answered everything is qualified", async () => {
+    // Pinned to midday: outside 8am–9pm the call waits for the morning and the tool says so instead.
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date("2026-10-15T15:00:00Z"));
     db.query.mockResolvedValueOnce(row());
     vi.mocked(chatWithTools)
-      .mockResolvedValueOnce(toolTurn(toolUseBlock("t1", "schedule_transfer_call", { intent: "buyer", timeline: "maybe next year", financing: "not-approved", when: "now" })))
-      .mockResolvedValueOnce(endTurn("No problem — someone from the team will follow up."));
+      .mockResolvedValueOnce(toolTurn(toolUseBlock("t1", "schedule_transfer_call", { intent: "seller", area: "Hussey Drive", propertyDetails: "house with apartments", timeline: null, budget: "$450000", financing: null, when: "now" })))
+      .mockResolvedValueOnce(endTurn("Thanks Samir — I'll give you a call shortly to connect you with one of our agents."));
 
-    await irisHandleInboundSms("contact-1", "sure", NO_WAIT);
+    await irisHandleInboundSms("contact-1", "Take care", NO_WAIT);
 
-    expect(db.query.mock.calls.find((c) => String(c[0]).includes("sms_scheduled = true"))).toBeUndefined();
+    expect(db.query.mock.calls.find((c) => String(c[0]).includes("sms_scheduled = true"))).toBeDefined();
     const toolResult = (vi.mocked(chatWithTools).mock.calls[1][1] as any[]).at(-1).content[0].content as string;
-    expect(toolResult).toMatch(/^NOT scheduled/);
-    expect(toolResult).toContain("request_human_followup");
+    expect(toolResult).toMatch(/^Scheduled/);
+    expect(toolResult).toContain("connect them with one of our agents");
+    expect(toolResult).toMatch(/not a good time or they'd rather another time/);
+    vi.useRealTimers();
+  });
+
+  it("tells the model to ask when they're free, book a named time, and call now only for 'now'", async () => {
+    db.query.mockResolvedValueOnce(row());
+    vi.mocked(chatWithTools).mockResolvedValueOnce(endTurn("What area?"));
+    await irisHandleInboundSms("contact-1", "hi", NO_WAIT);
+    const prompt = systemPrompt();
+    expect(prompt).toContain("when are they available for a quick call with one of our agents");
+    expect(prompt).toContain("call check_availability with that moment");
+    expect(prompt).toContain("call book_appointment with the isoTime it gave, copied verbatim");
+    expect(prompt).toContain("schedule_transfer_call with when = \"now\"");
+    expect(prompt).toMatch(/Right now it is .*America\/St_Johns/);
+    expect(prompt).toContain("Never say or imply an appointment is booked until book_appointment has confirmed it");
+    expect(prompt).toContain("no asterisks, bold or other formatting");
   });
 
   it("rejects an unreadable time instead of guessing", async () => {
@@ -199,5 +229,109 @@ describe("humanReplyDelayMs — never reply instantly (Mark, 2026-09-25)", () =>
     expect(waits).toHaveLength(1);
     expect(waits[0]).toBeGreaterThanOrEqual(29_000);
     expect(ghl.sendSMS).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("booking an appointment by text (Mark, 2026-10-15)", () => {
+  const toolResultOf = (callIndex: number) => (vi.mocked(chatWithTools).mock.calls[callIndex][1] as any[]).at(-1).content[0].content as string;
+
+  beforeEach(() => {
+    vapiTools.handleCheckAvailability.mockReset();
+    vapiTools.handleBookAppointment.mockReset();
+  });
+
+  it("offers check_availability and book_appointment alongside the call tools", async () => {
+    db.query.mockResolvedValueOnce(row());
+    vi.mocked(chatWithTools).mockResolvedValueOnce(endTurn("What area?"));
+    await irisHandleInboundSms("contact-1", "hi", NO_WAIT);
+    expect(toolNames()).toEqual(expect.arrayContaining(["check_availability", "book_appointment", "schedule_transfer_call"]));
+  });
+
+  it("is not offered when the client hasn't turned the handoff on", async () => {
+    readFileSyncMock.mockReturnValue(CLIENT_CONFIG);
+    db.query.mockResolvedValueOnce(row());
+    vi.mocked(chatWithTools).mockResolvedValueOnce(endTurn("What area?"));
+    await irisHandleInboundSms("contact-1", "hi", NO_WAIT);
+    expect(toolNames()).not.toContain("check_availability");
+    expect(toolNames()).not.toContain("book_appointment");
+  });
+
+  it("checks the real calendar for the lead's intent, with the time the model worked out", async () => {
+    db.query.mockResolvedValueOnce(row());
+    vapiTools.handleCheckAvailability.mockResolvedValue('That time is available. To lock it in, call book_appointment with isoTime: "2026-10-16T17:30:00.000Z"');
+    vi.mocked(chatWithTools)
+      .mockResolvedValueOnce(toolTurn(toolUseBlock("t1", "check_availability", { intent: "seller", requestedTime: "2026-10-16T15:00:00" })))
+      .mockResolvedValueOnce(endTurn("Let me lock that in."));
+
+    await irisHandleInboundSms("contact-1", "Tomorrow at 3 works", NO_WAIT);
+
+    expect(vapiTools.handleCheckAvailability).toHaveBeenCalledWith("eden-sub-account-one", "cal-sell", "2026-10-16T15:00:00");
+    expect(toolResultOf(1)).toContain("That time is available");
+  });
+
+  it("books the real appointment, closes the lead's call queue, and tells the model to confirm only that time", async () => {
+    db.query.mockResolvedValueOnce(row());
+    vapiTools.handleBookAppointment.mockResolvedValue({
+      success: true,
+      result: 'Booked for Friday, October 16 at 3:00 PM. appointmentId: "abc" — if the lead wants to change this specific booking later...',
+    });
+    vi.mocked(chatWithTools)
+      .mockResolvedValueOnce(toolTurn(toolUseBlock("t1", "book_appointment", { intent: "seller", isoTime: "2026-10-16T17:30:00.000Z", notes: "Seller | Hussey Drive | $450K" })))
+      .mockResolvedValueOnce(endTurn("You're all set for Friday, October 16 at 3:00 PM — one of our agents will give you a call then."));
+
+    await irisHandleInboundSms("contact-1", "Yes 3 is great", NO_WAIT);
+
+    expect(vapiTools.handleBookAppointment).toHaveBeenCalledWith(
+      "eden-sub-account-one", "contact-1", "cal-sell", "seller", "2026-10-16T17:30:00.000Z", "Seller | Hussey Drive | $450K", undefined, undefined, "Iris (by text)"
+    );
+    expect(db.query.mock.calls.find((c) => String(c[0]).includes("UPDATE iris_pending_calls SET status = 'skipped'") && (c[1] as string[]).includes("qualified and booked by text — appointment made"))).toBeDefined();
+    const result = toolResultOf(1);
+    expect(result).toContain("Booked for Friday, October 16 at 3:00 PM");
+    expect(result).toContain("one of our agents will give you a call then");
+    expect(result).not.toContain("appointmentId");
+    expect(ghl.sendSMS).toHaveBeenCalledWith("contact-1", expect.stringContaining("all set for Friday"), "loc-1", "key-1");
+  });
+
+  it("does not close the queue or claim a booking when the slot is gone", async () => {
+    db.query.mockResolvedValueOnce(row());
+    vapiTools.handleBookAppointment.mockResolvedValue({ success: false, result: "That exact time is no longer available — it may have just been taken. Do not claim it's booked." });
+    vi.mocked(chatWithTools)
+      .mockResolvedValueOnce(toolTurn(toolUseBlock("t1", "book_appointment", { intent: "buyer", isoTime: "2026-10-16T17:30:00.000Z" })))
+      .mockResolvedValueOnce(endTurn("That time just went — would another work?"));
+
+    await irisHandleInboundSms("contact-1", "3 is good", NO_WAIT);
+
+    expect(toolResultOf(1)).toContain("no longer available");
+    expect(db.query.mock.calls.find((c) => (c[1] as string[] | undefined)?.includes("qualified and booked by text — appointment made"))).toBeUndefined();
+  });
+
+  it("with no calendar for the lead's kind, says so and sends the model to a human follow-up", async () => {
+    db.query.mockResolvedValueOnce(row());
+    vi.mocked(chatWithTools)
+      .mockResolvedValueOnce(toolTurn(toolUseBlock("t1", "check_availability", { intent: "unknown", requestedTime: "2026-10-16T15:00:00" })))
+      .mockResolvedValueOnce(endTurn("Someone will be in touch."));
+    await irisHandleInboundSms("contact-1", "tomorrow at 3", NO_WAIT);
+    expect(vapiTools.handleCheckAvailability).not.toHaveBeenCalled();
+    expect(toolResultOf(1)).toContain("request_human_followup");
+  });
+
+  it("a time named mid-conversation is booked by the model, not also queued as an Iris callback", async () => {
+    vi.mocked(classifyInboundText).mockResolvedValueOnce({ type: "schedule_for", when: new Date(Date.now() + 86_400_000) });
+    vi.mocked(loadHistory).mockResolvedValueOnce([{ role: "user", content: "hi" }, { role: "assistant", content: "When are you free for a quick call?" }] as any);
+    db.query.mockResolvedValueOnce(row());
+    vi.mocked(chatWithTools).mockResolvedValueOnce(endTurn("Let me check."));
+
+    await irisHandleInboundSms("contact-1", "tomorrow at 3", NO_WAIT);
+
+    expect(db.query.mock.calls.find((c) => String(c[0]).includes("lead requested this time via text"))).toBeUndefined();
+  });
+
+  it("but the first reply to the initial outreach text still schedules the callback it always did", async () => {
+    vi.mocked(classifyInboundText).mockResolvedValueOnce({ type: "schedule_for", when: new Date(Date.now() + 86_400_000) });
+    db.query.mockResolvedValueOnce(row());
+
+    await irisHandleInboundSms("contact-1", "tomorrow at 3", NO_WAIT);
+
+    expect(db.query.mock.calls.find((c) => String(c[0]).includes("lead requested this time via text"))).toBeDefined();
   });
 });

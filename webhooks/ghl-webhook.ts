@@ -3,6 +3,7 @@ import { readdirSync, readFileSync } from "fs";
 import { join } from "path";
 import { eventBus } from "../shared/events";
 import { postLiveTransferToSlack } from "./vapi-webhook";
+import { postAppointmentToSlack } from "./appointment-post";
 import { query } from "../shared/db";
 import { buildEmailDeps, buildOutreachDeps } from "../agents/quarry/deps";
 import { parseAppointmentContactId, parseInboundMessage } from "../agents/quarry/inbound";
@@ -80,6 +81,19 @@ export function createGHLRouter(): Router {
           const clientId = data.locationId ? clientIdForGhlLocation(data.locationId) : null;
           if (clientId && data.id) await postLiveTransferToSlack(clientId, data.id);
           else console.warn(`[GHL] LiveTransfer webhook with no resolvable client/contact: location=${data.locationId} id=${data.id}`);
+          break;
+        }
+
+        case "AppointmentBooked": {
+          // The booked-appointment automation's webhook step (Mark, 2026-10-14):
+          // Iris posts every new booking to the team's channel, including ones
+          // a person made. The body may carry the appointment id; if not, the
+          // contact's newest appointment is used. A booking Iris already
+          // posted stays quiet.
+          const clientId = data.locationId ? clientIdForGhlLocation(data.locationId) : null;
+          const appointmentId = data.appointmentId ?? data.appointment_id ?? data.calendar?.appointmentId ?? null;
+          if (clientId && data.id) await postAppointmentToSlack(clientId, data.id, { appointmentId });
+          else console.warn(`[GHL] AppointmentBooked webhook with no resolvable client/contact: location=${data.locationId} id=${data.id}`);
           break;
         }
 

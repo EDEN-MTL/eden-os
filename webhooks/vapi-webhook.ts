@@ -5,14 +5,23 @@ import { getGhlConfig, getContact, addContactTags, findOpenOpportunitiesForConta
 import { sendMessage, uploadFile } from "../shared/slack";
 import { appendHistory } from "../shared/conversation-memory";
 import { loadIrisConfig, loadClientBranding } from "../agents/iris";
-import { reopenForNextAttempt, reopenAfterMissedCallback, scheduleExplicitCallback, holdForTextReply, SWEEP_SOURCE } from "../agents/iris/dial-pending";
-import { extractFirstName } from "../agents/iris/scripts";
+import { reopenForNextAttempt, reopenAfterMissedCallback, scheduleExplicitCallback, holdForTextReply, reopenNoShowAfterMiss, closeNoShowFollowUp, SWEEP_SOURCE } from "../agents/iris/dial-pending";
+import { NO_SHOW_SOURCE } from "../agents/iris/no-show-state";
+import { helloRescue } from "../agents/iris/hello-rescue";
+import { hasActiveSmsConversation } from "../agents/iris/sms";
+import { isWithinLegalCallingWindow } from "../agents/iris/cadence";
+import { buildMissedCallQualifyText, QualifyTextLead } from "../agents/iris/qualify-text";
+import { extractFirstName, buildCallOpeningLine } from "../agents/iris/scripts";
 import { buildKeyToId, readField } from "../agents/scout/intake";
+import { loadScoutConfig } from "../agents/scout";
 import { appendNoteToContact } from "../agents/iris/notes";
 import { checkHumanTouch, DEFAULT_HUMAN_HANDS_OFF_DAYS } from "../agents/iris/human-touch";
 import { clampToLegalCallingWindow, formatLocal } from "../agents/iris/cadence";
 import { handleInboundCall } from "../agents/iris/inbound";
 import { classifyMissedCallback } from "../agents/iris/call-signals";
+import { reviewCall, shouldAlertTeam, formatCallAlert } from "../agents/iris/call-review";
+import { linkLineFor } from "../agents/iris/links";
+import { isaNoteBullets } from "./appointment-post";
 
 /**
  * Every Iris call — real or test — gets posted here so the team can watch
@@ -22,7 +31,7 @@ import { classifyMissedCallback } from "../agents/iris/call-signals";
  * this session can do remotely — still overridable via IRIS_CALL_LOG_CHANNEL
  * if that ever needs to change without a code deploy.
  */
-const CALL_LOG_CHANNEL = process.env.IRIS_CALL_LOG_CHANNEL || "iris-call-logs";
+import { CALL_LOG_CHANNEL } from "../agents/iris/channels";
 
 /**
  * Vapi's endedReason for a warm transfer that actually connected — the
@@ -98,13 +107,81 @@ const TRANSFER_ABANDONED_REASONS = new Set(["customer-ended-call-before-warm-tra
  * way TRANSFER_ABANDONED_REASONS grew, if a differently-worded screener
  * shows up on a future real call.
  */
-const CALL_SCREENER_PHRASES = [/record(?:ing)? your name and reason for calling/i];
+const CALL_SCREENER_PHRASES = [
+  /record(?:ing)? your name and reason for calling/i,
+  /see if (this person|he|she|they)(?: is|'s| are|'re) available/i,
+  /(?:is|are) screening (?:this|your|their) calls?/i,
+  /google is screening/i,
+  /call[- ]screening (?:service|assistant)/i,
+];
 
+/**
+ * Lines that are still the machine talking after it has asked for a name —
+ * "stay on the line", "please hold", "not available, leave a message". A
+ * later customer line that is NOT one of these is a real person joining.
+ * Added 2026-10-10 when Iris began answering a screener with just "Iris."
+ * and waiting (agents/iris/scripts.ts, "How you open the call"): a screener
+ * that then connects the lead is a genuine conversation, so a screener
+ * phrase alone must no longer mark the whole call unanswered.
+ */
+const MACHINE_FOLLOW_UPS = [
+  ...CALL_SCREENER_PHRASES,
+  /stay on the line/i,
+  /please (hold|wait)/i,
+  /one moment/i,
+  /(?:is|isn't|is not|not) available/i,
+  /leave a message/i,
+  /after the (tone|beep)/i,
+  /connecting (you|your call)/i,
+  /thanks?,? \w+\.?\s*$/i,
+];
+
+/**
+ * True when the call hit a screening service and NO real person ever joined
+ * after it. If the customer's own words appear after the screener phrases —
+ * anything that isn't the machine talking — the lead (or someone) came on
+ * the line, and it is not a screener-only call.
+ */
 export function hitCallScreener(message: Record<string, any>): boolean {
-  const msgs: any[] = message?.messages ?? [];
-  return msgs.some(
-    (m) => m?.role === "user" && typeof m?.message === "string" && CALL_SCREENER_PHRASES.some((re) => re.test(m.message))
-  );
+  const userLines: string[] = ((message?.messages ?? []) as any[])
+    .filter((m) => m?.role === "user" && typeof m?.message === "string" && m.message.trim() !== "")
+    .map((m) => m.message as string);
+  const first = userLines.findIndex((line) => CALL_SCREENER_PHRASES.some((re) => re.test(line)));
+  if (first === -1) return false;
+  const realPersonJoined = userLines.slice(first + 1).some((line) => !MACHINE_FOLLOW_UPS.some((re) => re.test(line)));
+  return !realPersonJoined;
+}
+
+/**
+ * A voicemail greeting heard on the line. Vapi's own voicemail detection often
+ * catches these (endedReason "voicemail" / "customer-did-not-answer"), but not
+ * always: Angela Marie's call (2026-10-14) heard "Call has been forwarded to
+ * voice mail. The person you're trying to reach is not available.", Iris hung
+ * up, and Vapi reported "assistant-ended-call" — which counts as a real
+ * conversation, so no retry was ever scheduled. Same shape as hitCallScreener:
+ * a greeting with nobody real after it.
+ */
+const VOICEMAIL_PHRASES = [
+  /forwarded to (?:voice ?mail|an? (?:automated|voice))/i,
+  /(?:voice ?mail|mailbox) (?:is|has been)? ?(?:full|not set up|unavailable)/i,
+  /(?:you(?:'ve| have) reached|this is) the (?:voice ?mail|mailbox)/i,
+  /at the (?:tone|beep)/i,
+  /after the (?:tone|beep)/i,
+  /record your message/i,
+  /leave (?:a|your) message/i,
+  /after leaving a message/i,
+  /press pound/i,
+  /(?:person|party|number|customer) you(?:'re| are) (?:trying to reach|calling) is (?:not available|unavailable)/i,
+];
+
+export function hitVoicemailGreeting(message: Record<string, any>): boolean {
+  const userLines: string[] = ((message?.messages ?? []) as any[])
+    .filter((m) => m?.role === "user" && typeof m?.message === "string" && m.message.trim() !== "")
+    .map((m) => m.message as string);
+  const first = userLines.findIndex((line) => VOICEMAIL_PHRASES.some((re) => re.test(line)));
+  if (first === -1) return false;
+  const realPersonJoined = userLines.slice(first + 1).some((line) => !MACHINE_FOLLOW_UPS.some((re) => re.test(line)) && !VOICEMAIL_PHRASES.some((re) => re.test(line)));
+  return !realPersonJoined;
 }
 
 /**
@@ -149,7 +226,7 @@ export function customerSpokeAtAll(message: Record<string, any>): boolean {
  */
 export function genuinelyAnswered(endedReason: string | null, message: Record<string, any>): boolean {
   if (!wasAnswered(endedReason)) return false;
-  if (hitCallScreener(message)) return false;
+  if (hitCallScreener(message) || hitVoicemailGreeting(message)) return false;
   if (endedReason === "assistant-ended-call") return customerSpokeAtAll(message);
   return true;
 }
@@ -179,6 +256,7 @@ export function describeOutcome(endedReason: string | null, message: Record<stri
   if (endedReason === TRANSFER_SUCCEEDED_REASON) return "✅ Live transfer completed";
   if (endedReason === "voicemail") return "📵 Left voicemail";
   if (hitCallScreener(message)) return "🤖 Hit a call-screening service, not the actual lead — will retry";
+  if (hitVoicemailGreeting(message)) return "📵 Voicemail greeting, no message left — will retry";
   if (endedReason === "assistant-ended-call" && !customerSpokeAtAll(message)) return "🔇 No response (gave up after the idle nudge)";
   if (TRANSFER_ABANDONED_REASONS.has(endedReason ?? "")) return "⚠️ Disconnected right before transfer connected — needs a manual callback";
   if (wasAnswered(endedReason)) return "💬 Answered (no transfer)";
@@ -224,6 +302,12 @@ export async function attachRecording(message: Record<string, any>, channel: str
   }
 }
 
+/** "\n🔗 …" for text-related updates (the GHL contact), or "" when no link can be built. */
+async function linkSuffix(clientId: string, contactId: string): Promise<string> {
+  const line = await linkLineFor(clientId, contactId);
+  return line ? `\n${line}` : "";
+}
+
 /**
  * Posts every finished Iris call to #iris-call-logs — real or test, any
  * outcome — so the team has an ongoing eye on Iris's calls without
@@ -233,7 +317,7 @@ export async function attachRecording(message: Record<string, any>, channel: str
  * anything stale — falls back to the raw phone number when there's no
  * contactId at all (a manual test call) or the lookup fails.
  */
-export async function postCallLogToSlack(clientId: string, contactId: string | null, message: Record<string, any>, endedReason: string | null): Promise<void> {
+export async function postCallLogToSlack(clientId: string, contactId: string | null, message: Record<string, any>, endedReason: string | null, posted?: { channel?: string; ts?: string }): Promise<void> {
   try {
     const phone = message?.call?.customer?.number ?? "unknown number";
     let who = phone;
@@ -251,10 +335,12 @@ export async function postCallLogToSlack(clientId: string, contactId: string | n
       }
     }
 
+    const links = await linkLineFor(clientId, contactId, message?.call?.id, loadIrisConfig(clientId)?.vapiCallUrlTemplate);
     const text =
       `📞 *${who}* — ${clientId}\n` +
       `${describeOutcome(endedReason, message)}\n` +
-      `Duration: ${formatDuration(message?.durationSeconds)}`;
+      `Duration: ${formatDuration(message?.durationSeconds)}` +
+      (links ? `\n${links}` : "");
 
     // Seeds this post into Iris's own conversation history, keyed by
     // Slack's real resolved channel id + this message's own ts — the
@@ -271,6 +357,11 @@ export async function postCallLogToSlack(clientId: string, contactId: string | n
         console.error("[VAPI] Failed to seed call-log thread history:", error instanceof Error ? error.message : error);
       });
       await attachRecording(message, result.channel, result.ts);
+    }
+    // Handed back so the call review can reply in this post's thread.
+    if (posted) {
+      posted.channel = result?.channel;
+      posted.ts = result?.ts;
     }
   } catch (error) {
     console.error("[VAPI] Failed to post call log to Slack:", error instanceof Error ? error.message : error);
@@ -364,7 +455,8 @@ async function handleEndOfCallReport(message: Record<string, any>): Promise<void
   console.log(`[VAPI] Call ${callId} ended (${endedReason ?? "unknown reason"}).`);
 
   const row = rows[0];
-  if (row) await postCallLogToSlack(row.client_id, row.contact_id, message, endedReason);
+  const logPost: { channel?: string; ts?: string } = {};
+  if (row) await postCallLogToSlack(row.client_id, row.contact_id, message, endedReason, logPost);
   // Mark, 2026-10-06: a successful live transfer already left Iris's own short
   // summary in the notes field — the extra "Live transfer completed ..."
   // status line only made the text sent to the agent longer and costlier.
@@ -374,7 +466,7 @@ async function handleEndOfCallReport(message: Record<string, any>): Promise<void
 
   if (endedReason === TRANSFER_SUCCEEDED_REASON && row?.contact_id) {
     await handleSuccessfulTransfer(row.client_id, row.contact_id);
-    await postLiveTransferToSlack(row.client_id, row.contact_id);
+    await postLiveTransferToSlack(row.client_id, row.contact_id, callId);
   }
 
   // Only the automatic dial-pending queue's own retry cadence gets
@@ -393,6 +485,143 @@ async function handleEndOfCallReport(message: Record<string, any>): Promise<void
       await maybeHonorMissedCallback(row.client_id, row.contact_id, transcript);
     }
   }
+
+  if (row) await postCallReview(row.client_id, row.contact_id, row.triggered_by, message, endedReason, logPost.ts, logPost.channel);
+}
+
+/**
+ * Mark, 2026-10-14: Iris reviews every finished call herself and posts the
+ * verdict, so nobody has to open each transcript. Clean calls get a short
+ * thread reply under the call-log post; a call that needs a look gets its own
+ * top-level post so it isn't buried. Runs last, after the retry logic, so it
+ * can also tell whether a retry actually got lined up. Best-effort: never
+ * affects the call's handling.
+ */
+export async function postCallReview(
+  clientId: string,
+  contactId: string | null,
+  triggeredBy: string,
+  message: Record<string, any>,
+  endedReason: string | null,
+  logPostTs?: string | null,
+  logPostChannel?: string | null
+): Promise<void> {
+  try {
+    const lines = ((message?.messages ?? []) as any[])
+      .filter((m) => typeof m?.message === "string" && m.message.trim() !== "" && ["user", "bot", "assistant"].includes(m?.role))
+      .map((m) => ({ role: m.role as string, message: m.message as string }));
+    const machineOnly = hitCallScreener(message) || hitVoicemailGreeting(message);
+
+    let who = message?.call?.customer?.number ?? "unknown number";
+    let expectedOpener: string | null = null;
+    let retryExpected = false;
+    let retryLinedUp: boolean | undefined;
+    let queueRow: { status: string; attempts_made: number; call_after: Date | string; is_explicit_callback: boolean; source: string | null } | undefined;
+    if (contactId) {
+      const ghlConfig = await getGhlConfig(clientId).catch(() => null);
+      if (ghlConfig) {
+        const resp = await getContact(contactId, ghlConfig.locationId, ghlConfig.apiKey).catch(() => null);
+        const contact = resp?.contact ?? resp;
+        const name = [contact?.firstName, contact?.lastName].filter(Boolean).join(" ").trim();
+        if (name) who = name;
+        const branding = loadClientBranding(clientId);
+        if (branding && name) expectedOpener = buildCallOpeningLine(extractFirstName(name), branding.brandName);
+      }
+      const rows = await query<{ status: string; attempts_made: number; call_after: Date | string; is_explicit_callback: boolean; source: string | null }>(
+        `SELECT status, attempts_made, call_after, is_explicit_callback, source FROM iris_pending_calls WHERE client_id = $1 AND contact_id = $2`,
+        [clientId, contactId]
+      );
+      queueRow = rows[0];
+      if (triggeredBy === "automatic" && !genuinelyAnswered(endedReason, message) && endedReason !== TRANSFER_SUCCEEDED_REASON) {
+        retryExpected = true;
+        // A lead whose whole cadence is spent legitimately has no retry left.
+        retryLinedUp =
+          !queueRow ||
+          queueRow.status === "pending" ||
+          queueRow.attempts_made >= 8 ||
+          // A no-show follow-up ends after its own (shorter) number of calls.
+          (queueRow.source === NO_SHOW_SOURCE && queueRow.attempts_made >= (loadIrisConfig(clientId)?.noShowFollowUp?.maxCalls ?? 3));
+      }
+    }
+
+    const review = reviewCall({
+      lines,
+      endedReason,
+      durationSeconds: message?.durationSeconds ?? null,
+      machineOnly,
+      transferSucceeded: endedReason === TRANSFER_SUCCEEDED_REASON,
+      expectedOpener,
+      retryExpected,
+      retryLinedUp,
+    });
+
+    if (review.verdict === "attention") {
+      const links = await linkLineFor(clientId, contactId, message?.call?.id, loadIrisConfig(clientId)?.vapiCallUrlTemplate);
+      await sendMessage("iris", { channel: CALL_LOG_CHANNEL, text: `🔎 *Call review — ${who}*\n${review.summary}${links ? `\n${links}` : ""}` });
+    } else {
+      // A short reply under that call's own log post (top-level if the post's ts is unknown).
+      await sendMessage("iris", { channel: logPostChannel ?? CALL_LOG_CHANNEL, text: `🔎 ${review.summary}`, threadTs: logPostTs ?? undefined });
+    }
+
+    await alertTeamAboutCall(clientId, contactId, who, message, endedReason, machineOnly, review, queueRow);
+  } catch (error) {
+    console.error("[VAPI] Failed to review the call:", error instanceof Error ? error.message : error);
+  }
+}
+
+/**
+ * Messages the configured people directly (iris.callAlerts) when a call is worth
+ * their attention, so nobody has to open #iris-call-logs to find out how a
+ * watched lead's call went. Best-effort, like the review itself.
+ */
+async function alertTeamAboutCall(
+  clientId: string,
+  contactId: string | null,
+  who: string,
+  message: Record<string, any>,
+  endedReason: string | null,
+  machineOnly: boolean,
+  review: ReturnType<typeof reviewCall>,
+  queueRow: { status: string; call_after: Date | string; is_explicit_callback: boolean; source: string | null } | undefined
+): Promise<void> {
+  try {
+    const config = loadIrisConfig(clientId);
+    const recipients = config?.callAlerts?.userIds;
+    if (!contactId || !config || !recipients || recipients.length === 0) return;
+
+    const reachedPerson = !machineOnly && genuinelyAnswered(endedReason, message);
+    // A lead someone asked Iris to call (requested callback, or lined up by hand) — not a sweep or Ember row.
+    const watched = !!queueRow?.is_explicit_callback && queueRow.source !== "sweep" && queueRow.source !== "ember" && queueRow.source !== NO_SHOW_SOURCE;
+    if (!shouldAlertTeam({ reachedPerson, flagged: review.verdict === "attention", watched })) return;
+
+    const timezone = config.timezone || "America/St_Johns";
+    let nextStep = "nothing scheduled";
+    if (endedReason === TRANSFER_SUCCEEDED_REASON) {
+      nextStep = "transferred to an agent";
+    } else if (queueRow?.status === "pending") {
+      const ms = typeof queueRow.call_after === "string" ? (/inf/i.test(queueRow.call_after) ? Infinity : Date.parse(queueRow.call_after)) : queueRow.call_after.getTime();
+      nextStep = Number.isFinite(ms) ? `Iris calls again ${formatLocal(new Date(ms).toISOString(), timezone)}` : "waiting for the lead's text reply (no call time)";
+    } else if (reachedPerson) {
+      nextStep = "no further Iris call — someone on the team should follow up if it wasn't booked or transferred";
+    }
+
+    const text = formatCallAlert({
+      links: await linkLineFor(clientId, contactId, message?.call?.id, config.vapiCallUrlTemplate),
+      who,
+      whenLocal: formatLocal(new Date().toISOString(), timezone),
+      outcome: describeOutcome(endedReason, message),
+      duration: formatDuration(message?.durationSeconds),
+      review,
+      nextStep,
+    });
+    for (const userId of recipients) {
+      await sendMessage("iris", { channel: userId, text }).catch((error) => {
+        console.error(`[VAPI] Failed to DM the call alert to ${userId}:`, error instanceof Error ? error.message : error);
+      });
+    }
+  } catch (error) {
+    console.error("[VAPI] Failed to alert the team about a call:", error instanceof Error ? error.message : error);
+  }
 }
 
 /**
@@ -404,6 +633,29 @@ async function handleEndOfCallReport(message: Record<string, any>): Promise<void
  * this is a visibility nicety, never something that should block the
  * actual cadence logic in reopenForNextAttempt.
  */
+/**
+ * Whether Iris must leave this lead alone: a teammate (Jacob or any agent) texted or called them
+ * recently, or their card already sits in a column a person works (Live Transferred, Appointment
+ * Set, ...). Mark, 2026-10-21: "double check the recent conversation; if the lead is being talked
+ * to by Jacob or other agents, leave that lead and not touch it or move it." Sabrina Marie had been
+ * called and texted by Jacob the day before Iris called her and moved her card to Day 2.
+ * Returns the reason, or null when the lead is free. Fails closed: a thread that can't be read
+ * counts as "leave it".
+ */
+export async function reasonToLeaveLead(clientId: string, contactId: string, currentStageId?: string | null): Promise<string | null> {
+  const config = loadIrisConfig(clientId);
+  if (!config?.humanTextBlocksCalls) return null; // the client hasn't turned the rule on
+  const ghlConfig = await getGhlConfig(clientId).catch(() => null);
+  if (!ghlConfig) return "couldn't reach the CRM to check";
+  const scout = loadScoutConfig(clientId);
+  const protectedStages = scout?.historyStageIds?.length ? scout.historyStageIds : scout?.touchedStageIds ?? [];
+  if (currentStageId && protectedStages.includes(currentStageId)) return "their card is in a column a person works";
+  const touch = await checkHumanTouch(contactId, ghlConfig.locationId, ghlConfig.apiKey, config.humanHandsOffDays ?? DEFAULT_HUMAN_HANDS_OFF_DAYS);
+  if (touch.status === "human") return `a teammate ${touch.kind === "call" ? "called" : "texted"} them on ${touch.at}`;
+  if (touch.status === "unknown") return "couldn't verify no teammate is talking to them";
+  return null;
+}
+
 export async function moveToFollowUpStage(clientId: string, contactId: string, attemptsMade: number): Promise<void> {
   const config = loadIrisConfig(clientId);
   const stageId = config?.followUpStageIds?.[attemptsMade - 1];
@@ -416,6 +668,11 @@ export async function moveToFollowUpStage(clientId: string, contactId: string, a
     const opportunity = opportunities[0];
     if (!opportunity) {
       console.warn(`[VAPI] No open opportunity found for contact ${contactId} — cannot move to follow-up stage.`);
+      return;
+    }
+    const leave = await reasonToLeaveLead(clientId, contactId, opportunity.pipelineStageId);
+    if (leave) {
+      console.log(`[VAPI] Not moving contact ${contactId} to a follow-up stage — ${leave}.`);
       return;
     }
     await updateOpportunityStage(opportunity.id, stageId, ghlConfig.locationId, ghlConfig.apiKey);
@@ -434,6 +691,11 @@ export async function tagSequenceExhausted(clientId: string, contactId: string):
   try {
     const ghlConfig = await getGhlConfig(clientId);
     if (!ghlConfig) return;
+    const leave = await reasonToLeaveLead(clientId, contactId);
+    if (leave) {
+      console.log(`[VAPI] Not tagging contact ${contactId} "iris no answer" — ${leave}.`);
+      return;
+    }
     await addContactTags(contactId, ["iris no answer"], ghlConfig.locationId, ghlConfig.apiKey);
   } catch (error) {
     console.error(`[VAPI] Failed to tag contact ${contactId} as "iris no answer":`, error instanceof Error ? error.message : error);
@@ -458,17 +720,34 @@ export async function maybeReopenPendingCall(clientId: string, contactId: string
       status: string;
       source: string | null;
       callback_misses: number;
+      callback_time_of_day: string | null;
+      human_requested: boolean;
       lead: { name?: string | null; intent?: string | null } | null;
     }>(
-      `SELECT id, attempts_made, created_at, is_explicit_callback, status, source, callback_misses, lead FROM iris_pending_calls
+      `SELECT id, attempts_made, created_at, is_explicit_callback, status, source, callback_misses, callback_time_of_day, human_requested, lead FROM iris_pending_calls
        WHERE client_id = $1 AND contact_id = $2`,
       [clientId, contactId]
     );
     const pending = rows[0];
     if (!pending || pending.status !== "placed") return;
 
+    // A teammate is now talking to this lead (or already was): no retry, no stage move, no tag.
+    if (!pending.human_requested && pending.source !== SWEEP_SOURCE) {
+      const leave = await reasonToLeaveLead(clientId, contactId);
+      if (leave) {
+        await query(`UPDATE iris_pending_calls SET status = 'skipped', resolution_reason = $2, resolved_at = now() WHERE id = $1`, [pending.id, `no retry — ${leave}`]);
+        console.log(`[VAPI] Contact ${contactId} didn't answer, and Iris is leaving the lead alone — ${leave}.`);
+        return;
+      }
+    }
+
     if (pending.source === SWEEP_SOURCE) {
       await handleUnansweredSweepCall(clientId, contactId, pending, endedReason);
+      return;
+    }
+
+    if (pending.source === NO_SHOW_SOURCE) {
+      await handleUnansweredNoShowCall(clientId, contactId, pending);
       return;
     }
 
@@ -486,8 +765,68 @@ export async function maybeReopenPendingCall(clientId: string, contactId: string
 
     await moveToFollowUpStage(clientId, contactId, pending.attempts_made);
     if (!reopened) await tagSequenceExhausted(clientId, contactId);
+    await maybeTextAfterMissedCalls(clientId, contactId, pending, endedReason);
   } catch (error) {
     console.error(`[VAPI] Failed to check/reopen pending call for ${contactId}:`, error instanceof Error ? error.message : error);
+  }
+}
+
+/**
+ * The attempts of a normal sequence after which Iris texts: the FIRST unanswered call (Mark, 2026-11-05 — Melanie
+ * Petten missed one call and heard nothing from Iris for a day), or the second/third when the first text could not
+ * go (outside calling hours, a conversation already open). One text per lead either way (missed_call_texted).
+ */
+const MISSED_CALL_TEXT_ATTEMPTS = [1, 2, 3];
+
+/**
+ * Mark, 2026-10-27 (Eileen Hillier: two voicemails and nothing in between but the intake automation): a new lead's
+ * normal call sequence sent no text of its own. Iris now texts once after an unanswered call (the second one until
+ * 2026-11-05, the first since) and the text asks the next qualifying question (qualify-text.ts) rather than only
+ * "a better time?", so the reply carries the lead toward a booked call with an agent. The reply is handled by her
+ * text flow (booking included).
+ * No "Reply STOP" line (Jacob, 2026-10-29); a STOP reply is still honored by GHL and Iris's opt-out check.
+ * Skipped when: the lead is already texting with Iris, opted out, outside calling hours, or a teammate is in touch
+ * (sendIrisText checks that too). Claimed in the database first, so it can never go out twice.
+ */
+async function maybeTextAfterMissedCalls(
+  clientId: string,
+  contactId: string,
+  pending: { id: number; attempts_made: number; lead: QualifyTextLead | null },
+  endedReason: string | null
+): Promise<void> {
+  try {
+    if (!MISSED_CALL_TEXT_ATTEMPTS.includes(pending.attempts_made)) return;
+    // A call that never connected for a technical reason is not a "missed you".
+    if (endedReason && /error|failed/i.test(endedReason)) return;
+    const config = loadIrisConfig(clientId);
+    const branding = loadClientBranding(clientId);
+    if (!config || !branding) return;
+    if (!isWithinLegalCallingWindow(new Date(), config.timezone || "America/St_Johns")) return;
+    if (await hasActiveSmsConversation(clientId, contactId)) return;
+
+    const ghlConfig = await getGhlConfig(clientId);
+    if (!ghlConfig) return;
+    const raw = await getContact(contactId, ghlConfig.locationId, ghlConfig.apiKey);
+    const contact = raw?.contact ?? raw;
+    const tags: string[] = (contact?.tags ?? []).map((t: string) => String(t).toLowerCase());
+    if (contact?.dnd === true || tags.includes("do not call")) return;
+
+    const claim = await query<{ id: number }>(
+      `UPDATE iris_pending_calls SET missed_call_texted = true WHERE id = $1 AND missed_call_texted = false RETURNING id`,
+      [pending.id]
+    );
+    if (claim.length === 0) return;
+
+    const outcome = await sendIrisText(clientId, contactId, pending.lead?.name, buildMissedCallQualifyText(pending.lead?.name, branding.brandName, pending.lead ?? {}));
+    if (outcome === "skipped" || outcome === "failed") return;
+    await sendMessage("iris", {
+      channel: CALL_LOG_CHANNEL,
+      text: `📱 Texted *${pending.lead?.name ?? contactId}* after ${pending.attempts_made} unanswered call${pending.attempts_made === 1 ? "" : "s"} (no voicemail left) — ${outcome === "delivered" ? "delivered" : "sent"}, waiting for a reply.${await linkSuffix(clientId, contactId)}`,
+    }).catch((error) => {
+      console.error("[VAPI] Failed to post the missed-call text to Slack:", error instanceof Error ? error.message : error);
+    });
+  } catch (error) {
+    console.error(`[VAPI] Failed to text ${contactId} after the missed calls:`, error instanceof Error ? error.message : error);
   }
 }
 
@@ -504,9 +843,9 @@ export async function maybeReopenPendingCall(clientId: string, contactId: string
 async function handleMissedExplicitCallback(
   clientId: string,
   contactId: string,
-  pending: { id: number; attempts_made: number; created_at: Date; callback_misses: number; lead: { name?: string | null } | null }
+  pending: { id: number; attempts_made: number; created_at: Date; callback_misses: number; callback_time_of_day?: string | null; lead: { name?: string | null } | null }
 ): Promise<void> {
-  const outcome = await reopenAfterMissedCallback(pending.id, clientId, pending.attempts_made, pending.created_at, pending.callback_misses);
+  const outcome = await reopenAfterMissedCallback(pending.id, clientId, pending.attempts_made, pending.created_at, pending.callback_misses, pending.callback_time_of_day ?? null);
   if (!outcome.reopened) {
     console.log(`[VAPI] Contact ${contactId} missed their callback and the cadence is exhausted — not requeuing.`);
     await tagSequenceExhausted(clientId, contactId);
@@ -529,6 +868,32 @@ async function handleMissedExplicitCallback(
 }
 
 /**
+ * Mark, 2026-10-20: a no-show Iris texted and then called who did not pick up. The next call goes to the
+ * next 10 AM / 2 PM slot, until the client's maxCalls are used; then the follow-up ends and the team is told
+ * in the call-log channel so a person can take over. No second text, no voicemail, and the card never moves.
+ */
+async function handleUnansweredNoShowCall(
+  clientId: string,
+  contactId: string,
+  pending: { id: number; attempts_made: number; lead: { name?: string | null } | null }
+): Promise<void> {
+  const name = pending.lead?.name ?? contactId;
+  const next = await reopenNoShowAfterMiss(pending.id, clientId, pending.attempts_made);
+  if (next) {
+    console.log(`[VAPI] No-show ${contactId} didn't answer (call ${pending.attempts_made}) — next call ${next.toISOString()}.`);
+    return;
+  }
+  await closeNoShowFollowUp(pending.id, `no-show follow-up: no answer after the text and ${pending.attempts_made} call(s)`);
+  await appendNoteToContact(clientId, contactId, `Iris: no-show follow-up ended. Texted to rebook and called ${pending.attempts_made} time(s) with no answer.`).catch(() => {});
+  await sendMessage("iris", {
+    channel: CALL_LOG_CHANNEL,
+    text: `📵 *${name}* (no-show) never answered: Iris texted and called ${pending.attempts_made} time(s). Ending the follow-up, so this one needs a person to reach out.${await linkSuffix(clientId, contactId)}`,
+  }).catch((error) => {
+    console.error("[VAPI] Failed to post the exhausted no-show follow-up to Slack:", error instanceof Error ? error.message : error);
+  });
+}
+
+/**
  * Mark, 2026-10-07: a cold lead Iris was lined up to call by hand (source
  * 'sweep') who doesn't pick up — or whose voicemail picks up — gets ONE text
  * instead of a retry. No voicemail is ever left (Iris hangs up on a machine,
@@ -538,7 +903,7 @@ async function handleMissedExplicitCallback(
 async function handleUnansweredSweepCall(
   clientId: string,
   contactId: string,
-  pending: { id: number; attempts_made: number; lead: { name?: string | null; intent?: string | null } | null },
+  pending: { id: number; attempts_made: number; lead: QualifyTextLead | null },
   endedReason: string | null
 ): Promise<void> {
   if (endedReason && /error|failed/i.test(endedReason)) {
@@ -553,7 +918,7 @@ async function handleUnansweredSweepCall(
     console.log(`[VAPI] Sweep call to ${contactId} unanswered again (attempt ${pending.attempts_made}) — not texting a second time.`);
     await sendMessage("iris", {
       channel: CALL_LOG_CHANNEL,
-      text: `📵 *${pending.lead?.name ?? contactId}* didn't answer the second attempt either — no voicemail, no second text.`,
+      text: `📵 *${pending.lead?.name ?? contactId}* didn't answer the second attempt either — no voicemail, no second text.${await linkSuffix(clientId, contactId)}`,
     }).catch((error) => {
       console.error("[VAPI] Failed to post the second-round miss to Slack:", error instanceof Error ? error.message : error);
     });
@@ -563,7 +928,7 @@ async function handleUnansweredSweepCall(
   if (outcome === "skipped") {
     await sendMessage("iris", {
       channel: CALL_LOG_CHANNEL,
-      text: `🤝 Not texting *${pending.lead?.name ?? contactId}* after the unanswered call — a teammate has texted them recently, so they're handling the conversation.`,
+      text: `🤝 Not texting *${pending.lead?.name ?? contactId}* after the unanswered call — a teammate has texted them recently, so they're handling the conversation.${await linkSuffix(clientId, contactId)}`,
     }).catch(() => {});
     return;
   }
@@ -572,7 +937,7 @@ async function handleUnansweredSweepCall(
     // so the follow-up text shows up there too, not only the call itself.
     await sendMessage("iris", {
       channel: CALL_LOG_CHANNEL,
-      text: `📱 Texted *${pending.lead?.name ?? contactId}* after the unanswered call (no voicemail left) — ${outcome === "delivered" ? "delivered" : "sent"}, waiting for a reply.`,
+      text: `📱 Texted *${pending.lead?.name ?? contactId}* after the unanswered call (no voicemail left) — ${outcome === "delivered" ? "delivered" : "sent"}, waiting for a reply.${await linkSuffix(clientId, contactId)}`,
     }).catch((error) => {
       console.error("[VAPI] Failed to post the sweep follow-up text to Slack:", error instanceof Error ? error.message : error);
     });
@@ -641,7 +1006,7 @@ export async function sendIrisText(clientId: string, contactId: string, leadName
     console.error(`[VAPI] Text to contact ${contactId} could not be delivered: ${failure}`);
     await sendMessage("iris", {
       channel: CALL_LOG_CHANNEL,
-      text: `⚠️ The follow-up text to *${leadName ?? contactId}* could NOT be delivered: ${failure}`,
+      text: `⚠️ The follow-up text to *${leadName ?? contactId}* could NOT be delivered: ${failure}${await linkSuffix(clientId, contactId)}`,
     }).catch(() => {});
     return "failed";
   }
@@ -741,6 +1106,8 @@ export interface LiveTransferPost {
   agentName: string | null;
   leadName: string;
   notes: string | null;
+  /** "🔗 Vapi call · GHL contact", already built; "" or missing when there are no links. */
+  links?: string;
 }
 
 /**
@@ -752,12 +1119,10 @@ export interface LiveTransferPost {
  */
 export function formatLiveTransferPost(post: LiveTransferPost): string {
   const kind = post.intent === "seller" || post.intent === "downsize" || post.intent === "upgrading" ? "Seller" : "Buyer";
-  const bullets = (post.notes ?? "")
-    .split(/\n| \| /)
-    .map((line) => line.trim())
-    .filter((line) => line && !/^Iris( call|:)/.test(line));
+  const bullets = isaNoteBullets(post.notes);
   const lines = [`${kind} Live Transfer for ${post.clientLabel} with ${post.agentName ?? "an agent (not confirmed on the call)"}`, `Name: ${post.leadName}`];
   if (bullets.length > 0) lines.push("", `ISA NOTES: ${bullets.map((b) => `- ${b}`).join("\n")}`);
+  if (post.links) lines.push("", post.links);
   return lines.join("\n");
 }
 
@@ -767,7 +1132,7 @@ export function formatLiveTransferPost(post: LiveTransferPost): string {
  * own account. Runs after the transfer is already done, so it's best-effort:
  * any failure is logged and never affects the transfer or the tagging.
  */
-export async function postLiveTransferToSlack(clientId: string, contactId: string): Promise<void> {
+export async function postLiveTransferToSlack(clientId: string, contactId: string, callId?: string | null): Promise<void> {
   let claimId: string | null = null;
   try {
     const config = loadIrisConfig(clientId);
@@ -813,7 +1178,8 @@ export async function postLiveTransferToSlack(clientId: string, contactId: strin
 
     await sendMessage("iris", {
       channel: target.channel,
-      text: formatLiveTransferPost({ intent, clientLabel: target.clientLabel, agentName, leadName, notes }),
+      // The contact page always; the exact Vapi call too when Iris did the transfer on a call (a hand-made one has no call).
+      text: formatLiveTransferPost({ intent, clientLabel: target.clientLabel, agentName, leadName, notes, links: await linkLineFor(clientId, contactId, callId, config.vapiCallUrlTemplate) }),
     });
   } catch (error) {
     console.error(`[VAPI] Failed to post the live transfer for ${contactId} to Slack:`, error instanceof Error ? error.message : error);
@@ -891,6 +1257,9 @@ export function createVapiRouter(): Router {
 
     try {
       if (!message) return;
+
+      // A lead who said hello but was never transcribed gets the opener (hello-rescue.ts).
+      helloRescue.observe(message);
 
       if (message.type === "end-of-call-report") {
         await handleEndOfCallReport(message);

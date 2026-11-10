@@ -22,7 +22,9 @@
 import { readFileSync } from "fs";
 import { join } from "path";
 import { MetaClient } from "../../../shared/meta";
-import { computeMetrics } from "./metrics";
+import { computeMetrics, runningOnly } from "./metrics";
+import { adsManagerUrl } from "./links";
+import { createdChain, type CreatedChain } from "./age";
 import { EntityMetrics, RuleScope } from "./types";
 
 export type HealthVerdict = "kill" | "refresh_creative" | "scale" | "watch" | "healthy" | "too_early";
@@ -195,6 +197,14 @@ export interface LiveEntityState {
   effectiveStatus?: string;
   campaignId?: string;
   campaignName?: string;
+  /** Ads only: the ad set it belongs to. */
+  adsetId?: string;
+  /** Which level this entry is. */
+  kind?: "campaign" | "adset" | "ad";
+  /** When Meta last recorded a change to it (an edit, a pause, a new creative), epoch ms. */
+  updatedAt?: number;
+  /** When it was first launched (Meta's created_time), epoch ms. Unlike updatedAt, editing it never changes this. */
+  createdAt?: number;
   /** Daily budget in account currency (Meta returns minor units; already converted). */
   dailyBudget?: number | null;
   /** Ad sets only. */
@@ -208,6 +218,13 @@ export interface EntityHealth {
   id: string;
   name: string | null;
   campaignName: string | null;
+  /** The campaign it sits in (itself, for a campaign) and, for an ad, its ad set: what a direct link needs. */
+  campaignId?: string;
+  adsetId?: string;
+  /** Direct link to it in Ads Manager, when the client's ad account is known. */
+  url?: string | null;
+  /** When it (and the campaign / ad set above it) first launched, epoch ms: the basis for judging its results. */
+  created?: CreatedChain;
   funnel: string | null;
   targetCpl: number;
   verdict: HealthVerdict;
@@ -312,6 +329,8 @@ export function assessEntity(
     id: row.entity_id,
     name: row.entity_name,
     campaignName: live.campaignName ?? null,
+    ...(live.campaignId ? { campaignId: live.campaignId } : {}),
+    ...(live.adsetId ? { adsetId: live.adsetId } : {}),
     funnel,
     targetCpl,
     verdict,
@@ -375,6 +394,13 @@ function loadForgeConfig(clientId: string): any | null {
   }
 }
 
+/** Meta writes times like "2026-10-20T00:47:15-0230" (no colon in the offset), which not every parser reads. */
+export function parseMetaTime(value: unknown): number | undefined {
+  if (typeof value !== "string") return undefined;
+  const ms = Date.parse(value.replace(/([+-]\d{2})(\d{2})$/, "$1:$2"));
+  return Number.isNaN(ms) ? undefined : ms;
+}
+
 const centsToUnits = (v: unknown) => (v === undefined || v === null || v === "" ? null : Number(v) / 100);
 
 /**
@@ -388,9 +414,9 @@ const centsToUnits = (v: unknown) => (v === undefined || v === null || v === "" 
  */
 export async function fetchLiveState(client: MetaClient): Promise<Map<string, LiveEntityState>> {
   const [campaigns, adsets, ads] = await Promise.all([
-    client.listCampaigns(["id", "name", "effective_status", "daily_budget", "lifetime_budget"]),
-    client.listAdsets(undefined, ["id", "name", "effective_status", "campaign_id", "daily_budget", "learning_stage_info"]),
-    client.listAds(undefined, ["id", "effective_status", "campaign_id", "adset_id"]),
+    client.listCampaigns(["id", "name", "effective_status", "daily_budget", "lifetime_budget", "updated_time", "created_time"]),
+    client.listAdsets(undefined, ["id", "name", "effective_status", "campaign_id", "daily_budget", "learning_stage_info", "updated_time", "created_time"]),
+    client.listAds(undefined, ["id", "effective_status", "campaign_id", "adset_id", "updated_time", "created_time"]),
   ]);
 
   const out = new Map<string, LiveEntityState>();
@@ -398,12 +424,15 @@ export async function fetchLiveState(client: MetaClient): Promise<Map<string, Li
   const nowSec = Date.now() / 1000;
 
   for (const c of campaigns) {
-    out.set(c.id, { effectiveStatus: c.effective_status, campaignId: c.id, campaignName: c.name, dailyBudget: centsToUnits(c.daily_budget) });
+    out.set(c.id, { kind: "campaign", updatedAt: parseMetaTime(c.updated_time), createdAt: parseMetaTime(c.created_time), effectiveStatus: c.effective_status, campaignId: c.id, campaignName: c.name, dailyBudget: centsToUnits(c.daily_budget) });
   }
   for (const s of adsets) {
     const parent = campaignById.get(s.campaign_id);
     const info = s.learning_stage_info;
     out.set(s.id, {
+      kind: "adset",
+      updatedAt: parseMetaTime(s.updated_time),
+      createdAt: parseMetaTime(s.created_time),
       effectiveStatus: s.effective_status,
       campaignId: s.campaign_id,
       campaignName: parent?.name,
@@ -420,7 +449,7 @@ export async function fetchLiveState(client: MetaClient): Promise<Map<string, Li
   }
   for (const a of ads) {
     const parent = campaignById.get(a.campaign_id);
-    out.set(a.id, { effectiveStatus: a.effective_status, campaignId: a.campaign_id, campaignName: parent?.name });
+    out.set(a.id, { kind: "ad", updatedAt: parseMetaTime(a.updated_time), createdAt: parseMetaTime(a.created_time), effectiveStatus: a.effective_status, campaignId: a.campaign_id, campaignName: parent?.name, adsetId: a.adset_id });
   }
   return out;
 }
@@ -474,7 +503,12 @@ export function buildHealthReport(
   playbook: HealthPlaybook,
   rowsByScope: Record<RuleScope, EntityMetrics[]>,
   live: Map<string, LiveEntityState> | null,
-  lookbackDays: number
+  lookbackDays: number,
+  /**
+   * What each ad set and campaign is judged on: only the ads still running (see runningOnly). Totals
+   * still come from rowsByScope, because money already spent on a since-paused ad was still spent.
+   */
+  assessRows: Record<RuleScope, EntityMetrics[]> = rowsByScope
 ): CampaignHealthReport {
   const entities: EntityHealth[] = [];
   let budgetSum = 0;
@@ -482,7 +516,7 @@ export function buildHealthReport(
   const budgetByFunnel = new Map<string, number>();
 
   for (const scope of ["campaign", "adset", "ad"] as RuleScope[]) {
-    for (const row of rowsByScope[scope]) {
+    for (const row of assessRows[scope]) {
       if (row.spend <= 0) continue;
       const state = live?.get(row.entity_id);
       // Paused/archived since: nothing to decide. Unknown to Meta (deleted) also drops out.
@@ -577,6 +611,20 @@ export async function getCampaignHealth(clientId: string, client: MetaClient | n
     liveStateError = "No Meta account configured; judged on synced snapshots only (may include paused entities).";
   }
 
-  const report = buildHealthReport(clientId, playbook, { campaign, adset, ad }, live, days);
+  const raw = { campaign, adset, ad };
+  const assess = live
+    ? {
+        campaign: runningOnly(campaign, "campaign", ad, live),
+        adset: runningOnly(adset, "adset", ad, live),
+        ad: runningOnly(ad, "ad", ad, live),
+      }
+    : raw;
+  const built = buildHealthReport(clientId, playbook, raw, live, days, assess);
+  // Every entity gets a direct Ads Manager link (Slack digest, chat answers).
+  const report = client
+    ? { ...built, entities: built.entities.map((e) => ({ ...e, url: adsManagerUrl(client.adAccountId, e.scope, e.id, { campaignId: e.campaignId, adsetId: e.adsetId }) })) }
+    : built;
+  // How long each has been running, from Meta's launch dates (digest footer, chat answers).
+  if (live) report.entities = report.entities.map((e) => ({ ...e, created: createdChain(live, e.scope, e.id) }));
   return liveStateError ? { ...report, liveStateError } : report;
 }

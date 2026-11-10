@@ -145,6 +145,29 @@ export interface IrisConfig {
   humanHandsOffDays?: number;
   /** When true, a recent teammate text also stops Iris CALLING that lead. Off by default — texting only. */
   humanTextBlocksCalls?: boolean;
+  /**
+   * Follow up on leads the team marks as no-shows (iris.noShowFollowUp): the card moved to the
+   * client's No-Show pipeline stage after a booked appointment the lead did not attend. See no-show.ts.
+   */
+  noShowFollowUp?: { enabled: boolean; stageName: string; maxCalls: number };
+  /**
+   * Where a card goes when a week of follow-up ends (iris.followUpCohort): no answer to any call or text
+   * -> notReadyStage; opted out -> notInterestedStage. Stage NAMES, resolved against the live pipeline.
+   */
+  followUpCohort?: { notReadyStage: string; notInterestedStage: string };
+  /** The ASAP watch (asap-watch.ts): follow-up texts for leads whose timeline is ASAP, written from their call and text history. */
+  asapWatch?: import("./asap-watch").AsapWatchConfig;
+  callbackWatch?: import("./callback-watch").CallbackWatchConfig;
+  /** The lead review (lead-review.ts): contacts to never flag. */
+  leadReview?: { excludeEmailDomains?: string[]; excludeContactIds?: string[] };
+  /** Where Iris posts her morning summary (a channel id; the bot must be a member). */
+  dailySummary?: { channel: string };
+  /** Local dates (YYYY-MM-DD, client timezone) Iris places no calls — holidays. Due calls roll to the next open day. */
+  noCallDates?: string[];
+  /** Address of one call on Vapi's dashboard, with {callId} where the call's id goes. See links.ts. */
+  vapiCallUrlTemplate?: string;
+  /** Slack user ids Iris messages directly after a call that matters (a person reached, something off, or a lead someone asked her to call). */
+  callAlerts?: { userIds: string[] };
   /** Where Iris posts each completed live transfer (a private channel, so its ID), and the client name used in that post. */
   liveTransferSlack?: { channel: string; clientLabel: string };
   /**

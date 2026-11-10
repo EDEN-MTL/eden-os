@@ -190,3 +190,84 @@ export async function computeAdMetricsForAdset(
   }
   return results;
 }
+
+/** What the roll-up needs to know about each entity's live state: whether it delivers, and where it sits. */
+export type LiveStatusLookup = Map<
+  string,
+  { effectiveStatus?: string; adsetId?: string; campaignId?: string; kind?: "campaign" | "adset" | "ad"; updatedAt?: number }
+>;
+
+/**
+ * An ad set or campaign judged on the ads that are still on.
+ *
+ * Forge used to judge an ad set on every dollar and lead of the last N days, including those of an ad
+ * that had since been paused. 2026-10-20: Forge flagged "AUG 2026 | Testing | Static Seller" for a CPL
+ * of $118 (1 lead). $99 of that $116 was one ad, "AI image new 5", which Jacob paused 12 minutes later.
+ * The flag kept coming back because that ad's spend stayed inside the 7-day window.
+ *
+ * So for ad sets and campaigns the totals are re-added from the AD rows of the ads that are live right
+ * now, and an entity that is not itself running is dropped. Ad rows are only filtered (a paused ad is
+ * not a decision). If no ad rows exist for an entity (an ad-level sync gap) it is left as it was rather
+ * than judged on nothing. Leads GHL attributed to the ad set but to no ad cannot be placed, so they drop
+ * out with the paused ads.
+ */
+export function runningOnly(rows: EntityMetrics[], scope: RuleScope, adRows: EntityMetrics[], live: LiveStatusLookup): EntityMetrics[] {
+  const running = (id: string) => live.get(id)?.effectiveStatus === "ACTIVE";
+  if (scope === "ad") return rows.filter((r) => running(r.entity_id));
+
+  const parentOf = (adId: string) => (scope === "adset" ? live.get(adId)?.adsetId : live.get(adId)?.campaignId);
+  const out: EntityMetrics[] = [];
+  for (const row of rows) {
+    if (!running(row.entity_id)) continue;
+    const mine = adRows.filter((a) => parentOf(a.entity_id) === row.entity_id);
+    if (mine.length === 0) {
+      out.push(row);
+      continue;
+    }
+    const on = mine.filter((a) => running(a.entity_id));
+    const sum = (f: (a: EntityMetrics) => number) => on.reduce((s, a) => s + f(a), 0);
+    const freqs = on.map((a) => a.frequency).filter((f): f is number => typeof f === "number");
+    out.push(
+      deriveMetrics(
+        {
+          entity_id: row.entity_id,
+          entity_name: row.entity_name,
+          spend: String(sum((a) => a.spend)),
+          impressions: String(sum((a) => a.impressions)),
+          clicks: String(sum((a) => a.clicks)),
+          frequency: freqs.length ? String(freqs.reduce((s, f) => s + f, 0) / freqs.length) : null,
+          meta_leads: String(sum((a) => a.meta_lead_count)),
+          first_date: row.first_date,
+          last_date: row.last_date,
+          active_days: String(row.active_days),
+        },
+        { lead_count: String(sum((a) => a.crm_lead_count)), won_count: String(sum((a) => a.won_count)), revenue: String(sum((a) => a.revenue)) }
+      )
+    );
+  }
+  return out;
+}
+
+/**
+ * Leaves alone an entity that was changed lately. A professional media buyer doesn't judge an ad set the
+ * day after pausing one of its ads: Meta's delivery re-settles, and the number being judged still mixes
+ * the old setup with the new. So an entity is held back for `hours` after Meta last recorded a change to
+ * it, or to anything directly under it (an ad set: its ads; a campaign: its ad sets). Ads are held on
+ * their own change, which also keeps brand-new ads out of the running. 2026-10-20: Jacob paused the ad
+ * that was spending the budget, and Forge flagged the ad set again anyway.
+ *
+ * hours <= 0 turns it off. An entity Meta gave no change time for is never held.
+ */
+export function holdRecentlyChanged(rows: EntityMetrics[], scope: RuleScope, live: LiveStatusLookup, now: Date, hours: number): EntityMetrics[] {
+  if (hours <= 0) return rows;
+  const since = now.getTime() - hours * 3_600_000;
+  const recent = (id: string) => (live.get(id)?.updatedAt ?? 0) >= since;
+  const childRecent = (id: string): boolean => {
+    for (const [childId, c] of live) {
+      if (scope === "adset" && c.kind === "ad" && c.adsetId === id && recent(childId)) return true;
+      if (scope === "campaign" && c.kind === "adset" && c.campaignId === id && recent(childId)) return true;
+    }
+    return false;
+  };
+  return rows.filter((r) => !(recent(r.entity_id) || (scope !== "ad" && childRecent(r.entity_id))));
+}

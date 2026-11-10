@@ -18,6 +18,7 @@ vi.mock("./cadence", () => ({
   decideNextAttempt: vi.fn(),
   nextAttemptTime: vi.fn(),
   clampToLegalCallingWindow: vi.fn((d: Date) => d),
+  nextOpenCallDay: vi.fn(() => null),
 }));
 
 vi.mock("./qualification", () => ({ transferNumberForIntent: vi.fn(() => undefined), callbackCalendarForIntent: vi.fn(() => undefined) }));
@@ -28,13 +29,14 @@ const textSignals = vi.hoisted(() => ({
 }));
 vi.mock("./text-signals", () => textSignals);
 
-const smsModule = vi.hoisted(() => ({ hasActiveSmsConversation: vi.fn(async () => false) }));
+const smsModule = vi.hoisted(() => ({ hasActiveSmsConversation: vi.fn(async () => false), markLeadNoCalls: vi.fn(async () => {}), NO_CALLS_TAG: "no calls" }));
 vi.mock("./sms", () => smsModule);
 
 const ghl = vi.hoisted(() => ({
   getGhlConfig: vi.fn(async () => ({ locationId: "loc-1", apiKey: "key-1" })),
   getLocationTimezone: vi.fn(async () => "America/St_Johns"),
   addContactTags: vi.fn(async () => ({})),
+  getContact: vi.fn(async () => ({ tags: [] as string[] })),
 }));
 vi.mock("../../shared/ghl", () => ghl);
 
@@ -233,5 +235,124 @@ describe("resolveOne — Ember handoffs and text-agreed calls (Mark, 2026-09-24)
     withRow({ source: null, sms_scheduled: false });
     await runDialPendingCalls();
     expect(vi.mocked(buildLeadQualificationPrompt).mock.calls.at(-1)?.[7]).toBe("form");
+  });
+});
+
+describe("resolveOne — only a recent text counts as an instruction (Angela Marie, 2026-10-13)", () => {
+  it("ignores a months-old inbound text instead of classifying it, so an old reply can't close a fresh lead's queue", async () => {
+    textSignals.lastInboundText.mockResolvedValue({
+      text: "I'm putting a pause on considering building for the time being",
+      precedingOutbound: null,
+      dateAdded: new Date(Date.now() - 75 * 24 * 60 * 60 * 1000).toISOString(),
+    });
+    smsModule.hasActiveSmsConversation.mockResolvedValue(false);
+    calling.placeCall.mockResolvedValue({ id: "call-1" });
+
+    await runDialPendingCalls();
+
+    expect(textSignals.classifyInboundText).toHaveBeenCalledTimes(1);
+    expect((textSignals.classifyInboundText.mock.calls[0] as unknown as [string])[0]).toBe("");
+    expect(db.query.mock.calls.find((c) => String(c[0]).includes("lead opted out"))).toBeUndefined();
+  });
+
+  it("still classifies a recent text", async () => {
+    textSignals.lastInboundText.mockResolvedValue({
+      text: "please stop calling",
+      precedingOutbound: null,
+      dateAdded: new Date(Date.now() - 2 * 24 * 60 * 60 * 1000).toISOString(),
+    });
+    smsModule.hasActiveSmsConversation.mockResolvedValue(false);
+    calling.placeCall.mockResolvedValue({ id: "call-1" });
+
+    await runDialPendingCalls();
+
+    expect((textSignals.classifyInboundText.mock.calls[0] as unknown as [string])[0]).toBe("please stop calling");
+  });
+});
+
+describe("resolveOne — a time the lead asked for by text (Jesse Noseworthy, 2026-10-14)", () => {
+  it("reads the request as of when they texted, and calls when that time has arrived instead of pushing it out again", async () => {
+    const textedAt = new Date(Date.now() - 20 * 60 * 60 * 1000);
+    textSignals.lastInboundText.mockResolvedValue({ text: "call me at noon", precedingOutbound: null, dateAdded: textedAt.toISOString() });
+    textSignals.classifyInboundText.mockResolvedValue({ type: "schedule_for", when: new Date(Date.now() - 60_000) });
+    smsModule.hasActiveSmsConversation.mockResolvedValue(false);
+    calling.placeCall.mockResolvedValue({ id: "call-1" });
+
+    await runDialPendingCalls();
+
+    expect((textSignals.classifyInboundText.mock.calls[0] as unknown as [string, Date])[1].getTime()).toBe(textedAt.getTime());
+    expect(db.query.mock.calls.find((c) => String(c[0]).includes("lead requested this time via text"))).toBeUndefined();
+    expect(calling.placeCall).toHaveBeenCalledTimes(1);
+  });
+
+  it("still moves the call when the requested time is genuinely still ahead", async () => {
+    textSignals.lastInboundText.mockResolvedValue({ text: "call me at 6", precedingOutbound: null, dateAdded: new Date(Date.now() - 60_000).toISOString() });
+    textSignals.classifyInboundText.mockResolvedValue({ type: "schedule_for", when: new Date(Date.now() + 3 * 3_600_000) });
+
+    await runDialPendingCalls();
+
+    expect(db.query.mock.calls.find((c) => String(c[0]).includes("lead requested this time via text"))).toBeDefined();
+    expect(calling.placeCall).not.toHaveBeenCalled();
+  });
+});
+
+describe("resolveOne — an explicit callback is not paused by the lead texting afterwards (Jesse Noseworthy, 2026-10-14)", () => {
+  it("still places the call when the lead texted recently and a text exchange is active", async () => {
+    db.query.mockImplementation(async (sql: string) => {
+      if (sql.includes("WHERE status = 'pending' AND call_after <= now()")) return [{ ...DUE_ROW, is_explicit_callback: true }];
+      return [];
+    });
+    textSignals.lastInboundText.mockResolvedValue({ text: "That is 100% something I need to do.", precedingOutbound: null, dateAdded: new Date(Date.now() - 15 * 60 * 60 * 1000).toISOString() });
+    smsModule.hasActiveSmsConversation.mockResolvedValue(true);
+    calling.placeCall.mockResolvedValue({ id: "call-1" });
+
+    await runDialPendingCalls();
+
+    expect(calling.placeCall).toHaveBeenCalledTimes(1);
+    expect(db.query.mock.calls.find((c) => String(c[0]).includes("texting with lead — call paused"))).toBeUndefined();
+  });
+});
+
+/**
+ * Kelly Joseph, 2026-11-06: "Please no Calls" means no phone calls, not no interest. Whatever path queued the
+ * row, nothing dials her, and she is not closed out as an opt-out.
+ */
+describe("resolveOne — a lead who asked for no calls is never dialled", () => {
+  it("holds a row whose contact carries the 'no calls' tag, without placing a call", async () => {
+    ghl.getContact.mockResolvedValueOnce({ tags: ["buyer lead", "no calls"] });
+    calling.placeCall.mockResolvedValue({ id: "call-1" });
+
+    await runDialPendingCalls();
+
+    expect(calling.placeCall).not.toHaveBeenCalled();
+    expect(smsModule.markLeadNoCalls).toHaveBeenCalledTimes(1);
+  });
+
+  it("holds the row, and does not tag 'do not call', when the latest text says no calls", async () => {
+    textSignals.lastInboundText.mockResolvedValue({ text: "Please no Calls", precedingOutbound: null, dateAdded: new Date(Date.now() - 60_000).toISOString() });
+    textSignals.classifyInboundText.mockResolvedValue({ type: "no_calls" });
+    calling.placeCall.mockResolvedValue({ id: "call-1" });
+
+    await runDialPendingCalls();
+
+    expect(calling.placeCall).not.toHaveBeenCalled();
+    expect(smsModule.markLeadNoCalls).toHaveBeenCalledTimes(1);
+    expect(ghl.addContactTags).not.toHaveBeenCalledWith("contact-1", ["do not call"], expect.anything(), expect.anything());
+    expect(db.query.mock.calls.find((c) => String(c[0]).includes("lead opted out"))).toBeUndefined();
+  });
+});
+
+describe("resolveOne — a text that only MIGHT mean stop (reversible by default)", () => {
+  it("holds the dial and closes nothing, instead of ending the cadence and tagging 'do not call'", async () => {
+    textSignals.lastInboundText.mockResolvedValue({ text: "Not interested right now", precedingOutbound: null, dateAdded: new Date(Date.now() - 60_000).toISOString() });
+    textSignals.classifyInboundText.mockResolvedValue({ type: "unsure_stop" });
+    calling.placeCall.mockResolvedValue({ id: "call-1" });
+
+    await runDialPendingCalls();
+
+    expect(calling.placeCall).not.toHaveBeenCalled();
+    expect(ghl.addContactTags).not.toHaveBeenCalled();
+    expect(db.query.mock.calls.find((c) => String(c[0]).includes("lead opted out"))).toBeUndefined();
+    expect(db.query.mock.calls.find((c) => String(c[0]).includes("may have asked to stop"))).toBeDefined();
   });
 });

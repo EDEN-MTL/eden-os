@@ -2,6 +2,7 @@ import crypto from "crypto";
 import { Request, Response, Router } from "express";
 import { AgentId, SlackIncomingMessage } from "../shared/types";
 import { getSigningSecret } from "../shared/slack";
+import { handleApprovalClick, KEEP_ACTION_ID, PAUSE_ACTION_ID, ClickOutcome } from "../agents/forge/ads/approval";
 
 // Import all agents
 import { edenBrain } from "../agents/eden-brain";
@@ -177,6 +178,61 @@ function createAgentHandler(agentId: AgentId) {
 }
 
 /**
+ * Button presses on Forge's flags (agents/forge/ads/approval.ts). Slack posts these as a
+ * form field `payload` holding JSON, to the Interactivity Request URL set on the Forge Slack app:
+ * https://<server>/webhooks/slack/forge/interactive. Exported for direct testing.
+ */
+export async function handleForgeInteraction(
+  payload: any,
+  deps: {
+    click?: (actionId: string, pendingId: number, userId: string) => Promise<ClickOutcome>;
+    respond?: (url: string, body: Record<string, unknown>) => Promise<void>;
+  } = {}
+): Promise<void> {
+  if (payload?.type !== "block_actions") return;
+  const click = deps.click ?? ((a, p, u) => handleApprovalClick(a, p, u));
+  const respond =
+    deps.respond ??
+    (async (url: string, body: Record<string, unknown>) => {
+      await fetch(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+    });
+
+  for (const action of payload.actions ?? []) {
+    if (action?.action_id !== PAUSE_ACTION_ID && action?.action_id !== KEEP_ACTION_ID) continue;
+    const pendingId = Number(action.value);
+    const userId = payload.user?.id;
+    if (!Number.isInteger(pendingId) || !userId || !payload.response_url) continue;
+    const outcome = await click(action.action_id, pendingId, userId);
+    await respond(
+      payload.response_url,
+      outcome.replace
+        ? { replace_original: true, text: outcome.text, blocks: [{ type: "section", text: { type: "mrkdwn", text: outcome.text } }] }
+        : { response_type: "ephemeral", replace_original: false, text: outcome.text }
+    );
+  }
+}
+
+function createForgeInteractiveHandler() {
+  return async (req: Request, res: Response) => {
+    // Unlike the event routes, this one changes the ad account, so an unsigned request is never accepted.
+    const signingSecret = getSigningSecret("forge");
+    if (!signingSecret || !verifySlackSignature(signingSecret, req)) {
+      console.warn("[WEBHOOK] Invalid or unsigned forge interactive request");
+      return res.status(401).send("Invalid signature");
+    }
+    // Slack wants the 200 inside 3 seconds; the pause itself happens after.
+    res.status(200).send();
+    try {
+      const raw = req.body?.payload;
+      if (typeof raw !== "string") return;
+      await handleForgeInteraction(JSON.parse(raw));
+    } catch (error) {
+      console.error("[WEBHOOK] Error handling forge interaction:", error);
+    }
+  };
+}
+
+/**
  * Create the Express router with all 9 agent webhook routes.
  */
 export function createSlackRouter(): Router {
@@ -192,6 +248,9 @@ export function createSlackRouter(): Router {
     router.post(`/${agentId}`, createAgentHandler(agentId));
     console.log(`[WEBHOOK] Registered: POST /webhooks/slack/${agentId}`);
   }
+
+  router.post("/forge/interactive", createForgeInteractiveHandler());
+  console.log("[WEBHOOK] Registered: POST /webhooks/slack/forge/interactive");
 
   return router;
 }

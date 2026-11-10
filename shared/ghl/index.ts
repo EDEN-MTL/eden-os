@@ -5,6 +5,7 @@
  * GHL is the source of truth for all lead data.
  */
 import { query } from "../db";
+import { assertSendableText } from "./outbound-guard";
 
 const GHL_BASE_URL = "https://services.leadconnectorhq.com";
 
@@ -681,6 +682,12 @@ export async function getCalendarSlots(
   );
 }
 
+/** Every calendar on the location (id + name), so a report can read the bookings on all of them. */
+export async function listCalendars(locationId: string, apiKey?: string): Promise<{ id: string; name: string; isActive?: boolean }[]> {
+  const result = await ghlRequest(`/calendars/?locationId=${locationId}`, { locationId, apiKey });
+  return result?.calendars || [];
+}
+
 /**
  * Lists booked calendar events (appointments) in a time range — verified
  * live, 2026-09-09, against 3% Realty's account. `calendarId` is required:
@@ -768,6 +775,8 @@ export async function sendSMS(
   apiKey?: string,
   fromNumber?: string
 ): Promise<any> {
+  // Never let an id, an empty string or an unfilled template reach a person (outbound-guard.ts).
+  assertSendableText(contactId, message);
   return ghlRequest(`/conversations/messages`, {
     method: "POST",
     body: {
@@ -874,6 +883,22 @@ export async function getConversations(
     locationId,
     apiKey,
   });
+}
+
+/**
+ * The location's conversations, most recently active first, one page at a time.
+ * `startAfterDate` (epoch ms of the last conversation already seen) pages on.
+ * Used to find everything that happened on one day without knowing the contacts.
+ */
+export async function listRecentConversations(
+  locationId: string,
+  apiKey?: string,
+  options: { limit?: number; startAfterDate?: number } = {}
+): Promise<any[]> {
+  const params = new URLSearchParams({ locationId, sortBy: "last_message_date", sort: "desc", limit: String(options.limit ?? 50) });
+  if (options.startAfterDate) params.set("startAfterDate", String(options.startAfterDate));
+  const payload = await ghlRequest(`/conversations/search?${params.toString()}`, { locationId, apiKey });
+  return payload?.conversations || [];
 }
 
 /**

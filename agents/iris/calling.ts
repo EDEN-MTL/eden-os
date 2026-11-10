@@ -23,7 +23,7 @@ import { createCall, getVapiEnvConfig, CreateCallPayload, VapiAssistantConfig, V
 import { query } from "../../shared/db";
 import { isCallingEnabled } from "./calling-settings";
 import { CallIntent } from "./qualification";
-import { AGENT_UNAVAILABLE_LINE, buildCallOpeningLine, CallOrigin, expandBudgetShorthand, IDLE_NUDGE_VARIATIONS } from "./scripts";
+import { AGENT_UNAVAILABLE_LINE, buildCallOpeningLine, CallOrigin, expandBudgetShorthand, IDLE_NUDGE_VARIATIONS, SILENT_MARKER } from "./scripts";
 
 export class CallingDisabledError extends Error {}
 
@@ -129,7 +129,7 @@ function buildLeadDetails(params: PlaceCallParams, audience: "buyer" | "seller")
   // client, since no client checked so far has a real area field at all.
   if (params.propertyInterest) details.push(`looking for a ${params.propertyInterest}`);
   if (params.bedrooms) details.push(`${params.bedrooms} bedrooms`);
-  if (params.budget) details.push(`around a ${expandBudgetShorthand(params.budget)} budget`);
+  if (params.budget) details.push(`a budget of around ${expandBudgetShorthand(params.budget)}`);
   if (params.timeline) details.push(`hoping to move within ${params.timeline}`);
   if (audience === "buyer" && params.financing) details.push(`financing: ${params.financing}`);
   if (params.workingWithRealtor !== null && params.workingWithRealtor !== undefined) {
@@ -177,15 +177,20 @@ export function buildCallPayload(
   params: PlaceCallParams,
   vapiConfig: ReturnType<typeof getVapiEnvConfig>
 ): CreateCallPayload {
-  // The full opening turn — greeting, self-intro, and the identify
-  // question, as ONE line. Root cause found live, 2026-09-16: under
-  // firstMessageMode "assistant-waits-for-user", Vapi speaks firstMessage
-  // VERBATIM the instant the other party speaks, before the model gets a
-  // turn — a bare "Hi!" here was the exact bare "Hi." every real call kept
-  // showing, mechanically, regardless of what the system prompt said.
-  // Everything else (how are you, the reason for the call) still happens
-  // as its own later turn, driven by the system prompt.
-  const firstMessage = buildCallOpeningLine(params.firstName, params.brandName, params.origin);
+  // NO firstMessage on a normal outbound call (Mark, 2026-10-10). Under
+  // firstMessageMode "assistant-waits-for-user" Vapi speaks firstMessage
+  // VERBATIM the instant the other side makes any sound — which is how
+  // Iris's full greeting ("...Am I speaking with Corinne?") played straight
+  // into a call-screening service (Koren Pye, twice) instead of a person.
+  // Per Vapi's docs an empty/omitted firstMessage makes the assistant wait
+  // for the other party to speak and have the MODEL respond, so the first
+  // turn can depend on what was actually heard: the exact opening line for a
+  // real person, only "Iris." for a screener that asks for a name, silence
+  // for hold messages. That opening line is now written into the system
+  // prompt (scripts.ts, "How you open the call") instead. The bare "Hi."
+  // bug of 2026-09-16 came from a short literal firstMessage; the prompt now
+  // quotes the full line and forbids any shorter or longer version. The
+  // transfer assistant and inbound calls are unchanged.
 
   const tools: VapiTool[] = [];
 
@@ -708,10 +713,12 @@ export function buildCallPayload(
         description:
           "Records that this lead asked to be called back, and schedules a real follow-up call — it does " +
           "not book a calendar appointment. Call this as soon as the lead asks to be called back, whether " +
-          "or not they gave a specific time. If they gave one, pass it as callbackTime. If they did NOT " +
-          "give one (e.g. \"call me later\", \"I'm busy, try again another time\") — call this with NO " +
-          "callbackTime argument at all. Never invent or guess a time yourself; the system schedules a " +
-          "sensible default automatically when none is given.",
+          "or not they gave a specific time. If they gave one, pass it as callbackTime. A span you offered " +
+          "or they agreed to (\"in a few days\" = 3 days out at 10:00 AM, \"next week\" = 7 days out at " +
+          "10:00 AM) counts as a time: pass it. If they did NOT give one and you named none (e.g. \"call me " +
+          "later\", \"I'm busy, try again another time\") — call this with NO callbackTime argument at all; " +
+          "the system then calls back in about an hour. Never invent or guess a time the lead and you " +
+          "didn't talk about.",
         parameters: {
           type: "object",
           properties: {
@@ -809,7 +816,6 @@ export function buildCallPayload(
     phoneNumberId: vapiConfig.phoneNumberId,
     customer: { number: params.phone },
     assistant: {
-      firstMessage,
       firstMessageMode: "assistant-waits-for-user",
       // Mark's live feedback, 2026-09-06: if the lead stays silent, Iris
       // shouldn't wait forever — firstMessage alone never fires under
@@ -825,6 +831,13 @@ export function buildCallPayload(
       // mid-thought answering an open-ended question), so as of
       // 2026-09-21 the actual fix is WHAT gets said (IDLE_NUDGE_VARIATIONS,
       // scripts.ts), not just when — see that constant's own doc comment.
+      //
+      // 2026-11-06: a fixed line again, not a `prompt`. A `say` hook with a prompt is generated
+      // WITHOUT Iris's prompt, and on two live calls to Magar Bhuma (and once on Oct 18) it
+      // answered as a bare assistant ("I'm Claude, an AI assistant, I'm not actually on a phone
+      // call") into a real conversation and then the endCall hook hung up. A call screener's
+      // silent hold can now hear "are you still there?" (the Koren Pye case, 2026-10-12) — a
+      // harmless line next to losing a lead mid-qualification.
       //
       // triggerResetMode fixed "onUserSpeech" → "never", 2026-09-15:
       // confirmed live (real transcript, timestamps) and via Vapi's own
@@ -884,6 +897,15 @@ export function buildCallPayload(
       voice: {
         provider: vapiConfig.voiceProvider,
         voiceId: vapiConfig.voiceId,
+        // Nothing the model writes may reach the caller as speech unless it is
+        // meant to. The prompt tells it to write SILENT_MARKER when it should
+        // say nothing; this removes that marker, plus the narration it used to
+        // write instead ("I'll stay silent and wait for a real person to join",
+        // Koren Pye's call, 2026-10-12), so a slip can't be heard by a screener.
+        // numberToDigitsCutoff: Vapi's default (2025) reads any number above it digit by digit,
+        // which turned a $299,000 budget into "2 9 9 0 0 0". Prices and street numbers are said
+        // as numbers up to ten million; phone numbers (ten digits) still read digit by digit.
+        chunkPlan: { formatPlan: { numberToDigitsCutoff: 10_000_000, replacements: SPEECH_REPLACEMENTS } },
       },
       // Confirmed against Vapi's own OpenAPI schema (api.vapi.ai/api-json),
       // 2026-09-05 — both fields live directly on `assistant`, not nested
@@ -952,6 +974,26 @@ export function buildCallPayload(
 export function buildInboundAssistantConfig(params: PlaceCallParams, vapiConfig: ReturnType<typeof getVapiEnvConfig>): VapiAssistantConfig {
   return buildCallPayload(params, vapiConfig).assistant;
 }
+
+const escapeRegex = (text: string): string => text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+/**
+ * Strips the silence marker and any sentence about being silent/waiting from
+ * what the voice speaks. Each regex is deliberately narrow so real speech is
+ * never touched.
+ */
+export const SPEECH_REPLACEMENTS = [
+  [escapeRegex(SILENT_MARKER), ""],
+  ["\\bI(?:'|’)?(?:ll| will| am|'m|’m) (?:stay(?:ing)?|remain(?:ing)?|keep(?:ing)?) (?:silent|quiet)[^.!?]*[.!?]?", ""],
+  ["\\bI(?:'|’)?(?:ll| will|'m|’m| am) (?:wait|waiting) (?:for|until) (?:a|the) (?:real|live|actual) (?:person|human)[^.!?]*[.!?]?", ""],
+  // A turn that is nothing but "Goodbye." — what she said into a screener and a voicemail
+  // greeting (2026-10-13, 2026-10-14) when she should have hung up silently. Anchored to
+  // the whole chunk, so a real goodbye inside a full sentence is untouched.
+  ["^\\s*(?:good ?bye|bye)[.!]?\\s*$", ""],
+  // Every price here is Canadian dollars; there are no euros. A stray "euro dollars" came out of
+  // the voice on a real call (Noeleen Gray, 2026-10-18) — whatever the model wrote, say dollars.
+  ["\\beuro(?:s| dollars?)?\\b", "dollars"],
+].map(([regex, value]) => ({ type: "regex" as const, regex, value, options: [{ type: "ignore-case" as const, enabled: true }] }));
 
 /**
  * Places a real call and logs it. Throws CallingDisabledError before

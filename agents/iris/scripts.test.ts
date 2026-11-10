@@ -6,6 +6,7 @@ import {
   TRANSFER_ATTEMPT_LINES,
   TRANSFER_REINFORM_LINES,
   buildLeadQualificationPrompt,
+  buildNoShowSmsPrompt,
   buildSmsQualificationPrompt,
   BUYER_QUESTIONS,
   buildCallOpeningLine,
@@ -17,10 +18,14 @@ import {
   expandBudgetShorthand,
   extractFirstName,
   IDLE_NUDGE_VARIATIONS,
+  isBudgetRange,
+  isTimelineBucket,
   LIVE_TRANSFER_LINES,
   liveTransferLineForIntent,
   NATURAL_TRANSITIONS,
   SELLER_QUESTIONS,
+  specificAnswersRule,
+  specificAnswersSmsRule,
 } from "./scripts";
 import { IrisConfig } from "./qualification";
 import { NormalisedLead } from "../scout/intake";
@@ -143,32 +148,44 @@ describe("liveTransferLineForIntent", () => {
  * source (this function) rather than relying on the model to correctly
  * expand shorthand it sees as raw text every time.
  */
-describe("expandBudgetShorthand", () => {
-  it("expands a plain M-suffixed amount into million", () => {
-    expect(expandBudgetShorthand("$500M")).toBe("$500 million");
+describe("expandBudgetShorthand — a budget as words a voice reads correctly", () => {
+  it("says M-suffixed amounts in millions", () => {
+    expect(expandBudgetShorthand("$500M")).toBe("five hundred million dollars");
+    expect(expandBudgetShorthand("$3.5M")).toBe("three and a half million dollars");
+    expect(expandBudgetShorthand("$500m")).toBe("five hundred million dollars");
   });
 
-  it("expands a decimal M-suffixed amount into million", () => {
-    expect(expandBudgetShorthand("$3.5M")).toBe("$3.5 million");
+  it("says K-suffixed amounts in thousands", () => {
+    expect(expandBudgetShorthand("$450k")).toBe("four hundred fifty thousand dollars");
+    expect(expandBudgetShorthand("$450K")).toBe("four hundred fifty thousand dollars");
   });
 
-  it("expands a K-suffixed amount into thousand", () => {
-    expect(expandBudgetShorthand("$450k")).toBe("$450 thousand");
+  it("says both sides of a range, joined with 'to'", () => {
+    expect(expandBudgetShorthand("$3.5M - $5M")).toBe("three and a half million to five million dollars");
+    expect(expandBudgetShorthand("$1.5M - $2.5M")).toBe("one and a half million to two and a half million dollars");
   });
 
-  it("expands both sides of a range independently", () => {
-    expect(expandBudgetShorthand("$3.5M - $5M")).toBe("$3.5 million - $5 million");
-    expect(expandBudgetShorthand("$1.5M - $2.5M")).toBe("$1.5 million - $2.5 million");
+  /**
+   * The real budgets that came out wrong on live calls: Noeleen Gray's "$299K-$600K" was read as
+   * "2 9 9 2 5 euro dollars" (2026-10-18) and Sabrina Marie's as "299 dollars thousand" (Oct 17).
+   */
+  it("turns the real stored budgets into plain words", () => {
+    expect(expandBudgetShorthand("$299K-$600K")).toBe("two hundred ninety-nine thousand to six hundred thousand dollars");
+    expect(expandBudgetShorthand("$300K-$600K")).toBe("three hundred thousand to six hundred thousand dollars");
+    expect(expandBudgetShorthand("$500K-$700K")).toBe("five hundred thousand to seven hundred thousand dollars");
+    expect(expandBudgetShorthand("400- 500k")).toBe("four hundred thousand to five hundred thousand dollars");
+    expect(expandBudgetShorthand("1 MILLION")).toBe("one million dollars");
+    expect(expandBudgetShorthand(">$400K")).toBe("over four hundred thousand dollars");
   });
 
-  it("leaves a budget with no M/K shorthand untouched", () => {
-    expect(expandBudgetShorthand("$450,000")).toBe("$450,000");
-    expect(expandBudgetShorthand("1000000")).toBe("1000000");
+  it("says plain dollar figures in words too, never as digits", () => {
+    expect(expandBudgetShorthand("$450,000")).toBe("four hundred fifty thousand dollars");
+    expect(expandBudgetShorthand("1000000")).toBe("one million dollars");
+    expect(expandBudgetShorthand("299250")).toBe("two hundred ninety-nine thousand two hundred fifty dollars");
   });
 
-  it("is case-insensitive for the M/K suffix", () => {
-    expect(expandBudgetShorthand("$500m")).toBe("$500 million");
-    expect(expandBudgetShorthand("$450K")).toBe("$450 thousand");
+  it("leaves text with no figure in it alone", () => {
+    expect(expandBudgetShorthand("flexible")).toBe("flexible");
   });
 });
 
@@ -327,7 +344,7 @@ describe("buildLeadQualificationPrompt", () => {
     expect(prompt).toContain("How many bedrooms and bathrooms do you need?");
     expect(prompt).toContain(IRIS_CONFIG.questions[3]); // timeline unknown
     expect(prompt).toContain("Are you preapproved for a mortgage yet?");
-    expect(prompt).toContain("What's your budget range?");
+    expect(prompt).toContain("What specific budget do you have in mind?");
   });
 
   /**
@@ -344,7 +361,9 @@ describe("buildLeadQualificationPrompt", () => {
     const lead: NormalisedLead = { ...BLANK_LEAD, intent: "seller", propertyInterest: "bungalow", timeline: "3-6 months" };
     const prompt = buildLeadQualificationPrompt(IRIS_CONFIG, lead, "3 Percent East Coast", "St. John's", false, true, false);
     expect(prompt).toContain("You mentioned you're looking for a bungalow — is that still what you're after?");
-    expect(prompt).toContain("You mentioned you're looking to sell within 3-6 months — does that still sound right?");
+    // "3-6 months" is a bucket: it gets narrowed, not just confirmed (Mark, 2026-11-03).
+    expect(prompt).toContain("I see you're thinking 3-6 months to sell — do you have any particular timeline in mind?");
+    expect(prompt).not.toContain("You mentioned you're looking to sell within 3-6 months — does that still sound right?");
     expect(prompt).not.toContain(IRIS_CONFIG.questions[0]);
     expect(prompt).not.toContain("What type of home are you looking for?");
     expect(prompt).not.toContain(IRIS_CONFIG.questions[3]);
@@ -372,11 +391,11 @@ describe("buildLeadQualificationPrompt", () => {
    */
   it("verifies budget when known, asks it fresh when not", () => {
     const known = buildLeadQualificationPrompt(IRIS_CONFIG, { ...BLANK_LEAD, intent: "buyer", budget: "$450k" }, "3 Percent East Coast", "St. John's", false, true, false);
-    expect(known).toContain("I also see you mentioned a budget around $450 thousand — does that still sound right?");
-    expect(known).not.toContain("What's your budget range?");
+    expect(known).toContain("I also see you mentioned a budget around four hundred fifty thousand dollars — does that still sound right?");
+    expect(known).not.toContain("What specific budget do you have in mind?");
 
     const unknown = buildLeadQualificationPrompt(IRIS_CONFIG, { ...BLANK_LEAD, intent: "buyer" }, "3 Percent East Coast", "St. John's", false, true, false);
-    expect(unknown).toContain("What's your budget range?");
+    expect(unknown).toContain("What specific budget do you have in mind?");
   });
 
   /**
@@ -387,7 +406,7 @@ describe("buildLeadQualificationPrompt", () => {
    */
   it("expands M/K budget shorthand into words before it ever reaches the model", () => {
     const prompt = buildLeadQualificationPrompt(IRIS_CONFIG, { ...BLANK_LEAD, intent: "buyer", budget: "$3.5M - $5M" }, "3 Percent East Coast", "St. John's", false, true, false);
-    expect(prompt).toContain("$3.5 million - $5 million");
+    expect(prompt).toContain("three and a half million to five million dollars");
     expect(prompt).not.toMatch(/\$3\.5M\b/);
   });
 
@@ -413,7 +432,7 @@ describe("buildLeadQualificationPrompt", () => {
     const lead: NormalisedLead = { ...BLANK_LEAD, intent: "seller" };
     const prompt = buildLeadQualificationPrompt(IRIS_CONFIG, lead, "3 Percent East Coast", "St. John's", false, true, false);
     expect(prompt).not.toContain("Are you preapproved for a mortgage yet?");
-    expect(prompt).not.toContain("What's your budget range?");
+    expect(prompt).not.toContain("What specific budget do you have in mind?");
   });
 
   /**
@@ -463,9 +482,12 @@ describe("buildLeadQualificationPrompt", () => {
     expect(prompt).toContain("Montreal and the area around it");
   });
 
-  it("never claims to be human, pulling the real approved wording (with the right brand) rather than inventing new lines", () => {
+  it("never claims to be human, and answers 'are you an AI?' plainly instead of dodging it", () => {
     const prompt = buildLeadQualificationPrompt(IRIS_CONFIG, BLANK_LEAD, "3 Percent East Coast", "St. John's", false, true, false);
-    expect(prompt).toContain(EDGE_CASE_RESPONSES.isRealPerson("3 Percent East Coast")[0]);
+    expect(prompt).toContain("Yes, I'm an AI assistant with 3 Percent East Coast");
+    expect(prompt).toMatch(/even if they ask twice/);
+    expect(prompt).toMatch(/Never dodge it/);
+    expect(prompt).not.toContain(EDGE_CASE_RESPONSES.isRealPerson("3 Percent East Coast")[0]);
     expect(prompt).toContain(EDGE_CASE_RESPONSES.dontKnowAnswer);
   });
 
@@ -670,13 +692,27 @@ describe("buildLeadQualificationPrompt", () => {
      * The prompt's job now is just to tell the model this already
      * happened, so it never repeats or paraphrases it.
      */
-    it("tells Iris her opening line is already spoken for her automatically, and never to repeat it", () => {
+    it("tells Iris NOTHING is spoken for her — the opening line is hers to say, exactly, once a real person has spoken", () => {
       const prompt = buildLeadQualificationPrompt(IRIS_CONFIG, { ...BLANK_LEAD, name: "Justin" }, "3 Percent East Coast", "St. John's", false, true, false);
-      expect(prompt).toMatch(/Your opening line is spoken FOR you, automatically, the instant/i);
+      expect(prompt).toMatch(/NOTHING is spoken for you/);
       expect(prompt).toContain('"Hi, this is Iris with 3 Percent East Coast. Am I speaking with Justin?"');
-      expect(prompt).toMatch(/mechanical platform behavior, not something you generate or choose to/i);
-      expect(prompt).toMatch(/NEVER say it again, never/i);
-      expect(prompt).toMatch(/never say a bare "Hi" of/i);
+      expect(prompt).toMatch(/say your opening line EXACTLY,\s+word for word, with nothing before or after it/i);
+      expect(prompt).toMatch(/NEVER repeat it afterwards/i);
+      expect(prompt).toMatch(/never\s+add a bare "Hi" of your own/i);
+    });
+
+    it("quotes the full opening line — never the reason for the call or 'how are you' — for a named lead and for an unknown one, whatever the intent", () => {
+      const quoted = (lead: typeof BLANK_LEAD) => {
+        const prompt = buildLeadQualificationPrompt(IRIS_CONFIG, lead, "3 Percent East Coast", "St. John's", false, true, false);
+        return prompt.match(/say your opening line EXACTLY,[\s\S]*?\n\s+"([^"]+)"/)?.[1] ?? "";
+      };
+      expect(quoted({ ...BLANK_LEAD, name: "Sam Lee" })).toBe("Hi, this is Iris with 3 Percent East Coast. Am I speaking with Sam?");
+      expect(quoted({ ...BLANK_LEAD, name: null })).toBe("Hi, this is Iris with 3 Percent East Coast. Who do I have the pleasure of speaking with?");
+      for (const intent of ["buyer", "seller"] as const) {
+        const line = quoted({ ...BLANK_LEAD, name: "Sam Lee", intent, leadSource: "facebook" });
+        expect(line).not.toMatch(/calling about/i);
+        expect(line).not.toMatch(/how are you/i);
+      }
     });
 
     it("gives Iris a clear branch for how to react to the lead's response to the already-spoken identify question", () => {
@@ -710,7 +746,27 @@ describe("buildLeadQualificationPrompt", () => {
       const prompt = buildLeadQualificationPrompt(IRIS_CONFIG, { ...BLANK_LEAD, intent: "buyer" }, "3 Percent East Coast", "St. John's", false, true, false);
       expect(prompt).toContain("Perfect. We'll connect you with one of our buyer agents to send over some available home options.");
       expect(prompt).toContain("I'm just the assistant, so let me connect you with one of our buyer agents — they'll have access to send over some real listings.");
-      expect(prompt).toMatch(/pick ONE of these\s*\n\(never repeat the same one call after call\)/i);
+      expect(prompt).toMatch(/pick ONE of these \(never repeat the same one\s*\ncall after call\)/i);
+    });
+
+    /**
+     * Angela Marie, 2026-10-14: a qualified seller heard a transfer line that was a
+     * statement, said nothing, and hung up. Every variant now ends in a question.
+     */
+    it("ends every transfer line with a short question, and keeps 'connect you with' for the transferCall gate", () => {
+      for (const lines of [LIVE_TRANSFER_LINES.buyer, LIVE_TRANSFER_LINES.seller, LIVE_TRANSFER_LINES.general]) {
+        for (const line of lines) {
+          expect(line.trim().endsWith("?")).toBe(true);
+          expect(line).toContain("connect you with");
+        }
+      }
+      const prompt = buildLeadQualificationPrompt(IRIS_CONFIG, { ...BLANK_LEAD, intent: "seller" }, "3 Percent East Coast", "St. John's", false, true, false);
+      expect(prompt).toContain("Sounds good. I'll connect you with one of our seller agents now. Is that okay?");
+      expect(prompt).toMatch(/Each ends with a short question on purpose/);
+      expect(prompt).not.toMatch(/don't ask permission/);
+      // A "no" / "not right now" goes to booking an appointment or a callback, never a transfer.
+      expect(prompt).toMatch(/Unavailable right now, or a "no" \/ "not right now" to the question/);
+      expect(prompt).toMatch(/booking an appointment on the calendar when you can/);
     });
 
     /**
@@ -1156,12 +1212,99 @@ describe("buildLeadQualificationPrompt", () => {
    * follow-up instruction: the instant she recognizes a screener, she
    * should just hang up — no more back-and-forth, no goodbye, no message.
    */
-  it("tells Iris to recognize an automated call-screening service and hang up immediately, silently", () => {
+  it("tells Iris to answer a call-screening service with ONLY \"Iris.\" and then wait (Mark's spec, 2026-10-10)", () => {
+    const prompt = buildLeadQualificationPrompt(IRIS_CONFIG, { ...BLANK_LEAD, name: "Corin" }, "3 Percent East Coast", "St. John's", false, true, false);
+    expect(prompt).toMatch(/If you record your name and reason for calling, I'll see if this\s+person is available/i);
+    expect(prompt).toMatch(/say ONLY: "Iris\."/);
+    expect(prompt).toMatch(/not the company, not the lead's name, not the reason for\s+calling, not a greeting/i);
+    expect(prompt).toMatch(/Even when it asks for your name AND\s+your reason for calling, say only "Iris\."/i);
+    expect(prompt).toMatch(/Then STOP speaking and listen/);
+  });
+
+  it("holds the introduction until a real person speaks, and stays silent for hold announcements, menus and unclear sounds", () => {
+    const prompt = buildLeadQualificationPrompt(IRIS_CONFIG, { ...BLANK_LEAD, name: "Corin" }, "3 Percent East Coast", "St. John's", false, true, false);
+    expect(prompt).toMatch(/Please hold while we connect your call/);
+    expect(prompt).toMatch(/→ SAY NOTHING:\s*\n\s*reply with exactly \[silent\]/);
+    expect(prompt).toMatch(/Never launch your introduction\s+into a machine/i);
+    expect(prompt).toMatch(/a REAL PERSON may join once the system\s+connects/i);
+    expect(prompt).toMatch(/Another machine voice is not a person: reply\s+\[silent\]/i);
+    expect(prompt).toMatch(/Anything unclear → \[silent\] and listen/i);
+    // The model's words are spoken aloud: silence must be the marker, never a sentence about it.
+    expect(prompt).toMatch(/EVERYTHING YOU WRITE IS READ ALOUD/);
+    expect(prompt).toMatch(/never a sentence ABOUT being silent/);
+  });
+
+  it("tells Iris the only text allowed with a machine's silent endCall is the silence marker, never 'Goodbye'", () => {
     const prompt = buildLeadQualificationPrompt(IRIS_CONFIG, BLANK_LEAD, "3 Percent East Coast", "St. John's", false, true, false);
-    expect(prompt).toMatch(/automated call-screening\/gatekeeper service/i);
-    expect(prompt).toMatch(/record your name and reason for calling/i);
-    expect(prompt).toMatch(/invoke endCall immediately and\s+silently/i);
-    expect(prompt).toMatch(/no goodbye line/i);
+    expect(prompt).toMatch(/The only text\s+you may write with that endCall is \[silent\]/);
+    expect(prompt).toMatch(/never "Goodbye"/);
+  });
+
+  it("pins the opening line at the very top of an outbound prompt, and not on an inbound one", () => {
+    const outbound = buildLeadQualificationPrompt(IRIS_CONFIG, { ...BLANK_LEAD, name: "Amanda" }, "3 Percent East Coast", "St. John's", false, true, false);
+    expect(outbound.startsWith("## FIRST TURN — READ THIS FIRST")).toBe(true);
+    expect(outbound).toContain("Hi, this is Iris with 3 Percent East Coast. Am I speaking with Amanda?");
+    expect(outbound).toMatch(/Never shorten it to just "Hi" or just the question/);
+    expect(outbound).toMatch(/applies only to a real person/);
+    expect(outbound).toMatch(/Never reply \[silent\] to someone repeating "Hello\?"/);
+    const inbound = buildLeadQualificationPrompt(IRIS_CONFIG, { ...BLANK_LEAD, name: "Amanda" }, "3 Percent East Coast", "St. John's", false, true, false, "inbound");
+    expect(inbound.startsWith("## FIRST TURN")).toBe(false);
+  });
+
+  /**
+   * Sabrina Marie, 2026-10-17: told "a callback in a few days", but with no time passed the
+   * system called back about an hour later and texted "I missed you".
+   */
+  it("treats a span like 'a few days' as a real time to schedule, never a no-time callback", () => {
+    const prompt = buildLeadQualificationPrompt(IRIS_CONFIG, BLANK_LEAD, "3 Percent East Coast", "St. John's", true, true, false);
+    expect(prompt).toMatch(/SPAN rather than a clock time/);
+    expect(prompt).toContain('"a few days" = 3 days from now at 10:00 AM their time');
+    expect(prompt).toMatch(/Never call schedule_callback with\s+no time after you've named a span/);
+  });
+
+  /**
+   * Noeleen Gray, 2026-10-18: the model wrote "299000 dollars" and "euro dollars", and the voice read the
+   * digits one by one ("2 9 9 2 5 euro dollars").
+   */
+  it("tells Iris to write every amount in words, in Canadian dollars, never digits or 'euro'", () => {
+    const prompt = buildLeadQualificationPrompt(IRIS_CONFIG, BLANK_LEAD, "3 Percent East Coast", "St. John's", false, true, false);
+    expect(prompt).toContain('WRITE every amount in WORDS in your own replies');
+    expect(prompt).toContain('never "299000"');
+    expect(prompt).toContain('Every price here is in\n  Canadian dollars');
+    expect(prompt).toContain('never "euro"');
+  });
+
+  it("never loops on the screener: 'Iris.' at most twice, and a screener that never connects ends through the normal no-answer handling", () => {
+    const prompt = buildLeadQualificationPrompt(IRIS_CONFIG, BLANK_LEAD, "3 Percent East Coast", "St. John's", false, true, false);
+    expect(prompt).toMatch(/never more than twice in total/i);
+    expect(prompt).toMatch(/If it never connects, do not keep talking/i);
+    expect(prompt).toMatch(/A call a machine answered\s+is NOT a conversation/i);
+  });
+
+  it("keeps the no-message voicemail policy: a voicemail greeting, mailbox full, or a screener's 'leave a message' close gets a silent endCall", () => {
+    const prompt = buildLeadQualificationPrompt(IRIS_CONFIG, BLANK_LEAD, "3 Percent East Coast", "St. John's", false, true, false);
+    expect(prompt).toMatch(/Please leave a message after the tone/);
+    expect(prompt).toMatch(/no\s+message is ever left: invoke endCall\s+immediately and silently/i);
+    expect(prompt).toMatch(/Never qualify, ask questions or try to book with\s+a recording/i);
+  });
+
+  /**
+   * Angela Marie, 2026-10-14: hung up 0.4 s after the carrier's "forwarded to
+   * voice mail / not available" line, before the tone or the person's own
+   * greeting; a "hello" came right after.
+   */
+  it("does not hang up on the carrier's opening 'forwarded to voice mail / not available' line alone — waits for the record prompt or a real person", () => {
+    const prompt = buildLeadQualificationPrompt(IRIS_CONFIG, BLANK_LEAD, "3 Percent East Coast", "St. John's", false, true, false);
+    expect(prompt).toMatch(/whose greeting has ENDED/);
+    expect(prompt).toMatch(/NOT YET, though, for the carrier's opening line alone/);
+    expect(prompt).toMatch(/do NOT hang up on that line by itself/);
+    expect(prompt).toMatch(/If a real person says hello instead, treat it as rule 1/);
+  });
+
+  it("no longer tells Iris to hang up on a call-screening service", () => {
+    const prompt = buildLeadQualificationPrompt(IRIS_CONFIG, BLANK_LEAD, "3 Percent East Coast", "St. John's", false, true, false);
+    expect(prompt).not.toMatch(/call-screening\/gatekeeper service, not the actual lead[\s\S]{0,80}hang up immediately/i);
+    expect(prompt).toMatch(/An interactive call-screening service is NOT a reason to hang up/);
   });
 
   /**
@@ -1265,6 +1408,25 @@ describe("IDLE_NUDGE_VARIATIONS", () => {
  * written for texting rather than talking.
  */
 describe("buildSmsQualificationPrompt", () => {
+  it("when the lead may have asked to stop: checks what they mean, never says goodbye or qualifies, and uses no tools", () => {
+    const prompt = buildSmsQualificationPrompt(IRIS_CONFIG, BLANK_LEAD, "3 Percent East Coast", "St. John's", { stopCheck: true });
+    expect(prompt).toMatch(/may mean they want us to stop/);
+    expect(prompt).toMatch(/do not use any tool/);
+    expect(prompt).toMatch(/Never say "we won't reach out again"/);
+    expect(buildSmsQualificationPrompt(IRIS_CONFIG, BLANK_LEAD, "3 Percent East Coast", "St. John's")).not.toMatch(/may mean they want us to stop/);
+  });
+
+  it("for a lead who asked for no calls: keeps qualifying by text, never offers an Iris call, and asks when an agent can talk to them", () => {
+    const prompt = buildSmsQualificationPrompt(IRIS_CONFIG, BLANK_LEAD, "3 Percent East Coast", "St. John's", { noCalls: true, callHandoff: true });
+    expect(prompt).toMatch(/does NOT want phone calls/);
+    expect(prompt).toMatch(/NOT the same as not being interested/);
+    expect(prompt).toMatch(/when would be a good time for one of our agents to connect with them to send over listings/);
+    expect(prompt).not.toMatch(/call schedule_transfer_call confirmed/);
+    expect(prompt).not.toMatch(/Iris will give them a call shortly/);
+    const normal = buildSmsQualificationPrompt(IRIS_CONFIG, BLANK_LEAD, "3 Percent East Coast", "St. John's", { callHandoff: true });
+    expect(normal).not.toMatch(/does NOT want phone calls/);
+  });
+
   it("asks every config question when intent is unknown", () => {
     const prompt = buildSmsQualificationPrompt(IRIS_CONFIG, BLANK_LEAD, "3 Percent East Coast", "St. John's");
     for (const q of IRIS_CONFIG.questions) expect(prompt).toContain(q);
@@ -1280,7 +1442,7 @@ describe("buildSmsQualificationPrompt", () => {
   it("states already-known facts so they're confirmed rather than re-asked cold", () => {
     const lead: NormalisedLead = { ...BLANK_LEAD, intent: "buyer", budget: "$450k", timeline: "3-6 months" };
     const prompt = buildSmsQualificationPrompt(IRIS_CONFIG, lead, "3 Percent East Coast", "St. John's");
-    expect(prompt).toMatch(/budget.*450 thousand/i);
+    expect(prompt).toMatch(/budget.*four hundred fifty thousand/i);
     expect(prompt).toMatch(/timeline.*3-6 months/i);
   });
 
@@ -1476,5 +1638,127 @@ describe("service area in the prompts", () => {
 
     expect(prompt).toContain("never assume it's outside");
     expect(prompt).not.toContain("IN AREA");
+  });
+});
+
+/**
+ * The long-term guard (Mark, 2026-10-18: "fix this so it never happens again"). Whatever shape a
+ * lead's budget field comes in, what reaches Iris — and so what she says — is plain words: no
+ * digits, no $, no K/M shorthand. Every real stored budget so far is in this list, plus the
+ * messy formats a web form lets people type.
+ */
+describe("budgets always reach Iris as plain words, whatever was typed", () => {
+  const BUDGETS = [
+    "$299K-$600K", "$300K-$600K", "$500K-$700K", "400- 500k", "1 MILLION", ">$400K", "$450,000", "1000000", "299250",
+    "$1,250,000", "500-600k", "1.2 mil", "$450k+", "2M", "$2.5M", "$3.5M - $5M", "250 to 300 thousand", "$75,000", "$99K", "600K",
+    "$1.25M", "up to 800k", "around 350k", "$1,000,000 - $1,500,000", "$ 450 000", "<$200K", "$12,500",
+  ];
+
+  for (const budget of BUDGETS) {
+    it(`"${budget}" -> words only`, () => {
+      const spoken = expandBudgetShorthand(budget);
+      expect(spoken).not.toMatch(/\\d/);
+      expect(spoken).not.toContain("$");
+      expect(spoken).not.toMatch(/\\b\\d*[km]\\b/i);
+      expect(spoken).toMatch(/dollars|^(?:over|under) /);
+    });
+  }
+
+  it("every one of them also comes out clean in the full call prompt", () => {
+    for (const budget of BUDGETS) {
+      const prompt = buildLeadQualificationPrompt(IRIS_CONFIG, { ...BLANK_LEAD, intent: "buyer", budget }, "3 Percent East Coast", "St. John's", false, true, false);
+      const line = prompt.split("\\n").filter((l) => /budget/i.test(l) && /still|around|mentioned/i.test(l) && !/WRITE every amount/.test(l));
+      for (const l of line) expect(l, `budget "${budget}"`).not.toMatch(/\\$\\s?\\d|\\d{4,}/);
+    }
+  });
+});
+
+
+describe("getting specific answers (Mark, 2026-11-03)", () => {
+  const build = (lead: Partial<NormalisedLead>, noShow?: any) =>
+    buildLeadQualificationPrompt(IRIS_CONFIG, { ...BLANK_LEAD, ...lead }, "3 Percent East Coast", "St. John's", false, true, false, "form", noShow);
+
+  it.each([
+    ["$299K-$600K", true],
+    ["$300,000 - $500,000", true],
+    [">$500K", true],
+    ["<$300K", true],
+    ["$1M+", true],
+    ["$450k", false],
+    ["450000", false],
+  ])("reads the budget %s as a range: %s", (budget, range) => expect(isBudgetRange(budget)).toBe(range));
+
+  it.each([
+    ["3-6 months", true],
+    ["0 to 3 months", true],
+    ["4+ months", true],
+    ["ASAP", true],
+    ["within 3 months", true],
+    ["January 2027", false],
+    ["next spring", true],
+    ["March", false],
+  ])("reads the timeline %s as a bucket: %s", (timeline, bucket) => expect(isTimelineBucket(timeline)).toBe(bucket));
+
+  it("asks a buyer who has a budget span for a specific number, in words, instead of confirming the span", () => {
+    const prompt = build({ intent: "buyer", budget: "$299K-$600K", timeline: "3-6 months" });
+    expect(prompt).toContain("I see a budget of two hundred ninety-nine thousand to six hundred thousand dollars — what specific budget do you have in mind?");
+    expect(prompt).not.toContain("a budget around two hundred ninety-nine");
+    expect(prompt).toContain("do you have any particular timeline in mind?");
+    expect(prompt).toContain("Get specific answers");
+    expect(prompt).toContain("ONE follow-up per topic");
+  });
+
+  it("still confirms a single figure and a specific date instead of narrowing them", () => {
+    const prompt = build({ intent: "buyer", budget: "$450k", timeline: "January 2027" });
+    expect(prompt).toContain("I also see you mentioned a budget around four hundred fifty thousand dollars — does that still sound right?");
+    expect(prompt).toContain("You mentioned you're looking to make a move within January 2027 — does that still sound right?");
+  });
+
+  it("asks ASAP leads for a month rather than 'within ASAP'", () => {
+    const prompt = build({ intent: "buyer", timeline: "ASAP" });
+    expect(prompt).toContain("as soon as possible — is there a particular month or date");
+    expect(prompt).not.toContain("within ASAP");
+  });
+
+  it("gives a seller the timeline push but no budget push", () => {
+    const rule = specificAnswersRule("seller");
+    expect(rule).toContain("TIMELINE");
+    expect(rule).not.toContain("BUDGET");
+    expect(rule).toContain("right time to list");
+  });
+
+  it("leaves the no-show call alone: no qualifying there at all", () => {
+    const prompt = build({ intent: "buyer", budget: "$299K-$600K" }, { agentName: "Chantelle English", missedDay: "yesterday", missedWhen: "Monday, October 19 at 11:00 AM" });
+    expect(prompt).not.toContain("Get specific answers");
+  });
+});
+
+describe("text qualification asks for specific answers too", () => {
+  const sms = (lead: Partial<NormalisedLead>, options: any = {}) =>
+    buildSmsQualificationPrompt(IRIS_CONFIG, { ...BLANK_LEAD, ...lead }, "3 Percent East Coast", "St. John's", options);
+
+  it("flags a budget span and a timeline bucket from the form as things to narrow", () => {
+    const prompt = sms({ intent: "buyer", budget: "$299K-$600K", timeline: "3-6 months" });
+    expect(prompt).toContain("(a range from the form: ask for a specific number)");
+    expect(prompt).toContain("(a rough bucket from the form: ask for something more particular)");
+    expect(prompt).toContain("## Get specific answers");
+    expect(prompt).toContain("ONE follow-up per topic");
+  });
+
+  it("does not flag a single figure or a specific date", () => {
+    const prompt = sms({ intent: "buyer", budget: "$450k", timeline: "January 2027" });
+    expect(prompt).not.toContain("a range from the form");
+    expect(prompt).not.toContain("a rough bucket from the form");
+  });
+
+  it("gives sellers the timeline push but no budget push", () => {
+    const rule = specificAnswersSmsRule("seller");
+    expect(rule).toContain("TIMELINE");
+    expect(rule).not.toContain("BUDGET");
+  });
+
+  it("keeps the no-show text conversation free of it", () => {
+    const prompt = buildNoShowSmsPrompt(BLANK_LEAD, "3 Percent East Coast", "St. John's", { agentName: "Chantelle English", missedDay: "yesterday", missedWhen: "Monday, October 19 at 11:00 AM" });
+    expect(prompt).not.toContain("Get specific answers");
   });
 });

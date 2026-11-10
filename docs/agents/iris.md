@@ -90,6 +90,12 @@ It only gates the dial — it has no effect on whether leads get queued.
   check-ins, `triggerMaxCount: 3`), plus a second hook with `endCall` at 30s. Widening the
   timer three times didn't help. An `assistant-ended-call` from that hook must not count
   as answered — see `genuinelyAnswered` in `vapi-webhook.ts`.
+  **Never give the `say` hook a `prompt`** (tried Oct 12 to tell a screener's hold from a quiet lead):
+  Vapi generates that line without Iris's prompt, and on Magar Bhuma's two calls (2026-11-05) and
+  once on Oct 18 the model answered "I'm Claude, an AI assistant, I'm not actually on a phone call"
+  into a live conversation, then the endCall hook hung up. It speaks a fixed `exact` line again.
+  Chat-testing can't reproduce this (the chat gives the model Iris's prompt); the proof is in the
+  call's gzip log (`artifact.presignedLogUrl`): the hook's line never appears as a model request.
 - **Voicemail**: keep `voicemailDetection` on; "no voicemail message" means omitting
   `voicemailMessage` (Vapi then hangs up). False positives on live pickups: backoff is at
   5s/5s; the next step is provider `google`, which changes behaviour and possibly cost —
@@ -106,6 +112,72 @@ It only gates the dial — it has no effect on whether leads get queued.
   under Slack's **resolved** channel id + `ts`, so thread replies have context. Posts made
   before 2026-09-23 have no seeded history.
 - Iris's Slack tools: `iris_lookup_lead`, `iris_pipeline_stats`.
+- ASAP watch (Mark, 2026-11-05; `asap-watch.ts`, config `iris.asapWatch`, off until `enabled`): three passes a day
+  (10:15, 1:15, 4:15 St. John's) over active cards NOT in `skipStages` (booked, with an agent, finished, No-Show, the weekend
+  cohort's Not Ready). For every lead whose timeline reads ASAP it reads the GHL thread plus Iris's own call transcripts,
+  decides if a text is due (`decideAsapText`: not DND, nothing booked, no teammate in touch, not texted in 24h, no call
+  due within 6h, lead didn't text last, under 6 texts / 14 days), has the model write ONE text from that history
+  (`composeAsapText`; checked: one question, under 320 chars, no emoji/links/opt-out line, one retry), sends it with
+  `sendIrisText`, and opens the lead's queue row (source `asap`, call_after infinity) so a reply reaches Iris's text
+  handling. A lead who texted last, hit the text cap, or had 14 days of nothing is posted as "needs a person".
+  Dry run, never sends: `COMPOSE=1 npx tsx --env-file=.env scripts/asap-watch.ts` (NOW=… to pretend it is later).
+- Specific answers (Mark, 2026-11-03): the form only gives buckets ("$299K-$600K", "3-6 months", "ASAP"). Iris used
+  to confirm the bucket; now `verifyBudgetLines` / `verifyTimelineLines` narrow a range or bucket ("what specific
+  budget do you have in mind?", "any particular timeline in mind?") and `specificAnswersRule` (scripts.ts) adds the
+  rule: one follow-up per topic, accept "I don't know", the specific figure replaces the range in the recap and in
+  `save_isa_notes`. A single figure or a specific date is still just confirmed (`isBudgetRange`, `isTimelineBucket`).
+  Not on no-show calls. Checked with scripts/check-iris-call-prompt.ts (the four "vague budget" cases).
+  Text qualification does the same (`specificAnswersSmsRule` + the "ask for a specific number" tags in the Already-known
+  block of `buildSmsQualificationPrompt`); no-show texts are untouched.
+- Daylight saving and the scheduler: all crons run in `SCHEDULER_TIMEZONE` (America/Toronto). When the clocks go back,
+  node-cron skips the repeated hour for jobs pinned to a zone: on 2026-11-01 the every-minute call job paused 06:00-07:00
+  UTC and the watchdog posted a false "scheduler stalled". The watchdog now ignores a quiet scheduler for 3 hours after
+  the zone's offset changes (`clockChangedRecently`). Calls are unaffected in practice (the hour is the middle of the night).
+- Acting on the nightly lead review (`iris_act_on_review`, `prepareReviewActionCommand` in slack-commands.ts):
+  Mark or Jacob says "act on the flagged leads", Iris re-reads every flagged lead LIVE (the review is up to a day
+  old) and drops anyone do-not-call, booked, without a phone, touched by a teammate (calls count), already queued
+  or called since the review, or whose inquiry is over 180 days old (unless they texted last). One summary, one
+  yes, then the same sweep as "follow up on Jacob's calls" (one call at a time, one text after a miss). A review
+  older than 36h is refused. Stored as `iris_slack_commands.kind = 'review'`.
+
+### "Please no Calls" is not an opt-out (Mark, 2026-11-06 — Kelly Joseph)
+
+A new lead answered the intake text with "Please no Calls". The old classifier called that `opt_out`: row closed, "do not call"
+tag (which every watcher reads as stop-everything), "we won't reach out again" sent. Mark: don't assume they no longer want
+to talk to us. `classifyInboundText` now has `no_calls` (refuses phone calls only; "don't call or text me" and "not
+interested" stay `opt_out`). `markLeadNoCalls` (`agents/iris/sms.ts`) keeps the row `pending` with `call_after = infinity`
+(nothing dials), sets `lead.noCalls`, tags the contact **"no calls"**, and Iris qualifies by text: `buildSmsQualificationPrompt`
+with `noCalls` acknowledges it, asks the missing questions, drops `schedule_transfer_call`, and ends by asking when one of the
+agents can talk to them to send listings (book_appointment, or request_human_followup if they only want text).
+`dial-pending.ts` checks the tag live before EVERY dial (sweeps, cohort and retries create fresh rows that don't know the old
+text), and Slack "call X" refuses a "no calls" lead. The classifier itself can only be checked on Render (no local Anthropic key).
+
+### Reversible by default (Mark, 2026-11-06)
+
+The mistakes that cost leads were misreads acted on irreversibly (Kelly "Please no Calls", Angela's July reply). Rule for any
+classifier-driven action: when the message is ambiguous, take the action a person can undo and keep talking. A text stop
+(`opt_out` in `text-signals.ts`) is only acted on when the model says `certainty: "clear"` AND the `quote` it gives is
+really in the message; anything else is `unsure_stop`: nothing is closed or tagged, the dial is held (`call_after =
+infinity`), Iris asks what they mean (`stopCheck` prompt, no tools) and Slack shows the words. A clear stop still closes
+the lead but now posts the exact words to the call-log channel. New irreversible actions should follow the same pattern.
+
+### Texting after a missed call (Mark, 2026-11-05 — Melanie Petten)
+
+- After Iris's FIRST unanswered call (a normal new-lead sequence) she texts once (`maybeTextAfterMissedCalls` in
+  `webhooks/vapi-webhook.ts`; attempts 2 and 3 are the fallback when the first text could not go). The text is
+  `buildMissedCallQualifyText` (`agents/iris/qualify-text.ts`): sorry I missed you, and ONE qualifying question — a form
+  range or bucket is narrowed to a specific answer, a missing budget/timeline is asked, and when everything is specific
+  she asks for a call with an agent. The lead's reply is handled by the text qualification, which books the call or
+  schedules the live transfer. The GHL intake automation still sends its own two texts first; Iris never texts at intake.
+- A lead who RINGS BACK and is not picked up gets the same kind of text (`agents/iris/callback-watch.ts`, cron every
+  5 minutes, `iris.callbackWatch`). GHL sends no webhook for calls, so it polls the location's recent conversations,
+  keeps leads Iris has worked in the last 30 days, and looks for an inbound call under 30 s with nothing after it from
+  Iris, a teammate or the lead. One text per call (`callback_texts`, claimed before sending); calls Iris answered
+  herself through Vapi (`iris_call_log.triggered_by = 'inbound'`), booked leads, opted-out leads, leads texting with
+  Iris and leads a teammate is working are skipped. Overnight calls wait for 8 AM (18 h lookback). Dry run:
+  `npx tsx --env-file=.env scripts/callback-watch.ts`.
+- `checkHumanTouch` no longer counts a lead's OWN inbound call under 30 s as a teammate's call: GHL stamps the user it
+  rang, which made Melanie's call-back look like a teammate had phoned her and would have kept Iris from texting.
 
 ## Per-client setup for a new client going live
 

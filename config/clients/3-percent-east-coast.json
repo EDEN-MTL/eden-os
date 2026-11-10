@@ -63,6 +63,8 @@
     "roundRobin": true
   },
   "forge": {
+    "approverUserIds": ["U07H26WUGP5", "U06SA9782HW"],
+    "approverUserIdsNote": "Mark, 2026-10-21: who can press 'Pause this ad set' / 'Keep running' on a Forge flag in Slack, and who Forge nudges after 2 hours with no answer (agents/forge/ads/approval.ts). U07H26WUGP5 = Mark Christian Nuada, U06SA9782HW = Jacob Murphy. A client with no list gets plain flags, no buttons.",
     "_comment": "All values CAD. Grounded in real data pulled 2026-08-24 over a 30-day window: $1,131.37 total spend, $37.71/day actual, 3,203 clicks, $0.35 blended CPC. Client's own Meta daily budget is $50 ($30 buyers / $20 sellers).",
     "currency": "CAD",
     "cplThreshold": 110,
@@ -96,6 +98,28 @@
     }
   },
   "lens": {
+    "dashboard": {
+      "timezone": "America/St_Johns",
+      "appointmentSource": "pipeline",
+      "appointmentSourceNote": "2026-10-27: 3%'s team records appointments by moving the card and tagging the contact; only ~12 events ever reached GHL calendars (vs ~80 leads in booked-or-later stages), so calendar counts would badly undercount. Appointments are therefore counted from stages and tags (same lists as lens.funnel), for leads created in the period. Set to \"calendar\" if the team starts booking on GHL calendars.",
+      "pipeline": {
+        "bookedStages": ["Appointment Set", "Showed Up", "No-Show", "Buyer Confirmed", "Seller Confirmed", "Listing Active", "Deal Closed"],
+        "attendedStages": ["Showed Up", "Buyer Confirmed", "Seller Confirmed", "Listing Active", "Deal Closed"],
+        "noShowStages": ["No-Show"],
+        "bookedTags": ["appt booked"],
+        "attendedTags": ["showed up"],
+        "noShowTags": ["no show"]
+      },
+      "qualifiedStages": [],
+      "unqualifiedStages": ["Not Qualified/Not Interested", "Appointment Set (Not qualified)"],
+      "qualificationNote": "Jacob, 2026-10-28: qualified = anyone not in a Not Qualified stage, so qualifiedStages stays empty and unqualifiedStages is the whole rule. Closed deals use ghl.outcomeStages.wonStages (Deal Closed only; Buyer/Seller Confirmed and Listing Active are pipeline, not closed).",
+      "allLeadsFromAds": true,
+      "allLeadsFromAdsNote": "Jacob, 2026-10-28: 'They all come from ads anyways so they should all count, but if we can know exactly what ad then that's better.' So every lead, appointment and closed deal counts as from ads in the cards, ROAS and cost per closed deal; a real Meta campaign ID still names the campaign (confirmed) in the campaign table.",
+      "hiddenMetrics": ["roi", "otherCosts"],
+      "hiddenMetricsNote": "Jacob, 2026-10-28: 'For now just do ROAS.' Marketing ROI and other marketing costs are left off the page and the exports until someone enters other costs (table lens_other_costs). Remove hiddenMetrics to bring them back.",
+      "ghlDataStart": "2026-02-01",
+      "ghlDataStartNote": "Jacob, 2026-10-28: 3% started using GHL 'in February I think'. Periods that begin before this show N/A, not zero, for lead, appointment and deal numbers. Checked 2026-10-28: the first lead in ad_leads is 2026-02-18 (41 in February, none earlier)."
+    },
     "funnel": {
       "_comment": "Lens's lead funnel (agents/lens/funnel.ts), in the weekly and monthly reports. Mark, 2026-10-20: show how many leads converted since August 2026, buyer vs seller, one line per stage. A lead reaches a step if it carries one of the step's tags OR its card sits in one of the step's pipeline columns; columns include the later ones, because the card moves on (a card in 'Showed Up' was also booked) while tags stay. Tags and column names verified against live ad_leads 2026-10-20.",
       "since": "2026-08-01",
@@ -114,6 +138,8 @@
   "iris": {
     "inboundPhoneNumberId": "9e60ef71-73b4-4124-b59b-b7f7c829e8bc",
     "inboundPhoneNumberIdNote": "Vapi's phone-number id for +17097013598 — confirmed live via GET /phone-number/{id}, 2026-09-29. This is the SAME number Iris calls out from; GHL's own location has no separate tracked line for this client. Lets agents/iris/inbound.ts resolve which client an inbound assistant-request belongs to without hardcoding it.",
+    "noCallDates": ["2026-10-12"],
+    "noCallDatesNote": "Mark, 2026-10-12: Canadian Thanksgiving — Iris places no calls. Dates are local to this client's timezone; due calls roll to the next open day at 10am. Add future holidays here.",
     "timezone": "America/St_Johns",
     "timezoneNote": "Added 2026-09-16 before going live: this field was missing, so Iris was relying on dial-pending.ts's hardcoded 'America/St_Johns' default, which only happened to be correct because this was the sole client Iris ran against when that default was written. dial-pending.ts already fetches GHL's own live location timezone as the primary source (real data for this client, unlike eden-sub-account-one's known-wrong 'Pacific/Honolulu' snapshot) and only falls back to this field if that live fetch fails — this is the safety net for that fallback, made explicit per this repo's own rule against hardcoding client specifics in agent code.",
     "qualificationQuestions": [
@@ -140,6 +166,45 @@
       "notesFieldKeyNote": "Same underlying field as scout.fields.isaNotes below, but named separately here as a single write target (not a read-priority list) — see IrisConfig.callbackNotesFieldKey.",
       "calendarNote": "3% REC - ISA Callback (Iris), id buxIQTE3TkpVpjrYBaRc, still exists in GHL (currently inactive) from the earlier calendar-booking design. Nothing in code reads it anymore — left as-is rather than deleted in case the calendar-booking approach comes back."
     },
+    "links": { "vapiCallUrl": "https://dashboard.vapi.ai/logs?callId={callId}&datePreset=last7d" },
+    "linksNote": "Mark, 2026-10-15: the address of one call on Vapi's dashboard, copied from a real link (opens the Logs page filtered to that call; click the row to open it). {callId} is replaced with the call's id. datePreset=last7d is what Vapi showed — a call older than 7 days won't appear under that filter. Needs a Vapi login, like the dashboard itself. GHL links go to the contact page.",
+    "callbackWatch": {
+      "enabled": true,
+      "note": "Leads who ring the number back and are not picked up get one text from Iris (agents/iris/callback-watch.ts). Mark, 2026-11-05."
+    },
+    "asapWatch": {
+      "enabled": false,
+      "skipStages": ["Appointment Set", "Live Transferred", "Showed Up", "No-Show", "Buyer Confirmed", "Seller Confirmed", "Deal Closed", "Not Qualified/Not Interested", "International Numbers", "Listing Active", "Not Ready - [Endless Loop]", "Long Term Nurturing"],
+      "minHoursBetweenTexts": 24,
+      "maxTexts": 6,
+      "maxDays": 14,
+      "sendFromHour": 10,
+      "sendToHour": 19,
+      "note": "Mark, 2026-11-05: leads whose timeline is ASAP are watched. Iris reads each one's calls and texts, works out what we know and where the follow-up stands, and texts a follow-up written from that history (agents/iris/asap-watch.ts). OFF until Mark says go: check the dry run (scripts/asap-watch.ts) first. Stages in skipStages are with an agent, finished, or owned by another Iris flow (No-Show, the weekend cohort's Not Ready)."
+    },
+    "leadReview": {
+      "excludeEmailDomains": ["edenmtl.com"],
+      "excludeContactIds": ["S6Bojyhw3GQK5UssVLcy"],
+      "excludeContactIdsNote": "S6Bojyhw3GQK5UssVLcy = 'Mark Buyer', Mark's own test lead.",
+      "note": "Mark, 2026-10-29: the lead review flags leads worth checking in on (agents/iris/lead-review.ts). Eden's own test contacts (email at these domains) are never flagged."
+    },
+    "dailySummary": {
+      "channel": "C0BLPMHNXL1",
+      "note": "Mark, 2026-10-27: Iris posts a morning summary to #backend-ops at 8:15 AM NL (yesterday's calls, who was reached, appointments, what's lined up today, anything flagged)."
+    },
+    "followUpCohort": {
+      "notReadyStage": "Not Ready - [Endless Loop]",
+      "notInterestedStage": "Not Qualified/Not Interested",
+      "note": "Mark, 2026-10-22: leads Iris follows up on for a week (enrolled by scripts/enroll-followup-cohort.ts) end in Not Ready if they never answered a call or text, and in Not Interested if they opted out. Anyone who engages is left where they are."
+    },
+    "noShowFollowUp": {
+      "enabled": true,
+      "stageName": "No-Show",
+      "maxCalls": 3,
+      "note": "Mark, 2026-10-20: when an agent drags a lead's card into the No-Show column (a booked appointment the lead did not attend), Iris texts them within minutes to rebook, then calls at the next 10 AM / 2 PM slot if they have not replied, up to maxCalls calls in all. Only cards moved there after this was switched on count: the first scan records whatever is already in the column and leaves it alone."
+    },
+    "callAlerts": { "userIds": ["U07H26WUGP5"] },
+    "callAlertsNote": "Mark, 2026-10-14: Iris DMs these Slack users after a call that matters — a real person reached, something the review flagged, or any call to a lead someone asked her to call (a requested callback or one lined up by hand). Not for routine voicemails. U07H26WUGP5 = Mark Christian Nuada.",
     "liveTransferSlack": {
       "channel": "C0BR8F84LUD",
       "clientLabel": "3% Realty East Coast",
@@ -147,8 +212,8 @@
     },
     "humanHandsOff": {
       "days": 7,
-      "blocksCalls": false,
-      "note": "Mark, 2026-10-10: when a teammate (Mark, Jacob, any 3% agent) has texted a lead from GHL in the last N days, Iris stays out of that text conversation — no auto-replies, no texts of her own. blocksCalls=false: calls are unaffected (Mark has asked Iris to call leads he texted by hand); set true to stop Iris calling them too."
+      "blocksCalls": true,
+      "note": "Mark, 2026-10-10: when a teammate (Mark, Jacob, any 3% agent) has texted a lead from GHL in the last N days, Iris stays out of that text conversation — no auto-replies, no texts of her own. UPDATED 2026-10-21 (Mark, after Iris called and moved Sabrina Marie a day after Jacob had phoned and texted her): blocksCalls=true. A teammate's text OR call in the window also stops Iris's own calls, stage moves and tags on that lead. Calls a teammate asks for in Slack, and sweeps Mark lines up by hand, still go ahead."
     },
     "slackCommands": {
       "allowedUserIds": ["U07H26WUGP5", "U06SA9782HW"],
@@ -156,7 +221,9 @@
       "note": "Mark, 2026-10-10: only Mark (U07H26WUGP5) and Jacob (U06SA9782HW) may tell Iris to call or stop a lead in Slack. Every request waits for a plain 'yes' from the same person in the same place before anything happens."
     },
     "sms": {
-      "fromNumber": "+17097013598",
+      "callHandoff": true,
+    "callHandoffNote": "Mark, 2026-10-15: a lead Iris qualifies by text gets a call from Iris to connect them with an agent (not just 'someone will reach out'). On that call, a no or a preference for another time goes to booking. Samir Benslimane (Oct 15) was the case that prompted it.",
+    "fromNumber": "+17097013598",
       "fromNumberNote": "Mark, 2026-10-07: GHL reuses whichever number last texted a lead, and older leads were last texted from +17097021163, which is no longer available in the account — every send to them failed ('Invalid from number'). Iris's own proactive texts name the main 3% number explicitly. Same number Iris calls out from."
     },
     "outreachCadence": {
@@ -349,15 +416,7 @@
     "returningLeadTag": "returning lead",
     "returningLeadSlackChannel": "C0BRPC7FUMU",
     "returningLeadSlackChannelNote": "Mark, 2026-10-05: returning-lead alerts go to #newleads, posted by Scout (Scout is a member). #newleads is a PRIVATE channel, so this is its channel id — Slack only resolves a channel by name for public channels.",
-    "returningMinAgeMinutes": 60,
-    "legacyUserIds": {
-      "_note": "Mark, 2026-10-11: old user codes still on leads -> the agent's current user id (current ids match teams[]). Verified against live data: tX9W... on 67 contacts / 39 cards, 0bl2... on 53 cards, 2fb9... on 10 cards. Matching ignores l/I/1 and O/0 mix-ups, so a code copied by eye still resolves.",
-      "tX9WeRoJ6eWbDsqZVLs3": "1A5sJpqYGI2IvSYpS5s3",
-      "0bl2mebGKSbtIX4OrQuH": "XnTRNyagVeoyvpqDAHda",
-      "2fb9rtFbUBh1isqrxnoY": "FxhXD7440LRChvWfotmD",
-      "Xt65A0Ply0wZJN8zGmUc": "99ZRGYPQoZG6pdBj3Bpz",
-      "pSWiUg0VluySWOQmZFhi": "FtUDZ9FJqayyTS9SYanf"
-    }
+    "returningMinAgeMinutes": 60
   },
   "ember": {
     "_comment": "Mark, 2026-10-09: 3%'s Ember config, copied from the test account (eden-sub-account-one) where it was proven. enabled stays false until Jacob approves the SMS/AI cost and confirms CASL consent, and the first texts are previewed (scripts/ember-dry-run.ts 3-percent-east-coast --messages).",
@@ -369,7 +428,7 @@
     "stageDormancyDays": {
       "Replied": 14
     },
-    "stageDormancyDaysNote": "Mark, 2026-09-25: Replied leads are picked up after 14 quiet days; Not Ready and Long Term Nurturing use the 60-day default.",
+    "stageDormancyDaysNote": "Mark, 2026-09-25: Replied leads are picked up after 14 quiet days; Not Ready uses the 60-day default.",
     "excludeStages": [
       "Appointment Set",
       "Appointment Set (Not qualified)",
@@ -377,12 +436,13 @@
       "Listing Active",
       "International Numbers"
     ],
+    "bookingCalendarIds": { "buyer": "4Eyz51DOI7TY78gRgBU3", "seller": "vbsoYjk2Q6nI66q8u8to" },
+    "bookingCalendarIdsNote": "Mark, 2026-11-11: when a lead isn't free right now, Ember books the call on 3%'s round-robin consultation calendars (verified live: '3% REC - Buyer Consultation Calendar', 9 members; '3% REC - Seller Consultation Calendar', 3 members). Same ids as scout.calendars.",
     "includeStages": [
       "Not Ready - [Endless Loop]",
-      "Long Term Nurturing",
       "Replied"
     ],
-    "includeStagesNote": "Mark, 2026-09-25: Ember focuses on these three stages only, for now. Names verified live against this pipeline (and 3-percent-east-coast's, which has the same three).",
+    "includeStagesNote": "Mark, 2026-10-24: Long Term Nurturing REMOVED - Ember must not touch leads in that stage; tracked ones there are dropped quietly (scan.ts detectChange). Mark, 2026-09-25: Ember focuses on these three stages only, for now. Names verified live against this pipeline (and 3-percent-east-coast's, which has the same three).",
     "notInterestedStage": "Not Qualified/Not Interested",
     "notInterestedNote": "Mark, 2026-10-01: on CLEAR evidence a lead is no longer a prospect (bought, sold, another agent, no longer looking, asked to stop), Ember moves the card here and never contacts them again. Not ready / next year / busy / no reply keep nurturing. See agents/ember/status.ts.",
     "consentWindowDays": 180,

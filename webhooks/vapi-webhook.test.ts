@@ -35,9 +35,13 @@ vi.mock("../agents/iris/human-touch", () => humanTouch);
 const inbound = vi.hoisted(() => ({ handleInboundCall: vi.fn() }));
 vi.mock("../agents/iris/inbound", () => inbound);
 
+const smsModule = vi.hoisted(() => ({ hasActiveSmsConversation: vi.fn(async () => false) }));
+vi.mock("../agents/iris/sms", () => smsModule);
+
 const callSignals = vi.hoisted(() => ({ classifyMissedCallback: vi.fn(async () => ({ type: "none" })) }));
 vi.mock("../agents/iris/call-signals", () => callSignals);
 
+import { CALL_LOG_CHANNEL } from "../agents/iris/channels";
 import {
   appendCallStatusNote,
   attachRecording,
@@ -47,6 +51,8 @@ import {
   formatDuration,
   genuinelyAnswered,
   hitCallScreener,
+  hitVoicemailGreeting,
+  postCallReview,
   maybeHonorMissedCallback,
   maybeReopenPendingCall,
   buildSweepMissedCallText,
@@ -193,6 +199,36 @@ describe("hitCallScreener", () => {
     expect(hitCallScreener({})).toBe(false);
     expect(hitCallScreener({ messages: [] })).toBe(false);
   });
+
+  // Iris now answers a screener with just "Iris." and waits (2026-10-10), so a
+  // screener that then connects the lead is a REAL conversation.
+  it("is NOT a screener-only call when a real person speaks after the screener's prompts", () => {
+    const connected = {
+      messages: [
+        { role: "user", message: "If you record your name and reason for calling, I'll see if this person is available." },
+        { role: "user", message: "Thanks, Iris. Please stay on the line." },
+        { role: "user", message: "Hello?" },
+        { role: "user", message: "Yeah, this is Koren." },
+      ],
+    };
+    expect(hitCallScreener(connected)).toBe(false);
+  });
+
+  it("is still a screener-only call when only the machine ever spoke — even through its 'not available' close", () => {
+    const neverConnected = {
+      messages: [
+        { role: "user", message: "If you record your name and reason for calling, I'll see if this person is available." },
+        { role: "user", message: "Thanks, Corinne. Please stay on the line." },
+        { role: "user", message: "Sorry, this person isn't available. Please leave a message after the tone." },
+      ],
+    };
+    expect(hitCallScreener(neverConnected)).toBe(true);
+  });
+
+  it("recognises other screener wordings, like Google's", () => {
+    expect(hitCallScreener({ messages: [{ role: "user", message: "Hi, the person you're calling is using a call screening service." }] })).toBe(true);
+    expect(hitCallScreener({ messages: [{ role: "user", message: "Google is screening this call." }] })).toBe(true);
+  });
 });
 
 /**
@@ -240,6 +276,78 @@ describe("moveToFollowUpStage", () => {
 
     await expect(moveToFollowUpStage("3-percent-east-coast", "contact-1", 1)).resolves.toBeUndefined();
     expect(ghl.updateOpportunityStage).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * Mark, 2026-10-21: "double check the recent conversation; if the lead is being talked to by Jacob or other
+ * agents, leave that lead and not touch it or move it." Sabrina Marie: Jacob phoned and texted her on Oct 20;
+ * Iris called her and moved her card to Day 2 on Oct 21.
+ */
+describe("leaving a lead a teammate is talking to", () => {
+  const followUpStageIds = ["stage-day1-am", "stage-day1-pm", "stage-day2-am"];
+  const RULE_ON = { followUpStageIds, humanTextBlocksCalls: true, humanHandsOffDays: 7 };
+
+  beforeEach(() => {
+    iris.loadIrisConfig.mockReturnValue(RULE_ON);
+    ghl.getGhlConfig.mockResolvedValue({ locationId: "loc-1", apiKey: "key-1" });
+    ghl.findOpenOpportunitiesForContact.mockResolvedValue([{ id: "opp-1", pipelineStageId: "stage-intake" }]);
+    humanTouch.checkHumanTouch.mockResolvedValue({ status: "none" } as any);
+  });
+
+  it("does not move the card when a teammate texted or called the lead recently", async () => {
+    humanTouch.checkHumanTouch.mockResolvedValue({ status: "human", kind: "call", at: "2026-10-20T18:49:45.000Z", userId: "u" } as any);
+    await moveToFollowUpStage("3-percent-east-coast", "contact-1", 3);
+    expect(ghl.updateOpportunityStage).not.toHaveBeenCalled();
+  });
+
+  it("does not move the card when the thread cannot be read (fails closed)", async () => {
+    humanTouch.checkHumanTouch.mockResolvedValue({ status: "unknown" } as any);
+    await moveToFollowUpStage("3-percent-east-coast", "contact-1", 3);
+    expect(ghl.updateOpportunityStage).not.toHaveBeenCalled();
+  });
+
+  it("does not pull a card out of a column a person works (Live Transferred, Appointment Set, ...)", async () => {
+    // 3% Realty's real Live Transferred stage id, from config/clients/3-percent-east-coast.json
+    ghl.findOpenOpportunitiesForContact.mockResolvedValue([{ id: "opp-1", pipelineStageId: "d4cb572b-5fa5-48e5-bced-46c88715e2da" }]);
+    await moveToFollowUpStage("3-percent-east-coast", "contact-1", 3);
+    expect(ghl.updateOpportunityStage).not.toHaveBeenCalled();
+  });
+
+  it("still moves the card when nobody is talking to the lead", async () => {
+    await moveToFollowUpStage("3-percent-east-coast", "contact-1", 3);
+    expect(ghl.updateOpportunityStage).toHaveBeenCalledWith("opp-1", "stage-day2-am", "loc-1", "key-1");
+  });
+
+  it("does not tag the lead 'iris no answer' while a teammate is on them", async () => {
+    humanTouch.checkHumanTouch.mockResolvedValue({ status: "human", kind: "text", at: "x", userId: "u" } as any);
+    await tagSequenceExhausted("3-percent-east-coast", "contact-1");
+    expect(ghl.addContactTags).not.toHaveBeenCalled();
+  });
+
+  it("stops retrying a missed call to a lead a teammate is on, and closes the row without moving or tagging it", async () => {
+    db.query.mockResolvedValue([{ id: 5, attempts_made: 3, created_at: new Date(), status: "placed", is_explicit_callback: true, source: null, callback_misses: 1, human_requested: false, lead: { name: "Sabrina Marie" } }]);
+    humanTouch.checkHumanTouch.mockResolvedValue({ status: "human", kind: "text", at: "x", userId: "u" } as any);
+    await maybeReopenPendingCall("3-percent-east-coast", "contact-1");
+    expect(dialPending.reopenAfterMissedCallback).not.toHaveBeenCalled();
+    expect(dialPending.reopenForNextAttempt).not.toHaveBeenCalled();
+    expect(ghl.updateOpportunityStage).not.toHaveBeenCalled();
+    expect(db.query.mock.calls.some((c) => String(c[0]).includes("SET status = 'skipped'"))).toBe(true);
+  });
+
+  it("keeps retrying when a teammate asked for the call in Slack", async () => {
+    db.query.mockResolvedValue([{ id: 5, attempts_made: 1, created_at: new Date(), status: "placed", is_explicit_callback: true, source: null, callback_misses: 0, human_requested: true, lead: { name: "Koren Pye" } }]);
+    humanTouch.checkHumanTouch.mockResolvedValue({ status: "human", kind: "text", at: "x", userId: "u" } as any);
+    dialPending.reopenAfterMissedCallback.mockResolvedValue({ reopened: true, callAfter: new Date(), misses: 1, phase: "quick-retry" });
+    await maybeReopenPendingCall("3-percent-east-coast", "contact-1");
+    expect(dialPending.reopenAfterMissedCallback).toHaveBeenCalled();
+  });
+
+  it("does nothing different for a client that hasn't turned the rule on", async () => {
+    iris.loadIrisConfig.mockReturnValue({ followUpStageIds });
+    humanTouch.checkHumanTouch.mockResolvedValue({ status: "human", kind: "text", at: "x", userId: "u" } as any);
+    await moveToFollowUpStage("eden-sub-account-one", "contact-1", 1);
+    expect(ghl.updateOpportunityStage).toHaveBeenCalled();
   });
 });
 
@@ -387,7 +495,7 @@ describe("postCallLogToSlack", () => {
     expect(slack.sendMessage).toHaveBeenCalledWith(
       "iris",
       expect.objectContaining({
-        channel: "iris-call-logs",
+        channel: CALL_LOG_CHANNEL,
         text: expect.stringContaining("Bijeesh Varghese (+17097496049)"),
       })
     );
@@ -788,7 +896,7 @@ describe("maybeReopenPendingCall — missed explicit callbacks", () => {
 
     await maybeReopenPendingCall("3-percent-east-coast", "contact-1");
 
-    expect(dialPending.reopenAfterMissedCallback).toHaveBeenCalledWith(69, "3-percent-east-coast", 2, ROW.created_at, 0);
+    expect(dialPending.reopenAfterMissedCallback).toHaveBeenCalledWith(69, "3-percent-east-coast", 2, ROW.created_at, 0, null);
     expect(dialPending.reopenForNextAttempt).not.toHaveBeenCalled();
     expect(ghl.sendSMS).toHaveBeenCalledTimes(1);
     const [contactId, text] = ghl.sendSMS.mock.calls[0];
@@ -840,14 +948,14 @@ describe("maybeReopenPendingCall — missed explicit callbacks", () => {
   });
 
   it("still uses the normal cadence for an ordinary (non-explicit) row", async () => {
-    db.query.mockResolvedValue([{ ...ROW, is_explicit_callback: false }]);
+    // The qualifying text after a miss is covered in "the text after a missed call"; this is about the schedule.
+    db.query.mockResolvedValue([{ ...ROW, is_explicit_callback: false, attempts_made: 1 }]);
     dialPending.reopenForNextAttempt.mockResolvedValue(true);
 
     await maybeReopenPendingCall("3-percent-east-coast", "contact-1");
 
-    expect(dialPending.reopenForNextAttempt).toHaveBeenCalledWith(69, "3-percent-east-coast", 2, ROW.created_at);
+    expect(dialPending.reopenForNextAttempt).toHaveBeenCalledWith(69, "3-percent-east-coast", 1, ROW.created_at);
     expect(dialPending.reopenAfterMissedCallback).not.toHaveBeenCalled();
-    expect(ghl.sendSMS).not.toHaveBeenCalled();
   });
 
   it("still retries even if the text fails to send", async () => {
@@ -856,6 +964,117 @@ describe("maybeReopenPendingCall — missed explicit callbacks", () => {
 
     await expect(maybeReopenPendingCall("3-percent-east-coast", "contact-1")).resolves.toBeUndefined();
     expect(dialPending.reopenAfterMissedCallback).toHaveBeenCalled();
+  });
+});
+
+/**
+ * Mark, 2026-10-27 (Eileen Hillier): a new lead's normal call sequence sent no text of its own, so two voicemails
+ * left only the intake automation's messages. One text now goes out after the second unanswered call.
+ */
+describe("maybeReopenPendingCall — the text after a missed call", () => {
+  const ROW = (over: Record<string, unknown> = {}) => ({
+    id: 31,
+    attempts_made: 2,
+    created_at: new Date("2026-10-26T18:19:00.000Z"),
+    status: "placed",
+    is_explicit_callback: false,
+    source: null,
+    callback_misses: 0,
+    human_requested: false,
+    lead: { name: "Eileen Hillier", intent: "buyer", budget: "$299K-$600K", timeline: "3-6 Months" },
+    ...over,
+  });
+
+  beforeEach(() => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date("2026-10-27T12:31:00.000Z")); // 10:01 AM in St. John's
+    ghl.sendSMS.mockReset().mockResolvedValue({ messageId: "msg-1" });
+    ghl.getContact.mockResolvedValue({ contact: { tags: ["buyer lead"], dnd: false } });
+    slack.sendMessage.mockReset().mockResolvedValue({});
+    smsModule.hasActiveSmsConversation.mockResolvedValue(false);
+    iris.loadIrisConfig.mockReturnValue({ timezone: "America/St_Johns", smsFromNumber: "+17097013598" });
+    iris.loadClientBranding.mockReturnValue({ brandName: "3 Percent East Coast", city: "St. John's" });
+    ghl.getGhlConfig.mockResolvedValue({ locationId: "loc-1", apiKey: "key-1" });
+    dialPending.reopenForNextAttempt.mockResolvedValue(true);
+    humanTouch.checkHumanTouch.mockResolvedValue({ status: "none" } as any);
+    // the first SELECT is the row; the UPDATE ... RETURNING is the once-only claim
+    claimed = true;
+    db.query.mockImplementation(async (...args: unknown[]) => {
+      const sql = String(args[0]);
+      if (/SET missed_call_texted = true/.test(sql)) return claimed ? [{ id: 31 }] : [];
+      return [rowForTest];
+    });
+  });
+  afterEach(() => vi.useRealTimers());
+
+  let claimed = true;
+  let rowForTest: any = ROW();
+  const run = (over: Record<string, unknown> = {}) => {
+    rowForTest = ROW(over);
+    return maybeReopenPendingCall("3-percent-east-coast", "contact-1", "customer-did-not-answer");
+  };
+
+  it("texts the lead once after the second unanswered call, and says so in the log channel", async () => {
+    await run();
+    expect(ghl.sendSMS).toHaveBeenCalledTimes(1);
+    const [contactId, text] = ghl.sendSMS.mock.calls[0];
+    expect(contactId).toBe("contact-1");
+    expect(text).toBe("Hi Eileen, it's Iris from 3 Percent East Coast. Sorry I missed you! I'd love to match you with the right agent. I see $299K-$600K on your form. What specific budget do you have in mind?");
+    expect(slack.sendMessage.mock.calls.some((c) => String((c[1] as any)?.text).includes("Texted *Eileen Hillier* after 2 unanswered calls"))).toBe(true);
+    // the next call is still lined up
+    expect(dialPending.reopenForNextAttempt).toHaveBeenCalled();
+  });
+
+  it("texts after the FIRST miss too (Melanie Petten, 2026-11-05), but not once the sequence is well along", async () => {
+    await run({ attempts_made: 5 });
+    expect(ghl.sendSMS).not.toHaveBeenCalled();
+    await run({ attempts_made: 1 });
+    expect(ghl.sendSMS).toHaveBeenCalledTimes(1);
+    expect(slack.sendMessage.mock.calls.some((c) => String((c[1] as any)?.text).includes("after 1 unanswered call "))).toBe(true);
+  });
+
+  it("never texts the same lead twice", async () => {
+    claimed = false;
+    await maybeReopenPendingCall("3-percent-east-coast", "contact-1", "customer-did-not-answer");
+    expect(ghl.sendSMS).not.toHaveBeenCalled();
+  });
+
+  it("stays quiet when the lead is already texting with Iris, has opted out, or it is outside calling hours", async () => {
+    smsModule.hasActiveSmsConversation.mockResolvedValue(true);
+    await run();
+    smsModule.hasActiveSmsConversation.mockResolvedValue(false);
+    ghl.getContact.mockResolvedValue({ contact: { tags: ["do not call"], dnd: false } });
+    await run();
+    ghl.getContact.mockResolvedValue({ contact: { tags: [], dnd: true } });
+    await run();
+    ghl.getContact.mockResolvedValue({ contact: { tags: [], dnd: false } });
+    vi.setSystemTime(new Date("2026-10-27T03:00:00.000Z")); // 12:30 AM NL
+    await run();
+    expect(ghl.sendSMS).not.toHaveBeenCalled();
+  });
+
+  it("does not text a call that failed technically, and never when a teammate is talking to the lead", async () => {
+    rowForTest = ROW();
+    await maybeReopenPendingCall("3-percent-east-coast", "contact-1", "assistant-error");
+    expect(ghl.sendSMS).not.toHaveBeenCalled();
+    iris.loadIrisConfig.mockReturnValue({ timezone: "America/St_Johns", smsFromNumber: "+17097013598", humanTextBlocksCalls: true });
+    humanTouch.checkHumanTouch.mockResolvedValue({ status: "human", kind: "call", at: "2026-10-27T14:40:00.000Z", userId: "u" } as any);
+    await run();
+    expect(ghl.sendSMS).not.toHaveBeenCalled();
+  });
+
+  it("asks the timeline of a seller, and for a call with an agent once everything is specific", async () => {
+    await run({ lead: { name: "Judy Dunne", intent: "seller" } });
+    expect(ghl.sendSMS.mock.calls[0][1]).toContain("When are you hoping to sell?");
+    ghl.sendSMS.mockClear();
+    await run({ lead: { name: "Judy Dunne", intent: "buyer", budget: "$450,000", timeline: "June 2027" } });
+    expect(ghl.sendSMS.mock.calls[0][1]).toContain("Would a quick call with one of our agents work for you?");
+  });
+
+  it("a failed text never stops the retry", async () => {
+    ghl.sendSMS.mockRejectedValue(new Error("boom"));
+    await expect(run()).resolves.toBeUndefined();
+    expect(dialPending.reopenForNextAttempt).toHaveBeenCalled();
   });
 });
 
@@ -957,7 +1176,7 @@ describe("maybeReopenPendingCall — unanswered sweep calls", () => {
     expect(dialPending.holdForTextReply).toHaveBeenCalledWith(77);
     expect(ghl.sendSMS).toHaveBeenCalledTimes(1);
     expect(ghl.sendSMS.mock.calls[0][1]).toContain("Stella");
-    expect(slack.sendMessage).toHaveBeenCalledWith("iris", expect.objectContaining({ channel: "iris-call-logs", text: expect.stringContaining("Texted *Stella Max Clements*") }));
+    expect(slack.sendMessage).toHaveBeenCalledWith("iris", expect.objectContaining({ channel: CALL_LOG_CHANNEL, text: expect.stringContaining("Texted *Stella Max Clements*") }));
     expect(dialPending.reopenForNextAttempt).not.toHaveBeenCalled();
     expect(dialPending.reopenAfterMissedCallback).not.toHaveBeenCalled();
   });
@@ -1159,5 +1378,217 @@ describe("sendIrisText — stays out when a teammate has texted the lead", () =>
     await maybeReopenPendingCall("3-percent-east-coast", "contact-1", "customer-did-not-answer");
 
     expect(ghl.sendSMS).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * Angela Marie, 2026-10-14: a voicemail greeting, Iris hung up, Vapi reported
+ * "assistant-ended-call" — which counts as a real conversation — so she was
+ * never retried and Slack said "Answered".
+ */
+describe("hitVoicemailGreeting", () => {
+  const angela = {
+    messages: [
+      { role: "user", message: "Call has been forwarded to voice mail. The person you're trying to reach is not available." },
+      { role: "bot", message: "Goodbye." },
+    ],
+  };
+
+  it("recognises a voicemail greeting with nobody real after it", () => {
+    expect(hitVoicemailGreeting(angela)).toBe(true);
+    expect(hitVoicemailGreeting({ messages: [{ role: "user", message: "Please leave a message after the tone." }] })).toBe(true);
+  });
+
+  it("is not a voicemail when a real person speaks after the greeting", () => {
+    expect(hitVoicemailGreeting({ messages: [...angela.messages, { role: "user", message: "Hello? Sorry, who's this?" }] })).toBe(false);
+  });
+
+  it("ignores ordinary conversation", () => {
+    expect(hitVoicemailGreeting({ messages: [{ role: "user", message: "Hello? Yes, this is Amanda." }] })).toBe(false);
+  });
+
+  it("makes a voicemail-greeting hang-up count as NOT answered, so the retry is scheduled, and says so in the log", () => {
+    expect(genuinelyAnswered("assistant-ended-call", angela)).toBe(false);
+    expect(describeOutcome("assistant-ended-call", angela)).toMatch(/Voicemail greeting, no message left — will retry/);
+  });
+});
+
+describe("postCallReview — Iris reviews every finished call herself", () => {
+  const cleanMachine = {
+    call: { customer: { number: "+17097700724" } },
+    durationSeconds: 11,
+    messages: [{ role: "user", message: "Please leave a message after the tone." }],
+  };
+
+  beforeEach(() => {
+    ghl.getGhlConfig.mockResolvedValue({ locationId: "loc-1", apiKey: "key-1" });
+    ghl.getContact.mockResolvedValue({ contact: { firstName: "Angela", lastName: "Marie" } });
+    iris.loadClientBranding.mockReturnValue({ brandName: "3 Percent East Coast", city: "St. John's" });
+  });
+
+  it("replies in the call's own thread when nothing is off", async () => {
+    db.query.mockResolvedValueOnce([{ status: "pending", attempts_made: 2 }] as never);
+
+    await postCallReview("3-percent-east-coast", "c1", "automatic", cleanMachine, "customer-did-not-answer", "1791.1", "C123");
+
+    expect(slack.sendMessage).toHaveBeenCalledTimes(1);
+    expect(slack.sendMessage).toHaveBeenCalledWith("iris", expect.objectContaining({ channel: "C123", threadTs: "1791.1", text: expect.stringContaining("nothing off") }));
+  });
+
+  it("posts a visible top-level note when something needs a look, naming the lead", async () => {
+    const spoken = { ...cleanMachine, messages: [...cleanMachine.messages, { role: "bot", message: "Goodbye." }] };
+    db.query.mockResolvedValueOnce([{ status: "pending", attempts_made: 2 }] as never);
+
+    await postCallReview("3-percent-east-coast", "c1", "automatic", spoken, "assistant-ended-call", "1791.1", "C123");
+
+    const [, payload] = slack.sendMessage.mock.calls[0] as unknown as [string, { channel: string; threadTs?: string; text: string }];
+    expect(payload.threadTs).toBeUndefined();
+    expect(payload.text).toContain("Call review — Angela Marie");
+    expect(payload.text).toContain("Goodbye");
+  });
+
+  it("flags a missed call that has no retry lined up", async () => {
+    db.query.mockResolvedValueOnce([{ status: "placed", attempts_made: 1 }] as never);
+
+    await postCallReview("3-percent-east-coast", "c1", "automatic", cleanMachine, "customer-did-not-answer", "1791.1", "C123");
+
+    expect((slack.sendMessage.mock.calls[0] as unknown as [string, { text: string }])[1].text).toContain("No retry is lined up");
+  });
+
+  it("never throws, even when Slack or GHL fail", async () => {
+    ghl.getContact.mockRejectedValue(new Error("down"));
+    slack.sendMessage.mockRejectedValue(new Error("Slack down"));
+    await expect(postCallReview("3-percent-east-coast", "c1", "automatic", cleanMachine, "voicemail")).resolves.toBeUndefined();
+  });
+});
+
+describe("postCallReview — Iris messages Mark directly after a call that matters", () => {
+  const voicemail = { call: { customer: { number: "+17097308996" } }, durationSeconds: 11, messages: [{ role: "user", message: "Please leave a message after the tone." }] };
+  const conversation = {
+    call: { customer: { number: "+17097700724" } },
+    durationSeconds: 125,
+    messages: [{ role: "user", message: "Hello?" }, { role: "bot", message: "Hi, this is Iris with 3 Percent East Coast. Am I speaking with Angela?" }, { role: "user", message: "Yes." }],
+  };
+
+  beforeEach(() => {
+    slack.sendMessage.mockReset();
+    slack.sendMessage.mockResolvedValue({ ts: "1", channel: "C1" });
+    db.query.mockReset();
+    ghl.getGhlConfig.mockResolvedValue({ locationId: "loc-1", apiKey: "key-1" });
+    ghl.getContact.mockResolvedValue({ contact: { firstName: "Koren", lastName: "Pye" } });
+    iris.loadClientBranding.mockReturnValue({ brandName: "3 Percent East Coast", city: "St. John's" });
+    iris.loadIrisConfig.mockReturnValue({ timezone: "America/St_Johns", callAlerts: { userIds: ["U_MARK"] } });
+  });
+
+  const dms = () => slack.sendMessage.mock.calls.filter((c) => (c[1] as { channel: string }).channel === "U_MARK");
+
+  it("DMs about a call to a lead someone asked Iris to call, even when it was only a voicemail, with what happens next", async () => {
+    db.query.mockResolvedValueOnce([{ status: "pending", attempts_made: 6, call_after: new Date("2026-10-16T12:30:00Z"), is_explicit_callback: true, source: null }] as never);
+
+    await postCallReview("3-percent-east-coast", "c1", "automatic", voicemail, "customer-did-not-answer", "1791.1", "C123");
+
+    expect(dms()).toHaveLength(1);
+    const text = (dms()[0][1] as { text: string }).text;
+    expect(text).toContain("Koren Pye");
+    expect(text).toContain("Next: Iris calls again");
+  });
+
+  it("DMs when a real person was reached", async () => {
+    db.query.mockResolvedValueOnce([{ status: "placed", attempts_made: 1, call_after: new Date(), is_explicit_callback: false, source: null }] as never);
+    await postCallReview("3-percent-east-coast", "c1", "automatic", conversation, "customer-ended-call");
+    expect(dms()).toHaveLength(1);
+  });
+
+  it("stays quiet for a routine voicemail on the normal sequence", async () => {
+    db.query.mockResolvedValueOnce([{ status: "pending", attempts_made: 2, call_after: new Date(Date.now() + 3_600_000), is_explicit_callback: false, source: null }] as never);
+    await postCallReview("3-percent-east-coast", "c1", "automatic", voicemail, "customer-did-not-answer");
+    expect(dms()).toHaveLength(0);
+  });
+
+  it("stays quiet for a sweep voicemail", async () => {
+    db.query.mockResolvedValueOnce([{ status: "pending", attempts_made: 2, call_after: "infinity", is_explicit_callback: true, source: "sweep" }] as never);
+    await postCallReview("3-percent-east-coast", "c1", "automatic", voicemail, "customer-did-not-answer");
+    expect(dms()).toHaveLength(0);
+  });
+
+  it("does nothing when the client has no call alerts configured, and never throws if the DM fails", async () => {
+    iris.loadIrisConfig.mockReturnValue({ timezone: "America/St_Johns" });
+    db.query.mockResolvedValueOnce([{ status: "pending", attempts_made: 6, call_after: new Date(), is_explicit_callback: true, source: null }] as never);
+    await postCallReview("3-percent-east-coast", "c1", "automatic", voicemail, "customer-did-not-answer");
+    expect(dms()).toHaveLength(0);
+
+    iris.loadIrisConfig.mockReturnValue({ timezone: "America/St_Johns", callAlerts: { userIds: ["U_MARK"] } });
+    db.query.mockResolvedValueOnce([{ status: "pending", attempts_made: 6, call_after: new Date(), is_explicit_callback: true, source: null }] as never);
+    slack.sendMessage.mockRejectedValue(new Error("Slack down"));
+    await expect(postCallReview("3-percent-east-coast", "c1", "automatic", voicemail, "customer-did-not-answer")).resolves.toBeUndefined();
+  });
+});
+
+describe("direct links in the call-log post", () => {
+  beforeEach(() => {
+    slack.sendMessage.mockReset();
+    slack.sendMessage.mockResolvedValue({ ts: "1", channel: "C1" });
+    ghl.getGhlConfig.mockResolvedValue({ locationId: "L1", apiKey: "key-1" });
+    ghl.getContact.mockResolvedValue({ contact: { firstName: "Koren", lastName: "Pye" } });
+  });
+
+  it("links the GHL contact and, when the client has the Vapi link setting, the exact Vapi call", async () => {
+    iris.loadIrisConfig.mockReturnValue({ timezone: "America/St_Johns", vapiCallUrlTemplate: "https://dashboard.vapi.ai/calls/{callId}" });
+    await postCallLogToSlack("3-percent-east-coast", "contact-1", { call: { id: "call-7", customer: { number: "+17097308996" } }, durationSeconds: 11 }, "voicemail");
+
+    const text = (slack.sendMessage.mock.calls[0][1] as { text: string }).text;
+    expect(text).toContain("<https://dashboard.vapi.ai/calls/call-7|Vapi call>");
+    expect(text).toContain("<https://app.gohighlevel.com/v2/location/L1/contacts/detail/contact-1|GHL contact>");
+  });
+
+  it("still posts, with just the GHL link, when the Vapi link isn't set up", async () => {
+    iris.loadIrisConfig.mockReturnValue({ timezone: "America/St_Johns" });
+    await postCallLogToSlack("3-percent-east-coast", "contact-1", { call: { id: "call-7", customer: { number: "+17097308996" } }, durationSeconds: 11 }, "voicemail");
+
+    const text = (slack.sendMessage.mock.calls[0][1] as { text: string }).text;
+    expect(text).not.toContain("Vapi call");
+    expect(text).toContain("GHL contact");
+  });
+});
+
+describe("links on the live-transfer post", () => {
+  beforeEach(() => {
+    slack.sendMessage.mockReset();
+    slack.sendMessage.mockResolvedValue({ ts: "1", channel: "C1" });
+    db.query.mockReset();
+    db.query.mockResolvedValue([] as never);
+    db.query.mockResolvedValueOnce([{ id: "1" }] as never); // dedupe claim
+    ghl.getGhlConfig.mockResolvedValue({ locationId: "L1", apiKey: "key-1" });
+    ghl.getContact.mockResolvedValue({ contact: { firstName: "Roxane", lastName: "White", assignedTo: "u1", tags: ["seller lead"], customFields: [] } });
+    ghl.getCustomFieldDefs.mockResolvedValue([]);
+    ghl.listLocationUsers.mockResolvedValue([{ id: "u1", name: "Brittany Penney" }]);
+    iris.loadIrisConfig.mockReturnValue({
+      timezone: "America/St_Johns",
+      callbackNotesFieldKey: "isa_notes",
+      vapiCallUrlTemplate: "https://dashboard.vapi.ai/logs?callId={callId}&datePreset=last7d",
+      liveTransferSlack: { channel: "C9", clientLabel: "3% Realty East Coast" },
+    });
+  });
+
+  it("a transfer Iris made links the exact Vapi call and the GHL contact", async () => {
+    await postLiveTransferToSlack("3-percent-east-coast", "c1", "call-9");
+    const text = (slack.sendMessage.mock.calls[0][1] as { text: string }).text;
+    expect(text).toContain("Seller Live Transfer for 3% Realty East Coast with Brittany Penney");
+    expect(text).toContain("<https://dashboard.vapi.ai/logs?callId=call-9&datePreset=last7d|Vapi call>");
+    expect(text).toContain("<https://app.gohighlevel.com/v2/location/L1/contacts/detail/c1|GHL contact>");
+  });
+
+  it("a transfer the team marked by hand has no call, so only the GHL contact link", async () => {
+    await postLiveTransferToSlack("3-percent-east-coast", "c1");
+    const text = (slack.sendMessage.mock.calls[0][1] as { text: string }).text;
+    expect(text).not.toContain("Vapi call");
+    expect(text).toContain("GHL contact");
+  });
+});
+
+describe("hitVoicemailGreeting — greetings with their own wording", () => {
+  it("recognises Sabrina Legg's greeting (Oct 17), so a missed call there isn't mistaken for a person who never got an answer", () => {
+    const msg = { messages: [{ role: "user", message: "You have reached Sabrina Legg. After leaving a message, you can hang up or press pound for more options." }] };
+    expect(hitVoicemailGreeting(msg)).toBe(true);
   });
 });

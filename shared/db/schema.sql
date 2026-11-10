@@ -532,6 +532,8 @@ ALTER TABLE iris_pending_calls ADD COLUMN IF NOT EXISTS sms_scheduled BOOLEAN NO
 -- time. 1st miss = one quick retry + a text; 2nd+ = back onto the normal
 -- cadence slots. See agents/iris/dial-pending.ts reopenAfterMissedCallback.
 ALTER TABLE iris_pending_calls ADD COLUMN IF NOT EXISTS callback_misses INTEGER NOT NULL DEFAULT 0;
+-- The local clock time ("16:30") the lead asked to be called back at; missed-callback retries keep to it (agents/iris/cadence.ts applyPreferredTime).
+ALTER TABLE iris_pending_calls ADD COLUMN IF NOT EXISTS callback_time_of_day TEXT;
 
 -- One stable, revocable link per client for Scout's bi-weekly team
 -- check-in page (webhooks/checkin-api.ts). Not per-send: the page always
@@ -716,6 +718,18 @@ CREATE TABLE IF NOT EXISTS live_transfer_posts (
 );
 CREATE INDEX IF NOT EXISTS idx_live_transfer_posts_contact ON live_transfer_posts(client_id, contact_id, posted_at);
 
+-- One row per appointment Iris has posted to the live-transfers Slack channel.
+-- A booking can reach her twice (her own book_appointment tool, then the GHL
+-- appointment automation's webhook step); only the first may post.
+CREATE TABLE IF NOT EXISTS appointment_posts (
+    id BIGSERIAL PRIMARY KEY,
+    client_id TEXT NOT NULL,
+    appointment_id TEXT NOT NULL,
+    contact_id TEXT NOT NULL,
+    posted_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    UNIQUE (client_id, appointment_id)
+);
+
 -- Calls/stops asked of Iris in Slack ("call Koren Pye now"). A command is only
 -- PREPARED when asked (status 'pending'); it runs only when the same person
 -- replies yes in the same place within the time limit — see
@@ -726,7 +740,7 @@ CREATE TABLE IF NOT EXISTS iris_slack_commands (
     requested_by TEXT NOT NULL,        -- Slack user id
     channel_id TEXT NOT NULL,
     thread_ts TEXT,
-    kind TEXT NOT NULL,                -- call | stop
+    kind TEXT NOT NULL,                -- call | stop | followup | review
     contact_id TEXT NOT NULL,
     contact_name TEXT NOT NULL,
     call_at TIMESTAMPTZ,               -- for kind = call
@@ -736,3 +750,168 @@ CREATE TABLE IF NOT EXISTS iris_slack_commands (
     resolved_at TIMESTAMPTZ
 );
 CREATE INDEX IF NOT EXISTS idx_iris_slack_commands_pending ON iris_slack_commands(requested_by, channel_id, status, created_at);
+
+-- Iris's no-show follow-up (agents/iris/no-show.ts): one row per time a card
+-- was seen entering a client's No-Show stage. 'baseline' = already in the
+-- column when the feature was switched on (never followed up); 'started' =
+-- Iris texted and lined up calls; 'skipped' = looked at and deliberately left
+-- alone, with the reason. stage_changed_at is GHL's own lastStageChangeAt, so a
+-- card moved out and back in later counts as a fresh no-show.
+CREATE TABLE IF NOT EXISTS iris_noshow_followups (
+    id BIGSERIAL PRIMARY KEY,
+    client_id TEXT NOT NULL,
+    opportunity_id TEXT NOT NULL,
+    contact_id TEXT NOT NULL,
+    stage_changed_at TEXT NOT NULL,
+    outcome TEXT NOT NULL,
+    reason TEXT,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    UNIQUE (client_id, opportunity_id, stage_changed_at)
+);
+
+-- When Forge nudged the approvers about a flag nobody had acted on (agents/forge/ads/approval.ts).
+-- One nudge per flag: set once, never cleared. When the column is first created, every flag already
+-- pending counts as nudged, so switching this on does not re-ping people about old flags.
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'ad_pending_actions' AND column_name = 'nudged_at') THEN
+    ALTER TABLE ad_pending_actions ADD COLUMN nudged_at TIMESTAMPTZ;
+    UPDATE ad_pending_actions SET nudged_at = now() WHERE status = 'pending';
+  END IF;
+END $$;
+
+-- True when a teammate (Mark or Jacob, in Slack) asked for this call, as opposed to the lead asking for a
+-- callback or Iris's own cadence. Those are the only calls that go ahead while a teammate is already
+-- talking to the lead (agents/iris/dial-pending.ts): the person asking has already seen that warning.
+ALTER TABLE iris_pending_calls ADD COLUMN IF NOT EXISTS human_requested BOOLEAN NOT NULL DEFAULT FALSE;
+
+-- A Slack command that covers several leads at once (kind = followup: "follow up on the leads Jacob called
+-- and didn't reach"): the leads, as [{id, name}]. contact_id/contact_name then hold the first lead only.
+ALTER TABLE iris_slack_commands ADD COLUMN IF NOT EXISTS batch JSONB;
+
+-- A week of Iris follow-up on a hand-picked group of leads, and how it ends (agents/iris/followup-cohort.ts).
+-- rounds = extra call rounds still to queue; deadline_at = when "no answer to anything" moves the card to Not Ready.
+-- stage_id / opportunity_id = where the card sat when enrolled; a card someone has moved since is never touched.
+CREATE TABLE IF NOT EXISTS iris_followup_cohort (
+    id BIGSERIAL PRIMARY KEY,
+    client_id TEXT NOT NULL,
+    contact_id TEXT NOT NULL,
+    contact_name TEXT NOT NULL,
+    opportunity_id TEXT NOT NULL,
+    stage_id TEXT NOT NULL,
+    started_at TIMESTAMPTZ NOT NULL,
+    deadline_at TIMESTAMPTZ NOT NULL,
+    rounds TIMESTAMPTZ[] NOT NULL DEFAULT '{}',
+    rounds_done INTEGER NOT NULL DEFAULT 0,
+    status TEXT NOT NULL DEFAULT 'active',  -- active | moved_not_ready | moved_not_interested | engaged | dropped
+    outcome TEXT,
+    resolved_at TIMESTAMPTZ,
+    UNIQUE (client_id, contact_id)
+);
+
+-- The watchdog (agents/iris/watchdog.ts): one row per kind of trouble so it alerts once per cooldown, and a
+-- heartbeat per scheduled job so a stalled job is noticed.
+CREATE TABLE IF NOT EXISTS watchdog_alerts (
+    key TEXT PRIMARY KEY,
+    last_alert_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    times INTEGER NOT NULL DEFAULT 1
+);
+CREATE TABLE IF NOT EXISTS watchdog_heartbeats (
+    name TEXT PRIMARY KEY,
+    at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+-- One morning summary per client per local day (agents/iris/daily-summary.ts), so a double run posts once.
+CREATE TABLE IF NOT EXISTS daily_summaries (
+    client_id TEXT NOT NULL,
+    day TEXT NOT NULL,
+    posted_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    PRIMARY KEY (client_id, day)
+);
+
+-- Set once Iris has texted a lead after the second unanswered call of the normal sequence
+-- (webhooks/vapi-webhook.ts maybeTextAfterMissedCalls), so that text can never go out twice.
+ALTER TABLE iris_pending_calls ADD COLUMN IF NOT EXISTS missed_call_texted BOOLEAN NOT NULL DEFAULT FALSE;
+
+-- Appointments copied from GHL's calendars (agents/lens/dashboard/appointments-sync.ts) so Lens can report
+-- booked / confirmed / attended / no-show without calling GHL on every page load. One row per GHL event;
+-- `status` is normalized (booked | confirmed | attended | no_show | cancelled | invalid | deleted).
+-- start_time / booked_at are real instants (GHL sends the offset). A row whose event disappears from GHL
+-- inside the synced window is marked 'deleted' rather than kept as a phantom booking.
+CREATE TABLE IF NOT EXISTS ghl_appointments (
+    id BIGSERIAL PRIMARY KEY,
+    client_id TEXT NOT NULL,
+    appointment_id TEXT NOT NULL,
+    contact_id TEXT,
+    calendar_id TEXT,
+    title TEXT,
+    start_time TIMESTAMPTZ NOT NULL,
+    end_time TIMESTAMPTZ,
+    booked_at TIMESTAMPTZ,
+    status TEXT NOT NULL,
+    raw_status TEXT,
+    assigned_user_id TEXT,
+    synced_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    UNIQUE (client_id, appointment_id)
+);
+CREATE INDEX IF NOT EXISTS idx_ghl_appts_client_start ON ghl_appointments(client_id, start_time);
+CREATE INDEX IF NOT EXISTS idx_ghl_appts_contact ON ghl_appointments(client_id, contact_id);
+
+-- Marketing costs other than ad spend, entered by hand per client and day (agency fees, creative, tools...).
+-- Lens adds them to ad spend for Marketing ROI only; ROAS always uses ad spend alone.
+CREATE TABLE IF NOT EXISTS lens_other_costs (
+    id BIGSERIAL PRIMARY KEY,
+    client_id TEXT NOT NULL,
+    cost_date DATE NOT NULL,
+    amount DOUBLE PRECISION NOT NULL,
+    label TEXT,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_lens_other_costs ON lens_other_costs(client_id, cost_date);
+
+-- The lead review (agents/iris/lead-review.ts): each nightly run's findings, and leads someone asked it to stop
+-- flagging for a while ("snoozed", e.g. a lead a teammate is handling off the system).
+CREATE TABLE IF NOT EXISTS lead_review_runs (
+    id BIGSERIAL PRIMARY KEY,
+    client_id TEXT NOT NULL,
+    ran_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    scanned INTEGER NOT NULL,
+    findings JSONB NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_lead_review_runs ON lead_review_runs(client_id, ran_at DESC);
+CREATE TABLE IF NOT EXISTS lead_review_snoozes (
+    client_id TEXT NOT NULL,
+    contact_id TEXT NOT NULL,
+    contact_name TEXT NOT NULL,
+    until TIMESTAMPTZ NOT NULL,
+    reason TEXT,
+    requested_by TEXT,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    PRIMARY KEY (client_id, contact_id)
+);
+
+-- Follow-up texts the ASAP watch (agents/iris/asap-watch.ts) sent, so it can space them out and stop after a few.
+CREATE TABLE IF NOT EXISTS asap_watch_texts (
+    id BIGSERIAL PRIMARY KEY,
+    client_id TEXT NOT NULL,
+    contact_id TEXT NOT NULL,
+    text TEXT NOT NULL,
+    outcome TEXT NOT NULL,
+    sent_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_asap_watch_texts_contact ON asap_watch_texts(client_id, contact_id, sent_at);
+
+-- Texts Iris sent a lead who rang the number back and was not picked up (agents/iris/callback-watch.ts).
+-- One row per inbound call (the GHL message id), claimed BEFORE sending so a call is never answered twice.
+CREATE TABLE IF NOT EXISTS callback_texts (
+    id BIGSERIAL PRIMARY KEY,
+    client_id TEXT NOT NULL,
+    contact_id TEXT NOT NULL,
+    call_message_id TEXT NOT NULL,
+    call_at TIMESTAMPTZ NOT NULL,
+    text TEXT,
+    outcome TEXT,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    UNIQUE (client_id, call_message_id)
+);
+CREATE INDEX IF NOT EXISTS idx_callback_texts_contact ON callback_texts(client_id, contact_id, created_at);

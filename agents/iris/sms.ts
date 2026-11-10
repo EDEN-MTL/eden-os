@@ -12,14 +12,16 @@
  * with no iris_pending_calls row at all, or one already resolved, is simply
  * not Iris's to answer, and the caller falls through.
  */
+import { linkLineFor } from "./links";
 import { query } from "../../shared/db";
 import { NormalisedLead, buildKeyToId } from "../scout/intake";
 import { loadIrisConfig, loadClientBranding } from "./index";
-import { buildSmsQualificationPrompt } from "./scripts";
+import { buildSmsQualificationPrompt, buildNoShowSmsPrompt } from "./scripts";
+import { NO_SHOW_SOURCE } from "./no-show-state";
 import { classifyInboundText, lastInboundText, recentTexts } from "./text-signals";
 import { appendNoteToContact } from "./notes";
 import { checkHumanTouch, DEFAULT_HUMAN_HANDS_OFF_DAYS } from "./human-touch";
-import { IrisConfig, qualify, QualificationAnswers } from "./qualification";
+import { IrisConfig, qualify, QualificationAnswers, callbackCalendarForIntent, CallIntent } from "./qualification";
 import { clampToLegalCallingWindow, formatLocal } from "./cadence";
 import { chatWithTools, ChatMessage, ToolDef } from "../../shared/claude";
 import { loadHistory, appendHistory } from "../../shared/conversation-memory";
@@ -39,10 +41,11 @@ const MAX_SMS_TOOL_TURNS = 6;
 // reasoning text-signals.ts already gives for its own local MIN_MINUTES_OUT
 // copy: both name the same real Slack channel, but there's no shared owner
 // worth introducing an import for.
-const CALL_LOG_CHANNEL = process.env.IRIS_CALL_LOG_CHANNEL || "iris-call-logs";
+import { CALL_LOG_CHANNEL } from "./channels";
 
-function historyKey(clientId: string, contactId: string): string {
-  return `sms:${clientId}:${contactId}`;
+function historyKey(clientId: string, contactId: string, noShowFollowupId?: string): string {
+  // A no-show follow-up is its own conversation: it must not inherit the lead's earlier qualification thread.
+  return noShowFollowupId ? `sms:${clientId}:${contactId}:no-show:${noShowFollowupId}` : `sms:${clientId}:${contactId}`;
 }
 
 interface IrisLeadRow {
@@ -60,6 +63,28 @@ async function loadIrisLeadRow(contactId: string): Promise<IrisLeadRow | null> {
     [contactId]
   );
   return rows[0] ?? null;
+}
+
+/**
+ * "Please no Calls" (Kelly Joseph, 2026-11-06, replying to the intake text) means no PHONE calls — not "I'm
+ * not interested". The old handling closed her row, tagged her "do not call" (which every other watcher reads
+ * as stop-everything) and told her we would never reach out again. Now the row stays open for text with its
+ * call time pushed to infinity so nothing dials her, the lead is flagged noCalls so the text prompt qualifies
+ * by text and asks when an agent can talk to her, and the tag is "no calls" — checked before every dial
+ * (dial-pending.ts) and by Slack call requests, but not a reason to stop texting.
+ */
+export const NO_CALLS_TAG = "no calls";
+
+export async function markLeadNoCalls(clientId: string, contactId: string, ghl: { locationId: string; apiKey: string }, reason = "lead asked for no calls — text only"): Promise<void> {
+  await query(
+    `UPDATE iris_pending_calls
+     SET lead = lead || '{"noCalls": true}'::jsonb, call_after = 'infinity', status = 'pending', resolution_reason = $3, resolved_at = NULL
+     WHERE client_id = $1 AND contact_id = $2`,
+    [clientId, contactId, reason]
+  );
+  await addContactTags(contactId, [NO_CALLS_TAG], ghl.locationId, ghl.apiKey).catch((error) => {
+    console.error(`[IRS-SMS] Failed to tag contact ${contactId} as "${NO_CALLS_TAG}":`, error instanceof Error ? error.message : error);
+  });
 }
 
 /** Ends the calling sequence outright — a concluded text exchange (opted out or handed off) is not "gone cold," it's actually done. */
@@ -108,7 +133,7 @@ export interface InboundSmsOptions {
 
 const realWait = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
 
-const SMS_TOOLS: ToolDef[] = [
+export const SMS_TOOLS: ToolDef[] = [
   {
     name: "save_qualification_notes",
     description:
@@ -150,10 +175,10 @@ const SMS_TOOLS: ToolDef[] = [
  * model — so a lead is scored identically whether they answered on the
  * phone or by text.
  */
-const SCHEDULE_TRANSFER_CALL_TOOL: ToolDef = {
+export const SCHEDULE_TRANSFER_CALL_TOOL: ToolDef = {
   name: "schedule_transfer_call",
   description:
-    "Queues a phone call from Iris to this lead so they can be live-transferred to an agent. Call ONCE, after save_qualification_notes and after the lead has said when they can talk. Returns whether the call was scheduled and exactly what to text back.",
+    "Queues a phone call from Iris to this lead so they can be live-transferred to an agent. Call ONCE, right after save_qualification_notes, with when = \"now\" unless the lead already named a time. Returns exactly what to text back.",
   input_schema: {
     type: "object",
     properties: {
@@ -173,6 +198,44 @@ const SCHEDULE_TRANSFER_CALL_TOOL: ToolDef = {
       },
     },
     required: ["intent", "when"],
+  },
+};
+
+/**
+ * Booking by text (Mark, 2026-10-15): once a lead is prequalified, Iris asks when they're
+ * free for a quick call with an agent and, if they name a time, books it on the real
+ * calendar — the same live-calendar check and booking a phone call uses. Offered with the
+ * call handoff (config.smsCallHandoff).
+ */
+export const CHECK_AVAILABILITY_SMS_TOOL: ToolDef = {
+  name: "check_availability",
+  description:
+    "Checks the real calendar for the time the lead asked for. Read-only — it never books anything. Returns whether that exact time is open, or the real open times nearest it. Call it whenever the lead names a day/time for the call, BEFORE book_appointment.",
+  input_schema: {
+    type: "object",
+    properties: {
+      intent: { type: "string", enum: ["buyer", "seller", "downsize", "upgrading"], description: "Which calendar: seller/downsize use the seller calendar, buyer/upgrading the buyer one." },
+      requestedTime: {
+        type: "string",
+        description: 'The moment the lead named, in THEIR local time, as an ISO 8601 timestamp WITHOUT a timezone offset (e.g. "2026-10-16T14:00:00"), worked out from the current date and time given at the top of your instructions.',
+      },
+    },
+    required: ["intent", "requestedTime"],
+  },
+};
+
+export const BOOK_APPOINTMENT_SMS_TOOL: ToolDef = {
+  name: "book_appointment",
+  description:
+    "Books the call as a real calendar appointment. Only after check_availability returned that exact time as available (or one of its real open times the lead picked) — pass its isoTime VERBATIM, never one you worked out yourself. Returns whether it was really booked.",
+  input_schema: {
+    type: "object",
+    properties: {
+      intent: { type: "string", enum: ["buyer", "seller", "downsize", "upgrading"] },
+      isoTime: { type: "string", description: "The exact isoTime value check_availability gave you, copied verbatim." },
+      notes: { type: "string", description: "One short line summarising what you gathered (type of home, area, timeline, budget) so the agent has it. Only facts the lead actually gave." },
+    },
+    required: ["intent", "isoTime"],
   },
 };
 
@@ -196,13 +259,11 @@ async function scheduleTransferCall(
     financing: ["cash", "pre-approved", "in-progress", "not-approved"].includes(input?.financing) ? input.financing : null,
   };
   const result = qualify(config, answers);
-  if (result.outcome !== "transfer") {
-    return (
-      `NOT scheduled — they aren't ready for an agent call yet (score ${result.score}, needs ${config.warmScoreThreshold}: ` +
-      `${result.scoreReasons.join(", ") || "not enough information"}). Do not promise a call. ` +
-      `Call request_human_followup instead and tell them someone from the team will follow up.`
-    );
-  }
+  // No score bar here. Whoever Iris took through every question by text is qualified, and
+  // she calls to connect them (Mark, 2026-10-15). Samir Benslimane answered everything
+  // — a seller, $450K, address given — but the numeric score (25, bar 40) would have
+  // refused the call and left him with a vague "someone will reach out". The score is
+  // still kept for the Slack note below.
 
   const now = Date.now();
   let when = new Date(now + TRANSFER_CALL_MIN_DELAY_MINUTES * 60_000);
@@ -230,15 +291,15 @@ async function scheduleTransferCall(
   const localTime = when.toLocaleString("en-US", { timeZone: timezone, weekday: "short", hour: "numeric", minute: "2-digit" });
   await sendMessage(AGENT_ID, {
     channel: CALL_LOG_CHANNEL,
-    text: `📞 Iris qualified a lead over text (score ${result.score}) and will call them ${localTime} for a live transfer — contact ${contactId}.`,
+    text: `📞 Iris qualified a lead over text (score ${result.score}) and will call them ${localTime} for a live transfer — contact ${contactId}.${await linkSuffix(clientId, contactId)}`,
   }).catch((error) => {
     console.error(`[IRS-SMS] Failed to post transfer-call notice to Slack:`, error instanceof Error ? error.message : error);
   });
 
   const minutesOut = Math.round((when.getTime() - now) / 60_000);
   return minutesOut <= 10
-    ? "Scheduled — Iris will call them in the next few minutes. Tell them to expect a call shortly from our team, then stop."
-    : `Scheduled for ${localTime} (their local time). Confirm that time with them in one short text, then stop.`;
+    ? "Scheduled. Send ONE short text: Iris will give them a call shortly to connect them with one of our agents, and if it's not a good time or they'd rather another time, that's fine — it can be set up on the call. Then stop."
+    : `Scheduled for ${localTime} (their local time). Send ONE short text: Iris will call at ${localTime} to connect them with one of our agents, and if another time suits them better they can say so on the call. Then stop.`;
 }
 
 async function executeSmsTool(
@@ -248,8 +309,10 @@ async function executeSmsTool(
   ghlConfig: { locationId: string; apiKey: string },
   name: string,
   input: any,
-  timezone: string
+  timezone: string,
+  source: string | null = null
 ): Promise<string> {
+  const isNoShow = source === NO_SHOW_SOURCE;
   if (name === "schedule_transfer_call") {
     if (!config.smsCallHandoff) throw new Error("schedule_transfer_call is not enabled for this client");
     return scheduleTransferCall(clientId, contactId, config, timezone, input);
@@ -276,18 +339,40 @@ async function executeSmsTool(
   if (name === "request_human_followup") {
     const summary = typeof input?.summary === "string" && input.summary.trim() ? input.summary.trim() : "(no summary given)";
 
-    await addContactTags(contactId, ["iris sms qualified"], ghlConfig.locationId, ghlConfig.apiKey).catch((error) => {
-      console.error(`[IRS-SMS] Failed to tag contact ${contactId}:`, error instanceof Error ? error.message : error);
-    });
-    await finishIrisLead(clientId, contactId, "qualified via text — handed off for human follow-up");
+    if (!isNoShow) {
+      await addContactTags(contactId, ["iris sms qualified"], ghlConfig.locationId, ghlConfig.apiKey).catch((error) => {
+        console.error(`[IRS-SMS] Failed to tag contact ${contactId}:`, error instanceof Error ? error.message : error);
+      });
+    }
+    await finishIrisLead(clientId, contactId, isNoShow ? "no-show follow-up — handed to a teammate" : "qualified via text — handed off for human follow-up");
     await sendMessage(AGENT_ID, {
       channel: CALL_LOG_CHANNEL,
-      text: `💬 Iris qualified a lead over text and needs a human to book them:\n${summary}`,
+      text: `${isNoShow ? "🔁 A no-show lead replied and needs a person (Iris stopped texting)" : "💬 Iris qualified a lead over text and needs a human to book them"}:\n${summary}${await linkSuffix(clientId, contactId)}`,
     }).catch((error) => {
       console.error(`[IRS-SMS] Failed to post handoff to Slack:`, error instanceof Error ? error.message : error);
     });
 
     return "Handed off to the team. Tell the lead briefly that someone will reach out to book a time — never promise a specific time yourself — then stop.";
+  }
+
+  if (name === "check_availability" || name === "book_appointment") {
+    if (!config.smsCallHandoff && !isNoShow) throw new Error(`${name} is not enabled for this client`);
+    const intent: CallIntent = ["buyer", "seller", "downsize", "upgrading"].includes(input?.intent) ? input.intent : "unknown";
+    const calendarId = callbackCalendarForIntent(config, intent);
+    if (!calendarId) return "There's no calendar set up for this kind of lead — don't try to book. Call request_human_followup so a teammate books a time.";
+    // Loaded on demand: the booking logic lives with the phone tools (webhooks/vapi-tools.ts), which import this agent.
+    const tools = await import("../../webhooks/vapi-tools");
+
+    if (name === "check_availability") return tools.handleCheckAvailability(clientId, calendarId, input?.requestedTime);
+
+    const leadNotes = typeof input?.notes === "string" ? input.notes.trim() : "";
+    const outcome = await tools.handleBookAppointment(clientId, contactId, calendarId, intent, input?.isoTime, leadNotes, undefined, undefined, "Iris (by text)");
+    if (!outcome.success) return outcome.result.replace(/Do not tell the lead there's a technical issue\.?/g, "");
+    // The lead is booked: stop any call Iris had lined up for them, and tell the team.
+    await finishIrisLead(clientId, contactId, isNoShow ? "no-show rebooked by text — appointment made" : "qualified and booked by text — appointment made");
+    if (!isNoShow) await addContactTags(contactId, ["iris sms qualified"], ghlConfig.locationId, ghlConfig.apiKey).catch(() => {});
+    const when = outcome.result.match(/^Booked for (.+?)\. /)?.[1] ?? "the time you agreed";
+    return `Booked for ${when} — it's a real appointment now. Send ONE short text confirming it ("You're all set for ${when} — one of our agents will give you a call then.") and stop. Never mention a different time.`;
   }
 
   throw new Error(`Unknown SMS tool: ${name}`);
@@ -397,7 +482,8 @@ async function handleInboundSms(contactId: string, text: string, options: Inboun
 
   const timezone = (await getLocationTimezone(ghlConfig.locationId, ghlConfig.apiKey).catch(() => null)) || config.timezone || "America/St_Johns";
 
-  const key = historyKey(clientId, contactId);
+  const isNoShow = row.source === NO_SHOW_SOURCE;
+  const key = historyKey(clientId, contactId, isNoShow ? (row.lead as any)?.noShow?.followupId : undefined);
   const history = await loadHistory(AGENT_ID, key).catch((error) => {
     console.error(`[IRS-SMS] Failed to load conversation history for ${contactId}:`, error instanceof Error ? error.message : error);
     return [] as ChatMessage[];
@@ -412,6 +498,11 @@ async function handleInboundSms(contactId: string, text: string, options: Inboun
     await addContactTags(contactId, ["do not call"], ghlConfig.locationId, ghlConfig.apiKey).catch((error) => {
       console.error(`[IRS-SMS] Failed to tag contact ${contactId} as "do not call":`, error instanceof Error ? error.message : error);
     });
+    // Closing a lead can't be undone by someone who never saw it, so the exact words go to the team right away.
+    await sendMessage(AGENT_ID, {
+      channel: CALL_LOG_CHANNEL,
+      text: `🚫 *${(row.lead as any)?.name ?? contactId}* opted out by text — closed, tagged "do not call". Their words: "${signal.quote}". If that was a misread, reopen them.${await linkSuffix(clientId, contactId)}`,
+    }).catch(() => {});
     const reply = "No problem — we won't reach out again. Take care!";
     await pauseLikeAHuman(reply);
     await sendSMS(contactId, reply, ghlConfig.locationId, ghlConfig.apiKey).catch((error) => {
@@ -420,6 +511,33 @@ async function handleInboundSms(contactId: string, text: string, options: Inboun
     await appendHistory(AGENT_ID, key, "user", text).catch(() => {});
     await appendHistory(AGENT_ID, key, "assistant", reply).catch(() => {});
     return true;
+  }
+
+  // A message that MIGHT be a stop (temporary, about one thing, a mood). Reversible by default: nothing is closed or tagged,
+  // nothing dials, Iris asks what they mean, and the team sees the words in Slack. A plain "stop" next turn closes them.
+  const stopCheck = signal.type === "unsure_stop";
+  if (stopCheck) {
+    await query(
+      `UPDATE iris_pending_calls SET call_after = 'infinity', status = 'pending', resolution_reason = 'lead may have asked to stop — checking with them, no calls meanwhile', resolved_at = NULL
+       WHERE client_id = $1 AND contact_id = $2`,
+      [clientId, contactId]
+    );
+    await sendMessage(AGENT_ID, {
+      channel: CALL_LOG_CHANNEL,
+      text: `❓ *${(row.lead as any)?.name ?? contactId}* sent something that might mean "stop": "${text.slice(0, 200)}". I did NOT close them or tag them. No calls will go out, and Iris is asking what they mean.${await linkSuffix(clientId, contactId)}`,
+    }).catch(() => {});
+  }
+
+  // No calls, but still a prospect: stay on text, qualify, and ask when an agent can talk to them.
+  let noCalls = (row.lead as any)?.noCalls === true;
+  if (signal.type === "no_calls" && !noCalls) {
+    noCalls = true;
+    await markLeadNoCalls(clientId, contactId, ghlConfig);
+    await appendNoteToContact(clientId, contactId, "Iris: lead asked not to be called — keeping to text and still qualifying.").catch(() => {});
+    await sendMessage(AGENT_ID, {
+      channel: CALL_LOG_CHANNEL,
+      text: `📵 *${(row.lead as any)?.name ?? contactId}* texted "no calls". Not treating that as an opt-out: no calls will go out, and Iris is qualifying by text and asking when an agent can talk to them.${await linkSuffix(clientId, contactId)}`,
+    }).catch(() => {});
   }
 
   // Real mistake found live, 2026-09-25 (Kaitlyn Sheppard): dial-pending.ts's
@@ -435,9 +553,15 @@ async function handleInboundSms(contactId: string, text: string, options: Inboun
   // callback-time aside comes up mid-conversation — there, falling through
   // to the normal loop is correct, since the model has full context to
   // handle it naturally.
-  if (signal.type === "schedule_for") await recordTextCallback(clientId, contactId, signal.when, timezone);
+  // Mid-conversation, with booking on, a named time is the lead answering "when are you free for a
+  // quick call?" — the model books it as a real appointment. Queuing an Iris callback as well would
+  // put two things on the calendar for one request. The first reply to the initial outreach text
+  // (history empty) keeps the old callback behavior.
+  // A no-show follow-up always books the time itself, even on the first reply.
+  const bookingHandlesTimes = isNoShow || (config.smsCallHandoff === true && history.length > 0);
+  if (signal.type === "schedule_for" && !bookingHandlesTimes) await recordTextCallback(clientId, contactId, signal.when, timezone);
 
-  if (signal.type === "schedule_for" && history.length === 0) {
+  if (signal.type === "schedule_for" && history.length === 0 && !isNoShow) {
     const reply = "Sounds good — Iris will give you a call then. Talk soon!";
     await pauseLikeAHuman(reply);
     await sendSMS(contactId, reply, ghlConfig.locationId, ghlConfig.apiKey).catch((error) => {
@@ -465,19 +589,36 @@ async function handleInboundSms(contactId: string, text: string, options: Inboun
   // reasoning text-signals.ts's own doc comment already gives for using an
   // LLM pass over regex here.
   const initialOutreachText =
-    history.length === 0
+    history.length === 0 && !isNoShow
       ? (await lastInboundText(contactId, ghlConfig.locationId, ghlConfig.apiKey).catch(() => null))?.precedingOutbound ?? null
       : null;
 
   const recent = await recentTextsOnceAutomationQuiet(contactId, ghlConfig, wait);
 
-  const systemPrompt = buildSmsQualificationPrompt(config, row.lead, branding.brandName, branding.city, {
-    recentTexts: recent,
-    origin: "form",
-    callHandoff: config.smsCallHandoff,
-    initialOutreachText,
-  });
-  const tools = config.smsCallHandoff ? [...SMS_TOOLS, SCHEDULE_TRANSFER_CALL_TOOL] : SMS_TOOLS;
+  const nowLocal = new Date().toLocaleString("en-US", { timeZone: timezone, weekday: "long", year: "numeric", month: "long", day: "numeric", hour: "numeric", minute: "2-digit" });
+  const noShowContext = isNoShow ? (row.lead as any)?.noShow : null;
+  const systemPrompt = noShowContext
+    ? buildNoShowSmsPrompt(row.lead, branding.brandName, branding.city, noShowContext, { recentTexts: recent, nowLocal, timezoneName: timezone })
+    : buildSmsQualificationPrompt(config, row.lead, branding.brandName, branding.city, {
+        noCalls,
+        stopCheck,
+        recentTexts: recent,
+        origin: "form",
+        callHandoff: config.smsCallHandoff,
+        initialOutreachText,
+        nowLocal,
+        timezoneName: timezone,
+      });
+  const requestHumanFollowup: ToolDef = {
+    ...SMS_TOOLS.find((t) => t.name === "request_human_followup")!,
+    description:
+      "Ends this conversation and tells the team a real person should take over. Call it ONCE when the lead is no longer interested, already has another agent, changed their plans, or wants a person to reach out instead of booking by text.",
+  };
+  const tools = noShowContext
+    ? [requestHumanFollowup, CHECK_AVAILABILITY_SMS_TOOL, BOOK_APPOINTMENT_SMS_TOOL]
+    : config.smsCallHandoff
+      ? [...SMS_TOOLS, ...(noCalls ? [] : [SCHEDULE_TRANSFER_CALL_TOOL]), CHECK_AVAILABILITY_SMS_TOOL, BOOK_APPOINTMENT_SMS_TOOL]
+      : SMS_TOOLS;
 
   let working: ChatMessage[] = [...history, { role: "user", content: text }];
   let finalText = "";
@@ -500,7 +641,12 @@ async function handleInboundSms(contactId: string, text: string, options: Inboun
         const call = tu as { id: string; name: string; input: any };
         let content: string;
         try {
-          content = await executeSmsTool(clientId, contactId, config, ghlConfig, call.name, call.input, timezone);
+          content =
+            stopCheck
+              ? "Error: no tools on this turn — just ask the lead what they mean."
+              : noCalls && call.name === "schedule_transfer_call"
+              ? "Error: this lead asked for no phone calls — do not schedule one. Ask when an agent can reach them, or use request_human_followup."
+              : await executeSmsTool(clientId, contactId, config, ghlConfig, call.name, call.input, timezone, row.source);
         } catch (error) {
           content = `Error: ${error instanceof Error ? error.message : String(error)}`;
         }
@@ -538,4 +684,10 @@ async function handleInboundSms(contactId: string, text: string, options: Inboun
 export async function hasActiveSmsConversation(clientId: string, contactId: string): Promise<boolean> {
   const history = await loadHistory(AGENT_ID, historyKey(clientId, contactId), 1).catch(() => []);
   return history.length > 0;
+}
+
+/** "\n🔗 …" — the GHL contact, so the text thread is one click away — or "" when no link can be built. */
+async function linkSuffix(clientId: string, contactId: string): Promise<string> {
+  const line = await linkLineFor(clientId, contactId);
+  return line ? `\n${line}` : "";
 }

@@ -27,12 +27,15 @@ import { NormalisedLead } from "../scout/intake";
 import { loadIrisConfig, loadClientBranding } from "./index";
 import { buildLeadQualificationPrompt, extractFirstName } from "./scripts";
 import { placeCall, CallingDisabledError } from "./calling";
-import { decideNextAttempt, nextAttemptTime, nextFirstSlotTime, clampToLegalCallingWindow } from "./cadence";
+import { applyPreferredTime, decideNextAttempt, isStatedCallbackTime, nextAttemptTime, nextFirstSlotTime, nextSlotAfter, clampToLegalCallingWindow, nextOpenCallDay, timeOfDayLocal } from "./cadence";
 import { transferNumberForIntent, callbackCalendarForIntent } from "./qualification";
 import { classifyInboundText, lastInboundText } from "./text-signals";
 import { checkHumanTouch, DEFAULT_HUMAN_HANDS_OFF_DAYS } from "./human-touch";
-import { hasActiveSmsConversation } from "./sms";
-import { getGhlConfig, getLocationTimezone, addContactTags } from "../../shared/ghl";
+import { hasActiveSmsConversation, markLeadNoCalls, NO_CALLS_TAG } from "./sms";
+import { sendMessage } from "../../shared/slack";
+import { CALL_LOG_CHANNEL } from "./channels";
+import { NO_SHOW_SOURCE, noShowStillApplies } from "./no-show-state";
+import { getGhlConfig, getLocationTimezone, addContactTags, getContact } from "../../shared/ghl";
 
 /**
  * Mark's confirmed design, 2026-09-23 (two-way SMS qualification): while a
@@ -44,6 +47,9 @@ import { getGhlConfig, getLocationTimezone, addContactTags } from "../../shared/
  * lead who never gets called at all.
  */
 const SMS_ACTIVE_COLD_OFF_HOURS = 24;
+/** Texts from the lead older than this are history, not an instruction — see resolveOne's text-signal check. */
+const STALE_INBOUND_TEXT_DAYS = 14;
+
 /** How soon to look again once a call is paused for active texting — not a real cadence attempt, so attempts_made is never bumped for this. */
 const SMS_PAUSE_RECHECK_MINUTES = 60;
 /** Mark's spec, 2026-10-01: call ~5 minutes after a clear text consent to being called, not immediately — same reasoning as scheduleTransferCall's own TRANSFER_CALL_MIN_DELAY_MINUTES (agents/iris/sms.ts). */
@@ -71,6 +77,8 @@ interface PendingCallRow {
   source: string | null;
   /** The lead agreed to this call over text. See schema.sql. */
   sms_scheduled: boolean;
+  /** A teammate asked for this call in Slack. See schema.sql. */
+  human_requested?: boolean;
 }
 
 /** Ends the sequence for this row — no further attempts will be scheduled. */
@@ -124,7 +132,20 @@ export async function reopenForNextAttempt(
   if (decision !== "attempt") return false;
 
   const timeZone = config.timezone || CLIENT_TIMEZONE;
-  let callAfter = nextAttemptTime(config.outreachCadence, attemptsMade + 1, createdAt, timeZone);
+
+  // Day 1 is the day of the FIRST CALL, not the day the lead arrived. Cody Kennie
+  // (2026-10-18) came in at 11:47 PM Saturday, so "day 1" was Saturday — and when his
+  // first call went out Sunday at 10am, Saturday's 2pm slot and Sunday's 10am slot had
+  // both already passed, so attempts 2 and 3 fired five minutes apart, back to back.
+  const first = await query<{ first_call: Date | null }>(
+    `SELECT min(l.created_at) AS first_call
+     FROM iris_call_log l JOIN iris_pending_calls p ON p.contact_id = l.contact_id AND p.client_id = l.client_id
+     WHERE p.id = $1 AND l.created_at >= p.created_at`,
+    [id]
+  ).catch(() => [] as { first_call: Date | null }[]);
+  const sequenceStart = first[0]?.first_call ?? createdAt;
+
+  let callAfter = nextAttemptTime(config.outreachCadence, attemptsMade + 1, sequenceStart, timeZone);
   if (!callAfter) return false;
   // Same clamp as the old eager-reschedule path — a lead that comes in
   // outside the 10am-2pm window can make the next slot's theoretical time
@@ -132,8 +153,10 @@ export async function reopenForNextAttempt(
   // 2026-09-11 — this fallback used to be a bare "+5 minutes from now"
   // with no time-of-day check at all, meaning a retry due at, say, 11pm
   // could fire immediately instead of waiting for a legal hour.
-  if (callAfter.getTime() <= Date.now()) {
-    callAfter = clampToLegalCallingWindow(new Date(Date.now() + 5 * 60 * 1000), timeZone);
+  // A slot that's already behind us isn't made up in minutes — it waits for the next real
+  // slot, at least an hour out, so a lead is never called twice in quick succession.
+  if (callAfter.getTime() <= Date.now() + 60 * 60 * 1000) {
+    callAfter = clampToLegalCallingWindow(nextSlotAfter(config.outreachCadence, timeZone, new Date(Date.now() + 60 * 60 * 1000)), timeZone);
   }
 
   await query(
@@ -143,6 +166,30 @@ export async function reopenForNextAttempt(
     [id, callAfter]
   );
   return true;
+}
+
+/**
+ * A no-show follow-up call went unanswered. The next call is the next real slot (10 AM or 2 PM, at least
+ * an hour away), until maxCalls have been placed. attempts_made was already bumped when the call went out.
+ * Never moves the card or tags the lead. Returns the new time, or null when the calls are used up.
+ */
+export async function reopenNoShowAfterMiss(id: number, clientId: string, attemptsMade: number): Promise<Date | null> {
+  const config = loadIrisConfig(clientId);
+  if (!config?.noShowFollowUp || attemptsMade >= config.noShowFollowUp.maxCalls) return null;
+  const timeZone = config.timezone || CLIENT_TIMEZONE;
+  const callAfter = clampToLegalCallingWindow(nextSlotAfter(config.outreachCadence, timeZone, new Date(Date.now() + 60 * 60 * 1000)), timeZone);
+  await query(
+    `UPDATE iris_pending_calls
+     SET call_after = $2, status = 'pending', resolution_reason = 'no-show follow-up: not answered, trying again', resolved_at = NULL
+     WHERE id = $1`,
+    [id, callAfter]
+  );
+  return callAfter;
+}
+
+/** Ends a no-show follow-up whose calls are used up. */
+export async function closeNoShowFollowUp(id: number, reason: string): Promise<void> {
+  await query(`UPDATE iris_pending_calls SET status = 'skipped', resolution_reason = $2, resolved_at = now() WHERE id = $1`, [id, reason]);
 }
 
 /** Mark's spec, 2026-10-05: a callback the lead asked for that goes unanswered gets ONE quick retry about this long after the miss. */
@@ -174,7 +221,9 @@ export async function reopenAfterMissedCallback(
   clientId: string,
   attemptsMade: number,
   createdAt: Date,
-  priorMisses: number
+  priorMisses: number,
+  /** "16:30": the clock time the lead asked for. Later retries keep to it instead of the cadence's 10 AM / 2 PM. */
+  preferredTime: string | null = null
 ): Promise<MissedCallbackOutcome> {
   const config = loadIrisConfig(clientId);
   if (!config) return { reopened: false };
@@ -195,6 +244,7 @@ export async function reopenAfterMissedCallback(
     const slot = nextAttemptTime(config.outreachCadence, attemptsMade + 1, createdAt, timeZone);
     const floor = nextFirstSlotTime(config.outreachCadence, timeZone, now);
     callAfter = slot && slot.getTime() > floor.getTime() ? slot : floor;
+    if (preferredTime) callAfter = applyPreferredTime(callAfter, preferredTime, timeZone, now);
   }
 
   await query(
@@ -297,6 +347,26 @@ async function resolveOne(row: PendingCallRow): Promise<void> {
     return;
   }
 
+  // Holidays (iris.noCallDates): no calls today, whatever the row's source —
+  // roll it to the next open day at the first slot. Not an attempt, so
+  // attempts_made stays put.
+  const openDay = nextOpenCallDay(config.noCallDates, config.timezone || CLIENT_TIMEZONE);
+  if (openDay) {
+    await query(`UPDATE iris_pending_calls SET call_after = $2, resolution_reason = 'no-call day — moved to next open day' WHERE id = $1`, [row.id, openDay]);
+    return;
+  }
+
+  // A no-show follow-up stops the moment the lead is no longer an unhandled no-show: an agent moved
+  // the card on, or they already have a new appointment. GHL unreadable: leave it due and retry.
+  if (row.source === NO_SHOW_SOURCE && config.noShowFollowUp) {
+    const check = await noShowStillApplies(row.client_id, row.contact_id, config.noShowFollowUp.stageName, config.timezone || CLIENT_TIMEZONE);
+    if (check.applies === "unknown") return;
+    if (check.applies === false) {
+      await finish(row.id, "skipped", `no-show follow-up stopped: ${check.reason}`);
+      return;
+    }
+  }
+
   let lead: NormalisedLead;
 
   if (row.is_explicit_callback) {
@@ -317,7 +387,7 @@ async function resolveOne(row: PendingCallRow): Promise<void> {
     // go-round, and transferring them again is the entire point. (The
     // stage-based firstTouch check isn't on this path at all — explicit
     // callbacks never ran it — so this tag check is the only gate to lift.)
-    if (fresh.qualified && row.source !== "ember") {
+    if (fresh.qualified && row.source !== "ember" && row.source !== NO_SHOW_SOURCE) {
       await finish(row.id, "skipped", "already qualified since the callback was requested");
       return;
     }
@@ -333,6 +403,7 @@ async function resolveOne(row: PendingCallRow): Promise<void> {
     // working for the callback dial instead of silently losing the
     // transfer tool.
     lead = { ...fresh, intent: fresh.intent !== "unknown" ? fresh.intent : row.lead.intent };
+    if (row.source === NO_SHOW_SOURCE) (lead as any).noShow = (row.lead as any).noShow;
   } else {
     // Fails closed by design (see recheckFirstTouch's own doc comment): both
     // "definitely already touched" and "couldn't verify" stop the sequence.
@@ -387,22 +458,69 @@ async function resolveOne(row: PendingCallRow): Promise<void> {
   // comment for why. Best-effort: any failure here (no GHL config, the
   // fetch itself failing) just falls through to the normal dial, same
   // fail-toward-"proceed as before" philosophy as the rest of this file.
-  // Off unless the client turns it on (humanHandsOff.blocksCalls): a teammate's
-  // text normally stops Iris TEXTING that lead, not calling them.
-  if (ghlConfig && config.humanTextBlocksCalls) {
+  // A teammate talking to this lead means Iris leaves them alone, calls included (Mark, 2026-10-21, after
+  // Iris called and moved Sabrina Marie the day after Jacob phoned and texted her). Goes ahead only when a
+  // teammate asked for THIS call in Slack, or for a cold-lead sweep Mark lined up by hand: those people
+  // have already been shown that a teammate is in touch.
+  const humanAsked = row.human_requested === true || row.source === SWEEP_SOURCE;
+  if (ghlConfig && config.humanTextBlocksCalls && !humanAsked) {
     const humanTouch = await checkHumanTouch(row.contact_id, ghlConfig.locationId, ghlConfig.apiKey, config.humanHandsOffDays ?? DEFAULT_HUMAN_HANDS_OFF_DAYS);
     if (humanTouch.status === "human") {
-      await finish(row.id, "skipped", "a teammate texted this lead recently — Iris stays out");
+      await finish(row.id, "skipped", `a teammate is talking to this lead (${humanTouch.kind} ${humanTouch.at}) — Iris stays out`);
+      await sendMessage("iris", {
+        channel: CALL_LOG_CHANNEL,
+        text: `🤝 Not calling *${row.lead?.name ?? row.contact_id}*: a teammate ${humanTouch.kind === "call" ? "called" : "texted"} them recently, so Iris is leaving the lead alone (no call, no stage move).`,
+      }).catch(() => {});
       return;
     }
     if (humanTouch.status === "unknown") return; // can't verify — leave it due and try again next run
   }
 
   if (ghlConfig) {
-    const inbound = await lastInboundText(row.contact_id, ghlConfig.locationId, ghlConfig.apiKey);
-    const signal = await classifyInboundText(inbound?.text ?? "", new Date(), timezone, inbound?.precedingOutbound ?? null);
+    // A lead who asked for no calls ("Please no Calls", Kelly Joseph, 2026-11-06) is never dialled, whichever
+    // path queued this row — the sweeps, the follow-up cohort and the retry cadence all land here, and the
+    // new row they create knows nothing about the old text. The tag is the lasting record of it.
+    const contactNow: any = await getContact(row.contact_id, ghlConfig.locationId, ghlConfig.apiKey).catch(() => null);
+    const tagsNow: string[] = (contactNow?.contact ?? contactNow)?.tags ?? [];
+    if ((row.lead as any)?.noCalls === true || tagsNow.some((t) => String(t).toLowerCase() === NO_CALLS_TAG)) {
+      await markLeadNoCalls(row.client_id, row.contact_id, ghlConfig, "lead asked for no calls — not dialling");
+      return;
+    }
+
+    // Only a RECENT text can say "don't call" or "call at 6". Angela Marie,
+    // 2026-10-13: a July reply about pausing a new-build search was read as an
+    // opt-out, closing her queue and tagging her "do not call" the day she
+    // submitted a fresh form. (A real STOP is already caught by GHL's own
+    // do-not-contact flag.)
+    const latestInbound = await lastInboundText(row.contact_id, ghlConfig.locationId, ghlConfig.apiKey);
+    const inboundAgeDays = latestInbound?.dateAdded ? (Date.now() - new Date(latestInbound.dateAdded).getTime()) / 86_400_000 : 0;
+    const inbound = latestInbound && inboundAgeDays <= STALE_INBOUND_TEXT_DAYS ? latestInbound : null;
+    // "Call me at noon" means the next noon AFTER THEY TEXTED, so read it as of
+    // the text's own time. Read as of now, at noon it meant tomorrow's noon, and
+    // every attempt pushed the call a day further out (Jesse Noseworthy,
+    // 2026-10-14: asked for noon, was never called, and was moved to Thursday).
+    const textTime = inbound?.dateAdded ? new Date(inbound.dateAdded) : new Date();
+    const signal = await classifyInboundText(inbound?.text ?? "", Number.isNaN(textTime.getTime()) ? new Date() : textTime, timezone, inbound?.precedingOutbound ?? null);
+
+    // Might be a stop, might not (temporary, about one thing, a mood): don't close or tag anyone on a maybe. Hold the
+    // dial, and say so, so a person or Iris's next text exchange can check with the lead.
+    if (signal.type === "unsure_stop") {
+      await query(
+        `UPDATE iris_pending_calls SET call_after = 'infinity', status = 'pending', resolution_reason = 'lead may have asked to stop — held, not closed', resolved_at = NULL WHERE id = $1`,
+        [row.id]
+      );
+      await sendMessage("iris", {
+        channel: CALL_LOG_CHANNEL,
+        text: `❓ *${row.lead?.name ?? row.contact_id}* texted something that might mean "stop": "${String(inbound?.text ?? "").slice(0, 200)}". I did not call, close or tag them. A teammate should read it and decide.`,
+      }).catch(() => {});
+      return;
+    }
 
     if (signal.type === "opt_out") {
+      await sendMessage("iris", {
+        channel: CALL_LOG_CHANNEL,
+        text: `🚫 *${row.lead?.name ?? row.contact_id}* opted out by text — closed, tagged "do not call". Their words: "${signal.quote}". If that was a misread, reopen them.`,
+      }).catch(() => {});
       await finish(row.id, "skipped", "lead opted out via text — cadence stopped");
       await addContactTags(row.contact_id, ["do not call"], ghlConfig.locationId, ghlConfig.apiKey).catch((error) => {
         console.error(`[IRS] Failed to tag contact ${row.contact_id} as "do not call":`, error instanceof Error ? error.message : error);
@@ -410,7 +528,20 @@ async function resolveOne(row: PendingCallRow): Promise<void> {
       return;
     }
 
-    if (signal.type === "schedule_for") {
+    // The same "Please no Calls" text, caught here when Iris's text handler never saw it. Holds the row so
+    // nothing dials; she answers the lead's next text, or the team follows up from the Slack post.
+    if (signal.type === "no_calls") {
+      await markLeadNoCalls(row.client_id, row.contact_id, ghlConfig);
+      await sendMessage("iris", {
+        channel: CALL_LOG_CHANNEL,
+        text: `📵 *${row.lead?.name ?? row.contact_id}* texted that they don't want calls. I did not call and did not treat it as an opt-out. They still need a text from Iris or a teammate.`,
+      }).catch(() => {});
+      return;
+    }
+
+    // Only when that time is still ahead. Once it has arrived, it is time to call —
+    // not to reschedule yet again.
+    if (signal.type === "schedule_for" && signal.when.getTime() > Date.now() + 2 * 60_000) {
       await query(
         `UPDATE iris_pending_calls
          SET call_after = $2, status = 'pending', is_explicit_callback = true, callback_misses = 0,
@@ -453,9 +584,19 @@ async function resolveOne(row: PendingCallRow): Promise<void> {
     // can't accidentally trip this.
     // sms_scheduled calls skip this: the recent text IS the lead saying
     // "yes, call me now" — pausing would stall the exact call they asked for.
-    if (inbound?.dateAdded && !row.sms_scheduled) {
+    // So do explicit callbacks (a time the lead asked for, or one Mark/Jacob set):
+    // the lead texting AFTER asking for a call doesn't cancel it. Jesse Noseworthy,
+    // 2026-10-14: asked for a call tomorrow morning ("available till around 1ish"),
+    // then kept texting Iris — the pause would have held his 9 AM call until
+    // 24 hours after his last text, past his window.
+    // A no-show follow-up is the exception: its calls are explicit only because Iris lined them up, and
+    // the lead texting back is exactly the conversation to wait out. "Texting" there means a reply that
+    // arrived after Iris's own first text, not an old thread.
+    const noShowTextedAt = row.source === NO_SHOW_SOURCE ? Date.parse((row.lead as any)?.noShow?.textedAt ?? "") : NaN;
+    const noShowReplied = !Number.isNaN(noShowTextedAt) && inbound?.dateAdded ? new Date(inbound.dateAdded).getTime() > noShowTextedAt : false;
+    if (inbound?.dateAdded && !row.sms_scheduled && (!row.is_explicit_callback || noShowReplied)) {
       const hoursSinceLastText = (Date.now() - new Date(inbound.dateAdded).getTime()) / (60 * 60 * 1000);
-      if (hoursSinceLastText <= SMS_ACTIVE_COLD_OFF_HOURS && (await hasActiveSmsConversation(row.client_id, row.contact_id))) {
+      if (hoursSinceLastText <= SMS_ACTIVE_COLD_OFF_HOURS && (noShowReplied || (await hasActiveSmsConversation(row.client_id, row.contact_id)))) {
         await query(
           `UPDATE iris_pending_calls
            SET call_after = $2, status = 'pending', resolution_reason = 'texting with lead — call paused', resolved_at = NULL
@@ -468,7 +609,9 @@ async function resolveOne(row: PendingCallRow): Promise<void> {
   }
 
   const attemptNumber = row.attempts_made + 1;
-  const transferNumber = transferNumberForIntent(config, lead.intent) ?? undefined;
+  const isNoShow = row.source === NO_SHOW_SOURCE && Boolean((lead as any).noShow);
+  // A no-show call rebooks; it never live-transfers.
+  const transferNumber = isNoShow ? undefined : transferNumberForIntent(config, lead.intent) ?? undefined;
   const calendarId = callbackCalendarForIntent(config, lead.intent) ?? undefined;
 
   try {
@@ -494,7 +637,8 @@ async function resolveOne(row: PendingCallRow): Promise<void> {
         Boolean(process.env.VAPI_SERVER_URL),
         Boolean(transferNumber),
         Boolean(calendarId),
-        row.source === "ember" || row.sms_scheduled ? "text" : "form"
+        row.source === "ember" || row.sms_scheduled ? "text" : "form",
+        isNoShow ? (lead as any).noShow : undefined
       ),
       transferNumber,
       calendarId,
@@ -525,17 +669,24 @@ async function resolveOne(row: PendingCallRow): Promise<void> {
  * right now — the caller (webhooks/vapi-tools.ts) must not tell the lead a
  * callback is scheduled when it isn't.
  */
-export async function scheduleExplicitCallback(clientId: string, contactId: string, callbackTime: Date): Promise<boolean> {
+export async function scheduleExplicitCallback(clientId: string, contactId: string, callbackTime: Date, requestedByTeammate = false): Promise<boolean> {
   const lead = await refreshLead(contactId, clientId);
   if (!lead) return false;
 
+  // A clock time the lead named is remembered so missed-callback retries keep to it (see isStatedCallbackTime).
+  const preferredTime =
+    !requestedByTeammate && isStatedCallbackTime(callbackTime)
+      ? timeOfDayLocal(callbackTime, loadIrisConfig(clientId)?.timezone || CLIENT_TIMEZONE)
+      : null;
+
   await query(
-    `INSERT INTO iris_pending_calls (client_id, contact_id, lead, call_after, status, is_explicit_callback)
-     VALUES ($1, $2, $3, $4, 'pending', true)
+    `INSERT INTO iris_pending_calls (client_id, contact_id, lead, call_after, status, is_explicit_callback, human_requested, callback_time_of_day)
+     VALUES ($1, $2, $3, $4, 'pending', true, $5, $6)
      ON CONFLICT (client_id, contact_id) DO UPDATE
      SET lead = EXCLUDED.lead, call_after = EXCLUDED.call_after, status = 'pending',
-         is_explicit_callback = true, callback_misses = 0, resolution_reason = 'lead requested callback', resolved_at = NULL`,
-    [clientId, contactId, JSON.stringify(lead), callbackTime]
+         is_explicit_callback = true, callback_misses = 0, resolution_reason = 'lead requested callback', resolved_at = NULL,
+         human_requested = $5, callback_time_of_day = $6`,
+    [clientId, contactId, JSON.stringify(lead), callbackTime, requestedByTeammate, preferredTime]
   );
   return true;
 }
@@ -543,7 +694,7 @@ export async function scheduleExplicitCallback(clientId: string, contactId: stri
 /** Entry point called by the scheduler. Each row's failure is isolated — one bad row must not block the rest. */
 export async function runDialPendingCalls(): Promise<void> {
   const due = await query<PendingCallRow>(
-    `SELECT id, client_id, contact_id, lead, attempts_made, created_at, is_explicit_callback, source, sms_scheduled FROM iris_pending_calls
+    `SELECT id, client_id, contact_id, lead, attempts_made, created_at, is_explicit_callback, source, sms_scheduled, human_requested FROM iris_pending_calls
      WHERE status = 'pending' AND call_after <= now()
      ORDER BY call_after ASC, id ASC
      LIMIT 25`

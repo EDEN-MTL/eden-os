@@ -11,6 +11,8 @@
  * Pure, so the exact wording is unit-testable without Slack.
  */
 import type { CampaignHealthReport, EntityHealth, FunnelSummary } from "./health";
+import { slackLink } from "./links";
+import { ageParts } from "./age";
 
 function money(n: number): string {
   return `$${n.toLocaleString("en-CA", { maximumFractionDigits: 0 })}`;
@@ -50,7 +52,8 @@ function mainReason(e: EntityHealth): string {
 
 function itemLine(e: EntityHealth, withRecommendation: boolean): string {
   const nearLine = e.reasons.find((r) => r.startsWith("Close to the kill line"));
-  let line = `• ${SCOPE_LABEL[e.scope]} *${e.name ?? e.id}*: ${mainReason(e)}`;
+  // The name is the link: one tap from the report to the exact campaign, ad set or ad in Ads Manager.
+  let line = `• ${SCOPE_LABEL[e.scope]} *${slackLink(e.url ?? null, e.name ?? e.id)}*: ${mainReason(e)}`;
   if (nearLine) line += ` ${nearLine}`;
   if (withRecommendation) line += `\n   → ${e.recommendation}`;
   return line;
@@ -61,7 +64,19 @@ function section(title: string, items: EntityHealth[], withRecommendation: boole
   return ["", `${title} (${items.length})`, ...items.map((e) => itemLine(e, withRecommendation))];
 }
 
-export function formatHealthDigest(clientName: string, report: CampaignHealthReport): string {
+/**
+ * The launch dates of everything the report names, so a CPL can be read against how long it has been running.
+ * Last in the message, after the targets, one line per item in the order the items appear above.
+ */
+function launchSection(items: EntityHealth[], now: Date): string[] {
+  const lines = items.flatMap((e) => {
+    const parts = ageParts(e.scope, e.created ?? {}, now);
+    return parts.length ? [`• ${SCOPE_LABEL[e.scope]} *${e.name ?? e.id}* — ${parts.join(" · ")}`] : [];
+  });
+  return lines.length ? ["", "*When each was first launched*", ...lines] : [];
+}
+
+export function formatHealthDigest(clientName: string, report: CampaignHealthReport, now: Date = new Date()): string {
   const by = (v: EntityHealth["verdict"]) => report.entities.filter((e) => e.verdict === v);
   const { totals, dailyBudget } = report;
 
@@ -77,6 +92,7 @@ export function formatHealthDigest(clientName: string, report: CampaignHealthRep
   const actionable = by("kill").length + by("refresh_creative").length + by("scale").length;
   const promising = by("too_early").filter((e) => e.metrics.cpl !== null && e.metrics.cpl <= e.targetCpl);
 
+  const listed = [...by("kill"), ...by("refresh_creative"), ...by("scale"), ...by("watch"), ...promising];
   const body = [
     ...section("🔴 *Turn off*", by("kill"), true),
     ...section("🎨 *Needs new creative*", by("refresh_creative"), true),
@@ -98,6 +114,7 @@ export function formatHealthDigest(clientName: string, report: CampaignHealthRep
     "",
     "*Targets*",
     ...report.funnels.map(targetLine),
+    ...launchSection(listed, now),
     ...(report.liveStateError ? ["", `⚠️ Couldn't read live status from Meta (${report.liveStateError}). Paused items may be included.`] : []),
     "",
     actionable ? "Ask Forge to make any of these changes." : "No changes needed. Forge will check again tomorrow.",
