@@ -146,11 +146,11 @@
         "enabled": true,
         "fromNumber": "+17098001784",
         "fromNumberNote": "Mark, 2026-10-08: every Ember text is sent from this number, never left to GHL. This account's only number (and its GHL default).",
-        "_scriptsNote": "Mark approved the buyer and seller wording, 2026-09-24. Seller + downsize leads get seller; buyer + upgrading get buyer; unknown intent gets neutral. Touch 4 reuses touch 3. Every script must keep its STOP line — validateForSending refuses to send otherwise.",
+        "_scriptsNote": "Mark approved the buyer and seller wording, 2026-09-24. Buyer touch 2 reworded 2026-11-11 (Mark): it used to offer to send new listings, which Ember has no way to do - it now offers a call with an agent and names the sender. Seller + downsize leads get seller; buyer + upgrading get buyer; unknown intent gets neutral. Touch 4 reuses touch 3. Every script must keep its STOP line — validateForSending refuses to send otherwise.",
         "scripts": {
           "buyer": [
             "Hi {{firstName}}, it's {{senderName}}. You were looking at homes with us a while back. Still on the hunt, or did the timing change? Reply STOP to opt out.",
-            "Hi {{firstName}}, a few new listings came up that might fit what you were after. Want me to send some over? Reply STOP to opt out.",
+            "Hi {{firstName}}, {{senderName}} here. Still thinking about buying? Happy to set up a quick, no-pressure call with one of our agents. Reply STOP to opt out.",
             "Hi {{firstName}}, last check-in from {{senderName}}. If you're still thinking about buying, reply and we'll set up a quick call. Reply STOP to opt out."
           ],
           "seller": [
