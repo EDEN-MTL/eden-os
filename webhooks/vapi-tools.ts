@@ -531,7 +531,9 @@ export async function handleBookAppointment(
   // note, since it's free text from the model rather than a structured
   // fact eden-os already tracked.
   const notes = [
-    /text/i.test(bookedBy) ? "Booked automatically by Iris over text." : "Booked automatically by Iris during a live call.",
+    /^ember/i.test(bookedBy)
+      ? "Booked automatically by Ember (nurture texts) over text."
+      : /text/i.test(bookedBy) ? "Booked automatically by Iris over text." : "Booked automatically by Iris during a live call.",
     leadSummary || null,
     typeof conversationNotes === "string" && conversationNotes.trim() ? conversationNotes.trim() : null,
   ]
