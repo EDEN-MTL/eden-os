@@ -509,11 +509,11 @@
         "enabled": true,
         "fromNumber": "+17097013598",
         "fromNumberNote": "Mark, 2026-10-08: 3%'s main number, same as iris.sms.fromNumber. +17097021163 is an old number no longer in the account — sends from it fail.",
-        "_scriptsNote": "Mark approved the buyer and seller wording, 2026-09-24. Seller + downsize leads get seller; buyer + upgrading get buyer; unknown intent gets neutral. Touch 4 reuses touch 3. Every script must keep its STOP line — validateForSending refuses to send otherwise.",
+        "_scriptsNote": "Mark approved the buyer and seller wording, 2026-09-24. Buyer touch 2 reworded 2026-11-11 (Mark): it used to offer to send new listings, which Ember has no way to do - it now offers a call with an agent and names the sender. Neutral touch 2 reworded the same day for the same reason ('want a quick update on what's out there?'). Seller + downsize leads get seller; buyer + upgrading get buyer; unknown intent gets neutral. Touch 4 reuses touch 3. Every script must keep its STOP line — validateForSending refuses to send otherwise.",
         "scripts": {
           "buyer": [
             "Hi {{firstName}}, it's {{senderName}}. You were looking at homes with us a while back. Still on the hunt, or did the timing change? Reply STOP to opt out.",
-            "Hi {{firstName}}, a few new listings came up that might fit what you were after. Want me to send some over? Reply STOP to opt out.",
+            "Hi {{firstName}}, {{senderName}} here. Still thinking about buying? Happy to set up a quick, no-pressure call with one of our agents. Reply STOP to opt out.",
             "Hi {{firstName}}, last check-in from {{senderName}}. If you're still thinking about buying, reply and we'll set up a quick call. Reply STOP to opt out."
           ],
           "seller": [
@@ -523,7 +523,7 @@
           ],
           "neutral": [
             "Hi {{firstName}}, it's {{senderName}}. You reached out about real estate a while back. Still thinking about a move? Reply STOP to opt out.",
-            "Hi {{firstName}}, {{senderName}} here. The market's shifted since we last spoke. Want a quick update on what's out there? Reply STOP to opt out.",
+            "Hi {{firstName}}, {{senderName}} here. Still thinking about a move? Happy to set up a quick, no-pressure call with one of our agents. Reply STOP to opt out.",
             "Hi {{firstName}}, last check-in from {{senderName}}. If a move is still on your mind, reply and we'll set up a quick call. Reply STOP to opt out."
           ]
         }
