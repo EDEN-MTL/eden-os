@@ -24,6 +24,12 @@ Turning a client on or off = `ember.enabled` in `config/clients/<id>.json` + dep
 - Sends from a pinned number (`ember.outreach.sms.fromNumber`, required). Team members
   (GHL users' phones/emails) and `ember.excludePhones` are skipped.
 - After 15 Ember replies in one conversation, hand to a human.
+- **Calls** (Mark, 2026-11-11, after Eileen Hillier): free RIGHT NOW → `schedule_transfer_call`
+  ("now" only) queues Iris's live-transfer call. Not free now, for any reason → Ember right
+  away offers 2-3 real open times (`check_availability`) and books the pick
+  (`book_appointment`) on `ember.bookingCalendarIds`, else `iris.callbacks.calendarIds`; no
+  calendar → hand to a person. No score bar: anyone still buying/selling who wants to talk
+  gets the call or the booking.
 
 ## Self-pause (`agents/ember/health.ts`, `ember_health` table)
 

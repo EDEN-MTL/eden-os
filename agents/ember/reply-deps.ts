@@ -82,6 +82,11 @@ export async function buildReplyContext(
         await upsertIrisHandoff(l.clientId, l.ghlContactId, leadForIris, when, true);
       },
       updateLead: (id, patch) => updateLead(id, patch as any),
+      // Loaded on demand: the booking logic lives with the phone tools, which import the agents.
+      checkAvailability: async (calendarId, requestedTime) =>
+        (await import("../../webhooks/vapi-tools")).handleCheckAvailability(lead.clientId, calendarId, requestedTime),
+      bookAppointment: async (calendarId, intent, isoTime, notes) =>
+        (await import("../../webhooks/vapi-tools")).handleBookAppointment(lead.clientId, lead.ghlContactId, calendarId, intent, isoTime, notes, undefined, undefined, "Ember (by text)"),
       alert,
     };
     converse = (l, text) => emberConverse(l, text, convCtx, deps);

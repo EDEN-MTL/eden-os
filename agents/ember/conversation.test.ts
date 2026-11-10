@@ -45,6 +45,8 @@ function deps(...turns: any[]): ConversationDeps & { sent: string[] } {
     saveNotes: vi.fn(async () => true),
     queueIrisCall: vi.fn(async () => {}),
     updateLead: vi.fn(async () => {}),
+    checkAvailability: vi.fn(async () => 'That exact time isn\'t available. Real open times instead: {spoken: "Thursday 2:30 PM", isoTime: "2026-11-12T18:00:00.000Z"}.'),
+    bookAppointment: vi.fn(async () => ({ success: true, result: 'Booked for Thursday 2:30 PM. appointmentId: "a1"' })),
     alert: vi.fn(async () => {}),
   };
 }
@@ -103,15 +105,44 @@ describe("emberConverse — Ember texts the old lead itself", () => {
     expect(d.sent).toEqual(["Perfect - expect a quick call from our team in a couple of minutes!"]);
   });
 
-  it("an unqualified lead never gets a call queued, whatever the model wanted", async () => {
+  it("a lead free right now gets Iris's call even below the score bar (Mark, 2026-11-11)", async () => {
     const d = deps(
-      tool("schedule_transfer_call", { intent: "buyer", timeline: "maybe next year", financing: "not-approved", when: "now" }),
-      text("No problem — someone from the team will follow up.")
+      tool("schedule_transfer_call", { intent: "buyer", timeline: "depends on when my house sells", financing: null, when: "now" }),
+      text("Great - you'll get a quick call from our team shortly!")
     );
-    await emberConverse(lead({ status: "conversing" }), "sure", ctx(), d);
+    await emberConverse(lead({ status: "conversing" }), "now works", ctx(), d);
+    expect(d.queueIrisCall).toHaveBeenCalled();
+    expect(d.updateLead).toHaveBeenCalledWith(1, expect.objectContaining({ status: "handed_off" }));
+  });
+
+  it("never queues Iris for a later time — that's a booking", async () => {
+    const d = deps(tool("schedule_transfer_call", { intent: "buyer", when: "2026-11-12T14:30:00-03:30" }), text("ok"));
+    await emberConverse(lead({ status: "conversing" }), "tomorrow 2:30", ctx(), d);
     expect(d.queueIrisCall).not.toHaveBeenCalled();
     const toolResult = (d.chat as any).mock.calls[1][1].at(-1).content[0].content as string;
-    expect(toolResult).toMatch(/^NOT scheduled/);
+    expect(toolResult).toMatch(/use check_availability and book_appointment/);
+  });
+
+  it("not free now (Eileen, 2026-11-10): offers real agent times and books the one picked", async () => {
+    const c = ctx({ config: config({ bookingCalendarIds: { buyer: "cal-buyer" } }) });
+    const d = deps(tool("check_availability", { intent: "buyer", requestedTime: "2026-11-12T14:30:00" }), text("I can book you with one of our agents - Thu 2:30pm?"));
+    const offer = await emberConverse(lead({ status: "conversing" }), "Right now isn't good, tomorrow afternoon around 2.30", c, d);
+    expect(d.checkAvailability).toHaveBeenCalledWith("cal-buyer", "2026-11-12T14:30:00");
+    expect(offer).toMatch(/2:30pm/);
+
+    const d2 = deps(tool("book_appointment", { intent: "buyer", isoTime: "2026-11-12T18:00:00.000Z", notes: "Goulds, finished basement, $300-350K" }), text("You're all set for Thursday 2:30 PM - one of our agents will call you then."));
+    await emberConverse(lead({ status: "conversing" }), "2:30 works", c, d2);
+    expect(d2.bookAppointment).toHaveBeenCalledWith("cal-buyer", "buyer", "2026-11-12T18:00:00.000Z", "Goulds, finished basement, $300-350K");
+    expect(d2.updateLead).toHaveBeenCalledWith(1, expect.objectContaining({ status: "handed_off", statusReason: expect.stringContaining("Thursday 2:30 PM") }));
+    expect(d2.alert).toHaveBeenCalled();
+  });
+
+  it("with no agent calendar, never offers times — a person books instead", async () => {
+    const d = deps(tool("check_availability", { intent: "buyer", requestedTime: "2026-11-12T14:30:00" }), text("Someone from the team will follow up!"));
+    await emberConverse(lead({ status: "conversing" }), "not now", ctx(), d);
+    expect(d.checkAvailability).not.toHaveBeenCalled();
+    const toolResult = (d.chat as any).mock.calls[1][1].at(-1).content[0].content as string;
+    expect(toolResult).toMatch(/no agent calendar/);
   });
 
   it("request_human_followup hands it to a person", async () => {
