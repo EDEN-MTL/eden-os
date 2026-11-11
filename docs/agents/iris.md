@@ -219,3 +219,6 @@ single global env var; it moves into client config when a second client needs Ir
 - No decision yet on how the human agent introduces themselves after a merge, or where
   off-script inquiries (e.g. CHIP program evaluations) should transfer.
 - The multi-hook nudge → endCall timing hasn't been proven on a fully silent live call.
+
+## A stop is honored whatever state the row is in
+A clear stop runs `recordOptOut` (`agents/iris/opt-out.ts`): tag "do not call", card to Not Interested, row closed, words to Slack. It now also covers a lead whose row is `placed` (Beverley Bradbury, 2026-11-11: texted "do not reach out" right after a connected call and was ignored).

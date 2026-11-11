@@ -26,8 +26,13 @@ const ghl = vi.hoisted(() => ({
   updateContact: vi.fn(),
   addContactTags: vi.fn(),
   sendSMS: vi.fn(),
+  createContactNote: vi.fn(async () => ({})),
+  listOpportunitiesForContact: vi.fn(async () => [] as any[]),
+  listPipelines: vi.fn(async () => [] as any[]),
+  updateOpportunityStage: vi.fn(async () => ({})),
 }));
 vi.mock("../../shared/ghl", () => ghl);
+vi.mock("../scout", () => ({ loadScoutConfig: vi.fn(() => ({ historyStageIds: ["stage-live-transferred"] })) }));
 
 const readFileSyncMock = vi.hoisted(() => vi.fn());
 vi.mock("fs", async (importOriginal) => {
@@ -407,7 +412,7 @@ describe("irisHandleInboundSms — reply delay", () => {
 
   it("waits before the opt-out acknowledgment too, not just the qualification loop", async () => {
     db.query.mockResolvedValueOnce([{ client_id: "3-percent-east-coast", contact_id: "contact-1", lead: LEAD, status: "pending" }]);
-    vi.mocked(classifyInboundText).mockResolvedValueOnce({ type: "opt_out" });
+    vi.mocked(classifyInboundText).mockResolvedValueOnce({ type: "opt_out", quote: "stop texting me" });
 
     const waited: number[] = [];
     await irisHandleInboundSms("contact-1", "stop texting me", {
@@ -591,5 +596,99 @@ describe("irisHandleInboundSms — stays out when a teammate has texted the lead
     await irisHandleInboundSms("contact-1", "hello", { wait: async () => {} });
 
     expect(humanTouch.checkHumanTouch).toHaveBeenCalledWith("contact-1", "loc-1", "key-1", 3);
+  });
+});
+
+/**
+ * Mark, 2026-11-11 (Beverley Bradbury): she answered Iris's call and hung up; 28 seconds later she texted "Please do
+ * not reach out to me any more. I will NOT talk to AI". The row was 'placed' (a call that connects leaves it so) and
+ * the handler ignored every text from a row that wasn't pending, so nothing was tagged and her card stayed in Replied.
+ */
+describe("irisHandleInboundSms — a stop from a lead Iris just spoke to (row not pending)", () => {
+  const STOP = "Please do not reach out to me any more.   I will NOT talk to AI";
+  const closedRow = (over: Record<string, unknown> = {}) => ({ client_id: "3-percent-east-coast", contact_id: "contact-1", lead: { ...LEAD, name: "Beverley Bradbury" }, status: "placed", source: null, ...over });
+
+  beforeEach(() => {
+    vi.mocked(sendMessage).mockClear();
+    ghl.sendSMS.mockClear();
+    ghl.addContactTags.mockClear();
+    ghl.updateOpportunityStage.mockClear();
+    ghl.createContactNote.mockClear();
+    ghl.getGhlConfig.mockResolvedValue({ locationId: "loc-1", apiKey: "key-1" });
+    ghl.getLocationTimezone.mockResolvedValue("America/St_Johns");
+    ghl.sendSMS.mockResolvedValue({});
+    ghl.listPipelines.mockResolvedValue([{ stages: [{ id: "stage-not-interested", name: "Not Qualified/Not Interested" }, { id: "stage-replied", name: "Replied" }] }]);
+    ghl.listOpportunitiesForContact.mockResolvedValue([{ id: "opp-1", status: "open", pipelineStageId: "stage-replied" }]);
+    humanTouch.checkHumanTouch.mockResolvedValue({ status: "none" });
+    textSignals.classifyInboundText.mockResolvedValue({ type: "opt_out", quote: "Please do not reach out to me any more" } as any);
+    db.query.mockResolvedValue([closedRow()]);
+    readFileSyncMock.mockReturnValue(CLIENT_CONFIG.replace('"timezone"', '"followUpCohort": {"notReadyStage": "Not Ready - [Endless Loop]", "notInterestedStage": "Not Qualified/Not Interested"}, "timezone"'));
+  });
+
+  it("tags 'do not call', moves the card to Not Interested, tells the team, and acknowledges once", async () => {
+    const handled = await irisHandleInboundSms("contact-1", STOP, { wait: async () => {} });
+
+    expect(handled).toBe(true);
+    expect(ghl.addContactTags).toHaveBeenCalledWith("contact-1", ["do not call"], "loc-1", "key-1");
+    expect(ghl.updateOpportunityStage).toHaveBeenCalledWith("opp-1", "stage-not-interested", "loc-1", "key-1");
+    const post = vi.mocked(sendMessage).mock.calls.map((c) => String((c[1] as any).text)).find((t) => t.includes("opted out"));
+    expect(post).toContain("Beverley Bradbury");
+    expect(post).toContain("Please do not reach out to me any more");
+    expect(post).toContain("moved their card to *Not Qualified/Not Interested*");
+    expect(ghl.sendSMS).toHaveBeenCalledTimes(1);
+    expect(db.query.mock.calls.some((c) => String(c[0]).includes("SET status = 'skipped'"))).toBe(true);
+  });
+
+  it("leaves a card that a person works where it is, but still tags and tells the team", async () => {
+    ghl.listOpportunitiesForContact.mockResolvedValue([{ id: "opp-1", status: "open", pipelineStageId: "stage-live-transferred" }]);
+
+    await irisHandleInboundSms("contact-1", STOP, { wait: async () => {} });
+
+    expect(ghl.addContactTags).toHaveBeenCalled();
+    expect(ghl.updateOpportunityStage).not.toHaveBeenCalled();
+    expect(vi.mocked(sendMessage).mock.calls.some((c) => String((c[1] as any).text).includes("a person works"))).toBe(true);
+  });
+
+  it("does not acknowledge when a teammate is the one texting them", async () => {
+    humanTouch.checkHumanTouch.mockResolvedValue({ status: "human", kind: "text", at: "today" });
+
+    await irisHandleInboundSms("contact-1", STOP, { wait: async () => {} });
+
+    expect(ghl.addContactTags).toHaveBeenCalled();
+    expect(ghl.sendSMS).not.toHaveBeenCalled();
+  });
+
+  it("only reports a maybe-stop to the team: nothing closed, tagged or moved", async () => {
+    textSignals.classifyInboundText.mockResolvedValue({ type: "unsure_stop" } as any);
+
+    const handled = await irisHandleInboundSms("contact-1", "I'm done for now, don't reach out", { wait: async () => {} });
+
+    expect(handled).toBe(false);
+    expect(ghl.addContactTags).not.toHaveBeenCalled();
+    expect(ghl.updateOpportunityStage).not.toHaveBeenCalled();
+    expect(vi.mocked(sendMessage).mock.calls.some((c) => String((c[1] as any).text).includes('might mean "stop"'))).toBe(true);
+  });
+
+  it("does not run the classifier on an ordinary text from a closed lead", async () => {
+    const handled = await irisHandleInboundSms("contact-1", "Thanks, talk soon!", { wait: async () => {} });
+
+    expect(handled).toBe(false);
+    expect(textSignals.classifyInboundText).not.toHaveBeenCalled();
+  });
+
+  it("does nothing a second time for a lead already closed as an opt-out", async () => {
+    db.query.mockResolvedValue([closedRow({ status: "skipped", resolution_reason: "lead opted out via text — cadence stopped" })]);
+
+    const handled = await irisHandleInboundSms("contact-1", "I said stop texting me", { wait: async () => {} });
+
+    expect(handled).toBe(false);
+    expect(ghl.sendSMS).not.toHaveBeenCalled();
+  });
+
+  it("leaves a lead Ember is nurturing to Ember", async () => {
+    db.query.mockResolvedValue([closedRow({ source: "ember" })]);
+
+    expect(await irisHandleInboundSms("contact-1", STOP, { wait: async () => {} })).toBe(false);
+    expect(ghl.addContactTags).not.toHaveBeenCalled();
   });
 });

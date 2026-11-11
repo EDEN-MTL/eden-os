@@ -37,6 +37,14 @@ const INTAKE_TEXT = "Just a quick heads-up — you'll receive a quick call from 
 
 export const TEXT_SIGNAL_CASES: TextSignalCase[] = [
   {
+    id: "beverley-do-not-reach-out",
+    found: "2026-11-11, Beverley Bradbury",
+    message: "Please do not reach out to me any more.   I will NOT talk to AI",
+    expect: ["opt_out"],
+    modelOutput: '{"type": "opt_out", "certainty": "clear", "quote": "Please do not reach out to me any more"}',
+    why: "A clear stop, sent 28 seconds after Iris's call. It arrived while her row was 'placed' and was ignored: not tagged, card left in Replied.",
+  },
+  {
     id: "kelly-no-calls",
     found: "2026-11-06, Kelly Joseph",
     message: "Please no Calls",

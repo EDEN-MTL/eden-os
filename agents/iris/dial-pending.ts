@@ -35,6 +35,7 @@ import { hasActiveSmsConversation, markLeadNoCalls, NO_CALLS_TAG } from "./sms";
 import { sendMessage } from "../../shared/slack";
 import { CALL_LOG_CHANNEL } from "./channels";
 import { NO_SHOW_SOURCE, noShowStillApplies } from "./no-show-state";
+import { recordOptOut } from "./opt-out";
 import { isTransferResumeRow, transferResumeExpired, whenPhrase, TransferResumeState } from "./transfer-resume";
 import { getGhlConfig, getLocationTimezone, addContactTags, getContact } from "../../shared/ghl";
 
@@ -519,14 +520,12 @@ async function resolveOne(row: PendingCallRow): Promise<void> {
     }
 
     if (signal.type === "opt_out") {
+      await finish(row.id, "skipped", "lead opted out via text — cadence stopped");
+      const stageSummary = await recordOptOut(row.client_id, row.contact_id, ghlConfig, signal.quote);
       await sendMessage("iris", {
         channel: CALL_LOG_CHANNEL,
-        text: `🚫 *${row.lead?.name ?? row.contact_id}* opted out by text — closed, tagged "do not call". Their words: "${signal.quote}". If that was a misread, reopen them.`,
+        text: `🚫 *${row.lead?.name ?? row.contact_id}* opted out by text — closed, tagged "do not call", ${stageSummary}. Their words: "${signal.quote}". If that was a misread, reopen them.`,
       }).catch(() => {});
-      await finish(row.id, "skipped", "lead opted out via text — cadence stopped");
-      await addContactTags(row.contact_id, ["do not call"], ghlConfig.locationId, ghlConfig.apiKey).catch((error) => {
-        console.error(`[IRS] Failed to tag contact ${row.contact_id} as "do not call":`, error instanceof Error ? error.message : error);
-      });
       return;
     }
 

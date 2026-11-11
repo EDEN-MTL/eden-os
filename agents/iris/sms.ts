@@ -18,6 +18,7 @@ import { NormalisedLead, buildKeyToId } from "../scout/intake";
 import { loadIrisConfig, loadClientBranding } from "./index";
 import { buildSmsQualificationPrompt, buildNoShowSmsPrompt } from "./scripts";
 import { NO_SHOW_SOURCE } from "./no-show-state";
+import { mightBeStop, recordOptOut } from "./opt-out";
 import { classifyInboundText, lastInboundText, recentTexts } from "./text-signals";
 import { appendNoteToContact } from "./notes";
 import { checkHumanTouch, DEFAULT_HUMAN_HANDS_OFF_DAYS } from "./human-touch";
@@ -55,11 +56,12 @@ interface IrisLeadRow {
   status: string;
   /** 'ember' for an old lead Ember handed over; null for normal intake. */
   source: string | null;
+  resolution_reason?: string | null;
 }
 
 async function loadIrisLeadRow(contactId: string): Promise<IrisLeadRow | null> {
   const rows = await query<IrisLeadRow>(
-    `SELECT client_id, contact_id, lead, status, source FROM iris_pending_calls WHERE contact_id = $1 LIMIT 1`,
+    `SELECT client_id, contact_id, lead, status, source, resolution_reason FROM iris_pending_calls WHERE contact_id = $1 LIMIT 1`,
     [contactId]
   );
   return rows[0] ?? null;
@@ -446,6 +448,53 @@ async function recordTextCallback(clientId: string, contactId: string, when: Dat
   });
 }
 
+/**
+ * A text from a lead whose queue row is no longer pending. Iris does not start a conversation with them, but a clear
+ * stop is carried out exactly as for any other lead (tag, Not Interested, the team told). Returns true only when it
+ * handled a stop; everything else falls through as before.
+ */
+async function handleStopOnClosedRow(row: IrisLeadRow, contactId: string, text: string, wait: (ms: number) => Promise<void>): Promise<boolean> {
+  if (!mightBeStop(text)) return false;
+  // Already closed as an opt-out: nothing more to do, and no second acknowledgment.
+  if (row.status === "skipped" && /opted out/i.test(row.resolution_reason ?? "")) return false;
+
+  const clientId = row.client_id;
+  const config = loadIrisConfig(clientId);
+  if (!config) return false;
+  const ghlConfig = await getGhlConfig(clientId).catch(() => null);
+  if (!ghlConfig) return false;
+  const timezone = (await getLocationTimezone(ghlConfig.locationId, ghlConfig.apiKey).catch(() => null)) || config.timezone || "America/St_Johns";
+  const name = (row.lead as any)?.name ?? contactId;
+
+  const signal = await classifyInboundText(text, new Date(), timezone);
+  if (signal.type === "unsure_stop") {
+    await sendMessage(AGENT_ID, {
+      channel: CALL_LOG_CHANNEL,
+      text: `❓ *${name}* texted something that might mean "stop": "${text.slice(0, 200)}". I did not close or tag them. A teammate should read it and decide.${await linkSuffix(clientId, contactId)}`,
+    }).catch(() => {});
+    return false;
+  }
+  if (signal.type !== "opt_out") return false;
+
+  await finishIrisLead(clientId, contactId, "lead opted out via text — cadence stopped");
+  const stageSummary = await recordOptOut(clientId, contactId, ghlConfig, signal.quote);
+  await sendMessage(AGENT_ID, {
+    channel: CALL_LOG_CHANNEL,
+    text: `🚫 *${name}* opted out by text after Iris had already spoken with them — tagged "do not call", ${stageSummary}. Their words: "${signal.quote}". If that was a misread, reopen them.${await linkSuffix(clientId, contactId)}`,
+  }).catch(() => {});
+
+  // One short acknowledgment, as for any opt-out, unless a teammate is the one talking to them.
+  const humanTouch = await checkHumanTouch(contactId, ghlConfig.locationId, ghlConfig.apiKey, config.humanHandsOffDays ?? DEFAULT_HUMAN_HANDS_OFF_DAYS);
+  if (humanTouch.status === "none") {
+    const reply = "No problem — we won't reach out again. Take care!";
+    await wait(humanReplyDelayMs(new Date(), reply));
+    await sendSMS(contactId, reply, ghlConfig.locationId, ghlConfig.apiKey).catch((error) => {
+      console.error(`[IRS-SMS] Failed to send opt-out acknowledgment to ${contactId}:`, error instanceof Error ? error.message : error);
+    });
+  }
+  return true;
+}
+
 async function handleInboundSms(contactId: string, text: string, options: InboundSmsOptions = {}): Promise<boolean> {
   const receivedAt = options.receivedAt ?? new Date();
   const wait = options.wait ?? realWait;
@@ -453,14 +502,16 @@ async function handleInboundSms(contactId: string, text: string, options: Inboun
 
   const row = await loadIrisLeadRow(contactId);
   if (!row) return false;
-  // Already resolved (exhausted, qualified by voice or a human, opted out,
-  // etc.) — not this contact's first real text exchange with Iris. Falls
-  // through rather than reopening a concluded lead on an unrelated text.
-  if (row.status !== "pending") return false;
   // Ember owns the TEXT conversation with leads it reactivated (Mark,
   // 2026-10-06: "Ember replies itself"); Iris only places the call Ember
   // queued. Falling through lets the /message route hand it to Ember.
   if (row.source === "ember") return false;
+  // Already resolved (exhausted, qualified by voice or a human, opted out,
+  // etc.) — not this contact's first real text exchange with Iris. Falls
+  // through rather than reopening a concluded lead on an unrelated text —
+  // except for a stop: a lead Iris just reached by phone has a 'placed' row, and
+  // their "do not reach out any more" must not be ignored (Beverley Bradbury, 2026-11-11).
+  if (row.status !== "pending") return handleStopOnClosedRow(row, contactId, text, wait);
 
   const clientId = row.client_id;
   const config = loadIrisConfig(clientId);
@@ -495,13 +546,11 @@ async function handleInboundSms(contactId: string, text: string, options: Inboun
   const signal = await classifyInboundText(text, new Date(), timezone);
   if (signal.type === "opt_out") {
     await finishIrisLead(clientId, contactId, "lead opted out via text — cadence stopped");
-    await addContactTags(contactId, ["do not call"], ghlConfig.locationId, ghlConfig.apiKey).catch((error) => {
-      console.error(`[IRS-SMS] Failed to tag contact ${contactId} as "do not call":`, error instanceof Error ? error.message : error);
-    });
+    const stageSummary = await recordOptOut(clientId, contactId, ghlConfig, signal.quote);
     // Closing a lead can't be undone by someone who never saw it, so the exact words go to the team right away.
     await sendMessage(AGENT_ID, {
       channel: CALL_LOG_CHANNEL,
-      text: `🚫 *${(row.lead as any)?.name ?? contactId}* opted out by text — closed, tagged "do not call". Their words: "${signal.quote}". If that was a misread, reopen them.${await linkSuffix(clientId, contactId)}`,
+      text: `🚫 *${(row.lead as any)?.name ?? contactId}* opted out by text — closed, tagged "do not call", ${stageSummary}. Their words: "${signal.quote}". If that was a misread, reopen them.${await linkSuffix(clientId, contactId)}`,
     }).catch(() => {});
     const reply = "No problem — we won't reach out again. Take care!";
     await pauseLikeAHuman(reply);
