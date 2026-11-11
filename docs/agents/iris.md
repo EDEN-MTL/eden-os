@@ -85,6 +85,17 @@ It only gates the dial — it has no effect on whether leads get queued.
 - **After transfer, Iris has no audio.** Warm transfer completes via SIP REFER; Vapi
   steps out. Any "say something after the merge" feature is infeasible. Warm transfer
   needs Twilio (not Telnyx).
+- **A failed warm transfer: read the gzip log, not the tool result.** The `transferCall` result ("Transfer failed due to
+  user hangup" / "Transfer completed") arrives about 2 seconds after the tool call on every attempt, success or not, so it
+  says nothing. The real story is the `call.warmTransferStateChanged` events in `artifact.presignedLogUrl`
+  (`PENDING` while the ring group rings, `ACTIVE` once an agent answers) and `call.statusReceived` for the agent leg
+  (`ringing`, `completed`). Timeline of the five attempts pulled 2026-11-11: success = PENDING, an agent answers
+  in about 16s, the transfer assistant briefs them for about 50s, merged (lead on hold about 67s). Ritu Patel (11-05) = an agent
+  answered at 16s but the lead hung up at 71s, just before the merge. Michelle Smith Funk (11-11) = the ring group rang 23s
+  and the agent leg ended with nobody answering, Iris said `AGENT_UNAVAILABLE_LINE`, and the lead hung up 4s later.
+  Jalpesh Patel (09-24) can't be diagnosed: Vapi no longer returns that call. In all three the endedReason is
+  `customer-ended-call-before-warm-transfer`, and the only follow-up is the Slack line "needs a manual callback"
+  (`TRANSFER_ABANDONED_REASONS` in `vapi-webhook.ts`): no text goes to the lead and no retry is queued.
 - **`customer.speech.timeout` hook** fires on the first silence gap anywhere in the call,
   not just at pickup. Fixed by changing *what* it says (`IDLE_NUDGE_VARIATIONS`, short
   check-ins, `triggerMaxCount: 3`), plus a second hook with `endCall` at 30s. Widening the
