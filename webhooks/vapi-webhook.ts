@@ -7,6 +7,16 @@ import { appendHistory } from "../shared/conversation-memory";
 import { loadIrisConfig, loadClientBranding } from "../agents/iris";
 import { reopenForNextAttempt, reopenAfterMissedCallback, scheduleExplicitCallback, holdForTextReply, reopenNoShowAfterMiss, closeNoShowFollowUp, SWEEP_SOURCE } from "../agents/iris/dial-pending";
 import { NO_SHOW_SOURCE } from "../agents/iris/no-show-state";
+import {
+  buildTransferResumeText,
+  isaNotesFromCall,
+  isTransferResumeRow,
+  MAX_TRANSFER_RESUME_CALLS,
+  queueTransferResume,
+  TRANSFER_RESUME_DELAY_MINUTES,
+  TRANSFER_RESUME_SOURCE,
+  TransferResumeState,
+} from "../agents/iris/transfer-resume";
 import { helloRescue } from "../agents/iris/hello-rescue";
 import { hasActiveSmsConversation } from "../agents/iris/sms";
 import { isWithinLegalCallingWindow } from "../agents/iris/cadence";
@@ -258,7 +268,7 @@ export function describeOutcome(endedReason: string | null, message: Record<stri
   if (hitCallScreener(message)) return "🤖 Hit a call-screening service, not the actual lead — will retry";
   if (hitVoicemailGreeting(message)) return "📵 Voicemail greeting, no message left — will retry";
   if (endedReason === "assistant-ended-call" && !customerSpokeAtAll(message)) return "🔇 No response (gave up after the idle nudge)";
-  if (TRANSFER_ABANDONED_REASONS.has(endedReason ?? "")) return "⚠️ Disconnected right before transfer connected — needs a manual callback";
+  if (TRANSFER_ABANDONED_REASONS.has(endedReason ?? "")) return "⚠️ Disconnected before the transfer connected — Iris calls back to connect them again, then texts if no answer";
   if (wasAnswered(endedReason)) return "💬 Answered (no transfer)";
   return `❌ No answer (\`${endedReason ?? "unknown"}\`)`;
 }
@@ -473,7 +483,10 @@ async function handleEndOfCallReport(message: Record<string, any>): Promise<void
   // reopened here — a manual test call (scripts/test-iris-call.ts etc.)
   // has no cadence to continue even if it happens to share a contactId.
   if (row?.contact_id && row.triggered_by === "automatic") {
-    if (!genuinelyAnswered(endedReason, message)) {
+    if (TRANSFER_ABANDONED_REASONS.has(endedReason ?? "")) {
+      // They agreed to an agent and the call ended while the transfer was still going (Mark, 2026-11-11).
+      await handleAbandonedTransfer(row.client_id, row.contact_id, callId, message);
+    } else if (!genuinelyAnswered(endedReason, message)) {
       await maybeReopenPendingCall(row.client_id, row.contact_id, endedReason);
     } else if (endedReason !== TRANSFER_SUCCEEDED_REASON) {
       // Real case found live 2026-10-01 (Saife Sarwar): "Ma'am, right now
@@ -741,6 +754,12 @@ export async function maybeReopenPendingCall(clientId: string, contactId: string
       }
     }
 
+    // The retry for a dropped transfer went unanswered: text them instead (Mark, 2026-11-11).
+    if (isTransferResumeRow(pending)) {
+      await handleUnansweredTransferResume(clientId, contactId, pending);
+      return;
+    }
+
     if (pending.source === SWEEP_SOURCE) {
       await handleUnansweredSweepCall(clientId, contactId, pending, endedReason);
       return;
@@ -769,6 +788,112 @@ export async function maybeReopenPendingCall(clientId: string, contactId: string
   } catch (error) {
     console.error(`[VAPI] Failed to check/reopen pending call for ${contactId}:`, error instanceof Error ? error.message : error);
   }
+}
+
+/**
+ * Mark, 2026-11-11 (Michelle Smith Funk; also Ritu Patel and Jalpesh Patel): a lead who agreed to be connected to an
+ * agent hung up while the transfer was still going. Iris calls back in a few minutes, tells them she is going to
+ * transfer them again and picks up from there (agents/iris/transfer-resume.ts). If the second transfer drops too, she
+ * texts instead of calling a third time. Skipped when a teammate is already talking to the lead.
+ */
+async function handleAbandonedTransfer(clientId: string, contactId: string, callId: string, message: Record<string, any>): Promise<void> {
+  try {
+    const rows = await query<{ id: number; status: string; human_requested: boolean; lead: { name?: string | null; transferResume?: TransferResumeState } | null }>(
+      `SELECT id, status, human_requested, lead FROM iris_pending_calls WHERE client_id = $1 AND contact_id = $2`,
+      [clientId, contactId]
+    );
+    const pending = rows[0];
+    if (!pending || pending.status !== "placed") return;
+    const name = pending.lead?.name ?? contactId;
+
+    const leave = pending.human_requested ? null : await reasonToLeaveLead(clientId, contactId);
+    if (leave) {
+      await sendMessage("iris", {
+        channel: CALL_LOG_CHANNEL,
+        text: `⚠️ *${name}* agreed to be connected to an agent but the call dropped. I'm not calling back because ${leave}. They need a person to pick up.${await linkSuffix(clientId, contactId)}`,
+      }).catch(() => {});
+      return;
+    }
+
+    const prior = pending.lead?.transferResume;
+    const state: TransferResumeState = {
+      at: new Date().toISOString(),
+      callId,
+      collected: isaNotesFromCall(message) ?? prior?.collected ?? null,
+      count: (prior?.count ?? 0) + 1,
+      texted: prior?.texted,
+    };
+
+    if (state.count > MAX_TRANSFER_RESUME_CALLS) {
+      await query(`UPDATE iris_pending_calls SET lead = COALESCE(lead, '{}'::jsonb) || jsonb_build_object('transferResume', $2::jsonb), source = $3 WHERE id = $1`, [pending.id, JSON.stringify(state), TRANSFER_RESUME_SOURCE]);
+      await textTransferResumeQuestion(clientId, contactId, pending.id, name, state);
+      return;
+    }
+
+    const timezone = loadIrisConfig(clientId)?.timezone || "America/St_Johns";
+    const callAfter = clampToLegalCallingWindow(new Date(Date.now() + TRANSFER_RESUME_DELAY_MINUTES * 60_000), timezone);
+    if (!(await queueTransferResume(clientId, contactId, state, callAfter))) return;
+    console.log(`[VAPI] Contact ${contactId} dropped while being transferred — Iris calls back ${callAfter.toISOString()} (drop ${state.count}).`);
+
+    const when = formatLocal(callAfter.toISOString(), timezone);
+    await sendMessage("iris", {
+      channel: CALL_LOG_CHANNEL,
+      text: `📞 *${name}* agreed to be connected to an agent but the call dropped. Iris calls back ${when} to connect them again; if they don't answer she texts them.${await linkSuffix(clientId, contactId)}`,
+    }).catch(() => {});
+    await appendNoteToContact(clientId, contactId, `Iris: call dropped while connecting to an agent — calling back ${when} to connect again.`).catch(() => {});
+  } catch (error) {
+    console.error(`[VAPI] Failed to follow up a dropped transfer for ${contactId}:`, error instanceof Error ? error.message : error);
+  }
+}
+
+/**
+ * Asks the lead whether they hung up or still want to be connected, once, and keeps their row open (never due again)
+ * so their reply is answered by Iris's text handling, which carries the "already qualified" context.
+ */
+async function textTransferResumeQuestion(clientId: string, contactId: string, rowId: number, name: string, state: TransferResumeState): Promise<void> {
+  const config = loadIrisConfig(clientId);
+  const branding = loadClientBranding(clientId);
+  if (!config || !branding) return;
+  // Held either way, so a reply to anything we send is still answered.
+  const hold = () => holdForTextReply(rowId);
+
+  const claim = await query<{ id: number }>(
+    `UPDATE iris_pending_calls SET lead = jsonb_set(lead, '{transferResume,texted}', 'true'::jsonb, true)
+      WHERE id = $1 AND COALESCE(lead->'transferResume'->>'texted', 'false') <> 'true' RETURNING id`,
+    [rowId]
+  );
+  if (claim.length === 0) {
+    await hold();
+    return; // already asked once; a second text would just be nagging
+  }
+  if (!isWithinLegalCallingWindow(new Date(), config.timezone || "America/St_Johns")) {
+    await hold();
+    await sendMessage("iris", {
+      channel: CALL_LOG_CHANNEL,
+      text: `⚠️ *${name}* agreed to be connected to an agent but the call dropped again, and it is outside texting hours. They need a person to follow up.${await linkSuffix(clientId, contactId)}`,
+    }).catch(() => {});
+    return;
+  }
+  const outcome = await sendIrisText(clientId, contactId, name, buildTransferResumeText(name, branding.brandName));
+  await hold();
+  await sendMessage("iris", {
+    channel: CALL_LOG_CHANNEL,
+    text:
+      outcome === "skipped" || outcome === "failed"
+        ? `⚠️ *${name}* agreed to be connected to an agent but the call dropped${state.count > 1 ? " more than once" : ""} and I could not text them (${outcome}). They need a person to follow up.${await linkSuffix(clientId, contactId)}`
+        : `📱 Texted *${name}* to ask whether they hung up or still want to be connected to an agent (${outcome}). Their call dropped${state.count > 1 ? " more than once" : ""} during the transfer. Waiting for a reply.${await linkSuffix(clientId, contactId)}`,
+  }).catch(() => {});
+}
+
+/** The call back to re-connect a dropped transfer was not answered. */
+async function handleUnansweredTransferResume(
+  clientId: string,
+  contactId: string,
+  pending: { id: number; lead: { name?: string | null; transferResume?: TransferResumeState } | null }
+): Promise<void> {
+  const state = pending.lead?.transferResume;
+  if (!state) return;
+  await textTransferResumeQuestion(clientId, contactId, pending.id, pending.lead?.name ?? contactId, state);
 }
 
 /**

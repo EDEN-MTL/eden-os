@@ -94,8 +94,16 @@ It only gates the dial — it has no effect on whether leads get queued.
   answered at 16s but the lead hung up at 71s, just before the merge. Michelle Smith Funk (11-11) = the ring group rang 23s
   and the agent leg ended with nobody answering, Iris said `AGENT_UNAVAILABLE_LINE`, and the lead hung up 4s later.
   Jalpesh Patel (09-24) can't be diagnosed: Vapi no longer returns that call. In all three the endedReason is
-  `customer-ended-call-before-warm-transfer`, and the only follow-up is the Slack line "needs a manual callback"
-  (`TRANSFER_ABANDONED_REASONS` in `vapi-webhook.ts`): no text goes to the lead and no retry is queued.
+  `customer-ended-call-before-warm-transfer` (`TRANSFER_ABANDONED_REASONS` in `vapi-webhook.ts`).
+  **What Iris does now (Mark, 2026-11-11, `agents/iris/transfer-resume.ts`):** `handleAbandonedTransfer` puts the lead's
+  queue row back to pending, due in 3 minutes, source `transfer-resume`, with `lead.transferResume` holding what she
+  learned (her `save_isa_notes`). The call back opens by saying the call got cut off and that she will connect them
+  again, asks nothing else, and transfers on a yes (`transferResumeCallLines` in `scripts.ts`; the question keeps
+  "connect you with" so the `transferCall` rejection plan lets it through). If that call is not answered, or the second
+  transfer drops too, `textTransferResumeQuestion` texts once ("Did you hang up, or would you still like to be
+  connected?") and holds the row for a reply; the reply is answered by the text prompt's resume block, which knows they
+  are already qualified and uses `schedule_transfer_call` on a yes. Skipped (Slack note only) when a teammate is in touch;
+  expires after 48 hours; no agent line = no call. Michelle was texted by hand the same way on 2026-11-11.
 - **`customer.speech.timeout` hook** fires on the first silence gap anywhere in the call,
   not just at pickup. Fixed by changing *what* it says (`IDLE_NUDGE_VARIATIONS`, short
   check-ins, `triggerMaxCount: 3`), plus a second hook with `endCall` at 30s. Widening the

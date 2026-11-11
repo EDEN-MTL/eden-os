@@ -397,8 +397,8 @@ describe("describeOutcome", () => {
    * a generic "answered, no transfer" — this lead needs a manual callback.
    */
   it("labels a disconnect right before/during a transfer attempt distinctly from a generic 'answered, no transfer'", () => {
-    expect(describeOutcome("customer-ended-call-before-warm-transfer", messageWithUserSpeech)).toMatch(/manual callback/i);
-    expect(describeOutcome("customer-ended-call-after-warm-transfer-attempt", messageWithUserSpeech)).toMatch(/manual callback/i);
+    expect(describeOutcome("customer-ended-call-before-warm-transfer", messageWithUserSpeech)).toMatch(/before the transfer connected/i);
+    expect(describeOutcome("customer-ended-call-after-warm-transfer-attempt", messageWithUserSpeech)).toMatch(/before the transfer connected/i);
   });
 
   /**
@@ -683,8 +683,8 @@ describe("appendCallStatusNote", () => {
     const call = ghl.updateContact.mock.calls[0];
     const writtenValue = call[1].customFields[0].value;
     expect(writtenValue).toContain("Lead: Jalpesh Patel\nBudget: $350k-400k");
-    expect(writtenValue).toContain("manual callback");
-    expect(writtenValue.indexOf("Jalpesh")).toBeLessThan(writtenValue.indexOf("manual callback"));
+    expect(writtenValue).toContain("Disconnected before the transfer connected");
+    expect(writtenValue.indexOf("Jalpesh")).toBeLessThan(writtenValue.indexOf("Disconnected before the transfer connected"));
   });
 
   it("includes the real outcome and duration in the status line", async () => {
@@ -1590,5 +1590,163 @@ describe("hitVoicemailGreeting — greetings with their own wording", () => {
   it("recognises Sabrina Legg's greeting (Oct 17), so a missed call there isn't mistaken for a person who never got an answer", () => {
     const msg = { messages: [{ role: "user", message: "You have reached Sabrina Legg. After leaving a message, you can hang up or press pound for more options." }] };
     expect(hitVoicemailGreeting(msg)).toBe(true);
+  });
+});
+
+/**
+ * Mark, 2026-11-11 (Michelle Smith Funk; also Ritu Patel, Jalpesh Patel): a lead who agreed to be connected to an
+ * agent hung up while the transfer was still going. Iris calls back and says she will transfer them again; if that
+ * second try drops too, or the call back isn't answered, she texts to ask whether they hung up.
+ */
+describe("a transfer that dropped before it connected", () => {
+  const ghlCfg = { locationId: "loc-1", apiKey: "key-1" };
+  const PENDING = (over: Record<string, unknown> = {}) => ({
+    id: 159,
+    status: "placed",
+    human_requested: false,
+    source: null,
+    lead: { name: "Michelle Smith Funk", intent: "buyer" },
+    ...over,
+  });
+  let pendingRow: any;
+  let claimed: boolean;
+
+  function getRootHandler(): (req: any, res: any) => Promise<void> {
+    const router = createVapiRouter();
+    return (router as any).stack[0].route.stack[0].handle;
+  }
+  const res = () => ({ status: vi.fn().mockReturnThis(), send: vi.fn(), json: vi.fn() });
+  const report = {
+    type: "end-of-call-report",
+    endedReason: "customer-ended-call-before-warm-transfer",
+    call: { id: "call-257" },
+    durationSeconds: 264,
+    messages: [
+      { role: "user", message: "Okay." },
+      { role: "tool_calls", toolCalls: [{ function: { name: "save_isa_notes", arguments: JSON.stringify({ notes: "Buyer | $500K | Paradise, Mount Pearl | 4 bed" }) } }] },
+    ],
+  };
+  const sqlCalls = () => db.query.mock.calls.map((c: any[]) => ({ sql: String(c[0]), params: c[1] as any[] }));
+  const texts = () => ghl.sendSMS.mock.calls.map((c: any[]) => String(c[1]));
+  const posts = () => slack.sendMessage.mock.calls.map((c: any[]) => String(c[1].text));
+
+  beforeEach(() => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date("2026-11-11T13:35:00.000Z")); // 10:05 AM in St. John's
+    pendingRow = PENDING();
+    claimed = true;
+    ghl.getGhlConfig.mockResolvedValue(ghlCfg);
+    ghl.getCustomFieldDefs.mockResolvedValue([]);
+    ghl.getContact.mockResolvedValue({ contact: { customFields: [], tags: ["buyer lead"] } });
+    ghl.sendSMS.mockReset().mockResolvedValue({ messageId: "msg-1" });
+    ghl.getMessage.mockResolvedValue({ status: "delivered" });
+    slack.sendMessage.mockReset().mockResolvedValue({});
+    iris.loadIrisConfig.mockReturnValue({ timezone: "America/St_Johns", smsFromNumber: "+17097013598", callbackNotesFieldKey: "contact.isa_notes" });
+    iris.loadClientBranding.mockReturnValue({ brandName: "3 Percent East Coast", city: "St. John's" });
+    humanTouch.checkHumanTouch.mockResolvedValue({ status: "none" } as any);
+    db.query.mockImplementation(async (...args: unknown[]) => {
+      const sql = String(args[0]);
+      if (/UPDATE iris_call_log/.test(sql)) return [{ client_id: "3-percent-east-coast", contact_id: "contact-1", triggered_by: "automatic" }];
+      if (/source = \$5/.test(sql)) return [{ id: 159 }]; // queueTransferResume
+      if (/'\{transferResume,texted\}'/.test(sql)) return claimed ? [{ id: 159 }] : [];
+      if (/SELECT id, status, human_requested/.test(sql)) return [pendingRow];
+      return [];
+    });
+  });
+  afterEach(() => vi.useRealTimers());
+
+  const finishCall = () => getRootHandler()({ body: { message: report }, headers: {} }, res());
+
+  it("queues a call back a few minutes later, carrying what Iris already learned, and does not text yet", async () => {
+    await finishCall();
+
+    const queued = sqlCalls().find((c) => /source = \$5/.test(c.sql));
+    expect(queued).toBeDefined();
+    const [clientId, contactId, stateJson, callAfter, source] = queued!.params;
+    expect([clientId, contactId, source]).toEqual(["3-percent-east-coast", "contact-1", "transfer-resume"]);
+    expect(JSON.parse(stateJson)).toMatchObject({ count: 1, callId: "call-257", collected: "Buyer | $500K | Paradise, Mount Pearl | 4 bed" });
+    expect(new Date(callAfter).toISOString()).toBe("2026-11-11T13:38:00.000Z"); // three minutes on, inside calling hours
+    expect(ghl.sendSMS).not.toHaveBeenCalled();
+    expect(posts().some((t) => t.includes("*Michelle Smith Funk*") && t.includes("calls back"))).toBe(true);
+  });
+
+  it("when the second transfer drops as well, texts instead of calling a third time, and holds the row for a reply", async () => {
+    pendingRow = PENDING({ source: "transfer-resume", lead: { name: "Michelle Smith Funk", intent: "buyer", transferResume: { at: "2026-11-11T13:34:00.000Z", callId: "call-1", collected: null, count: 1 } } });
+
+    await finishCall();
+
+    expect(sqlCalls().some((c) => /source = \$5/.test(c.sql) && /call_after/.test(c.sql))).toBe(false); // no new call queued
+    expect(texts()).toHaveLength(1);
+    expect(texts()[0]).toBe("Hi Michelle, it's Iris from 3 Percent East Coast. It looks like our call got cut off while I was connecting you with one of our agents. Did you hang up, or would you still like to be connected?");
+    expect(dialPending.holdForTextReply).toHaveBeenCalledWith(159);
+  });
+
+  it("leaves the lead alone when a teammate is already talking to them, and tells the channel", async () => {
+    iris.loadIrisConfig.mockReturnValue({ timezone: "America/St_Johns", humanTextBlocksCalls: true, humanHandsOffDays: 7 });
+    humanTouch.checkHumanTouch.mockResolvedValue({ status: "human", kind: "text", at: "Nov 11" } as any);
+
+    await finishCall();
+
+    expect(sqlCalls().some((c) => /source = \$5/.test(c.sql))).toBe(false);
+    expect(ghl.sendSMS).not.toHaveBeenCalled();
+    expect(posts().some((t) => t.includes("not calling back") || t.includes("I'm not calling back"))).toBe(true);
+  });
+
+  it("does nothing for a manual test call", async () => {
+    db.query.mockImplementation(async (...args: unknown[]) => (/UPDATE iris_call_log/.test(String(args[0])) ? [{ client_id: "3-percent-east-coast", contact_id: "contact-1", triggered_by: "manual" }] : []));
+
+    await finishCall();
+
+    expect(sqlCalls().some((c) => /source = \$5/.test(c.sql))).toBe(false);
+  });
+
+  describe("when the call back goes unanswered", () => {
+    const resumeRow = (over: Record<string, unknown> = {}) => ({
+      id: 159,
+      attempts_made: 2,
+      created_at: new Date("2026-11-11T13:30:00.000Z"),
+      status: "placed",
+      is_explicit_callback: true,
+      source: "transfer-resume",
+      callback_misses: 0,
+      human_requested: false,
+      lead: { name: "Michelle Smith Funk", intent: "buyer", transferResume: { at: "2026-11-11T13:34:00.000Z", callId: "call-1", collected: null, count: 1 } },
+      ...over,
+    });
+    beforeEach(() => {
+      db.query.mockImplementation(async (...args: unknown[]) => {
+        const sql = String(args[0]);
+        if (/'\{transferResume,texted\}'/.test(sql)) return claimed ? [{ id: 159 }] : [];
+        return [resumeRow()];
+      });
+    });
+
+    it.each(["customer-did-not-answer", "voicemail", "customer-busy"])("texts the lead to ask if they hung up or still want to be connected (%s)", async (reason) => {
+      await maybeReopenPendingCall("3-percent-east-coast", "contact-1", reason);
+
+      expect(texts()).toHaveLength(1);
+      expect(texts()[0]).toContain("Did you hang up, or would you still like to be connected?");
+      expect(dialPending.holdForTextReply).toHaveBeenCalledWith(159);
+      expect(dialPending.reopenForNextAttempt).not.toHaveBeenCalled();
+      expect(posts().some((t) => t.includes("Texted *Michelle Smith Funk*"))).toBe(true);
+    });
+
+    it("does not text twice, but still keeps the row open for a reply", async () => {
+      claimed = false;
+
+      await maybeReopenPendingCall("3-percent-east-coast", "contact-1", "customer-did-not-answer");
+
+      expect(ghl.sendSMS).not.toHaveBeenCalled();
+      expect(dialPending.holdForTextReply).toHaveBeenCalledWith(159);
+    });
+
+    it("does not text outside calling hours, and tells the team instead", async () => {
+      vi.setSystemTime(new Date("2026-11-12T03:00:00.000Z")); // 11:30 PM in St. John's
+
+      await maybeReopenPendingCall("3-percent-east-coast", "contact-1", "customer-did-not-answer");
+
+      expect(ghl.sendSMS).not.toHaveBeenCalled();
+      expect(posts().some((t) => t.includes("outside texting hours"))).toBe(true);
+    });
   });
 });

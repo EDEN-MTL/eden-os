@@ -197,6 +197,21 @@ describe("irisHandleInboundSms — no calls", () => {
   });
 });
 
+describe("irisHandleInboundSms — a reply to the 'did you hang up?' text after a dropped transfer (Mark, 2026-11-11)", () => {
+  it("answers knowing they are already qualified, so it never starts the questions again", async () => {
+    db.query.mockResolvedValue([
+      { client_id: "3-percent-east-coast", contact_id: "contact-1", lead: { ...LEAD, transferResume: { at: "2026-11-11T13:34:00.000Z", callId: "c", collected: null, count: 1, texted: true } }, status: "pending", source: "transfer-resume" },
+    ]);
+    vi.mocked(chatWithTools).mockResolvedValueOnce(endTurn("No problem, I'll have Iris call you right now to connect you."));
+
+    await irisHandleInboundSms("contact-1", "yes please connect me", { wait: async () => {} });
+
+    const systemPrompt = String(vi.mocked(chatWithTools).mock.calls[0][0]);
+    expect(systemPrompt).toMatch(/Their call dropped while you were connecting them to an agent/);
+    expect(systemPrompt).toMatch(/NEVER ask about buying or selling/);
+  });
+});
+
 /**
  * Real mistake found live, 2026-09-25 (Kaitlyn Sheppard): dial-pending.ts's
  * pre-dial recheck already reads and acts on a lead's first reply to the

@@ -790,6 +790,45 @@ The aim is that an agent can pick this lead up straight after this chat already 
 - Their specific figure or month is the real answer: use it, not the range, in save_qualification_notes.`;
 }
 
+/**
+ * A lead whose call dropped while Iris was connecting them to an agent (transfer-resume.ts). Everything about them was
+ * already gathered on that call, so the retry is only about connecting them again.
+ */
+export interface TransferResumePromptContext {
+  /** "a few minutes ago", "earlier", "the other day": how to refer to the call that dropped. */
+  when: string;
+  /** Iris's own one-line note from that call, so nothing is asked again. */
+  collected: string | null;
+}
+
+/**
+ * What Iris says right after identity is confirmed on a retry call. Every line says the call got cut off, says she
+ * will connect them again, and ends on a question containing "connect you with" — calling.ts's transferCall
+ * rejectionPlan requires that phrase in her previous turn (see LIVE_TRANSFER_LINES), so the transfer can't fire
+ * without it.
+ */
+export function transferResumeCallLines(ctx: TransferResumePromptContext, intent: CallIntent): string[] {
+  const agent = intent === "seller" || intent === "downsize" ? "one of our selling agents" : intent === "buyer" || intent === "upgrading" ? "one of our buyer agents" : "one of our agents";
+  return [
+    `Sorry about that, it looks like we got cut off ${ctx.when} while I was connecting you with ${agent}. I'll connect you with them again now. Is that okay?`,
+    `Apologies, our call dropped ${ctx.when} just as I was connecting you with ${agent}. I'd like to connect you with them again right now. Is that alright?`,
+    `Sorry we got disconnected ${ctx.when}. I was in the middle of connecting you with ${agent}, so I'll connect you with them again. Does that work for you?`,
+  ];
+}
+
+function transferResumeCallBlock(ctx: TransferResumePromptContext): string {
+  return `## Why you're calling — your last call dropped while you were connecting them to an agent
+You were on the phone with this person ${ctx.when}. They had told you everything and agreed to be connected to an agent, but the call ended while the transfer was still going. You are calling back to connect them again. ${ctx.collected ? `What you already have from that call: ${ctx.collected}.` : ""} So:
+- NEVER ask about buying or selling, area, property, bedrooms, timeline, budget, pre-approval or an agent, and never re-confirm any of it. It is all done. This is not a qualification call.
+- Skip the "how are you doing today" small talk. Right after they confirm who they are, say one of the lines above (in your own words, keeping the question that ends it), then STOP and wait for their answer. This overrides step 6's "don't wait for a yes": here you DO wait. That line tells them you are going to transfer them again, so do not say anything else first.
+- Agreement ("okay", "sure", "yes") → say one of the transfer lines below, THEN invoke transferCall, exactly as described under the live transfer rules.
+- They say it is not a good time, or ask you to call later → do not transfer. Acknowledge it warmly and use the scheduling fallback below to set a time.
+- They say they no longer want an agent, or already have one: thank them kindly and end the call. Do not push, and do not say someone will follow up.
+- If they ask why the call dropped, say it happens sometimes and you are sorry. Never blame them or the agents, and never explain the phone system.
+- Never say who the agent will be.
+- If you reword one of those lines, keep the words "connect you with" in the question you end on.`;
+}
+
 function noShowCallBlock(ctx: NoShowPromptContext): string {
   return `## Why you're calling — a missed appointment, not a new lead
 This person booked an appointment${noShowAgentPhrase(ctx)} for ${ctx.missedWhen} and did not make it. The team marked it a no-show, and you are following up to get them rebooked. They were already qualified when they booked, so:
@@ -810,7 +849,8 @@ export function buildLeadQualificationPrompt(
   transferAvailable: boolean,
   calendarAvailable: boolean,
   origin: CallOrigin = "form",
-  noShow?: NoShowPromptContext
+  noShow?: NoShowPromptContext,
+  transferResume?: TransferResumePromptContext
 ): string {
   const firstName = extractFirstName(lead.name);
   const identifyLine = callIdentifyLine(firstName);
@@ -818,7 +858,13 @@ export function buildLeadQualificationPrompt(
   // Moved out of the firstMessage (see callOpeningGreeting) into the
   // opening-sequence instructions below, so the reason for the call is its
   // own turn rather than crammed into the first thing Iris says.
-  const contextLine = noShow ? noShowCallContextLines(noShow) : callOpeningContextLine(lead.intent, city, lead.leadSource, origin);
+  const contextLine = noShow
+    ? noShowCallContextLines(noShow)
+    : transferResume
+      ? transferResumeCallLines(transferResume, lead.intent)
+      : callOpeningContextLine(lead.intent, city, lead.leadSource, origin);
+  // Both of these calls have a single purpose and a lead who is already qualified: no verifying, no new questions.
+  const skipQualifying = Boolean(noShow || transferResume);
 
   // Verifying lines are actual sentences to speak, confirming what Scout/the
   // form already established — never a generic "confirm it" instruction.
@@ -872,6 +918,8 @@ export function buildLeadQualificationPrompt(
 
   const verifyingBlock = noShow
     ? noShowCallBlock(noShow)
+    : transferResume
+    ? transferResumeCallBlock(transferResume)
     : verifying.length
     ? `## Verify what's already known — these are FACTS to confirm, not a script to read. Check in on each ONE AT A TIME, in your own natural words, pausing and waiting for their answer before the next one. Never re-discover any of this cold.
 
@@ -897,7 +945,7 @@ EVERY item in this list gets asked as a confirmation, not one or two of them —
 The moment the lead actually answers one of these — confirms it, or gives you an updated value — that fact is CLOSED for the rest of the call. Never circle back and re-confirm something you already checked, even while wrapping up a different, newly-gathered fact in the same breath. Mark's live feedback, 2026-09-11: right after the lead gave their bedroom and bathroom count (a "still need to gather" item), Iris said "just to make sure I have that right, you're looking for a townhouse with that setup?" — re-asking the property type, which had ALREADY been confirmed several turns earlier in this same call. The lead had to say "don't need to repeat that." A single recap right before presenting the transfer (once, covering everything, after every item here and every "still need to gather" item is truly done) is fine and expected — see the transfer section below — but re-verifying one already-closed fact mid-conversation, unprompted, is not.`
     : `## What you already know about this lead\nNothing yet — this is a cold first contact.`;
 
-  const stillNeededBlock = stillNeeded.length && !noShow
+  const stillNeededBlock = stillNeeded.length && !skipQualifying
     ? `\n\n## Still need to gather — ask ONE at a time, always pausing and waiting for their answer before the next one. These are what to find out, not exact lines to read — ask naturally in your own words, phrased differently call to call:\n${stillNeeded.map((q) => `- ${q}`).join("\n")}`
     : "";
 
@@ -910,9 +958,9 @@ The moment the lead actually answers one of these — confirms it, or gives you 
    * two blocks above each one lands in (verified vs. still-needed), since
    * either can be known or unknown independently.
    */
-  const specificAnswersBlock = noShow ? "" : specificAnswersRule(lead.intent);
+  const specificAnswersBlock = skipQualifying ? "" : specificAnswersRule(lead.intent);
 
-  const propertyTypeOrderingRule = noShow ? "" : `\n\n## Ordering rule — property type, then bedrooms/bathrooms, always back to back
+  const propertyTypeOrderingRule = skipQualifying ? "" : `\n\n## Ordering rule — property type, then bedrooms/bathrooms, always back to back
 The moment the type of home is settled (confirmed if known, answered if you had to ask), your VERY NEXT question — before timeline, budget, area, financing, or anything else — must be how many bedrooms and bathrooms they need. Never let another topic land between these two.`;
 
   // bookingToolsAvailable reflects whether this environment actually has a
@@ -1595,7 +1643,7 @@ form?" — asking twice is exactly as wrong as never asking at all.
 
 Once identity is settled, continue (you already introduced yourself by
 name in your opening turn above — never introduce yourself a second time):
-4. Ask how they're doing today (e.g. "How are you doing today?" —
+${transferResume ? `4-5. SKIP both of these on this call (no "how are you doing today", no small talk): the call dropped a moment ago and they are waiting to be connected. Go straight to 6.\n` : ""}4. ${transferResume ? "(Does not apply on this call.) " : ""}Ask how they're doing today (e.g. "How are you doing today?" —
    confirmed live, 2026-09-14, on two separate calls: this came out as
    the ungrammatical "Are you doing today?", dropping the leading "How" —
    include it), and genuinely wait for their answer.
@@ -1607,7 +1655,7 @@ name in your opening turn above — never introduce yourself a second time):
    Say it in your own words rather than reciting it verbatim, and don't wait
    for an explicit "yes" before continuing — flow straight into your next
    question the way a real conversation would.
-7. ${noShow ? "Move straight into rescheduling — this is NOT a qualification call, so do not verify or ask about their home search (see \"Why you're calling\" above). Everything below about verifying and gathering does not apply to this call. Otherwise: " : ""}Move into verifying what's known, then gathering what's still needed
+7. ${transferResume ? "Do not verify or gather anything on this call (see \"Why you're calling\" above): the only thing left is connecting them. Otherwise: " : ""}${noShow ? "Move straight into rescheduling — this is NOT a qualification call, so do not verify or ask about their home search (see \"Why you're calling\" above). Everything below about verifying and gathering does not apply to this call. Otherwise: " : ""}Move into verifying what's known, then gathering what's still needed
    (both below) — one at a time, always pausing and genuinely waiting for
    their answer before asking the next one. Never stack more than one question
    into a single turn, and never answer your own question. If an item below
@@ -1619,7 +1667,9 @@ name in your opening turn above — never introduce yourself a second time):
 
 ## Your job
 ${
-  noShow
+  transferResume
+    ? `Connect this person to an agent: they already agreed to it on the call that dropped, and everything about them is gathered. Say the line, hear their yes, then transfer them with the live-transfer rules below. If they would rather talk later, schedule it as described in the fallback below.`
+    : noShow
     ? `Get this person booked into a NEW appointment, as a short natural back-and-forth. They were already qualified when they first booked, so never re-qualify them. You have no live-transfer on this call; the outcome you want is a real booking made with your scheduling tool.`
     : `Verify what's known above, gather what's still needed, decide fit, then get
 a qualified lead connected to the right agent — as a natural back-and-forth
@@ -2017,6 +2067,12 @@ export interface SmsPromptOptions {
    */
   stopCheck?: boolean;
   /**
+   * Their phone call dropped while Iris was connecting them to an agent, and the text they are answering asked
+   * whether they hung up or still want to be connected (transfer-resume.ts, Mark 2026-11-11). They are already
+   * qualified from that call, so nothing is asked again.
+   */
+  transferResume?: boolean;
+  /**
    * The real outbound text this lead is replying to (their very first
    * reply only — text-signals.ts's precedingOutbound). Real gap found
    * live, 2026-09-25 (Kaitlyn Sheppard): the initial outreach text asks
@@ -2093,6 +2149,15 @@ They told us not to call them. That is NOT the same as not being interested: the
 Do NOT qualify, book, schedule or push on this turn, and do not use any tool. Reply with ONE short, warm line that finds out what they mean without arguing: ask whether they'd like us to stop reaching out altogether, or whether something else would suit them better (a different time, text only, no calls). Never say "we won't reach out again" or goodbye until they confirm they want to stop; if they do, that is handled for you.\n`
     : "";
 
+  const transferResumeBlock = options.transferResume
+    ? `\n## Their call dropped while you were connecting them to an agent
+You spoke to them by phone a little earlier, they told you everything and agreed to be connected to an agent, then the call ended before the transfer finished. Your last text asked whether they hung up or would still like to be connected. They are already qualified, so NEVER ask about buying or selling, area, bedrooms, budget, timeline or pre-approval again.
+- They still want to be connected ("yes", "yeah, call me", "sorry the call dropped") → ${options.callHandoff && !options.noCalls ? `call schedule_transfer_call with when "now" (or the time they name) and fill in what you can from the conversation, then send the ONE text it tells you to.` : `say one of our agents will reach out shortly, and call request_human_followup.`}
+- They say they hung up on purpose, it is not a good time, or they name a later time → no problem, ask what day and time suits them (or use the time they gave) and ${options.callHandoff && !options.noCalls ? "schedule it with schedule_transfer_call" : "call request_human_followup with that time"}.
+- They no longer want an agent, or already have one → thank them kindly and call request_human_followup. Do not push.
+Keep it to one short, warm text. Never blame them for the call dropping.\n`
+    : "";
+
   const noCallsEnding = `## Ending the conversation
 This lead does not want phone calls from Iris, so there is no "Iris will call you" ending. Once every question above is answered (or they've clearly declined some), the lead is qualified.
 1. Call save_qualification_notes with a concise structured summary of everything gathered THIS conversation, and include that they asked for no calls.
@@ -2134,7 +2199,7 @@ Some of the "Us" lines were sent by our automated texts before you joined — yo
     : "";
 
   return `You are IRIS, texting with ${firstName !== "there" ? firstName : "a lead"} on behalf of ${brandName}, a real estate brokerage in ${city}. This is a REAL text conversation with a real prospective client who replied to an earlier text — not a drill, not a live phone call. You have no voice here; every reply is a text message.
-${stopCheckBlock}${noCallsBlock}${outreachContextBlock}${recentTextsBlock}
+${stopCheckBlock}${transferResumeBlock}${noCallsBlock}${outreachContextBlock}${recentTextsBlock}
 ## How to write a text, not talk on the phone
 Keep every message SHORT — one or two sentences, like a real person texting, never a paragraph. Ask ONE question per message and wait for their reply before the next one. Use casual, warm phrasing, not a script read verbatim. Vary your acknowledgments rather than repeating the same one — some natural options: ${NATURAL_TRANSITIONS.sms.map((t) => `"${t}"`).join(", ")}.
 ${emberBlock}

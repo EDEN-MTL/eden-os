@@ -41,6 +41,8 @@ const ghl = vi.hoisted(() => ({
 vi.mock("../../shared/ghl", () => ghl);
 
 import { runDialPendingCalls } from "./dial-pending";
+import { buildLeadQualificationPrompt } from "./scripts";
+import { transferNumberForIntent } from "./qualification";
 
 const LEAD = {
   contactId: "contact-1",
@@ -354,5 +356,65 @@ describe("resolveOne — a text that only MIGHT mean stop (reversible by default
     expect(ghl.addContactTags).not.toHaveBeenCalled();
     expect(db.query.mock.calls.find((c) => String(c[0]).includes("lead opted out"))).toBeUndefined();
     expect(db.query.mock.calls.find((c) => String(c[0]).includes("may have asked to stop"))).toBeDefined();
+  });
+});
+
+/**
+ * Mark, 2026-11-11 (Michelle Smith Funk): a lead who agreed to an agent and hung up during the transfer gets a call
+ * back that connects them again — qualified by definition, so the "already qualified" gate must not stop it.
+ */
+describe("resolveOne — the call back after a transfer dropped", () => {
+  const resumeRow = (over: Record<string, unknown> = {}, at = new Date(Date.now() - 4 * 60_000).toISOString()) => ({
+    ...DUE_ROW,
+    is_explicit_callback: true,
+    source: "transfer-resume",
+    lead: { ...LEAD, transferResume: { at, callId: "call-257", collected: "Buyer | $500K", count: 1 } },
+    ...over,
+  });
+
+  beforeEach(() => {
+    vi.mocked(transferNumberForIntent).mockReturnValue("+15551110000");
+    scout.refreshLead.mockResolvedValue({ ...LEAD, qualified: true });
+  });
+
+  function dueRow(row: unknown) {
+    db.query.mockImplementation(async (sql: string) => (sql.includes("WHERE status = 'pending' AND call_after <= now()") ? [row] : []));
+  }
+
+  it("places the call even though the lead now reads as qualified, and tells the prompt what they agreed to", async () => {
+    dueRow(resumeRow());
+
+    await runDialPendingCalls();
+
+    expect(calling.placeCall).toHaveBeenCalledTimes(1);
+    expect(calling.placeCall.mock.calls[0][0]).toMatchObject({ transferNumber: "+15551110000", contactId: "contact-1" });
+    const promptArgs = vi.mocked(buildLeadQualificationPrompt).mock.calls[0];
+    expect(promptArgs[9]).toEqual({ when: "a few minutes ago", collected: "Buyer | $500K" });
+  });
+
+  it("calls an ordinary already-qualified callback off, as before", async () => {
+    dueRow({ ...resumeRow(), source: null, lead: LEAD });
+
+    await runDialPendingCalls();
+
+    expect(calling.placeCall).not.toHaveBeenCalled();
+  });
+
+  it("does not call back once the drop is too old to pick up from, and tells the team", async () => {
+    dueRow(resumeRow({}, new Date(Date.now() - 49 * 3_600_000).toISOString()));
+
+    await runDialPendingCalls();
+
+    expect(calling.placeCall).not.toHaveBeenCalled();
+    expect(db.query.mock.calls.some((c) => c[1]?.[2] === "transfer resume not placed: it was too long ago to pick up where we left off")).toBe(true);
+  });
+
+  it("does not call back when there is no agent line to connect them to", async () => {
+    vi.mocked(transferNumberForIntent).mockReturnValue(undefined as any);
+    dueRow(resumeRow());
+
+    await runDialPendingCalls();
+
+    expect(calling.placeCall).not.toHaveBeenCalled();
   });
 });

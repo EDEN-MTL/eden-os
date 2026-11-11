@@ -4,6 +4,7 @@ import {
   AGENT_UNAVAILABLE_LINE,
   CHECK_AVAILABILITY_ACK_LINES,
   TRANSFER_ATTEMPT_LINES,
+  transferResumeCallLines,
   TRANSFER_REINFORM_LINES,
   buildLeadQualificationPrompt,
   buildNoShowSmsPrompt,
@@ -1760,5 +1761,57 @@ describe("text qualification asks for specific answers too", () => {
   it("keeps the no-show text conversation free of it", () => {
     const prompt = buildNoShowSmsPrompt(BLANK_LEAD, "3 Percent East Coast", "St. John's", { agentName: "Chantelle English", missedDay: "yesterday", missedWhen: "Monday, October 19 at 11:00 AM" });
     expect(prompt).not.toContain("Get specific answers");
+  });
+});
+
+/**
+ * Mark, 2026-11-11 (Michelle Smith Funk, Ritu Patel, Jalpesh Patel): the call dropped while Iris was connecting the
+ * lead to an agent. The call back says so, says she will connect them again, and asks nothing the lead already told her.
+ */
+describe("the call back after a transfer dropped", () => {
+  const LEAD = { ...BLANK_LEAD, name: "Michelle Smith Funk", intent: "buyer" as const, budget: "$500K", timeline: "6+ months" };
+  const RESUME = { when: "a few minutes ago", collected: "Buyer | Paradise, Mount Pearl | 4 bed | $500K" };
+  const prompt = () => buildLeadQualificationPrompt(IRIS_CONFIG, LEAD, "3 Percent East Coast", "St. John's", false, true, false, "form", undefined, RESUME);
+
+  it("opens by saying the call got cut off and that she will connect them with an agent again, in a question the transfer rule accepts", () => {
+    const lines = transferResumeCallLines(RESUME, "buyer");
+    expect(lines.length).toBeGreaterThan(1);
+    for (const line of lines) {
+      expect(line).toContain("a few minutes ago");
+      expect(line).toMatch(/connect(ing)? you with one of our buyer agents/);
+      expect(line.trim()).toMatch(/connect you with[^.?!]*[.?!][^.?!]*\?$/); // ends on a question that has "connect you with" in it
+    }
+    expect(prompt()).toContain(lines[0]);
+  });
+
+  it("does not verify or gather anything, skips the small talk, and carries what she already learned", () => {
+    const p = prompt();
+    expect(p).toContain("your last call dropped while you were connecting them to an agent");
+    expect(p).toContain("Buyer | Paradise, Mount Pearl | 4 bed | $500K");
+    expect(p).toContain("NEVER ask about buying or selling");
+    expect(p).toContain("SKIP both of these on this call");
+    expect(p).not.toContain("## Still need to gather");
+    expect(p).not.toContain("## Verify what's already known");
+    expect(p).not.toContain("## Get specific answers");
+  });
+
+  it("still has the live-transfer rules, so agreement ends in the transfer", () => {
+    const p = prompt();
+    expect(p).toContain("transferCall");
+    for (const line of TRANSFER_ATTEMPT_LINES) expect(p).toContain(line);
+  });
+
+  it("is an ordinary call when nothing dropped", () => {
+    const p = buildLeadQualificationPrompt(IRIS_CONFIG, LEAD, "3 Percent East Coast", "St. John's", false, true, false);
+    expect(p).not.toContain("your last call dropped");
+    expect(p).toContain("## Verify what's already known");
+  });
+
+  it("the text prompt for their reply knows they are already qualified and what each answer means", () => {
+    const p = buildSmsQualificationPrompt(IRIS_CONFIG, LEAD, "3 Percent East Coast", "St. John's", { transferResume: true, callHandoff: true });
+    expect(p).toContain("Their call dropped while you were connecting them to an agent");
+    expect(p).toContain("NEVER ask about buying or selling");
+    expect(p).toContain("schedule_transfer_call");
+    expect(buildSmsQualificationPrompt(IRIS_CONFIG, LEAD, "3 Percent East Coast", "St. John's", { callHandoff: true })).not.toContain("Their call dropped");
   });
 });

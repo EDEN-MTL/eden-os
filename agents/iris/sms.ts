@@ -602,6 +602,7 @@ async function handleInboundSms(contactId: string, text: string, options: Inboun
     : buildSmsQualificationPrompt(config, row.lead, branding.brandName, branding.city, {
         noCalls,
         stopCheck,
+        transferResume: Boolean((row.lead as any)?.transferResume),
         recentTexts: recent,
         origin: "form",
         callHandoff: config.smsCallHandoff,

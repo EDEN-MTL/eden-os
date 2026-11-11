@@ -35,6 +35,7 @@ import { hasActiveSmsConversation, markLeadNoCalls, NO_CALLS_TAG } from "./sms";
 import { sendMessage } from "../../shared/slack";
 import { CALL_LOG_CHANNEL } from "./channels";
 import { NO_SHOW_SOURCE, noShowStillApplies } from "./no-show-state";
+import { isTransferResumeRow, transferResumeExpired, whenPhrase, TransferResumeState } from "./transfer-resume";
 import { getGhlConfig, getLocationTimezone, addContactTags, getContact } from "../../shared/ghl";
 
 /**
@@ -387,7 +388,8 @@ async function resolveOne(row: PendingCallRow): Promise<void> {
     // go-round, and transferring them again is the entire point. (The
     // stage-based firstTouch check isn't on this path at all — explicit
     // callbacks never ran it — so this tag check is the only gate to lift.)
-    if (fresh.qualified && row.source !== "ember" && row.source !== NO_SHOW_SOURCE) {
+    // A dropped transfer is qualified by definition: that is the whole reason for the call (transfer-resume.ts).
+    if (fresh.qualified && row.source !== "ember" && row.source !== NO_SHOW_SOURCE && !isTransferResumeRow(row)) {
       await finish(row.id, "skipped", "already qualified since the callback was requested");
       return;
     }
@@ -614,6 +616,19 @@ async function resolveOne(row: PendingCallRow): Promise<void> {
   const transferNumber = isNoShow ? undefined : transferNumberForIntent(config, lead.intent) ?? undefined;
   const calendarId = callbackCalendarForIntent(config, lead.intent) ?? undefined;
 
+  // The retry for a transfer that dropped (Mark, 2026-11-11). Only worth placing while the drop is fresh, and only
+  // when there is an agent line to connect them to; otherwise the team is told and the lead is left to them.
+  const resume: TransferResumeState | null = isTransferResumeRow(row) ? (row.lead as any).transferResume : null;
+  if (resume && (transferResumeExpired(resume.at) || !transferNumber)) {
+    const why = !transferNumber ? "there is no agent line to connect them to" : "it was too long ago to pick up where we left off";
+    await finish(row.id, "skipped", `transfer resume not placed: ${why}`);
+    await sendMessage("iris", {
+      channel: CALL_LOG_CHANNEL,
+      text: `⚠️ *${lead.name}* agreed to be connected to an agent but the call dropped, and I did not call back because ${why}. They need a person to call.`,
+    }).catch(() => {});
+    return;
+  }
+
   try {
     const result = await placeCall({
       clientId: row.client_id,
@@ -638,7 +653,8 @@ async function resolveOne(row: PendingCallRow): Promise<void> {
         Boolean(transferNumber),
         Boolean(calendarId),
         row.source === "ember" || row.sms_scheduled ? "text" : "form",
-        isNoShow ? (lead as any).noShow : undefined
+        isNoShow ? (lead as any).noShow : undefined,
+        resume ? { when: whenPhrase(resume.at), collected: resume.collected } : undefined
       ),
       transferNumber,
       calendarId,
