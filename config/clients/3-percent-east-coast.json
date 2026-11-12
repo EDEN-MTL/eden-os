@@ -182,6 +182,13 @@
       "sendToHour": 19,
       "note": "Mark, 2026-11-05: leads whose timeline is ASAP are watched. Iris reads each one's calls and texts, works out what we know and where the follow-up stands, and texts a follow-up written from that history (agents/iris/asap-watch.ts). OFF until Mark says go: check the dry run (scripts/asap-watch.ts) first. Stages in skipStages are with an agent, finished, or owned by another Iris flow (No-Show, the weekend cohort's Not Ready)."
     },
+    "dailyFollowUp": {
+      "enabled": false,
+      "maxPerDay": 5,
+      "kinds": ["owed_contact", "qualified_untouched", "only_missed_attempts"],
+      "snoozeDays": 3,
+      "note": "Mark, 2026-11-12 (Magar Bhuma was flagged by the nightly review every morning for a week and nobody acted): every day at 9:50 AM NL Iris follows up on the leads the review says were dropped (agents/iris/review-followup.ts): one call at a time, one text after a miss. Never leads with an agent (Live Transferred, Appointment Set...), never a lead whose last message is theirs and unanswered (a person reads that first), at most maxPerDay a day. Same vetting as the Slack 'act on the flagged leads' command. OFF until Mark says go: check the dry run (scripts/daily-followup.ts) first."
+    },
     "leadReview": {
       "excludeEmailDomains": ["edenmtl.com"],
       "excludeContactIds": ["S6Bojyhw3GQK5UssVLcy"],

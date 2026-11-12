@@ -10,7 +10,7 @@ const fsMock = vi.hoisted(() => ({ readdirSync: vi.fn(() => ["3pc.json"]) }));
 vi.mock("fs", () => fsMock);
 vi.mock("../../webhooks/vapi-webhook", () => ({ hitCallScreener: () => false, hitVoicemailGreeting: () => false }));
 
-import { formatDailySummary, gatherSummary, runDailySummary, type SummaryData } from "./daily-summary";
+import { formatDailySummary, gatherSummary, reviewForSummary, runDailySummary, type SummaryData } from "./daily-summary";
 
 const base = (over: Partial<SummaryData> = {}): SummaryData => ({
   dayLabel: "Tuesday, October 27",
@@ -58,6 +58,15 @@ describe("formatDailySummary", () => {
     expect(flagged).toContain("watchdog raised 2 alerts");
     expect(flagged).not.toContain("Nothing flagged");
   });
+  it("lists every lead nobody has (not just five) and only counts the ones already with an agent", () => {
+    const f = (name: string, withAgent = false) => ({ name, stageName: withAgent ? "Live Transferred" : "Buyer Leads", headline: "h", withAgent });
+    const r = reviewForSummary([f("A", true), f("B", true), f("C"), f("D"), f("E"), f("F"), f("G"), f("Magar")]);
+    expect(r.total).toBe(6);
+    expect(r.top.map((x) => x.name)).toEqual(["C", "D", "E", "F", "G", "Magar"]);
+    expect(r.withAgent).toBe(2);
+    expect(formatDailySummary(base({ review: r }))).toContain("Not counted: 2 more already with an agent");
+  });
+
   it("quotes the top of last night's lead review, and says nothing when there is none", () => {
     const text = formatDailySummary(base({ review: { total: 7, top: [{ name: "Sabrina Marie", stageName: "Replied", headline: "Was promised a call or follow-up 7d ago and nobody has tried since" }] } }));
     expect(text).toContain("*Worth checking in on* (7 from last night's review)");

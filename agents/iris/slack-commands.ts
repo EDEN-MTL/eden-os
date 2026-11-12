@@ -23,6 +23,7 @@ import { clampToLegalCallingWindow, formatLocal } from "./cadence";
 import { queueColdLeadSweep, scheduleExplicitCallback } from "./dial-pending";
 import { findTeammateCalls } from "./teammate-calls";
 import { latestReview } from "./lead-review";
+import { pickFollowUpLeads, REVIEW_MAX_AGE_MS } from "./review-followup";
 import { checkHumanTouch, DEFAULT_HUMAN_HANDS_OFF_DAYS } from "./human-touch";
 import { linkLineFor } from "./links";
 
@@ -322,10 +323,6 @@ export async function prepareFollowUpCommand(
   };
 }
 
-/** A review is a day old at most when someone says yes to it; older than this and the facts may have moved on. */
-const REVIEW_MAX_AGE_MS = 36 * 3_600_000;
-/** CASL: an inquiry older than this is outside implied consent, so Jacob decides (Mark, 2026-10-22). */
-const STALE_INQUIRY_MS = 180 * 86_400_000;
 
 /**
  * Prepares "act on the leads the review flagged": takes the nightly review's findings, re-reads every lead LIVE
@@ -361,37 +358,7 @@ export async function prepareReviewActionCommand(
   });
   if (wanted.length === 0) return { status: "nothing_to_do", reason: "No flagged leads to act on.", instruction: "Tell them there is nobody flagged in the latest review to follow up on." };
 
-  const eligible: { id: string; name: string }[] = [];
-  const left: string[] = [];
-  for (const f of wanted) {
-    if (eligible.some((e) => e.id === f.contactId)) continue;
-    const raw = await getContact(f.contactId, ghl.locationId, ghl.apiKey).catch(() => null);
-    const contact = raw?.contact ?? raw;
-    const tags: string[] = (contact?.tags ?? []).map((t: string) => String(t).toLowerCase());
-    const added = contact?.dateAdded ? new Date(contact.dateAdded).getTime() : NaN;
-    if (!contact) left.push(`${f.name} (couldn't read their record)`);
-    else if (contact.dnd || tags.includes("do not call")) left.push(`${f.name} (do not call)`);
-    else if (tags.includes("no calls")) left.push(`${f.name} (no calls)`);
-    else if (!contact.phone) left.push(`${f.name} (no phone)`);
-    else if (tags.includes("appt booked") || tags.includes("live transferred")) left.push(`${f.name} (already ${tags.includes("appt booked") ? "booked" : "live transferred"})`);
-    // They wrote to us, so an old inquiry is not the issue; otherwise an inquiry over six months old needs Jacob's OK.
-    else if (f.kind !== "unanswered_reply" && Number.isFinite(added) && now.getTime() - added > STALE_INQUIRY_MS) left.push(`${f.name} (inquiry over 6 months old — needs Jacob's OK)`);
-    else {
-      // Calls count here: a teammate who has called or texted since the review ran is working this lead.
-      const touch = await checkHumanTouch(f.contactId, ghl.locationId, ghl.apiKey, settings.humanHandsOffDays, now);
-      if (touch.status !== "none") left.push(`${f.name} (a teammate has been in touch)`);
-      else {
-        // Iris or Ember already dealt with them since the review ran.
-        const recent = await query<{ n: string }>(
-          `SELECT (SELECT count(*) FROM iris_pending_calls WHERE client_id = $1 AND contact_id = $2 AND status = 'pending')
-                + (SELECT count(*) FROM iris_call_log WHERE client_id = $1 AND contact_id = $2 AND created_at > $3) AS n`,
-          [clientId, f.contactId, review.ranAt]
-        );
-        if (Number(recent[0]?.n ?? 0) > 0) left.push(`${f.name} (Iris already has them in hand)`);
-        else eligible.push({ id: f.contactId, name: f.name });
-      }
-    }
-  }
+  const { eligible, left } = await pickFollowUpLeads(clientId, wanted, { humanHandsOffDays: settings.humanHandsOffDays, now, reviewRanAt: review.ranAt });
   if (eligible.length === 0) {
     return { status: "nothing_to_do", reason: "Nobody safe to follow up.", instruction: `Tell them none of the flagged leads can be followed up right now, and why: ${left.join("; ")}.` };
   }
@@ -401,7 +368,7 @@ export async function prepareReviewActionCommand(
     `Follow up on ${eligible.length} lead${eligible.length === 1 ? "" : "s"} from the lead review: ${eligible.map((e) => `*${e.name}*`).join(", ")}.\n` +
     `Iris calls them one at a time starting ${formatLocal(startAt.toISOString(), settings.timezone)}; anyone who doesn't pick up gets one text.` +
     (left.length ? `\nLeaving out: ${left.join("; ")}.` : "");
-  const commandId = await storePending(clientId, ctx, "review", eligible[0], summary, startAt, eligible);
+  const commandId = await storePending(clientId, ctx, "review", eligible[0], summary, startAt, eligible.map((e) => ({ id: e.id, name: e.name })));
   return {
     status: "needs_confirmation",
     commandId,

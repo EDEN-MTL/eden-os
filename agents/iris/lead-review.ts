@@ -115,7 +115,17 @@ export interface Finding {
   lastContact: string;
   suggested: string;
   assignedTo: string | null;
+  /** The card sits in a column a person works (Live Transferred, Appointment Set, ...): the team has this lead, Iris doesn't chase it. */
+  withAgent?: boolean;
 }
+
+/**
+ * Columns where a person has the lead (the live transfer or the appointment already happened). They stay in the
+ * review's list (a promised call a teammate never made is worth knowing) but are listed apart, and Iris never
+ * follows them up on her own. Mark, 2026-11-12: 9 of the 16 flagged leads were these, which buried Magar at number 8.
+ */
+export const WITH_AGENT_STAGES = ["Live Transferred", "Appointment Set", "Appointment Set (Not qualified)", "Showed Up", "No-Show", "Buyer Confirmed", "Seller Confirmed", "Listing Active", "Deal Closed"];
+export const isWithAgentStage = (stageName: string): boolean => WITH_AGENT_STAGES.some((s) => s.toLowerCase() === String(stageName).trim().toLowerCase());
 
 const HOUR = 3_600_000;
 const DAY = 24 * HOUR;
@@ -249,7 +259,7 @@ export function formatFindings(findings: Finding[], scanned: number, max = 10): 
 
 // Stages where the outcome is a person's: a lead who showed up, closed or is under contract is not a dropped ball,
 // and No-Show cards have their own follow-up (agents/iris/no-show.ts).
-const DEFAULT_SKIP_STAGES = ["Deal Closed", "Not Qualified/Not Interested", "International Numbers", "Listing Active", "Buyer Confirmed", "Seller Confirmed", "Showed Up", "No-Show"];
+export const DEFAULT_SKIP_STAGES = ["Deal Closed", "Not Qualified/Not Interested", "International Numbers", "Listing Active", "Buyer Confirmed", "Seller Confirmed", "Showed Up", "No-Show"];
 
 /** Eden's own test leads (Mark's and Jacob's test numbers and emails) must never show up as leads worth checking in on. */
 export function isTestContact(contact: { email?: string | null; tags?: string[] }, emailDomains: string[] = []): boolean {
@@ -348,7 +358,8 @@ export async function reviewClient(clientId: string, options: { now?: Date; only
   // One finding per lead: the strongest.
   const best = new Map<string, Finding>();
   for (const f of results.flat()) if (!best.has(f.contactId) || best.get(f.contactId)!.score < f.score) best.set(f.contactId, f);
-  return { findings: [...best.values()].sort((a, b) => b.score - a.score), scanned: ids.length };
+  const findings = [...best.values()].map((f) => ({ ...f, withAgent: isWithAgentStage(f.stageName) })).sort((a, b) => b.score - a.score);
+  return { findings, scanned: ids.length };
 }
 
 // ─── Stored runs, snoozes, and the nightly loop ───

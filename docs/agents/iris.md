@@ -159,6 +159,25 @@ It only gates the dial — it has no effect on whether leads get queued.
   yes, then the same sweep as "follow up on Jacob's calls" (one call at a time, one text after a miss). A review
   older than 36h is refused. Stored as `iris_slack_commands.kind = 'review'`.
 
+### The daily lead follow-up (Mark, 2026-11-12 — Magar Bhuma)
+
+Mark's rule (2026-10-29): Iris checks every lead, every day, works out who needs a follow-up, so nobody is missed. The nightly
+review (7:30 AM NL, `lead-review.ts`) did the reading but only listed names, and acting needed someone to ask in Slack; nobody
+ever did (zero `review` commands in `iris_slack_commands`). Magar was flagged "qualified, untouched" every morning from 11-05
+and nothing happened for a week. He was also number 8 of 16 and the summary showed five; 9 of the 16 were leads already with
+an agent.
+- `review-followup.ts`, 9:50 AM NL daily, `iris.dailyFollowUp` (`enabled`, `maxPerDay` 5, `kinds`, `snoozeDays` 3). Off until
+  Mark says go: `npx tsx --env-file=.env scripts/daily-followup.ts` is the dry run (stages, who would be lined up, who is left out).
+- Same vetting as the Slack "act on the flagged leads" command (`pickFollowUpLeads`, shared): do-not-call, no-calls, no phone,
+  booked / live transferred, a teammate in touch, an inquiry over 180 days old all leave a lead out. Same follow-up: one call at
+  a time, one text after a miss (`queueColdLeadSweep`). It never moves a card.
+- Never on its own: leads in a with-agent column (`WITH_AGENT_STAGES`), parked columns (`PARKED_STAGES`: Not Ready, Long Term
+  Nurturing), or a lead whose last message is theirs (`unanswered_reply`: a person reads it first). Those are listed in Slack.
+- A lead followed up is snoozed from the review for `snoozeDays`, so it isn't dialled daily.
+- The "Iris already has them in hand" check ignored nothing: a row parked for a text reply (`call_after = infinity`) counted, which
+  would have kept Magar out even on a yes. It now counts only a pending row due within a day.
+- The morning summary lists every lead nobody has and only counts the ones with an agent.
+
 ### "Please no Calls" is not an opt-out (Mark, 2026-11-06 — Kelly Joseph)
 
 A new lead answered the intake text with "Please no Calls". The old classifier called that `opt_out`: row closed, "do not call"

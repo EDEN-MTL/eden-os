@@ -719,6 +719,14 @@ export function loadIrisConfig(clientId: string): IrisConfig | null {
         typeof raw.iris.followUpCohort?.notReadyStage === "string" && typeof raw.iris.followUpCohort?.notInterestedStage === "string"
           ? { notReadyStage: raw.iris.followUpCohort.notReadyStage, notInterestedStage: raw.iris.followUpCohort.notInterestedStage }
           : undefined,
+      dailyFollowUp: raw.iris.dailyFollowUp
+        ? {
+            enabled: raw.iris.dailyFollowUp.enabled === true,
+            maxPerDay: Number.isInteger(raw.iris.dailyFollowUp.maxPerDay) && raw.iris.dailyFollowUp.maxPerDay > 0 ? raw.iris.dailyFollowUp.maxPerDay : 5,
+            kinds: Array.isArray(raw.iris.dailyFollowUp.kinds) ? raw.iris.dailyFollowUp.kinds.filter((k: unknown) => typeof k === "string") : ["owed_contact", "qualified_untouched", "only_missed_attempts"],
+            snoozeDays: Number.isInteger(raw.iris.dailyFollowUp.snoozeDays) && raw.iris.dailyFollowUp.snoozeDays > 0 ? raw.iris.dailyFollowUp.snoozeDays : 3,
+          }
+        : undefined,
       asapWatch: raw.iris.asapWatch
         ? {
             enabled: raw.iris.asapWatch.enabled === true,

@@ -35,8 +35,18 @@ export interface SummaryData {
   waitingOnText: number;
   cohortActive: number;
   watchdogAlerts: number;
-  /** The lead review's top findings (name, stage, headline) and how many there are in all; null when there is no fresh review. */
-  review: { total: number; top: { name: string; stageName: string; headline: string }[] } | null;
+  /**
+   * The lead review: the leads nobody on the team has (every one, ranked; the review is short once the ones with an
+   * agent are set apart) and how many more are already with an agent; null when there is no fresh review.
+   */
+  review: { total: number; top: { name: string; stageName: string; headline: string }[]; withAgent?: number } | null;
+}
+
+/** Leads nobody has first, all of them up to a screenful; the ones a person already works are only counted. */
+const SUMMARY_REVIEW_MAX = 8;
+export function reviewForSummary(findings: { name: string; stageName: string; headline: string; withAgent?: boolean }[]): NonNullable<SummaryData["review"]> {
+  const open = findings.filter((f) => !f.withAgent);
+  return { total: open.length, top: open.slice(0, SUMMARY_REVIEW_MAX).map((f) => ({ name: f.name, stageName: f.stageName, headline: f.headline })), withAgent: findings.length - open.length };
 }
 
 const names = (list: string[], max = 6): string => (list.length <= max ? list.join(", ") : `${list.slice(0, max).join(", ")} and ${list.length - max} more`);
@@ -70,6 +80,7 @@ export function formatDailySummary(d: SummaryData): string {
     lines.push("", `*Worth checking in on* (${d.review.total} from last night's review)`);
     for (const r of d.review.top) lines.push(`• *${r.name}* (${r.stageName}): ${r.headline}`);
     if (d.review.total > d.review.top.length) lines.push(`• …ask me "who's worth checking in on?" for the full list with the evidence`);
+    if (d.review.withAgent) lines.push(`• Not counted: ${d.review.withAgent} more already with an agent (Live Transferred, Appointment Set)`);
   }
 
   const flagged = d.calls.filter((c) => c.flags.length > 0);
@@ -141,7 +152,7 @@ export async function gatherSummary(clientId: string, now: Date, timeZone: strin
   const freshReview = review && now.getTime() - review.ranAt.getTime() < 36 * 3_600_000 ? review : null;
 
   return {
-    review: freshReview ? { total: freshReview.findings.length, top: freshReview.findings.slice(0, 5).map((f) => ({ name: f.name, stageName: f.stageName, headline: f.headline })) } : null,
+    review: freshReview ? reviewForSummary(freshReview.findings) : null,
     dayLabel: new Intl.DateTimeFormat("en-US", { timeZone, weekday: "long", month: "long", day: "numeric" }).format(now),
     calls,
     appointments: nameOf(appts),

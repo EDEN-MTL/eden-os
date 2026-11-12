@@ -158,6 +158,8 @@ export interface IrisConfig {
   /** The ASAP watch (asap-watch.ts): follow-up texts for leads whose timeline is ASAP, written from their call and text history. */
   asapWatch?: import("./asap-watch").AsapWatchConfig;
   callbackWatch?: import("./callback-watch").CallbackWatchConfig;
+  /** The daily follow-up (review-followup.ts): Iris follows up on leads the nightly review says were dropped. Off unless enabled. */
+  dailyFollowUp?: import("./review-followup").DailyFollowUpConfig;
   /** The lead review (lead-review.ts): contacts to never flag. */
   leadReview?: { excludeEmailDomains?: string[]; excludeContactIds?: string[] };
   /** Where Iris posts her morning summary (a channel id; the bot must be a member). */
