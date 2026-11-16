@@ -890,6 +890,20 @@ CREATE TABLE IF NOT EXISTS lead_review_snoozes (
     PRIMARY KEY (client_id, contact_id)
 );
 
+-- What the stuck-lead check (agents/iris/stuck-leads.ts) did about a lead, or listed for a person: it spaces its own
+-- actions out (a lead handled this week is left alone), counts the follow-up texts it sent, and lists a person's
+-- leads once a week instead of every morning.
+CREATE TABLE IF NOT EXISTS iris_stuck_actions (
+    id BIGSERIAL PRIMARY KEY,
+    client_id TEXT NOT NULL,
+    contact_id TEXT NOT NULL,
+    contact_name TEXT,
+    action TEXT NOT NULL, -- call_again | text_follow_up | park_not_ready | close_wrong_number | person
+    detail TEXT,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_iris_stuck_actions_contact ON iris_stuck_actions(client_id, contact_id, created_at);
+
 -- Follow-up texts the ASAP watch (agents/iris/asap-watch.ts) sent, so it can space them out and stop after a few.
 CREATE TABLE IF NOT EXISTS asap_watch_texts (
     id BIGSERIAL PRIMARY KEY,

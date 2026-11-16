@@ -160,6 +160,7 @@ export interface IrisConfig {
   callbackWatch?: import("./callback-watch").CallbackWatchConfig;
   /** The daily follow-up (review-followup.ts): Iris follows up on leads the nightly review says were dropped. Off unless enabled. */
   dailyFollowUp?: import("./review-followup").DailyFollowUpConfig;
+  stuckLeads?: import("./stuck-leads").StuckLeadsConfig;
   /** The lead review (lead-review.ts): contacts to never flag. */
   leadReview?: { excludeEmailDomains?: string[]; excludeContactIds?: string[] };
   /** Where Iris posts her morning summary (a channel id; the bot must be a member). */

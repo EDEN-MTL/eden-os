@@ -211,10 +211,10 @@ Rules:
 Reply with the text message only.`;
 
 /** What the model is shown for one lead. */
-export function composerInput(ctx: AsapLeadContext, now: Date, timeZone: string): string {
+export function composerInput(ctx: AsapLeadContext, now: Date, timeZone: string, asap = true): string {
   const { known, missing } = knownAndMissing(ctx);
   return `Lead: ${ctx.name} (first name: ${ctx.firstName})
-Wants to: ${ctx.intent === "seller" ? "sell" : "buy"}, timeline ASAP
+Wants to: ${ctx.intent === "seller" ? "sell" : "buy"}${asap ? ", timeline ASAP" : ctx.timeline ? `, timeline: ${ctx.timeline}` : ""}
 Where we are in the follow-up:
 ${whereWeAre(ctx, now, timeZone).map((l) => `- ${l}`).join("\n")}
 
@@ -252,13 +252,21 @@ export type TextGenerator = (system: string, input: string) => Promise<string>;
 const askModel: TextGenerator = (system, input) => ask(system, input, { maxTokens: 220, temperature: 0.5 });
 
 /** Writes the text, checks it, and gives the model one more go when a check fails (it told them what was wrong). */
-export async function composeAsapText(ctx: AsapLeadContext, now: Date, timeZone: string, generate: TextGenerator = askModel): Promise<{ text: string } | { text: null; reason: string }> {
-  const input = composerInput(ctx, now, timeZone);
+export async function composeAsapText(
+  ctx: AsapLeadContext,
+  now: Date,
+  timeZone: string,
+  generate: TextGenerator = askModel,
+  /** The stuck-lead check writes the same kind of text for leads that are not ASAP, with its own instructions. */
+  options: { system?: string; asap?: boolean } = {}
+): Promise<{ text: string } | { text: null; reason: string }> {
+  const system = options.system ?? COMPOSER_SYSTEM;
+  const input = composerInput(ctx, now, timeZone, options.asap ?? true);
   let problem = "";
   for (let attempt = 0; attempt < 2; attempt++) {
     let raw: string;
     try {
-      raw = await generate(COMPOSER_SYSTEM, attempt === 0 ? input : `${input}\n\nYour previous attempt was rejected because it ${problem}. Write a different text that fixes that.`);
+      raw = await generate(system, attempt === 0 ? input : `${input}\n\nYour previous attempt was rejected because it ${problem}. Write a different text that fixes that.`);
     } catch (error) {
       return { text: null, reason: `the model could not be reached: ${error instanceof Error ? error.message : error}` };
     }

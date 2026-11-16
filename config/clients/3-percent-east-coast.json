@@ -189,6 +189,22 @@
       "snoozeDays": 3,
       "note": "Mark, 2026-11-12 (Magar Bhuma was flagged by the nightly review every morning for a week and nobody acted): every day at 9:50 AM NL Iris follows up on the leads the review says were dropped (agents/iris/review-followup.ts): one call at a time, one text after a miss. Never leads with an agent (Live Transferred, Appointment Set...), never a lead whose last message is theirs and unanswered (a person reads that first), at most maxPerDay a day. Same vetting as the Slack 'act on the flagged leads' command. ON since 2026-11-16 (Mark: 5 a day, 3-day pause). Dry run: scripts/daily-followup.ts."
     },
+    "stuckLeads": {
+      "enabled": true,
+      "stagePatterns": ["^replied", "^buyer leads", "^seller leads", "^downsize leads", "^upgrading leads", "^day [123] -", "^weeke?n?d -"],
+      "stageTags": { "buyer leads": "buyer lead", "seller leads": "seller lead" },
+      "maxCallsPerDay": 4,
+      "maxTextsPerDay": 3,
+      "maxMovesPerDay": 10,
+      "extraTriesForUnfinishedCalls": 2,
+      "quietDays": 3,
+      "giveUpAfterDays": 5,
+      "maxNudges": 2,
+      "autoContactMaxDays": 60,
+      "recheckDays": 3,
+      "personRepeatDays": 7,
+      "note": "Mark, 2026-11-17 (Jacob asked why leads sit in Day 1 AM/PM, Day 2...): every day at 10:20 AM NL Iris goes through the early-stage cards, works out why each has not moved (a call that connected but never finished, calls that ran out, a wrong number, nobody ever contacted, gone quiet) and fixes it: calls again at another time of day (2 extra tries), texts from the history (max 2), moves the card to Not Ready after the last try or Not Interested for a wrong number, and lists the rest for a person once a week (including every lead whose inquiry is over 60 days old, and anything over 6 months, which needs Jacob's OK). See agents/iris/stuck-leads.ts. stagePatterns are regexes on the stage names (the pipeline has typos like WEEKEDN); stageTags is the tag each stage's cards should carry."
+    },
     "leadReview": {
       "excludeEmailDomains": ["edenmtl.com"],
       "excludeContactIds": ["S6Bojyhw3GQK5UssVLcy"],

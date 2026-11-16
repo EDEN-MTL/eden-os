@@ -727,6 +727,27 @@ export function loadIrisConfig(clientId: string): IrisConfig | null {
             snoozeDays: Number.isInteger(raw.iris.dailyFollowUp.snoozeDays) && raw.iris.dailyFollowUp.snoozeDays > 0 ? raw.iris.dailyFollowUp.snoozeDays : 3,
           }
         : undefined,
+      stuckLeads: raw.iris.stuckLeads
+        ? (() => {
+            const c = raw.iris.stuckLeads;
+            const pos = (v: unknown, d: number) => (Number.isInteger(v) && (v as number) > 0 ? (v as number) : d);
+            return {
+              enabled: c.enabled === true,
+              stagePatterns: Array.isArray(c.stagePatterns) ? c.stagePatterns.filter((x: unknown) => typeof x === "string") : [],
+              stageTags: c.stageTags && typeof c.stageTags === "object" ? Object.fromEntries(Object.entries(c.stageTags).filter(([k, v]) => typeof k === "string" && typeof v === "string").map(([k, v]) => [k.trim().toLowerCase(), v as string])) : {},
+              maxCallsPerDay: pos(c.maxCallsPerDay, 4),
+              maxTextsPerDay: pos(c.maxTextsPerDay, 3),
+              maxMovesPerDay: pos(c.maxMovesPerDay, 10),
+              extraTriesForUnfinishedCalls: pos(c.extraTriesForUnfinishedCalls, 2),
+              quietDays: pos(c.quietDays, 3),
+              giveUpAfterDays: pos(c.giveUpAfterDays, 5),
+              maxNudges: pos(c.maxNudges, 2),
+              autoContactMaxDays: pos(c.autoContactMaxDays, 60),
+              recheckDays: pos(c.recheckDays, 3),
+              personRepeatDays: pos(c.personRepeatDays, 7),
+            };
+          })()
+        : undefined,
       asapWatch: raw.iris.asapWatch
         ? {
             enabled: raw.iris.asapWatch.enabled === true,

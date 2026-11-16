@@ -190,6 +190,37 @@ an agent.
   earlier calls were the cadence's, so attempt 3 was wrongly treated as a second round and he got no text). `sweep-text.ts` reads
   the lead's thread for the sweep wording within 7 days; none = text, found = no second text, unreadable = no text.
 
+### The stuck-lead check (Mark, 2026-11-17 — Jacob: "why are leads still in Day 1 AM, Day 1 PM...?")
+
+Iris owns the pipeline's early stages, so a card that is not moving, has no tag, no notes, or never got a first text or call is
+Iris's problem to analyse and resolve. Audit of the 36 early-stage cards on 11-17 found why they sat there:
+- **A call that connected but never finished** (hung up in 30-40 s, a bad line, silence) counts as "answered": the queue row
+  stays 'placed', nothing re-opens, and the card keeps the stage of the first miss (Chris Snook, Daniel Eiriz, Robert Critch,
+  Kaitlyn Sheppard, ...). `moveToFollowUpStage` only ever ran on an *unanswered* attempt.
+- Calls that were never answered ran out (3-8 misses) and the card stayed in the last stage (Jerrett Warford, Melanie Petten, Arif Abu).
+- A wrong number (Ell Dee, 14 days in Day 1 AM, "Wrong number" on the 11-03 call) nobody closed.
+- ~13 old Replied cards (50-90 days; bare phone numbers; no tag, no notes, nobody ever contacted).
+- There is no "New Lead" stage in this pipeline: Buyer Leads is the intake column.
+
+`stuck-leads.ts`, 10:20 AM NL daily (after the 9:50 follow-up, so what it lined up reads as "in hand"), `iris.stuckLeads`
+(`enabled`, `stagePatterns` regexes on stage names, `stageTags`, `maxCallsPerDay` 4, `maxTextsPerDay` 3, `maxMovesPerDay` 10,
+`extraTriesForUnfinishedCalls` 2, `quietDays` 3, `giveUpAfterDays` 5, `maxNudges` 2, `autoContactMaxDays` 60, `recheckDays` 3,
+`personRepeatDays` 7). `diagnoseStuckLead` is a pure function (tested); the first matching rule wins:
+1. Leave alone: do-not-call, booking ahead, a teammate in touch (live thread read again before any action), a call already lined
+   up, waiting on a reply to Iris's text, handled in the last `recheckDays`.
+2. A person's: no phone, tagged live transferred but the card never moved, the lead texted last, inquiry over 180 days (Jacob's OK,
+   CASL) or over `autoContactMaxDays`, an old lead nobody ever contacted, a qualified lead that stopped moving. Listed in Slack
+   once a week (`iris_stuck_actions` remembers).
+3. Wrong number (the lead's own words on a call) -> tags "wrong number" + "do not call", card to Not Interested, queue row skipped.
+4. Nobody ever contacted (recent lead) -> first call now.
+5. Unfinished call (lead hung up / silence at any length; a call Iris ended herself only if under 2 minutes) -> call again at the
+   other half of the day (`retryStartAt`), up to 2 extra tries >= 20 h apart; a "no calls" lead gets a text instead.
+6. Never reached anyone: one text after the calls, then Not Ready after `giveUpAfterDays` of silence.
+7. Talked to Iris, then quiet -> a follow-up text written from the thread (the ASAP watch's writer and checks, its own prompt
+   `STUCK_COMPOSER_SYSTEM`, one model call, a few cents a day), at most `maxNudges`, then Not Ready (a qualified lead goes to a person).
+Texts reopen the lead's queue row (source "stuck") so a reply is answered by Iris. Dry run: `scripts/stuck-leads.ts` (no writes,
+stub text writer). The SMS composer prompt is not covered by `check-iris-call-prompt.ts` (it is a text, not the call prompt).
+
 ### "Please no Calls" is not an opt-out (Mark, 2026-11-06 — Kelly Joseph)
 
 A new lead answered the intake text with "Please no Calls". The old classifier called that `opt_out`: row closed, "do not call"
