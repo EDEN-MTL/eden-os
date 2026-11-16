@@ -208,6 +208,30 @@ export async function getUserRealName(agentId: AgentId, userId: string): Promise
   }
 }
 
+const botUserIdCache: Map<AgentId, string> = new Map();
+
+/**
+ * The agent's own Slack user id — what a "@Iris" tag looks like inside message
+ * text (`<@U0123ABC>`). Needed to tell "someone tagged her" from "someone said
+ * something in a channel she's in". Asked of Slack once per agent (auth.test)
+ * and remembered; a failed lookup returns null and is NOT remembered, so the
+ * next message tries again. Never throws.
+ */
+export async function getBotUserId(agentId: AgentId): Promise<string | null> {
+  const cached = botUserIdCache.get(agentId);
+  if (cached) return cached;
+
+  try {
+    const result = await getClient(agentId).auth.test();
+    if (typeof result.user_id !== "string" || !result.user_id) return null;
+    botUserIdCache.set(agentId, result.user_id);
+    return result.user_id;
+  } catch (error) {
+    console.warn(`[SLACK] Could not look up the bot user id for ${agentId}:`, error);
+    return null;
+  }
+}
+
 /**
  * React to a message as a specific agent.
  */

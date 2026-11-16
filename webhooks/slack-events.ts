@@ -1,7 +1,7 @@
 import crypto from "crypto";
 import { Request, Response, Router } from "express";
 import { AgentId, SlackIncomingMessage } from "../shared/types";
-import { getSigningSecret } from "../shared/slack";
+import { getBotUserId, getSigningSecret } from "../shared/slack";
 import { handleApprovalClick, KEEP_ACTION_ID, PAUSE_ACTION_ID, ClickOutcome } from "../agents/forge/ads/approval";
 
 // Import all agents
@@ -109,9 +109,47 @@ export function isSlackRetryDelivery(req: Request): boolean {
 }
 
 /**
- * Create the webhook handler for a specific agent.
+ * Agents that, in a channel, answer only when someone tags them (`@Iris`).
+ * Every message in a channel they sit in reaches them, and without this they
+ * reply to all of it — Mark, 2026-11-17: Iris was answering every message the
+ * team typed in the call-log channel, team chatter about a call included.
+ * Direct messages are never affected, and an agent not listed here keeps
+ * answering everything in its channels, as before.
  */
-function createAgentHandler(agentId: AgentId) {
+const TAGGED_ONLY_IN_CHANNELS: ReadonlySet<AgentId> = new Set<AgentId>(["iris"]);
+
+/** A Slack user mention inside message text: `<@U0123ABC>`, or legacy `<@U0123ABC|name>`. */
+function mentionPattern(userId: string, flags = ""): RegExp {
+  const escaped = userId.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return new RegExp(`<@${escaped}(?:\\|[^>]*)?>`, flags);
+}
+
+/** True when `text` tags `userId`. Exported for direct unit testing. */
+export function mentionsUser(text: string, userId: string): boolean {
+  return mentionPattern(userId).test(text);
+}
+
+/**
+ * Removes the agent's own tag from `text`, plus the ", " or ": " people type
+ * after it. The agent has no use for its own id, and some of what it reads is
+ * matched against the WHOLE message: Iris's "reply yes to confirm" check
+ * (isYes in agents/iris/slack-commands.ts) would stop matching a tagged
+ * "<@U0123ABC> yes", and a pending call to a real lead would quietly never be
+ * confirmed. Line breaks are kept. Exported for direct unit testing.
+ */
+export function stripMention(text: string, userId: string): string {
+  return text
+    .replace(mentionPattern(userId, "g"), "")
+    .replace(/[ \t]{2,}/g, " ")
+    .trim()
+    .replace(/^[,:;\-–—]\s*/, "");
+}
+
+/**
+ * Create the webhook handler for a specific agent. Exported so the routing
+ * rules (who answers what, where) can be tested without a running server.
+ */
+export function createAgentHandler(agentId: AgentId) {
   return async (req: Request, res: Response) => {
     const body = req.body;
 
@@ -154,14 +192,36 @@ function createAgentHandler(agentId: AgentId) {
       // needed to actually download it lives one layer up, in shared/slack).
       const file = extractFileFromEvent(event);
 
+      const isDM = event.channel_type === "im";
+      let text: string = event.text || "";
+
+      // In a channel, some agents only answer when tagged. A group DM
+      // (mpim) counts as a channel. If her own id can't be looked up, say
+      // nothing rather than fall back to answering everything — the team can
+      // simply tag her again.
+      if (!isDM && TAGGED_ONLY_IN_CHANNELS.has(agentId)) {
+        const botUserId = await getBotUserId(agentId);
+        if (!botUserId) {
+          console.warn(`[WEBHOOK] ${agentId}: could not look up own Slack user id — ignoring channel message in ${event.channel}`);
+          return;
+        }
+        if (!mentionsUser(text, botUserId)) {
+          console.log(`[WEBHOOK] ${agentId}: ignoring untagged message in ${event.channel}`);
+          return;
+        }
+        // A message that was only her tag still gets an answer — hand the
+        // model something, not an empty message.
+        text = stripMention(text, botUserId) || text;
+      }
+
       // Build the incoming message
       const message: SlackIncomingMessage = {
         agentId,
         userId: event.user,
         channelId: event.channel,
-        text: event.text || "",
+        text,
         threadTs: event.thread_ts || event.ts,
-        isDM: event.channel_type === "im",
+        isDM,
         timestamp: event.ts,
         file,
       };

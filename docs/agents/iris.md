@@ -140,6 +140,11 @@ It only gates the dial — it has no effect on whether leads get queued.
   under Slack's **resolved** channel id + `ts`, so thread replies have context. Posts made
   before 2026-09-23 have no seeded history.
 - Iris's Slack tools: `iris_lookup_lead`, `iris_pipeline_stats`.
+- In a channel Iris answers only when tagged (Mark, 2026-11-17: she was replying to every message in `#iris-call-logs`).
+  The gate is `TAGGED_ONLY_IN_CHANNELS` in `webhooks/slack-events.ts`; DMs always get an answer, other agents are untouched.
+  Her own tag is stripped before she reads the text — `isYes`/`isNo` match the WHOLE message, so a tagged "yes" would
+  otherwise stop confirming. Consequences: a reply in a thread under one of her call-log posts needs the tag too, and so does
+  a "yes"/"no" to a confirmation asked in a channel. If her own Slack id can't be looked up she stays quiet (not the reverse).
 - ASAP watch (Mark, 2026-11-05; `asap-watch.ts`, config `iris.asapWatch`, off until `enabled`): three passes a day
   (10:15, 1:15, 4:15 St. John's) over active cards NOT in `skipStages` (booked, with an agent, finished, No-Show, the weekend
   cohort's Not Ready). For every lead whose timeline reads ASAP it reads the GHL thread plus Iris's own call transcripts,
