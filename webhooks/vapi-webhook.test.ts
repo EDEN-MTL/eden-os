@@ -32,6 +32,9 @@ vi.mock("../shared/db", () => db);
 const humanTouch = vi.hoisted(() => ({ checkHumanTouch: vi.fn(async () => ({ status: "none" })), DEFAULT_HUMAN_HANDS_OFF_DAYS: 7 }));
 vi.mock("../agents/iris/human-touch", () => humanTouch);
 
+const sweepText = vi.hoisted(() => ({ recentSweepText: vi.fn(async () => ({ status: "none" })) }));
+vi.mock("../agents/iris/sweep-text", () => sweepText);
+
 const inbound = vi.hoisted(() => ({ handleInboundCall: vi.fn() }));
 vi.mock("../agents/iris/inbound", () => inbound);
 
@@ -1189,15 +1192,33 @@ describe("maybeReopenPendingCall — unanswered sweep calls", () => {
     expect(slack.sendMessage).not.toHaveBeenCalled();
   });
 
-  it("does not text a second time when a second round of calls goes unanswered, but still holds the row open for a reply", async () => {
-    db.query.mockResolvedValue([{ ...ROW, attempts_made: 2 }]);
+  it("does not text a second time when the lead already got a sweep text, but still holds the row open for a reply", async () => {
+    sweepText.recentSweepText.mockResolvedValueOnce({ status: "sent", at: "2026-11-12T15:50:00.000Z" });
 
     await maybeReopenPendingCall("3-percent-east-coast", "contact-1", "customer-did-not-answer");
 
     expect(ghl.sendSMS).not.toHaveBeenCalled();
     expect(dialPending.holdForTextReply).toHaveBeenCalledWith(77);
     const posts = slack.sendMessage.mock.calls.map((c: any[]) => c[1].text as string);
-    expect(posts.some((t) => t.includes("second attempt either"))).toBe(true);
+    expect(posts.some((t) => t.includes("no second text") && t.includes("2026-11-12"))).toBe(true);
+  });
+
+  it("texts a lead on a third call attempt when none of the earlier calls produced a sweep text (Magar Bhuma)", async () => {
+    db.query.mockResolvedValue([{ ...ROW, attempts_made: 3 }]);
+
+    await maybeReopenPendingCall("3-percent-east-coast", "contact-1", "customer-did-not-answer");
+
+    expect(ghl.sendSMS).toHaveBeenCalledTimes(1);
+    expect(dialPending.holdForTextReply).toHaveBeenCalledWith(77);
+  });
+
+  it("sends nothing when the thread can't be read to check for an earlier sweep text", async () => {
+    sweepText.recentSweepText.mockResolvedValueOnce({ status: "unknown" });
+
+    await maybeReopenPendingCall("3-percent-east-coast", "contact-1", "customer-did-not-answer");
+
+    expect(ghl.sendSMS).not.toHaveBeenCalled();
+    expect(dialPending.holdForTextReply).toHaveBeenCalledWith(77);
   });
 
   it("does nothing once the row has moved on from 'placed'", async () => {

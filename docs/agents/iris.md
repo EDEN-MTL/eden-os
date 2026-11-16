@@ -177,6 +177,9 @@ an agent.
 - The "Iris already has them in hand" check ignored nothing: a row parked for a text reply (`call_after = infinity`) counted, which
   would have kept Magar out even on a yes. It now counts only a pending row due within a day.
 - The morning summary lists every lead nobody has and only counts the ones with an agent.
+- The one text after a missed sweep call depends on the last sweep text, not on call attempts (Mark, 2026-11-16, Magar: his
+  earlier calls were the cadence's, so attempt 3 was wrongly treated as a second round and he got no text). `sweep-text.ts` reads
+  the lead's thread for the sweep wording within 7 days; none = text, found = no second text, unreadable = no text.
 
 ### "Please no Calls" is not an opt-out (Mark, 2026-11-06 — Kelly Joseph)
 

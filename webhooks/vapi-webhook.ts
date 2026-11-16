@@ -26,6 +26,7 @@ import { buildKeyToId, readField } from "../agents/scout/intake";
 import { loadScoutConfig } from "../agents/scout";
 import { appendNoteToContact } from "../agents/iris/notes";
 import { checkHumanTouch, DEFAULT_HUMAN_HANDS_OFF_DAYS } from "../agents/iris/human-touch";
+import { recentSweepText, type RecentSweepText } from "../agents/iris/sweep-text";
 import { clampToLegalCallingWindow, formatLocal } from "../agents/iris/cadence";
 import { handleInboundCall } from "../agents/iris/inbound";
 import { classifyMissedCallback } from "../agents/iris/call-signals";
@@ -1036,16 +1037,21 @@ async function handleUnansweredSweepCall(
     return;
   }
   await holdForTextReply(pending.id);
-  // Mark, 2026-10-08: a second round of calls to the same leads texts nobody
-  // again — they already got the one text after the first missed call. The row
-  // stays open so a reply to that earlier text is still answered.
-  if (pending.attempts_made >= 2) {
-    console.log(`[VAPI] Sweep call to ${contactId} unanswered again (attempt ${pending.attempts_made}) — not texting a second time.`);
+  // Mark, 2026-10-08: a second round of calls to the same leads texts nobody again — they already got the one text
+  // after the first round. Mark, 2026-11-16 (Magar Bhuma): that was decided by counting call attempts, so a lead whose
+  // earlier calls never produced a sweep text (Magar's were the normal cadence's) was never texted at all. It now
+  // depends on the last sweep text itself, read from the lead's thread. The row stays open so a reply to that earlier
+  // text is still answered.
+  const ghlConfig = await getGhlConfig(clientId);
+  const earlier: RecentSweepText = ghlConfig ? await recentSweepText(contactId, ghlConfig.locationId, ghlConfig.apiKey) : { status: "unknown" };
+  if (earlier.status !== "none") {
+    const why = earlier.status === "sent" ? `they already got the missed-call text on ${earlier.at.slice(0, 10)}` : "I couldn't read their thread to check whether they already got one";
+    console.log(`[VAPI] Sweep call to ${contactId} unanswered (attempt ${pending.attempts_made}) — not texting: ${why}.`);
     await sendMessage("iris", {
       channel: CALL_LOG_CHANNEL,
-      text: `📵 *${pending.lead?.name ?? contactId}* didn't answer the second attempt either — no voicemail, no second text.${await linkSuffix(clientId, contactId)}`,
+      text: `📵 *${pending.lead?.name ?? contactId}* didn't answer — no voicemail, no second text (${why}).${await linkSuffix(clientId, contactId)}`,
     }).catch((error) => {
-      console.error("[VAPI] Failed to post the second-round miss to Slack:", error instanceof Error ? error.message : error);
+      console.error("[VAPI] Failed to post the sweep miss to Slack:", error instanceof Error ? error.message : error);
     });
     return;
   }
