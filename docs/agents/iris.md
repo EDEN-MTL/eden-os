@@ -104,6 +104,15 @@ It only gates the dial — it has no effect on whether leads get queued.
   connected?") and holds the row for a reply; the reply is answered by the text prompt's resume block, which knows they
   are already qualified and uses `schedule_transfer_call` on a yes. Skipped (Slack note only) when a teammate is in touch;
   expires after 48 hours; no agent line = no call. Michelle was texted by hand the same way on 2026-11-11.
+  **Second trigger (Mark, 2026-11-17, Jerrick Mendoza):** a lead who hangs up at the moment Iris asks to connect them,
+  before any transfer starts, is reported by Vapi as a plain `customer-ended-call`, so none of the above ran and he was
+  left qualified with nothing queued. `hungUpAtTransferAsk` (transfer-resume.ts) catches it from the transcript (she spoke
+  last, her line was the transfer ask, the lead answered nothing, at least 3 lead turns) and calls the same
+  `handleAbandonedTransfer`. Also: the call back is due in 1 minute (was 3); when Iris saved no `save_isa_notes` the retry
+  carries Vapi's own call summary so nothing is re-asked; the text has four wordings picked per lead
+  (`buildTransferResumeText`, seeded by contact id); and a reply of "not now / not sure" gets a better time offered and
+  booked on the lead's own calendar (`check_availability` + `book_appointment`) by the text prompt's resume block. The
+  voice prompt for the call back is unchanged, so `check-iris-call-prompt.ts` was not needed.
 - **`customer.speech.timeout` hook** fires on the first silence gap anywhere in the call,
   not just at pickup. Fixed by changing *what* it says (`IDLE_NUDGE_VARIATIONS`, short
   check-ins, `triggerMaxCount: 3`), plus a second hook with `endCall` at 30s. Widening the

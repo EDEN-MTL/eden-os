@@ -9,6 +9,8 @@ import { reopenForNextAttempt, reopenAfterMissedCallback, scheduleExplicitCallba
 import { NO_SHOW_SOURCE } from "../agents/iris/no-show-state";
 import {
   buildTransferResumeText,
+  callSummaryFromCall,
+  hungUpAtTransferAsk,
   isaNotesFromCall,
   isTransferResumeRow,
   MAX_TRANSFER_RESUME_CALLS,
@@ -487,6 +489,9 @@ async function handleEndOfCallReport(message: Record<string, any>): Promise<void
     if (TRANSFER_ABANDONED_REASONS.has(endedReason ?? "")) {
       // They agreed to an agent and the call ended while the transfer was still going (Mark, 2026-11-11).
       await handleAbandonedTransfer(row.client_id, row.contact_id, callId, message);
+    } else if (hungUpAtTransferAsk(message, endedReason)) {
+      // Qualified, Iris asked to connect them, and they hung up before answering (Mark, 2026-11-17 — Jerrick Mendoza).
+      await handleAbandonedTransfer(row.client_id, row.contact_id, callId, message, true);
     } else if (!genuinelyAnswered(endedReason, message)) {
       await maybeReopenPendingCall(row.client_id, row.contact_id, endedReason);
     } else if (endedReason !== TRANSFER_SUCCEEDED_REASON) {
@@ -797,7 +802,7 @@ export async function maybeReopenPendingCall(clientId: string, contactId: string
  * transfer them again and picks up from there (agents/iris/transfer-resume.ts). If the second transfer drops too, she
  * texts instead of calling a third time. Skipped when a teammate is already talking to the lead.
  */
-async function handleAbandonedTransfer(clientId: string, contactId: string, callId: string, message: Record<string, any>): Promise<void> {
+async function handleAbandonedTransfer(clientId: string, contactId: string, callId: string, message: Record<string, any>, hungUpAtAsk = false): Promise<void> {
   try {
     const rows = await query<{ id: number; status: string; human_requested: boolean; lead: { name?: string | null; transferResume?: TransferResumeState } | null }>(
       `SELECT id, status, human_requested, lead FROM iris_pending_calls WHERE client_id = $1 AND contact_id = $2`,
@@ -811,7 +816,7 @@ async function handleAbandonedTransfer(clientId: string, contactId: string, call
     if (leave) {
       await sendMessage("iris", {
         channel: CALL_LOG_CHANNEL,
-        text: `⚠️ *${name}* agreed to be connected to an agent but the call dropped. I'm not calling back because ${leave}. They need a person to pick up.${await linkSuffix(clientId, contactId)}`,
+        text: `⚠️ *${name}* ${hungUpAtAsk ? "hung up when I asked to connect them to an agent" : "agreed to be connected to an agent but the call dropped"}. I'm not calling back because ${leave}. They need a person to pick up.${await linkSuffix(clientId, contactId)}`,
       }).catch(() => {});
       return;
     }
@@ -820,7 +825,7 @@ async function handleAbandonedTransfer(clientId: string, contactId: string, call
     const state: TransferResumeState = {
       at: new Date().toISOString(),
       callId,
-      collected: isaNotesFromCall(message) ?? prior?.collected ?? null,
+      collected: isaNotesFromCall(message) ?? callSummaryFromCall(message) ?? prior?.collected ?? null,
       count: (prior?.count ?? 0) + 1,
       texted: prior?.texted,
     };
@@ -839,7 +844,7 @@ async function handleAbandonedTransfer(clientId: string, contactId: string, call
     const when = formatLocal(callAfter.toISOString(), timezone);
     await sendMessage("iris", {
       channel: CALL_LOG_CHANNEL,
-      text: `📞 *${name}* agreed to be connected to an agent but the call dropped. Iris calls back ${when} to connect them again; if they don't answer she texts them.${await linkSuffix(clientId, contactId)}`,
+      text: `📞 *${name}* ${hungUpAtAsk ? "was qualified and hung up when Iris asked to connect them to an agent" : "agreed to be connected to an agent but the call dropped"}. Iris calls back ${when} to connect them again; if they don't answer she texts them.${await linkSuffix(clientId, contactId)}`,
     }).catch(() => {});
     await appendNoteToContact(clientId, contactId, `Iris: call dropped while connecting to an agent — calling back ${when} to connect again.`).catch(() => {});
   } catch (error) {
@@ -875,7 +880,7 @@ async function textTransferResumeQuestion(clientId: string, contactId: string, r
     }).catch(() => {});
     return;
   }
-  const outcome = await sendIrisText(clientId, contactId, name, buildTransferResumeText(name, branding.brandName));
+  const outcome = await sendIrisText(clientId, contactId, name, buildTransferResumeText(name, branding.brandName, contactId));
   await hold();
   await sendMessage("iris", {
     channel: CALL_LOG_CHANNEL,

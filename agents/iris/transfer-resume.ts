@@ -19,8 +19,11 @@ import { extractFirstName } from "./scripts";
 
 export const TRANSFER_RESUME_SOURCE = "transfer-resume";
 
-/** Long enough that the lead has put the phone down and our own line is free, short enough that it is still the same moment. */
-export const TRANSFER_RESUME_DELAY_MINUTES = 3;
+/**
+ * Mark, 2026-11-17 (Jerrick Mendoza): "try to call them back immediately". One minute is long enough for our own line
+ * to be free and still the same moment for the lead (it was three).
+ */
+export const TRANSFER_RESUME_DELAY_MINUTES = 1;
 
 /** A resume call is only worth placing while the dropped call is still fresh. */
 export const TRANSFER_RESUME_EXPIRES_HOURS = 48;
@@ -68,12 +71,54 @@ export function isaNotesFromCall(message: Record<string, any>): string | null {
 }
 
 /**
- * The text when the retry call goes unanswered (or a second transfer drops as well). Asks the one question that
- * matters, in the lead's own terms: did they hang up, or do they still want to be connected. No "Reply STOP" line,
- * same as Iris's other texts (Jacob, 2026-10-29).
+ * Vapi's own summary of the call, for a retry when Iris saved no note of her own (Jerrick Mendoza, 2026-11-16: she
+ * never called save_isa_notes, so the retry call would have re-asked everything). Trailing full stop dropped because
+ * the prompt adds its own.
  */
-export function buildTransferResumeText(leadName: string | null | undefined, brandName: string): string {
-  return `Hi ${extractFirstName(leadName)}, it's Iris from ${brandName}. It looks like our call got cut off while I was connecting you with one of our agents. Did you hang up, or would you still like to be connected?`;
+export function callSummaryFromCall(message: Record<string, any>): string | null {
+  const summary = message?.summary ?? message?.analysis?.summary;
+  if (typeof summary !== "string" || !summary.trim()) return null;
+  return summary.trim().replace(/[.\s]+$/, "").slice(0, 700);
+}
+
+/** Iris asking to connect them, or saying she is doing it. */
+const TRANSFER_ASK = /\b(connect you with|connecting you|transfer you|transferring you|put you through|get you connected)\b/i;
+
+/** The lead spoke at least this many times, so this was a real qualifying call and not a wrong number. */
+const MIN_LEAD_TURNS = 3;
+
+/**
+ * The lead hung up at the moment Iris asked to connect them to an agent, before any transfer started (Jerrick Mendoza,
+ * 2026-11-16: qualified, Iris asked "Is that okay?", he hung up ten seconds later). Vapi reports that as a plain
+ * "customer-ended-call", not one of the transfer reasons, so nothing followed. True only when Iris spoke last, what she
+ * said was the transfer ask, and the lead never answered.
+ */
+export function hungUpAtTransferAsk(message: Record<string, any>, endedReason: string | null | undefined): boolean {
+  if (endedReason !== "customer-ended-call") return false;
+  const msgs: any[] = message?.messages ?? message?.artifact?.messages ?? [];
+  const spoken = msgs.filter((m) => (m?.role === "user" || m?.role === "bot" || m?.role === "assistant") && typeof m?.message === "string" && m.message.trim());
+  const last = spoken[spoken.length - 1];
+  if (!last || last.role === "user" || !TRANSFER_ASK.test(last.message)) return false;
+  return spoken.filter((m) => m.role === "user").length >= MIN_LEAD_TURNS;
+}
+
+/**
+ * The texts when the retry call goes unanswered (or a second transfer drops as well). Each asks the one question that
+ * matters, in the lead's own terms: did they hang up, or do they still want to be connected. Mark, 2026-11-17: "you
+ * provide variations of this", so they are picked per lead (the same lead always gets the same one) and never repeat
+ * a line word for word across leads. No "Reply STOP" line, same as Iris's other texts (Jacob, 2026-10-29).
+ */
+export function buildTransferResumeText(leadName: string | null | undefined, brandName: string, seed: string = ""): string {
+  const first = extractFirstName(leadName);
+  const lines = [
+    `Hi ${first}, it's Iris from ${brandName}. It looks like our call got cut off while I was connecting you with one of our agents. Did you hang up, or would you still like to be connected?`,
+    `Hi ${first}, it's Iris from ${brandName}. Seems I lost you on the line while I was transferring you to one of our agents. Are you still good to be connected?`,
+    `Hi ${first}, it's Iris from ${brandName}. Sorry, I think we got disconnected just as I was connecting you with one of our agents. Are you still good to talk with them?`,
+    `Hi ${first}, it's Iris from ${brandName}. I lost you on the line during the transfer. Are you still okay to be connected with one of our agents?`,
+  ];
+  let hash = 0;
+  for (const ch of seed) hash = Math.imul(hash ^ ch.charCodeAt(0), 16777619) >>> 0; // FNV-1a; low bits alone repeat for similar ids
+  return lines[(hash >>> 8) % lines.length];
 }
 
 /**

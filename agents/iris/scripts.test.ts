@@ -1814,4 +1814,19 @@ describe("the call back after a transfer dropped", () => {
     expect(p).toContain("schedule_transfer_call");
     expect(buildSmsQualificationPrompt(IRIS_CONFIG, LEAD, "3 Percent East Coast", "St. John's", { callHandoff: true })).not.toContain("Their call dropped");
   });
+
+  it("when they hung up on purpose or are not sure, offers a better time and books the buyers' calendar (Mark, 2026-11-17)", () => {
+    const p = buildSmsQualificationPrompt(IRIS_CONFIG, LEAD, "3 Percent East Coast", "St. John's", { transferResume: true, callHandoff: true });
+    expect(p).toContain("Ask if there is a better time for one of our agents to give them a call");
+    expect(p).toContain("check_availability");
+    expect(p).toContain("book_appointment");
+    expect(p).toContain("offer two of the real open times");
+    expect(p).toContain("never invent a time");
+  });
+
+  it("without call handoff, passes the time they give to a teammate instead of booking", () => {
+    const p = buildSmsQualificationPrompt(IRIS_CONFIG, LEAD, "3 Percent East Coast", "St. John's", { transferResume: true });
+    expect(p).toContain("Call request_human_followup with the time they give.");
+    expect(p).not.toContain("book_appointment with the isoTime");
+  });
 });

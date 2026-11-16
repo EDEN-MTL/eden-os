@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildTransferResumeText, isaNotesFromCall, isTransferResumeRow, transferResumeExpired, whenPhrase } from "./transfer-resume";
+import { buildTransferResumeText, callSummaryFromCall, hungUpAtTransferAsk, isaNotesFromCall, isTransferResumeRow, transferResumeExpired, whenPhrase } from "./transfer-resume";
 
 describe("isaNotesFromCall", () => {
   const call = (notes: string) => ({ role: "tool_calls", toolCalls: [{ function: { name: "save_isa_notes", arguments: JSON.stringify({ notes }) } }] });
@@ -17,6 +17,64 @@ describe("isaNotesFromCall", () => {
     expect(isaNotesFromCall({ messages: [{ role: "user", message: "hi" }] })).toBeNull();
     expect(isaNotesFromCall({ messages: [{ role: "tool_calls", toolCalls: [{ function: { name: "save_isa_notes", arguments: "{oops" } }] }] })).toBeNull();
     expect(isaNotesFromCall({})).toBeNull();
+  });
+});
+
+/** Jerrick Mendoza, 2026-11-16: qualified, Iris asked "Is that okay?", he hung up ten seconds later. */
+describe("hungUpAtTransferAsk", () => {
+  const turn = (role: "user" | "bot", message: string) => ({ role, message });
+  const qualified = [turn("bot", "Hi. This is Iris with 3 percent East Coast."), turn("user", "Yeah. Speaking."), turn("user", "None."), turn("user", "Mount Pearl."), turn("user", "Right.")];
+  const ask = turn("bot", "Perfect. We'll connect you with 1 of our buyer agents to send over some available home options. Is that okay?");
+
+  it("is true when the lead hung up on the transfer question without answering", () => {
+    expect(hungUpAtTransferAsk({ messages: [...qualified, ask] }, "customer-ended-call")).toBe(true);
+    expect(hungUpAtTransferAsk({ artifact: { messages: [...qualified, ask] } }, "customer-ended-call")).toBe(true);
+  });
+
+  it("is true when she had said she was connecting them and they were gone", () => {
+    expect(hungUpAtTransferAsk({ messages: [...qualified, turn("bot", "Great, I'm connecting you now.")] }, "customer-ended-call")).toBe(true);
+  });
+
+  it("is false when the lead answered, whatever they said (a callback request is handled elsewhere)", () => {
+    expect(hungUpAtTransferAsk({ messages: [...qualified, ask, turn("user", "Can you call me later?")] }, "customer-ended-call")).toBe(false);
+  });
+
+  it("is false when her last line was not the transfer ask, e.g. she said goodbye after a no", () => {
+    expect(hungUpAtTransferAsk({ messages: [...qualified, ask, turn("user", "No thanks."), turn("bot", "No problem, have a great day!")] }, "customer-ended-call")).toBe(false);
+  });
+
+  it("is false for a call that never got as far as qualifying, and for any other end reason", () => {
+    expect(hungUpAtTransferAsk({ messages: [turn("bot", "Hi, am I speaking with Jerrick?"), turn("user", "Yes."), ask] }, "customer-ended-call")).toBe(false);
+    expect(hungUpAtTransferAsk({ messages: [...qualified, ask] }, "customer-did-not-answer")).toBe(false);
+    expect(hungUpAtTransferAsk({ messages: [...qualified, ask] }, "assistant-ended-call")).toBe(false);
+    expect(hungUpAtTransferAsk({}, "customer-ended-call")).toBe(false);
+  });
+});
+
+describe("callSummaryFromCall", () => {
+  it("uses Vapi's summary when Iris saved no note, without its trailing full stop", () => {
+    expect(callSummaryFromCall({ summary: "Jerrick wants a 1-story home in Mount Pearl, budget $200,000-$350,000." })).toBe("Jerrick wants a 1-story home in Mount Pearl, budget $200,000-$350,000");
+    expect(callSummaryFromCall({ analysis: { summary: "Buyer, Paradise." } })).toBe("Buyer, Paradise");
+  });
+
+  it("is null when there is none", () => {
+    expect(callSummaryFromCall({})).toBeNull();
+    expect(callSummaryFromCall({ summary: "  " })).toBeNull();
+  });
+});
+
+describe("buildTransferResumeText variations", () => {
+  it("gives the same lead the same text, and different leads different wording", () => {
+    const texts = new Set(["a1", "b2", "c3", "d4", "e5", "f6", "g7", "h8"].map((id) => buildTransferResumeText("Jerrick Mendoza", "3 Percent East Coast", id)));
+    expect(texts.size).toBeGreaterThan(1);
+    expect(buildTransferResumeText("Jerrick Mendoza", "3 Percent East Coast", "NumG4qP0k9cksuJmCCYr")).toBe(buildTransferResumeText("Jerrick Mendoza", "3 Percent East Coast", "NumG4qP0k9cksuJmCCYr"));
+  });
+
+  it.each(["a1", "b2", "c3", "d4", "e5", "f6"])("every variation names the lead and Iris, asks if they are still good to be connected, and has no 'Reply STOP' (%s)", (id) => {
+    const text = buildTransferResumeText("Jerrick Mendoza", "3 Percent East Coast", id);
+    expect(text).toMatch(/^Hi Jerrick, it's Iris from 3 Percent East Coast\./);
+    expect(text).toMatch(/connected|talk with them/);
+    expect(text).not.toMatch(/STOP/);
   });
 });
 

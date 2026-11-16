@@ -1686,9 +1686,41 @@ describe("a transfer that dropped before it connected", () => {
     const [clientId, contactId, stateJson, callAfter, source] = queued!.params;
     expect([clientId, contactId, source]).toEqual(["3-percent-east-coast", "contact-1", "transfer-resume"]);
     expect(JSON.parse(stateJson)).toMatchObject({ count: 1, callId: "call-257", collected: "Buyer | $500K | Paradise, Mount Pearl | 4 bed" });
-    expect(new Date(callAfter).toISOString()).toBe("2026-11-11T13:38:00.000Z"); // three minutes on, inside calling hours
+    expect(new Date(callAfter).toISOString()).toBe("2026-11-11T13:36:00.000Z"); // one minute on, inside calling hours (Mark: "immediately")
     expect(ghl.sendSMS).not.toHaveBeenCalled();
     expect(posts().some((t) => t.includes("*Michelle Smith Funk*") && t.includes("calls back"))).toBe(true);
+  });
+
+  describe("a lead who hung up at the transfer question, before any transfer started (Jerrick Mendoza)", () => {
+    const turn = (role: "user" | "bot", message: string) => ({ role, message });
+    const ask = turn("bot", "Perfect. We'll connect you with 1 of our buyer agents to send over some available home options. Is that okay?");
+    const jerrick = {
+      type: "end-of-call-report",
+      endedReason: "customer-ended-call",
+      call: { id: "call-267" },
+      durationSeconds: 196,
+      summary: "Jerrick wants a 1-story home with 4 bedrooms and 2 bathrooms in Mount Pearl, budget $200,000-$350,000, not pre-approved.",
+      messages: [turn("bot", "Hi. This is Iris."), turn("user", "Yeah. Speaking."), turn("user", "None."), turn("user", "Mount Pearl."), turn("user", "Right."), ask],
+    };
+    const finish = (r: any) => getRootHandler()({ body: { message: r }, headers: {} }, res());
+
+    it("queues the call back with what he said (Vapi's summary, since Iris saved no note) and tells the channel", async () => {
+      await finish(jerrick);
+
+      const queued = sqlCalls().find((c) => /source = \$5/.test(c.sql));
+      expect(queued).toBeDefined();
+      expect(JSON.parse(queued!.params[2])).toMatchObject({ count: 1, callId: "call-267", collected: expect.stringContaining("Mount Pearl") });
+      expect(new Date(queued!.params[3]).toISOString()).toBe("2026-11-11T13:36:00.000Z");
+      expect(ghl.sendSMS).not.toHaveBeenCalled();
+      expect(posts().some((t) => t.includes("hung up when Iris asked to connect them to an agent") && t.includes("calls back"))).toBe(true);
+    });
+
+    it("does nothing for a lead who answered the question, or one whose call ended some other way", async () => {
+      await finish({ ...jerrick, messages: [...jerrick.messages, turn("user", "Not right now.")] });
+      await finish({ ...jerrick, endedReason: "customer-did-not-answer" });
+
+      expect(sqlCalls().some((c) => /source = \$5/.test(c.sql))).toBe(false);
+    });
   });
 
   it("when the second transfer drops as well, texts instead of calling a third time, and holds the row for a reply", async () => {
@@ -1698,7 +1730,8 @@ describe("a transfer that dropped before it connected", () => {
 
     expect(sqlCalls().some((c) => /source = \$5/.test(c.sql) && /call_after/.test(c.sql))).toBe(false); // no new call queued
     expect(texts()).toHaveLength(1);
-    expect(texts()[0]).toBe("Hi Michelle, it's Iris from 3 Percent East Coast. It looks like our call got cut off while I was connecting you with one of our agents. Did you hang up, or would you still like to be connected?");
+    expect(texts()[0]).toMatch(/^Hi Michelle, it's Iris from 3 Percent East Coast\./);
+    expect(texts()[0]).toMatch(/connected|talk with them/);
     expect(dialPending.holdForTextReply).toHaveBeenCalledWith(159);
   });
 
@@ -1746,7 +1779,7 @@ describe("a transfer that dropped before it connected", () => {
       await maybeReopenPendingCall("3-percent-east-coast", "contact-1", reason);
 
       expect(texts()).toHaveLength(1);
-      expect(texts()[0]).toContain("Did you hang up, or would you still like to be connected?");
+      expect(texts()[0]).toMatch(/^Hi Michelle, it's Iris from 3 Percent East Coast\./);
       expect(dialPending.holdForTextReply).toHaveBeenCalledWith(159);
       expect(dialPending.reopenForNextAttempt).not.toHaveBeenCalled();
       expect(posts().some((t) => t.includes("Texted *Michelle Smith Funk*"))).toBe(true);
