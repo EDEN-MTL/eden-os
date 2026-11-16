@@ -12,7 +12,10 @@ ad set a verdict: kill, refresh_creative, scale, watch, healthy, too_early.
   ≤0.8× target, in +20% steps. CBO-aware; learning phase from `learning_stage_info`.
 - `cplThreshold` drives the `auto-cpl-high` Slack alert.
 - Daily health digest: `runDailyForgeHealthReport`, 08:15 America/Toronto, forge bot →
-  `LENS_OPS_CHANNEL` (internal), opt-in per client via `forge.health`.
+  `LENS_OPS_CHANNEL` (internal), opt-in per client via `forge.health`. Format (`health-digest.ts`, cleaned
+  2026-11-16 at Mark's request): items of one verdict are a tree (campaign > ad set > ad, each line only its own
+  numbers), the instruction is said once per section, the launch date is on the line it dates, goals are one line
+  per funnel at the bottom. Don't add a line that restates what a parent line already says.
 
 ## Lead attribution
 

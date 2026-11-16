@@ -57,17 +57,17 @@ describe("the daily digest", () => {
     clientId: "c", lookbackDays: 14, funnels: [], counts: { healthy: 0, too_early: 0 },
     totals: { spend: 100, leads: 3, cpl: 33, leadSource: "crm" }, dailyBudget: { current: null, cap: null },
     entities: [
-      { scope: "ad", id: "555", name: "OCT 2026 image 1", verdict: "scale", reasons: ["5 leads at $35.44 CPL"], recommendation: "Winning ad.", metrics: { spend: 177, cpl: 35.44 }, targetCpl: 45, url: "https://adsmanager.facebook.com/adsmanager/manage/ads?act=1&selected_ad_ids=555" },
-      { scope: "adset", id: "222", name: "Testing | Buyer Video | Sep  2026", verdict: "scale", reasons: ["3 leads at $32.59 CPL"], recommendation: "Raise the campaign budget.", metrics: { spend: 98, cpl: 32.59 }, targetCpl: 45 },
+      { scope: "ad", id: "555", name: "OCT 2026 image 1", verdict: "scale", reasons: ["5 leads at $35.44 CPL"], recommendation: "Winning ad.", metrics: { spend: 177, cpl: 35.44, lead_count: 5, active_days: 20 }, targetCpl: 45, url: "https://adsmanager.facebook.com/adsmanager/manage/ads?act=1&selected_ad_ids=555" },
+      { scope: "adset", id: "222", name: "Testing | Buyer Video | Sep  2026", verdict: "scale", reasons: ["3 leads at $32.59 CPL"], recommendation: "Raise the campaign budget.", metrics: { spend: 98, cpl: 32.59, lead_count: 3, active_days: 20 }, targetCpl: 45 },
     ],
   };
 
   it("makes each entity's name a link to it in Ads Manager", () => {
     const text = formatHealthDigest("3 Percent East Coast", report);
-    expect(text).toContain("• Ad *<https://adsmanager.facebook.com/adsmanager/manage/ads?act=1&selected_ad_ids=555|OCT 2026 image 1>*: 5 leads at $35.44 CPL");
+    expect(text).toContain("Ad *<https://adsmanager.facebook.com/adsmanager/manage/ads?act=1&selected_ad_ids=555|OCT 2026 image 1>* — 5 leads · $35/lead");
   });
 
   it("leaves a name plain when it has no link, as before", () => {
-    expect(formatHealthDigest("3 Percent East Coast", report)).toContain("• Ad set *Testing | Buyer Video | Sep  2026*: 3 leads");
+    expect(formatHealthDigest("3 Percent East Coast", report)).toContain("Ad set *Testing | Buyer Video | Sep  2026* — 3 leads · $33/lead");
   });
 });
