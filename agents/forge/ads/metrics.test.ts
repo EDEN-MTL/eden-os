@@ -120,3 +120,24 @@ describe("computeAdMetricsForAdset", () => {
     expect(sql).toMatch(/GROUP BY ad_id, ad_name/);
   });
 });
+
+describe("computeMetrics lead window", () => {
+  it("cuts leads off at the last synced spend day only when asked, so a short window's spend and leads cover the same days", async () => {
+    queryMock.mockClear();
+    queryMock
+      .mockResolvedValueOnce([{ entity_id: "c1", entity_name: "x", spend: "129", impressions: "1000", clicks: "10", frequency: "1", meta_leads: "0" }])
+      .mockResolvedValueOnce([{ lead_count: "0", won_count: "0", revenue: null }]);
+    await computeMetrics("campaign", 3, "eden", { leadsThroughLastSpendDay: true });
+    const [sql, params] = queryMock.mock.calls[1];
+    expect(sql).toMatch(/created_at < \(SELECT MAX\(date_stop\) \+ 1 FROM meta_performance_snapshots/);
+    expect(params).toEqual(["eden", "c1", 3, "campaign"]);
+
+    queryMock
+      .mockResolvedValueOnce([{ entity_id: "c1", entity_name: "x", spend: "129", impressions: "1000", clicks: "10", frequency: "1", meta_leads: "0" }])
+      .mockResolvedValueOnce([{ lead_count: "0", won_count: "0", revenue: null }]);
+    await computeMetrics("campaign", 3, "eden");
+    const [plainSql, plainParams] = queryMock.mock.calls[3];
+    expect(plainSql).not.toContain("MAX(date_stop)");
+    expect(plainParams).toEqual(["eden", "c1", 3]);
+  });
+});

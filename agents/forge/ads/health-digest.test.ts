@@ -173,4 +173,32 @@ describe("formatHealthDigest", () => {
       expect(fmt([entity({})])).not.toContain("launched");
     });
   });
+
+  it("shows a held-back scale under Watch with the recent days that held it back", () => {
+    const text = fmt([
+      entity({
+        scope: "campaign", id: "c", campaignId: "c", name: "Evergreen", verdict: "watch", scaleHeldBack: true, recommendation: "Keep the budget where it is.",
+        recent: { days: 3, spend: 129, leads: 0, cpl: null },
+        metrics: { ...entity({}).metrics, spend: 586, lead_count: 20, cpl: 29 },
+      }),
+    ]);
+    expect(text).toContain("🟡 *Watch*\nCampaign *Evergreen* — $29/lead · $586 spent · 20 leads · held back from scale: last 3 days no leads on $129");
+    expect(text).toContain("→ Keep the budget where it is.");
+  });
+
+  it("gives the lead count and cost when the recent days did find some", () => {
+    const text = fmt([entity({ verdict: "watch", scaleHeldBack: true, recent: { days: 3, spend: 130, leads: 2, cpl: 65 } })]);
+    expect(text).toContain("held back from scale: last 3 days 2 leads · $65/lead on $130");
+  });
+
+  it("says the held-back recent days once, not again on a child with the same ones", () => {
+    const recent = { days: 3, spend: 129, leads: 2, cpl: 65 };
+    const campaign = entity({ scope: "campaign", id: "c", campaignId: "c", name: "Camp", verdict: "watch", scaleHeldBack: true, recent });
+    const adset = entity({ scope: "adset", id: "s", campaignId: "c", name: "Set", verdict: "watch", scaleHeldBack: true, recent });
+    const ad = entity({ scope: "ad", id: "a", campaignId: "c", adsetId: "s", name: "Own", verdict: "watch", scaleHeldBack: true, recent: { days: 3, spend: 56, leads: 1, cpl: 56 } });
+    const text = fmt([campaign, adset, ad]);
+    expect(text.match(/held back from scale/g)).toHaveLength(2); // the campaign, and the ad whose own days differ
+    expect(text.split("\n").find((l) => l.includes("Ad set *Set*"))).not.toContain("held back");
+    expect(text.split("\n").find((l) => l.includes("Ad *Own*"))).toContain("last 3 days 1 lead · $56/lead on $56");
+  });
 });

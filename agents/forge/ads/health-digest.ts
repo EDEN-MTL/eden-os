@@ -41,7 +41,7 @@ function plural(n: number, word: string): string {
 }
 
 /** What the numbers say, once, without repeating the goal (it is in the footer) or the verdict (it is the section). */
-function stat(e: EntityHealth, root: boolean): string {
+function stat(e: EntityHealth, root: boolean, parent: EntityHealth | null): string {
   const { spend, lead_count: leads, cpl, frequency, active_days } = e.metrics;
   const perLead = cpl !== null ? `${money(cpl)}/lead` : null;
   switch (e.verdict) {
@@ -56,6 +56,13 @@ function stat(e: EntityHealth, root: boolean): string {
     case "watch": {
       const near = e.reasons.find((r) => r.startsWith("Close to the kill line"));
       const base = leads === 0 ? `${money(spend)} spent, no leads yet` : `${perLead} · ${money(spend)} spent · ${plural(leads, "lead")}`;
+      // The longer window says scale, the last few days say otherwise: say why it is not under Scale.
+      // Said once: a line under a parent that held back for the very same recent days does not repeat it.
+      const sameAsParent = parent?.scaleHeldBack && parent.recent && e.recent && parent.recent.spend === e.recent.spend && parent.recent.leads === e.recent.leads;
+      if (e.scaleHeldBack && e.recent && !sameAsParent) {
+        const r = e.recent;
+        return `${base} · held back from scale: last ${r.days} days ${r.leads === 0 ? "no leads" : `${plural(r.leads, "lead")} · ${r.cpl !== null ? money(r.cpl) : "?"}/lead`} on ${money(r.spend)}`;
+      }
       return near ? `${base} · ${near.replace("Close to the kill line: ", "close to the turn-off line, ")}` : base;
     }
     default:
@@ -100,12 +107,12 @@ function buildTree(items: EntityHealth[]): Node[] {
   return roots;
 }
 
-function renderNode(node: Node, depth: number, shownAbove: Set<string>, now: Date): string[] {
+function renderNode(node: Node, depth: number, shownAbove: Set<string>, now: Date, parent: EntityHealth | null = null): string[] {
   const e = node.entity;
   const indent = depth === 0 ? "" : `${"   ".repeat(depth)}↳ `;
-  const line = `${indent}${SCOPE_LABEL[e.scope]} *${slackLink(e.url ?? null, cleanName(e))}* — ${stat(e, depth === 0)}${launched(e, shownAbove, now)}`;
+  const line = `${indent}${SCOPE_LABEL[e.scope]} *${slackLink(e.url ?? null, cleanName(e))}* — ${stat(e, depth === 0, parent)}${launched(e, shownAbove, now)}`;
   const nowAbove = new Set([...shownAbove, e.id]);
-  return [line, ...node.children.flatMap((child) => renderNode(child, depth + 1, nowAbove, now))];
+  return [line, ...node.children.flatMap((child) => renderNode(child, depth + 1, nowAbove, now, e))];
 }
 
 /**

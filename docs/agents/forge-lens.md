@@ -11,6 +11,13 @@ ad set a verdict: kill, refresh_creative, scale, watch, healthy, too_early.
 - Kill = 2.5× target spent with 0 leads, or CPL ≥1.75× target. Scale = 3+ leads at
   ≤0.8× target, in +20% steps. CBO-aware; learning phase from `learning_stage_info`.
 - `cplThreshold` drives the `auto-cpl-high` Slack alert.
+- Scale also has to pass the last `recentDays` (default 3, `forge.health.recentDays`): if the longer window says
+  scale but the recent days spent a target's worth of CPL with no leads, or at a CPL over target, the verdict is
+  `watch` ("held back from scale") and the advice is to hold the budget. Found 2026-11-16 on 3-percent-east-coast:
+  14-day CPL $31 (scale) while Nov 13-15 spent $129 for no leads right after the Nov 10 budget increase. An ad set
+  under a campaign-held budget is judged on the campaign's recent days. The recent window counts leads only up to
+  the last day with synced spend (`computeMetrics(..., {leadsThroughLastSpendDay: true})`): the saved spend stops
+  at yesterday, and a lead from this morning had made 3 days read $129 / 3 leads when it was $129 / 0.
 - Daily health digest: `runDailyForgeHealthReport`, 08:15 America/Toronto, forge bot →
   `LENS_OPS_CHANNEL` (internal), opt-in per client via `forge.health`. Format (`health-digest.ts`, cleaned
   2026-11-16 at Mark's request): items of one verdict are a tree (campaign > ad set > ad, each line only its own
