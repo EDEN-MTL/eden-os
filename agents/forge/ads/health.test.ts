@@ -260,3 +260,73 @@ describe("buildHealthReport", () => {
     expect(report.dailyBudget.current).toBeNull();
   });
 });
+
+describe("the recent-days check on a scale verdict", () => {
+  const seller: LiveEntityState = { campaignName: "Aug 2026 | Seller Campaign | EDEN" };
+  // 4 leads on $100 = $25 CPL against a $60 target: a scale over the long window.
+  const winning = makeRow({ spend: 100, lead_count: 4 });
+  const recent = (spend: number, leads: number) => makeRow({ spend, lead_count: leads });
+
+  it("scales when the recent days pay too", () => {
+    const h = assessEntity("campaign", winning, playbook, seller, recent(90, 2));
+    expect(h.verdict).toBe("scale");
+    expect(h.scaleHeldBack).toBeUndefined();
+    expect(h.recent).toEqual({ days: 3, spend: 90, leads: 2, cpl: 45 });
+  });
+
+  it("holds a scale back to watch when the recent days spent a target's worth with no leads", () => {
+    const h = assessEntity("campaign", winning, playbook, seller, recent(129, 0));
+    expect(h.verdict).toBe("watch");
+    expect(h.scaleHeldBack).toBe(true);
+    expect(h.reasons.join(" ")).toMatch(/Held back from scale: 4 leads at \$25\.00 CPL.*last 3 days brought 0 lead\(s\) on \$129\.00/);
+    expect(h.recommendation).toBe("Keep the budget where it is. Scale once the last 3 days are back at or under $60.00 per lead.");
+  });
+
+  it("also holds it back when the recent days found leads but over target", () => {
+    expect(assessEntity("campaign", winning, playbook, seller, recent(200, 2)).verdict).toBe("watch"); // $100 CPL vs $60
+  });
+
+  it("does not hold back on recent days that spent too little to have expected a lead", () => {
+    expect(assessEntity("ad", winning, playbook, seller, recent(24, 0)).verdict).toBe("scale"); // $24 < the $60 target
+  });
+
+  it("scales as before when there is no recent row (not running in those days)", () => {
+    expect(assessEntity("ad", winning, playbook, seller, null).verdict).toBe("scale");
+  });
+
+  it("leaves a kill alone", () => {
+    expect(assessEntity("ad", makeRow({ spend: 150 }), playbook, seller, recent(100, 0)).verdict).toBe("kill");
+  });
+
+  describe("in the report", () => {
+    const rows = {
+      campaign: [makeRow({ entity_id: "c1", entity_name: "Seller Campaign", spend: 300, lead_count: 12 })],
+      adset: [makeRow({ entity_id: "s1", entity_name: "Static Seller", spend: 300, lead_count: 12 })],
+      ad: [makeRow({ entity_id: "a1", entity_name: "Image 1", spend: 200, lead_count: 8 })],
+    };
+    const live = new Map<string, LiveEntityState>([
+      ["c1", { effectiveStatus: "ACTIVE", campaignName: "Seller Campaign", campaignId: "c1", dailyBudget: 20 }],
+      ["s1", { effectiveStatus: "ACTIVE", campaignName: "Seller Campaign", campaignId: "c1", campaignHoldsBudget: true }],
+      ["a1", { effectiveStatus: "ACTIVE", campaignName: "Seller Campaign", campaignId: "c1", adsetId: "s1" }],
+    ]);
+
+    it("judges an ad set under a campaign-held budget on the campaign's recent days", () => {
+      // The ad set itself did fine in the last days, the campaign (where the budget is raised) did not.
+      const recentRows = {
+        campaign: [makeRow({ entity_id: "c1", spend: 150, lead_count: 0 })],
+        adset: [makeRow({ entity_id: "s1", spend: 80, lead_count: 3 })],
+        ad: [makeRow({ entity_id: "a1", spend: 60, lead_count: 3 })],
+      };
+      const report = buildHealthReport("c", playbook, rows, live, 14, rows, recentRows);
+      const verdict = (id: string) => report.entities.find((e) => e.id === id)!.verdict;
+      expect(verdict("c1")).toBe("watch");
+      expect(verdict("s1")).toBe("watch");
+      expect(verdict("a1")).toBe("scale");
+    });
+
+    it("changes nothing without recent rows", () => {
+      const report = buildHealthReport("c", playbook, rows, live, 14);
+      expect(report.entities.every((e) => e.verdict === "scale")).toBe(true);
+    });
+  });
+});

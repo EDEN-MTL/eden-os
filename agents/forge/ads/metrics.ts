@@ -123,7 +123,8 @@ function deriveMetrics(row: PerfRow, lead: LeadRow | undefined): EntityMetrics {
 export async function computeMetrics(
   scope: RuleScope,
   lookbackDays: number,
-  clientId = "eden"
+  clientId = "eden",
+  options: { leadsThroughLastSpendDay?: boolean } = {}
 ): Promise<EntityMetrics[]> {
   const idCol = LEVEL_ID_COL[scope];
   const nameCol = LEVEL_NAME_COL[scope];
@@ -147,8 +148,16 @@ export async function computeMetrics(
               SUM(CASE WHEN won THEN 1 ELSE 0 END) AS won_count,
               SUM(CASE WHEN won THEN deal_value ELSE 0 END) AS revenue
        FROM ad_leads WHERE client_id = $1 AND ${leadCol} = $2
-         AND created_at >= (CURRENT_DATE - $3::int)`,
-      [clientId, row.entity_id, lookbackDays]
+         AND created_at >= (CURRENT_DATE - $3::int)${
+           // The saved spend stops at the last day Meta was synced, but leads run up to this minute. Over a short window
+           // that mismatch is the whole answer: 2026-11-16, Nov 13-15 spent $129 with no leads, yet a lead created
+           // that morning made the last 3 days read 3 leads at $43, under goal. Cut the leads off where the spend does.
+           options.leadsThroughLastSpendDay
+             ? ` AND created_at < (SELECT MAX(date_stop) + 1 FROM meta_performance_snapshots
+                  WHERE client_id = $1 AND level = $4 AND ${idCol} = $2 AND date_start >= (CURRENT_DATE - $3::int) AND date_stop <= CURRENT_DATE)`
+             : ""
+         }`,
+      options.leadsThroughLastSpendDay ? [clientId, row.entity_id, lookbackDays, scope] : [clientId, row.entity_id, lookbackDays]
     );
     results.push(deriveMetrics(row, lead));
   }

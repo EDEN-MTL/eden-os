@@ -74,6 +74,12 @@ export interface HealthPlaybook {
   /** Delivered days needed before judging anything short of a fast burn. */
   minActiveDays: number;
   lookbackDays: number;
+  /**
+   * Scale only if the most recent days also pay: the lookback window above lags a turn for the worse by about half
+   * its length. 3-percent-east-coast, 2026-11-16: the 14-day CPL was $31 (Scale) while the last 3 days had spent $129
+   * for no leads, right after a budget increase.
+   */
+  recentDays: number;
   /** History used to calibrate auto targets. */
   baselineDays: number;
   /** Fewer leads than this in the baseline and a CPL is too noisy to be a target. */
@@ -95,6 +101,7 @@ export const DEFAULT_PLAYBOOK: Tunables = {
   // 14, not 7: at under one lead/day per ad set, a 7-day window rarely holds
   // enough leads to separate a bad ad from an unlucky week.
   lookbackDays: 14,
+  recentDays: 3,
   // 60: long enough to hold 10+ leads per funnel on a $50/day realtor account
   // (3-percent-east-coast 2026-10-09: buyers 29 leads, sellers 15), short
   // enough that a creative or offer change from two months ago doesn't anchor it.
@@ -113,6 +120,7 @@ export function readTunables(forgeConfig: any): Tunables {
     fatigueFrequency: num(health.fatigueFrequency) ?? num(forgeConfig?.fatigueThreshold) ?? DEFAULT_PLAYBOOK.fatigueFrequency,
     minActiveDays: num(health.minActiveDays) ?? DEFAULT_PLAYBOOK.minActiveDays,
     lookbackDays: num(health.lookbackDays) ?? DEFAULT_PLAYBOOK.lookbackDays,
+    recentDays: num(health.recentDays) ?? DEFAULT_PLAYBOOK.recentDays,
     baselineDays: num(health.baselineDays) ?? DEFAULT_PLAYBOOK.baselineDays,
     minBaselineLeads: num(health.minBaselineLeads) ?? DEFAULT_PLAYBOOK.minBaselineLeads,
   };
@@ -223,6 +231,10 @@ export interface EntityHealth {
   adsetId?: string;
   /** Direct link to it in Ads Manager, when the client's ad account is known. */
   url?: string | null;
+  /** The last few days on their own (playbook.recentDays), the check a scale verdict also has to pass. */
+  recent?: { days: number; spend: number; leads: number; cpl: number | null };
+  /** True when the longer window says scale but the recent days do not, so it is shown as watch instead. */
+  scaleHeldBack?: boolean;
   /** When it (and the campaign / ad set above it) first launched, epoch ms: the basis for judging its results. */
   created?: CreatedChain;
   funnel: string | null;
@@ -250,7 +262,9 @@ export function assessEntity(
   scope: RuleScope,
   row: EntityMetrics,
   playbook: HealthPlaybook,
-  live: LiveEntityState = {}
+  live: LiveEntityState = {},
+  /** The same entity over the last playbook.recentDays; absent when it did not run in them. */
+  recentRow: EntityMetrics | null = null
 ): EntityHealth {
   const { funnel, targetCpl } = resolveFunnel(playbook, live.campaignName, row.entity_name);
   const killSpend = targetCpl * playbook.killSpendMultiple;
@@ -258,6 +272,11 @@ export function assessEntity(
   const cpl = row.cpl;
   const reasons: string[] = [];
   let verdict: HealthVerdict;
+  let recommendationOverride: string | null = null;
+  let scaleHeldBack = false;
+  const recent = recentRow
+    ? { days: playbook.recentDays, spend: recentRow.spend, leads: recentRow.lead_count, cpl: recentRow.cpl }
+    : undefined;
 
   if (row.lead_source === "meta" && row.crm_lead_count === 0) {
     reasons.push("Leads are Meta's own count; none are attributed in GHL yet, so lead quality and won deals are unknown.");
@@ -290,8 +309,19 @@ export function assessEntity(
     verdict = "refresh_creative";
     reasons.push(`Frequency ${row.frequency.toFixed(2)} is at or above ${playbook.fatigueFrequency}; the same people are seeing it repeatedly.`);
   } else if (cpl !== null && leads >= playbook.scaleMinLeads && cpl <= targetCpl * playbook.scaleCplMultiple) {
-    verdict = "scale";
-    reasons.push(`${leads} leads at ${money(cpl)} CPL, ${Math.round((1 - cpl / targetCpl) * 100)}% under the ${money(targetCpl)} target.`);
+    // Enough recent spend that a lead was due, and it did not pay: do not recommend spending more on it.
+    const recentWeak = recent !== undefined && recent.spend >= targetCpl && (recent.leads === 0 || (recent.cpl !== null && recent.cpl > targetCpl));
+    if (recentWeak && recent) {
+      verdict = "watch";
+      scaleHeldBack = true;
+      reasons.push(
+        `Held back from scale: ${leads} leads at ${money(cpl)} CPL over ${row.active_days} days, but the last ${recent.days} days brought ${recent.leads} lead(s) on ${money(recent.spend)}${recent.cpl !== null ? ` (${money(recent.cpl)} CPL)` : ""}, over the ${money(targetCpl)} target.`
+      );
+      recommendationOverride = `Keep the budget where it is. Scale once the last ${recent.days} days are back at or under ${money(targetCpl)} per lead.`;
+    } else {
+      verdict = "scale";
+      reasons.push(`${leads} leads at ${money(cpl)} CPL, ${Math.round((1 - cpl / targetCpl) * 100)}% under the ${money(targetCpl)} target.`);
+    }
   } else if (cpl !== null && cpl <= targetCpl) {
     verdict = "healthy";
     reasons.push(
@@ -335,7 +365,9 @@ export function assessEntity(
     targetCpl,
     verdict,
     reasons,
-    recommendation: recommend(scope, verdict, playbook, live),
+    recommendation: recommendationOverride ?? recommend(scope, verdict, playbook, live),
+    ...(recent ? { recent } : {}),
+    ...(scaleHeldBack ? { scaleHeldBack } : {}),
     metrics: {
       spend: row.spend,
       lead_count: row.lead_count,
@@ -508,8 +540,12 @@ export function buildHealthReport(
    * What each ad set and campaign is judged on: only the ads still running (see runningOnly). Totals
    * still come from rowsByScope, because money already spent on a since-paused ad was still spent.
    */
-  assessRows: Record<RuleScope, EntityMetrics[]> = rowsByScope
+  assessRows: Record<RuleScope, EntityMetrics[]> = rowsByScope,
+  /** The same rows over the last playbook.recentDays, judged on the same running ads; see assessEntity. */
+  recentRows: Record<RuleScope, EntityMetrics[]> | null = null
 ): CampaignHealthReport {
+  const recentById = new Map<string, EntityMetrics>();
+  for (const scope of ["campaign", "adset", "ad"] as RuleScope[]) for (const r of recentRows?.[scope] ?? []) recentById.set(r.entity_id, r);
   const entities: EntityHealth[] = [];
   let budgetSum = 0;
   let budgetKnown = false;
@@ -521,7 +557,9 @@ export function buildHealthReport(
       const state = live?.get(row.entity_id);
       // Paused/archived since: nothing to decide. Unknown to Meta (deleted) also drops out.
       if (live && state?.effectiveStatus !== "ACTIVE") continue;
-      entities.push(assessEntity(scope, row, playbook, state ?? {}));
+      // An ad set whose campaign holds the budget is scaled at the campaign, so the campaign's recent days are the ones that count.
+      const recentKey = scope === "adset" && state?.campaignHoldsBudget && state.campaignId ? state.campaignId : row.entity_id;
+      entities.push(assessEntity(scope, row, playbook, state ?? {}, recentById.get(recentKey) ?? null));
 
       // Count each budget once, at whichever level holds it.
       if (state?.dailyBudget && (scope === "campaign" || (scope === "adset" && !state.campaignHoldsBudget))) {
@@ -619,7 +657,15 @@ export async function getCampaignHealth(clientId: string, client: MetaClient | n
         ad: runningOnly(ad, "ad", ad, live),
       }
     : raw;
-  const built = buildHealthReport(clientId, playbook, raw, live, days, assess);
+  // The last few days on their own, for the "does it still pay" check on a scale verdict. Skipped if it would not be shorter.
+  let recent: Record<RuleScope, EntityMetrics[]> | null = null;
+  if (playbook.recentDays > 0 && playbook.recentDays < days) {
+    const [rc, ra, rd] = await Promise.all((["campaign", "adset", "ad"] as RuleScope[]).map((scope) => computeMetrics(scope, playbook.recentDays, clientId, { leadsThroughLastSpendDay: true })));
+    recent = live
+      ? { campaign: runningOnly(rc, "campaign", rd, live), adset: runningOnly(ra, "adset", rd, live), ad: runningOnly(rd, "ad", rd, live) }
+      : { campaign: rc, adset: ra, ad: rd };
+  }
+  const built = buildHealthReport(clientId, playbook, raw, live, days, assess, recent);
   // Every entity gets a direct Ads Manager link (Slack digest, chat answers).
   const report = client
     ? { ...built, entities: built.entities.map((e) => ({ ...e, url: adsManagerUrl(client.adAccountId, e.scope, e.id, { campaignId: e.campaignId, adsetId: e.adsetId }) })) }
