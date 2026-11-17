@@ -233,6 +233,20 @@ agents can talk to them to send listings (book_appointment, or request_human_fol
 `dial-pending.ts` checks the tag live before EVERY dial (sweeps, cohort and retries create fresh rows that don't know the old
 text), and Slack "call X" refuses a "no calls" lead. The classifier itself can only be checked on Render (no local Anthropic key).
 
+### Busy leads and text-only leads (Mark, 2026-11-17 — Troy Morris)
+
+Troy, on vacation, said no calls for a while and just wanted listings; Iris told him "one of our agents will reach out by text"
+before she had qualified him. `buildSmsQualificationPrompt` now has a busy-lead block for every text conversation: acknowledge,
+ask when they would be free, offer to ask the few questions by text, qualify by text if they agree, and only then ask when they
+could talk to an agent. Until the lead is qualified and a tool has confirmed a booking or the handoff, Iris never says an agent
+will call, text or contact them; a lead who just says "later" gets one "when should I check back?" and nothing else.
+A lead qualified by text who still refuses calls is not asked again: `request_human_followup` takes `text_only: true`, the CRM
+gets a note, and Slack posts "qualified over text, does NOT want phone calls, follow up by hand, no call booked or scheduled" (a
+manual-handoff post, never an appointment). If the Slack post fails the tool result says so and Iris must not claim the team was
+told. The "no calls" tag still carries the text-only preference. The prompt wording can only be checked on Render (no local
+Anthropic key), so watch the first busy-lead threads. The stuck-lead check (below the lead review) still picks up a busy lead who
+goes quiet.
+
 ### Corrections become tests (Mark, 2026-11-06)
 
 `docs/agents/iris-corrections.md` is the ledger of every time Iris was corrected and the test that pins it. A misread text

@@ -163,6 +163,11 @@ export const SMS_TOOLS: ToolDef[] = [
           type: "string",
           description: "One or two sentences a teammate can read at a glance — who this is and what they want.",
         },
+        text_only: {
+          type: "boolean",
+          description:
+            "Set true ONLY when the lead was qualified by text and refuses phone calls (they want text only). The team is then told to follow up manually and nothing is booked or called. Leave it out otherwise.",
+        },
       },
       required: ["summary"],
     },
@@ -340,21 +345,38 @@ async function executeSmsTool(
 
   if (name === "request_human_followup") {
     const summary = typeof input?.summary === "string" && input.summary.trim() ? input.summary.trim() : "(no summary given)";
+    // A lead qualified by text who still refuses calls (Mark, 2026-11-17): the team follows up by hand. Nothing is
+    // booked or dialled, and Slack says so, so nobody reads it as "book this lead a call".
+    const textOnly = input?.text_only === true && !isNoShow;
 
     if (!isNoShow) {
       await addContactTags(contactId, ["iris sms qualified"], ghlConfig.locationId, ghlConfig.apiKey).catch((error) => {
         console.error(`[IRS-SMS] Failed to tag contact ${contactId}:`, error instanceof Error ? error.message : error);
       });
     }
-    await finishIrisLead(clientId, contactId, isNoShow ? "no-show follow-up — handed to a teammate" : "qualified via text — handed off for human follow-up");
+    if (textOnly) {
+      await appendNoteToContact(clientId, contactId, `Iris: qualified by text. The lead does not want phone calls (text only) — needs manual follow-up from the team. ${summary}`).catch((error) => {
+        console.error(`[IRS-SMS] Failed to write the text-only note for ${contactId}:`, error instanceof Error ? error.message : error);
+      });
+    }
+    await finishIrisLead(clientId, contactId, isNoShow ? "no-show follow-up — handed to a teammate" : textOnly ? "qualified via text — text only, manual follow-up" : "qualified via text — handed off for human follow-up");
+    let slackSent = true;
     await sendMessage(AGENT_ID, {
       channel: CALL_LOG_CHANNEL,
-      text: `${isNoShow ? "🔁 A no-show lead replied and needs a person (Iris stopped texting)" : "💬 Iris qualified a lead over text and needs a human to book them"}:\n${summary}${await linkSuffix(clientId, contactId)}`,
+      text: textOnly
+        ? `📵💬 Iris qualified a lead over text, but they do NOT want phone calls. The 3% team should follow up by hand (text or email). No call is booked or scheduled:\n${summary}${await linkSuffix(clientId, contactId)}`
+        : `${isNoShow ? "🔁 A no-show lead replied and needs a person (Iris stopped texting)" : "💬 Iris qualified a lead over text and needs a human to book them"}:\n${summary}${await linkSuffix(clientId, contactId)}`,
     }).catch((error) => {
+      slackSent = false;
       console.error(`[IRS-SMS] Failed to post handoff to Slack:`, error instanceof Error ? error.message : error);
     });
 
-    return "Handed off to the team. Tell the lead briefly that someone will reach out to book a time — never promise a specific time yourself — then stop.";
+    if (!slackSent) {
+      return "The lead is recorded as handed off in the CRM, but the Slack alert to the team FAILED, so never say or imply the team has been notified. Tell the lead only that you have passed their details along, then stop.";
+    }
+    return textOnly
+      ? "Handed off to the team for manual follow-up (no call). Tell the lead briefly that one of our agents will message them with listings — never promise a time and never mention a call — then stop."
+      : "Handed off to the team. Tell the lead briefly that someone will reach out to book a time — never promise a specific time yourself — then stop.";
   }
 
   if (name === "check_availability" || name === "book_appointment") {

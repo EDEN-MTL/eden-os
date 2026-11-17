@@ -1428,6 +1428,30 @@ describe("buildSmsQualificationPrompt", () => {
     expect(normal).not.toMatch(/does NOT want phone calls/);
   });
 
+  // Mark, 2026-11-17 (Troy Morris, on vacation): Iris promised "one of our agents will reach out by text" before she
+  // had qualified him or asked when he'd be free. Busy is not a handoff.
+  it("tells Iris what to do with a busy lead, and never to promise an agent before the lead is qualified", () => {
+    for (const opts of [{}, { noCalls: true, callHandoff: true }, { callHandoff: true }]) {
+      const prompt = buildSmsQualificationPrompt(IRIS_CONFIG, BLANK_LEAD, "3 Percent East Coast", "St. John's", opts);
+      expect(prompt).toMatch(/If they say they are busy, at work, on vacation/);
+      expect(prompt).toMatch(/NOT the same as not interested, and it is NOT a handoff/);
+      expect(prompt).toMatch(/NEVER say or imply that an agent will call, text, reach out or contact them/);
+      expect(prompt).toMatch(/Ask when would be a better time to connect/);
+      expect(prompt).toMatch(/offer to ask the few quick questions right here by text/);
+      expect(prompt).toMatch(/ask when they could talk to one of our agents/);
+      // The generic "not a good time" line no longer invites a bare promise.
+      expect(prompt).toMatch(/never promise an agent will contact them yet/);
+    }
+  });
+
+  it("for a text-only lead who keeps refusing calls: stops asking, hands off with text_only, and the team follows up by hand", () => {
+    const noCalls = buildSmsQualificationPrompt(IRIS_CONFIG, BLANK_LEAD, "3 Percent East Coast", "St. John's", { noCalls: true, callHandoff: true });
+    expect(noCalls).toMatch(/never ask about a call again and never pressure them/);
+    expect(noCalls).toMatch(/request_human_followup with text_only set to true/);
+    const normal = buildSmsQualificationPrompt(IRIS_CONFIG, BLANK_LEAD, "3 Percent East Coast", "St. John's", { callHandoff: true });
+    expect(normal).toMatch(/They don't want a call at all[^\n]*text_only set to true/);
+  });
+
   it("asks every config question when intent is unknown", () => {
     const prompt = buildSmsQualificationPrompt(IRIS_CONFIG, BLANK_LEAD, "3 Percent East Coast", "St. John's");
     for (const q of IRIS_CONFIG.questions) expect(prompt).toContain(q);

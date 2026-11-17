@@ -351,6 +351,63 @@ describe("irisHandleInboundSms — full qualification loop", () => {
 });
 
 /**
+ * Mark, 2026-11-17: a lead qualified by text who still refuses phone calls is handed to the team to follow up by
+ * hand. Slack must say "no call", and Iris must never claim the team was told when the Slack post failed.
+ */
+describe("request_human_followup — text-only handoff", () => {
+  it("posts a text-only notice (no call booked) and notes the contact", async () => {
+    db.query.mockResolvedValue([{ client_id: "3-percent-east-coast", contact_id: "contact-1", lead: { ...LEAD, noCalls: true }, status: "pending" }]);
+    vi.mocked(chatWithTools)
+      .mockResolvedValueOnce(toolTurn(toolUseBlock("t1", "request_human_followup", { summary: "Troy, buyer, outside St. John's, 4 bed", text_only: true })))
+      .mockResolvedValueOnce(endTurn("Thanks Troy, one of our agents will message you with listings."));
+
+    await irisHandleInboundSms("contact-1", "still no calls please", { wait: async () => {} });
+
+    const post = vi.mocked(sendMessage).mock.calls.map((c) => String((c[1] as any).text)).find((t) => /do NOT want phone calls/.test(t));
+    expect(post).toMatch(/follow up by hand/);
+    expect(post).toMatch(/No call is booked or scheduled/);
+    expect(post).toContain("Troy, buyer, outside St. John's, 4 bed");
+    expect(ghl.addContactTags).toHaveBeenCalledWith("contact-1", ["iris sms qualified"], "loc-1", "key-1");
+    const finish = db.query.mock.calls.find((c) => String(c[0]).includes("UPDATE iris_pending_calls") && Array.isArray(c[1]) && c[1].includes("qualified via text — text only, manual follow-up"));
+    expect(finish).toBeDefined();
+    // The model is told this is a no-call handoff.
+    const toolResult = JSON.stringify(vi.mocked(chatWithTools).mock.calls[1][1]);
+    expect(toolResult).toMatch(/never mention a call/);
+  });
+
+  it("without text_only, the Slack post is the normal 'needs a human to book them'", async () => {
+    db.query.mockResolvedValue([{ client_id: "3-percent-east-coast", contact_id: "contact-1", lead: LEAD, status: "pending" }]);
+    vi.mocked(chatWithTools)
+      .mockResolvedValueOnce(toolTurn(toolUseBlock("t1", "request_human_followup", { summary: "Catherine, buyer" })))
+      .mockResolvedValueOnce(endTurn("Thanks!"));
+
+    await irisHandleInboundSms("contact-1", "ok", { wait: async () => {} });
+
+    const texts = vi.mocked(sendMessage).mock.calls.map((c) => String((c[1] as any).text));
+    expect(texts.some((t) => /needs a human to book them/.test(t))).toBe(true);
+    expect(texts.some((t) => /do NOT want phone calls/.test(t))).toBe(false);
+  });
+
+  it("tells Iris the truth when the Slack post fails: the team was not notified", async () => {
+    db.query.mockResolvedValue([{ client_id: "3-percent-east-coast", contact_id: "contact-1", lead: { ...LEAD, noCalls: true }, status: "pending" }]);
+    vi.mocked(sendMessage).mockImplementation(async (_a: any, m: any) => {
+      if (/do NOT want phone calls/.test(String(m.text))) throw new Error("slack down");
+      return {} as any;
+    });
+    vi.mocked(chatWithTools)
+      .mockResolvedValueOnce(toolTurn(toolUseBlock("t1", "request_human_followup", { summary: "Troy, buyer", text_only: true })))
+      .mockResolvedValueOnce(endTurn("Thanks Troy."));
+
+    await irisHandleInboundSms("contact-1", "no calls", { wait: async () => {} });
+
+    const toolResult = JSON.stringify(vi.mocked(chatWithTools).mock.calls[1][1]);
+    expect(toolResult).toMatch(/Slack alert to the team FAILED/);
+    expect(toolResult).toMatch(/never say or imply the team has been notified/);
+    vi.mocked(sendMessage).mockImplementation(async () => ({}) as any);
+  });
+});
+
+/**
  * Mark's instruction, 2026-09-25: never reply instantly — "so the lead
  * would not think they are chatting to an automation." Applies to every
  * reply, not a subset of leads.
