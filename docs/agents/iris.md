@@ -233,6 +233,19 @@ agents can talk to them to send listings (book_appointment, or request_human_fol
 `dial-pending.ts` checks the tag live before EVERY dial (sweeps, cohort and retries create fresh rows that don't know the old
 text), and Slack "call X" refuses a "no calls" lead. The classifier itself can only be checked on Render (no local Anthropic key).
 
+### The weekly patterns digest (Mark, 2026-11-18)
+
+"How can Iris be smarter, see patterns and repeated problems on her own?" Step one is `agents/iris/pattern-digest.ts`: every Monday
+8:30 AM NL (`iris.patternDigest`, scheduler) Iris DMs Mark what keeps repeating in her own last seven days against the seven before:
+hang-ups grouped by what she had just asked (budget, timeline, area, "connect you with an agent", ...), repeated call-review
+flags, out-of-character slips ("I'm Claude"), calls where she kept asking the lead to repeat themselves, leads who asked her to hold
+on or call later, plus what the stuck-lead check did and who has waited on a person two weeks running. A pattern needs `minRepeat`
+(3) calls; a slip is reported even once; one that also happened last week is marked "again". It is plain counts over the call
+transcripts: no AI model, no GHL calls, no cost, and it never changes anything. Each pattern says what a person should look at; the
+fix is built by hand (with a test and a ledger row) once Mark picks it. Next steps up, not built: Iris drafts the fix and the test for
+Mark to approve; then she applies only reversible fixes herself. The call prompt is never changed by her. Preview without sending:
+`npx tsx --env-file=.env scripts/pattern-digest.ts`.
+
 ### A call that connected but did not transfer moves the card (Mark, 2026-11-17 — Magar Bhuma)
 
 Magar's two first-day calls connected (one ended when they said "hold on, important call", one was the "I'm Claude" slip), neither

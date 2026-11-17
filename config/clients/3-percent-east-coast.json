@@ -189,6 +189,13 @@
       "snoozeDays": 3,
       "note": "Mark, 2026-11-12 (Magar Bhuma was flagged by the nightly review every morning for a week and nobody acted): every day at 9:50 AM NL Iris follows up on the leads the review says were dropped (agents/iris/review-followup.ts): one call at a time, one text after a miss. Never leads with an agent (Live Transferred, Appointment Set...), never a lead whose last message is theirs and unanswered (a person reads that first), at most maxPerDay a day. Same vetting as the Slack 'act on the flagged leads' command. ON since 2026-11-16 (Mark: 5 a day, 3-day pause). Dry run: scripts/daily-followup.ts."
     },
+    "patternDigest": {
+      "enabled": true,
+      "userIds": ["U07H26WUGP5"],
+      "minRepeat": 3,
+      "lookbackDays": 7,
+      "note": "Mark, 2026-11-18: every Monday 8:30 AM NL Iris DMs Mark what keeps repeating in her own calls this week against last week (hangups after the same question, call-review flags, 'I'm Claude' slips, audio trouble, leads who asked to wait), plus what the stuck-lead check did. Plain counts over the call transcripts: no AI model, no cost. U07H26WUGP5 = Mark Christian Nuada."
+    },
     "moveAfterConnectedCall": {
       "enabled": true,
       "fromStagePatterns": ["^buyer leads", "^seller leads", "^downsize leads", "^upgrading leads"],

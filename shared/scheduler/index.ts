@@ -32,6 +32,7 @@ import { runDailySummary } from "../../agents/iris/daily-summary";
 import { runNightlyLeadReview } from "../../agents/iris/lead-review";
 import { runAsapWatchAll } from "../../agents/iris/asap-watch";
 import { runDailyLeadFollowUpAll } from "../../agents/iris/review-followup";
+import { runPatternDigestAll } from "../../agents/iris/pattern-digest";
 import { runStuckLeadCheckAll } from "../../agents/iris/stuck-leads";
 import { runCallbackWatchAll } from "../../agents/iris/callback-watch";
 import { sendBlocks, sendMessage } from "../slack";
@@ -394,6 +395,8 @@ export function startScheduler(): void {
   cron.schedule("50 9 * * *", () => runDailyLeadFollowUpAll(), { timezone: "America/St_Johns" });
   // After the follow-up has lined up its calls (those leads then read as "in hand"): the stuck-lead check.
   cron.schedule("20 10 * * *", () => runStuckLeadCheckAll(), { timezone: "America/St_Johns" });
+  // Mondays 8:30 AM NL: the weekly patterns digest DMed to Mark (agents/iris/pattern-digest.ts). Free: no model.
+  cron.schedule("30 8 * * 1", () => runPatternDigestAll(), { timezone: "America/St_Johns" });
   // 10:15, 1:15 and 4:15 St. John's time: Iris reviews every ASAP lead's calls and texts and texts a follow-up where one is due
   // (agents/iris/asap-watch.ts). Off per client unless iris.asapWatch.enabled.
   cron.schedule("15 10,13,16 * * *", () => runAsapWatchAll(), { timezone: "America/St_Johns" });

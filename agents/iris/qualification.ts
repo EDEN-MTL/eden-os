@@ -166,6 +166,8 @@ export interface IrisConfig {
    * column (stage names matching these patterns) to the follow-up column for that attempt.
    */
   moveAfterConnectedCall?: { enabled: boolean; fromStagePatterns: string[] };
+  /** Mark, 2026-11-18: a weekly DM of what keeps repeating in Iris's own calls (agents/iris/pattern-digest.ts). Free, read-only. */
+  patternDigest?: import("./pattern-digest").PatternDigestConfig;
   /** The lead review (lead-review.ts): contacts to never flag. */
   leadReview?: { excludeEmailDomains?: string[]; excludeContactIds?: string[] };
   /** Where Iris posts her morning summary (a channel id; the bot must be a member). */
