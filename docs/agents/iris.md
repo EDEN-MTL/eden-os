@@ -217,7 +217,7 @@ Iris's problem to analyse and resolve. Audit of the 36 early-stage cards on 11-1
    other half of the day (`retryStartAt`), up to 2 extra tries >= 20 h apart; a "no calls" lead gets a text instead.
 6. Never reached anyone: one text after the calls, then Not Ready after `giveUpAfterDays` of silence.
 7. Talked to Iris, then quiet -> a follow-up text written from the thread (the ASAP watch's writer and checks, its own prompt
-   `STUCK_COMPOSER_SYSTEM`, one model call, a few cents a day), at most `maxNudges`, then Not Ready (a qualified lead goes to a person).
+   `STUCK_COMPOSER_SYSTEM`, one model call, a few cents a day), at most `maxNudges`, then Not Ready. A qualified lead who has answered us goes to a person; one who never answered a text gets the same follow-ups and move (Mark, 2026-11-17, Magar Bhuma), and the note says a person can pick them up from Not Ready.
 Texts reopen the lead's queue row (source "stuck") so a reply is answered by Iris. Dry run: `scripts/stuck-leads.ts` (no writes,
 stub text writer). The SMS composer prompt is not covered by `check-iris-call-prompt.ts` (it is a text, not the call prompt).
 

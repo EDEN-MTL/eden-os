@@ -125,8 +125,8 @@ describe("diagnoseStuckLead: a person decides", () => {
   it("an inquiry over six months old", () => expect(act(facts({ createdAt: ago(200), events: [irisText(30)] }))).toBe("person"));
   it("an old leftover nobody follows up on automatically", () => expect(act(facts({ createdAt: ago(75), events: [irisText(40), leadText(39)] }))).toBe("person"));
   it("an old lead nobody ever contacted", () => expect(act(facts({ createdAt: ago(45) }))).toBe("person"));
-  it("a qualified lead that has stopped moving", () => {
-    expect(act(facts({ notes: "Budget $400k, timeline 3 months, area Paradise, pre-approved", events: [irisText(9), leadText(8)].slice(0, 1), calls: [call(9)] }))).toBe("person");
+  it("a qualified lead who answered us and then stopped moving", () => {
+    expect(act(facts({ notes: "Budget $400k, timeline 3 months, area Paradise, pre-approved", events: [irisText(9), leadText(8), irisText(6)], calls: [call(9)] }))).toBe("person");
   });
 });
 
@@ -182,6 +182,33 @@ describe("diagnoseStuckLead: the fixes", () => {
     const f = facts({ nudges: 2, lastNudgeAt: ago(6), calls: [{ ...call(20), leadTurns: 3, endedReason: "assistant-ended-call", transcript: "User: hi" }], events: [irisCallEvent(20, true), irisText(6)] });
     expect(act(f)).toBe("park_not_ready");
     expect(act({ ...f, lastNudgeAt: ago(4), events: [irisCallEvent(20, true), irisText(4)] })).toBe("leave");
+  });
+
+  // Mark, 2026-11-17 (Magar Bhuma): qualified on a call, then nothing back to any text for a week. Iris follows up,
+  // and moves the card when that gets no answer; she doesn't just list it for a person.
+  describe("a qualified lead who never answered a text", () => {
+    const QUALIFIED = "Budget $400k, timeline 3 months, area Paradise, pre-approved";
+    const talked = { ...call(9), endedReason: "assistant-ended-call", seconds: 150, leadTurns: 6, transcript: "User: looking in Paradise" };
+    it("is followed up with a text", () => {
+      const f = facts({ notes: QUALIFIED, calls: [talked], events: [irisCallEvent(9, true), irisText(8)] });
+      const d = diagnoseStuckLead(f, cfg, NOW);
+      expect(d.diagnosis.action).toBe("text_follow_up");
+      expect(d.diagnosis.why).toMatch(/qualified in the notes, never answered a text/);
+    });
+    it("is moved to Not Ready after two follow-ups and five silent days, and says why", () => {
+      const f = facts({ notes: QUALIFIED, nudges: 2, lastNudgeAt: ago(6), calls: [talked], events: [irisCallEvent(20, true), irisText(6)] });
+      const d = diagnoseStuckLead(f, cfg, NOW);
+      expect(d.diagnosis.action).toBe("park_not_ready");
+      expect(d.diagnosis.why).toMatch(/a person can pick them up from Not Ready/);
+    });
+    it("waits while the last follow-up is under five days old", () => {
+      const f = facts({ notes: QUALIFIED, nudges: 2, lastNudgeAt: ago(4), calls: [talked], events: [irisCallEvent(20, true), irisText(4)] });
+      expect(act(f)).toBe("leave");
+    });
+    it("but a qualified lead who did answer goes to a person, not to Not Ready", () => {
+      const f = facts({ notes: QUALIFIED, nudges: 2, lastNudgeAt: ago(6), calls: [talked], events: [irisCallEvent(20, true), leadText(10), irisText(6)] });
+      expect(act(f)).toBe("person");
+    });
   });
 
   it("adds the stage's missing tag", () => {

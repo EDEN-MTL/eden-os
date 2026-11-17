@@ -278,7 +278,11 @@ export function diagnoseStuckLead(f: StuckFacts, cfg: Pick<StuckLeadsConfig, "st
 
   if (lastTouchAt !== null && t - lastTouchAt < cfg.quietDays * DAY) return done({ action: "leave", why: "tried within the last few days" });
 
-  if (qualified) return done({ action: "person", why: "qualified in the notes and not moving: needs an agent to take the conversation" });
+  // A qualified lead who has answered us is waiting for an agent. One who has never answered a text is still just
+  // silent: Iris follows up and, when that gets nothing, moves the card (Mark, 2026-11-17, Magar Bhuma).
+  const repliedByText = f.events.some((e) => e.direction === "in" && e.kind === "sms" && !STOP.test(e.text));
+  if (qualified && repliedByText) return done({ action: "person", why: "qualified in the notes and not moving: needs an agent to take the conversation" });
+  const silentQualified = qualified ? " (qualified in the notes, never answered a text: a person can pick them up from Not Ready)" : "";
 
   if (!engaged) {
     // Never reached anyone. One text after the calls, then a decided ending.
@@ -293,10 +297,10 @@ export function diagnoseStuckLead(f: StuckFacts, cfg: Pick<StuckLeadsConfig, "st
 
   // They have talked to Iris (or texted), then went quiet.
   if (f.nudges >= cfg.maxNudges) {
-    if (f.lastNudgeAt !== null && t - f.lastNudgeAt >= cfg.giveUpAfterDays * DAY) return done({ action: "park_not_ready", why: `${f.nudges} follow-up texts and no answer in ${Math.round((t - f.lastNudgeAt) / DAY)} days` }, false);
+    if (f.lastNudgeAt !== null && t - f.lastNudgeAt >= cfg.giveUpAfterDays * DAY) return done({ action: "park_not_ready", why: `${f.nudges} follow-up texts and no answer in ${Math.round((t - f.lastNudgeAt) / DAY)} days${silentQualified}` }, false);
     return done({ action: "leave", why: "waiting out the last follow-up text" });
   }
-  return done({ action: "text_follow_up", why: "they talked to Iris before and it has gone quiet: a follow-up from the history" });
+  return done({ action: "text_follow_up", why: `they talked to Iris before and it has gone quiet: a follow-up from the history${silentQualified}` });
 }
 
 /**
