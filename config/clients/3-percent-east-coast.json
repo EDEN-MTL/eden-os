@@ -189,6 +189,11 @@
       "snoozeDays": 3,
       "note": "Mark, 2026-11-12 (Magar Bhuma was flagged by the nightly review every morning for a week and nobody acted): every day at 9:50 AM NL Iris follows up on the leads the review says were dropped (agents/iris/review-followup.ts): one call at a time, one text after a miss. Never leads with an agent (Live Transferred, Appointment Set...), never a lead whose last message is theirs and unanswered (a person reads that first), at most maxPerDay a day. Same vetting as the Slack 'act on the flagged leads' command. ON since 2026-11-16 (Mark: 5 a day, 3-day pause). Dry run: scripts/daily-followup.ts."
     },
+    "moveAfterConnectedCall": {
+      "enabled": true,
+      "fromStagePatterns": ["^buyer leads", "^seller leads", "^downsize leads", "^upgrading leads"],
+      "note": "Mark, 2026-11-17 (Magar Bhuma sat in Buyer Leads for eleven days after two calls that connected but never transferred): a call that connected and did not end in a transfer moves a card still in one of these intake columns to the follow-up column for that attempt. The move used to run only for a call nobody picked up."
+    },
     "stuckLeads": {
       "enabled": true,
       "stagePatterns": ["^replied", "^buyer leads", "^seller leads", "^downsize leads", "^upgrading leads", "^day [123] -", "^weeke?n?d -"],

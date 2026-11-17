@@ -727,6 +727,12 @@ export function loadIrisConfig(clientId: string): IrisConfig | null {
             snoozeDays: Number.isInteger(raw.iris.dailyFollowUp.snoozeDays) && raw.iris.dailyFollowUp.snoozeDays > 0 ? raw.iris.dailyFollowUp.snoozeDays : 3,
           }
         : undefined,
+      moveAfterConnectedCall: raw.iris.moveAfterConnectedCall
+        ? {
+            enabled: raw.iris.moveAfterConnectedCall.enabled === true,
+            fromStagePatterns: Array.isArray(raw.iris.moveAfterConnectedCall.fromStagePatterns) ? raw.iris.moveAfterConnectedCall.fromStagePatterns.filter((x: unknown) => typeof x === "string") : [],
+          }
+        : undefined,
       stuckLeads: raw.iris.stuckLeads
         ? (() => {
             const c = raw.iris.stuckLeads;

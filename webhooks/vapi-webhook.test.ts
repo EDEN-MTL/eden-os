@@ -11,6 +11,7 @@ const ghl = vi.hoisted(() => ({
   sendSMS: vi.fn(),
   getMessage: vi.fn(),
   listLocationUsers: vi.fn(),
+  listPipelines: vi.fn(),
 }));
 vi.mock("../shared/ghl", () => ghl);
 
@@ -62,6 +63,7 @@ import {
   formatLiveTransferPost,
   postLiveTransferToSlack,
   moveToFollowUpStage,
+  moveIntakeCardAfterConnectedCall,
   smsConfirmation,
   postCallLogToSlack,
   tagSequenceExhausted,
@@ -241,6 +243,102 @@ describe("hitCallScreener", () => {
  * columns as each attempt goes unanswered, and tag it once the whole
  * sequence is exhausted with no answer at all.
  */
+/**
+ * Mark, 2026-11-17 (Magar Bhuma): "she should have been moved the moment we did not successfully transfer her at that
+ * first touch." Two calls connected, neither transferred, and the card sat in Buyer Leads for eleven days because the
+ * move to a follow-up column only ran for a call nobody picked up.
+ */
+describe("a call that connected but did not end in a transfer (Magar Bhuma)", () => {
+  const followUpStageIds = ["stage-day1-am", "stage-day1-pm", "stage-day2-am"];
+  const CONFIG = { followUpStageIds, moveAfterConnectedCall: { enabled: true, fromStagePatterns: ["^buyer leads", "^seller leads"] } };
+  const stagesNamed = (id: string, name: string) => [{ id: "pipe-1", stages: [{ id, name }, { id: "stage-day1-am", name: "DAY 1 - AM FOLLOWUP" }] }];
+
+  beforeEach(() => {
+    iris.loadIrisConfig.mockReturnValue(CONFIG);
+    ghl.getGhlConfig.mockResolvedValue({ locationId: "loc-1", apiKey: "key-1" });
+    ghl.findOpenOpportunitiesForContact.mockResolvedValue([{ id: "opp-1", pipelineStageId: "stage-buyer-leads" }]);
+    ghl.listPipelines.mockResolvedValue(stagesNamed("stage-buyer-leads", "Buyer Leads"));
+    ghl.getContact.mockResolvedValue({ contact: { customFields: [], tags: [] } });
+    db.query.mockImplementation(async (...args: unknown[]) => (/SELECT attempts_made/.test(String(args[0])) ? [{ attempts_made: 1 }] : []));
+  });
+
+  it("moves a card still in Buyer Leads to the follow-up column for that attempt, and notes why", async () => {
+    await moveIntakeCardAfterConnectedCall("3-percent-east-coast", "contact-1");
+
+    expect(ghl.updateOpportunityStage).toHaveBeenCalledWith("opp-1", "stage-day1-am", "loc-1", "key-1");
+  });
+
+  it("uses the attempt number: a second call that also connected goes to the second column", async () => {
+    db.query.mockImplementation(async (...args: unknown[]) => (/SELECT attempts_made/.test(String(args[0])) ? [{ attempts_made: 2 }] : []));
+    await moveIntakeCardAfterConnectedCall("3-percent-east-coast", "contact-1");
+
+    expect(ghl.updateOpportunityStage).toHaveBeenCalledWith("opp-1", "stage-day1-pm", "loc-1", "key-1");
+  });
+
+  it("leaves a card the call itself already moved (booked, live transferred, not interested)", async () => {
+    ghl.findOpenOpportunitiesForContact.mockResolvedValue([{ id: "opp-1", pipelineStageId: "stage-appt" }]);
+    ghl.listPipelines.mockResolvedValue(stagesNamed("stage-appt", "Appointment Set"));
+
+    await moveIntakeCardAfterConnectedCall("3-percent-east-coast", "contact-1");
+
+    expect(ghl.updateOpportunityStage).not.toHaveBeenCalled();
+  });
+
+  it("leaves a card in a column that is not an intake column, such as one already in follow-up", async () => {
+    ghl.findOpenOpportunitiesForContact.mockResolvedValue([{ id: "opp-1", pipelineStageId: "stage-day1-am" }]);
+
+    await moveIntakeCardAfterConnectedCall("3-percent-east-coast", "contact-1");
+
+    expect(ghl.updateOpportunityStage).not.toHaveBeenCalled();
+  });
+
+  it("does nothing when the client has not turned it on", async () => {
+    iris.loadIrisConfig.mockReturnValue({ followUpStageIds });
+
+    await moveIntakeCardAfterConnectedCall("3-percent-east-coast", "contact-1");
+
+    expect(ghl.updateOpportunityStage).not.toHaveBeenCalled();
+  });
+
+  it("does not move a lead a teammate is talking to", async () => {
+    iris.loadIrisConfig.mockReturnValue({ ...CONFIG, humanTextBlocksCalls: true, humanHandsOffDays: 7 });
+    humanTouch.checkHumanTouch.mockResolvedValue({ status: "human", kind: "call", at: "Nov 16" } as any);
+
+    await moveIntakeCardAfterConnectedCall("3-percent-east-coast", "contact-1");
+
+    expect(ghl.updateOpportunityStage).not.toHaveBeenCalled();
+  });
+
+  describe("wired into the end-of-call report", () => {
+    const res = () => ({ status: vi.fn().mockReturnThis(), send: vi.fn(), json: vi.fn() });
+    const handler = () => (createVapiRouter() as any).stack[0].route.stack[0].handle as (req: any, res: any) => Promise<void>;
+    const finish = (endedReason: string, triggeredBy = "automatic", messages: any[] = [{ role: "user", message: "Hello?" }, { role: "bot", message: "Hi, this is Iris." }, { role: "user", message: "Yes, one second please." }, { role: "bot", message: "No problem at all." }]) => {
+      db.query.mockImplementation(async (...args: unknown[]) => {
+        const sql = String(args[0]);
+        if (/UPDATE iris_call_log/.test(sql)) return [{ client_id: "3-percent-east-coast", contact_id: "contact-1", triggered_by: triggeredBy }];
+        if (/SELECT attempts_made/.test(sql)) return [{ attempts_made: 1 }];
+        return [];
+      });
+      return handler()({ body: { message: { type: "end-of-call-report", endedReason, call: { id: "call-232" }, durationSeconds: 199, messages } }, headers: {} }, res());
+    };
+
+    it("moves the card after an answered call that Iris ended", async () => {
+      await finish("assistant-ended-call");
+      expect(ghl.updateOpportunityStage).toHaveBeenCalledWith("opp-1", "stage-day1-am", "loc-1", "key-1");
+    });
+
+    it("does not run for a manual test call", async () => {
+      await finish("assistant-ended-call", "manual");
+      expect(ghl.updateOpportunityStage).not.toHaveBeenCalled();
+    });
+
+    it("does not run when the transfer succeeded", async () => {
+      await finish("assistant-forwarded-call");
+      expect(ghl.updateOpportunityStage).not.toHaveBeenCalled();
+    });
+  });
+});
+
 describe("moveToFollowUpStage", () => {
   const followUpStageIds = ["stage-day1-am", "stage-day1-pm", "stage-day2-am"];
 

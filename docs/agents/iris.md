@@ -233,6 +233,17 @@ agents can talk to them to send listings (book_appointment, or request_human_fol
 `dial-pending.ts` checks the tag live before EVERY dial (sweeps, cohort and retries create fresh rows that don't know the old
 text), and Slack "call X" refuses a "no calls" lead. The classifier itself can only be checked on Render (no local Anthropic key).
 
+### A call that connected but did not transfer moves the card (Mark, 2026-11-17 — Magar Bhuma)
+
+Magar's two first-day calls connected (one ended when they said "hold on, important call", one was the "I'm Claude" slip), neither
+reached a transfer, and the card sat in Buyer Leads for eleven days. `moveToFollowUpStage` only ran for a call nobody picked up, and a
+connected call leaves the row `placed`, so nothing watched it. `moveIntakeCardAfterConnectedCall` (`webhooks/vapi-webhook.ts`) now runs
+after every automatic call that connected (or whose transfer was abandoned) and did not end in a successful transfer: if the card is
+still in an intake column (`iris.moveAfterConnectedCall.fromStagePatterns`: Buyer/Seller/Downsize/Upgrading Leads) it moves to the
+follow-up column for that attempt, with a note. Cards the call itself moved (booked, live transferred, not interested) are not in an
+intake column any more, so nothing is pulled back; a lead a teammate has is left alone (`reasonToLeaveLead`). It only moves new
+connected calls: cards already stuck are the stuck-lead check's job.
+
 ### Busy leads and text-only leads (Mark, 2026-11-17 — Troy Morris)
 
 Troy, on vacation, said no calls for a while and just wanted listings; Iris told him "one of our agents will reach out by text"

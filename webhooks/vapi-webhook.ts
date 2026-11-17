@@ -1,7 +1,7 @@
 import crypto from "crypto";
 import { Request, Response, Router } from "express";
 import { query } from "../shared/db";
-import { getGhlConfig, getContact, addContactTags, findOpenOpportunitiesForContact, updateOpportunityStage, getCustomFieldDefs, updateContact, sendSMS, getMessage, listLocationUsers } from "../shared/ghl";
+import { getGhlConfig, getContact, addContactTags, findOpenOpportunitiesForContact, updateOpportunityStage, getCustomFieldDefs, updateContact, sendSMS, getMessage, listLocationUsers, listPipelines } from "../shared/ghl";
 import { sendMessage, uploadFile } from "../shared/slack";
 import { appendHistory } from "../shared/conversation-memory";
 import { loadIrisConfig, loadClientBranding } from "../agents/iris";
@@ -486,6 +486,11 @@ async function handleEndOfCallReport(message: Record<string, any>): Promise<void
   // reopened here — a manual test call (scripts/test-iris-call.ts etc.)
   // has no cadence to continue even if it happens to share a contactId.
   if (row?.contact_id && row.triggered_by === "automatic") {
+    // A call that connected but did not end in a transfer leaves the card in its intake column unless something moves
+    // it (Mark, 2026-11-17, Magar Bhuma): the move to a follow-up column only ran for a call nobody picked up.
+    if (endedReason !== TRANSFER_SUCCEEDED_REASON && (TRANSFER_ABANDONED_REASONS.has(endedReason ?? "") || genuinelyAnswered(endedReason, message))) {
+      await moveIntakeCardAfterConnectedCall(row.client_id, row.contact_id);
+    }
     if (TRANSFER_ABANDONED_REASONS.has(endedReason ?? "")) {
       // They agreed to an agent and the call ended while the transfer was still going (Mark, 2026-11-11).
       await handleAbandonedTransfer(row.client_id, row.contact_id, callId, message);
@@ -673,6 +678,45 @@ export async function reasonToLeaveLead(clientId: string, contactId: string, cur
   if (touch.status === "human") return `a teammate ${touch.kind === "call" ? "called" : "texted"} them on ${touch.at}`;
   if (touch.status === "unknown") return "couldn't verify no teammate is talking to them";
   return null;
+}
+
+/**
+ * Mark, 2026-11-17 (Magar Bhuma): "she should have been moved the moment we did not successfully transfer her at that
+ * first touch." The card moves to a follow-up column only when a call goes UNANSWERED, so a lead who picked up but did
+ * not end up transferred or booked (put Iris on hold, hung up, bad line) sat in Buyer Leads for eleven days with
+ * nobody watching it. Now any connected automatic call that did not end in a transfer moves a card still sitting in
+ * an intake column to the follow-up column for that attempt. Only the intake columns (config
+ * iris.moveAfterConnectedCall.fromStagePatterns): anything the call itself did (a booking, a live transfer, a "not
+ * interested") has already moved the card out of them, so nothing is pulled back. Never touches a lead a teammate has
+ * (reasonToLeaveLead). Best-effort.
+ */
+export async function moveIntakeCardAfterConnectedCall(clientId: string, contactId: string): Promise<void> {
+  try {
+    const config = loadIrisConfig(clientId);
+    const cfg = config?.moveAfterConnectedCall;
+    if (!cfg?.enabled || !cfg.fromStagePatterns?.length || !config?.followUpStageIds?.length) return;
+    const ghlConfig = await getGhlConfig(clientId);
+    if (!ghlConfig) return;
+    const opportunity = (await findOpenOpportunitiesForContact(contactId, ghlConfig.locationId, ghlConfig.apiKey))[0];
+    if (!opportunity) return;
+
+    let stageName = "";
+    for (const p of await listPipelines(ghlConfig.locationId, ghlConfig.apiKey)) {
+      const st = (p.stages ?? []).find((x: { id: string; name: string }) => x.id === opportunity.pipelineStageId);
+      if (st) stageName = String(st.name).trim();
+    }
+    if (!stageName || !cfg.fromStagePatterns.some((pat) => new RegExp(pat, "i").test(stageName))) return;
+
+    const attempts = await query<{ attempts_made: number }>(
+      `SELECT attempts_made FROM iris_pending_calls WHERE client_id = $1 AND contact_id = $2 ORDER BY created_at DESC LIMIT 1`,
+      [clientId, contactId]
+    );
+    const attemptsMade = Math.max(1, Number(attempts[0]?.attempts_made) || 1);
+    await moveToFollowUpStage(clientId, contactId, attemptsMade);
+    await appendNoteToContact(clientId, contactId, `Iris: the call connected but did not end in a transfer or booking, so the card moved out of ${stageName} to the follow-up column for attempt ${attemptsMade}.`).catch(() => {});
+  } catch (error) {
+    console.error(`[VAPI] Failed to move ${contactId}'s card after a connected call:`, error instanceof Error ? error.message : error);
+  }
 }
 
 export async function moveToFollowUpStage(clientId: string, contactId: string, attemptsMade: number): Promise<void> {
