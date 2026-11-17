@@ -233,6 +233,20 @@ agents can talk to them to send listings (book_appointment, or request_human_fol
 `dial-pending.ts` checks the tag live before EVERY dial (sweeps, cohort and retries create fresh rows that don't know the old
 text), and Slack "call X" refuses a "no calls" lead. The classifier itself can only be checked on Render (no local Anthropic key).
 
+### Iris contradicted herself in Slack (Mark, 2026-11-18 — Daniel Eiriz)
+
+Iris posted "Daniel Eiriz was qualified and hung up when Iris asked to connect them to an agent". Mark asked in the thread "when
+did you qualify this lead?" and she asked for the lead's name, then said he "hasn't been qualified in the system". Three faults:
+1. **The post was false.** `hungUpAtTransferAsk` matched "get you connected" in her own opening line ("…then we can get you
+   connected with someone who can send over some listings"); Daniel said hello three times and hung up. It now also needs at
+   least three different qualifying topics (budget, timeline, area, home type, pre-approval, realtor) in her lines before the
+   ask. (A wrong "qualified" had also queued a resume call that skips the questions.)
+2. **She did not remember her own post.** Only a few call sites seeded a thread's history. `sendMessage` (shared/slack) now
+   remembers every post: a top-level post or a reply goes to that thread's history, a DM to the person's DM history.
+3. **Her prompt defined "qualified" as the tags.** It now separates qualified (details gathered, shown in the call and notes)
+   from booked/transferred (the tags), tells her to pull the real call before answering a "why did you say that", to own a
+   wrong earlier claim first, and to use Slack bold (single asterisks).
+
 ### The weekly patterns digest (Mark, 2026-11-18)
 
 "How can Iris be smarter, see patterns and repeated problems on her own?" Step one is `agents/iris/pattern-digest.ts`: every Monday

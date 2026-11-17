@@ -630,19 +630,6 @@ describe("postCallLogToSlack", () => {
    * call site posts via sendMessage() directly, bypassing generateReply
    * entirely.
    */
-  it("seeds the post into Iris's own conversation history, keyed by Slack's real resolved channel id + this message's ts", async () => {
-    slack.sendMessage.mockResolvedValue({ ts: "5555.6666", channel: "C0REALCALLLOGS" });
-
-    await postCallLogToSlack("3-percent-east-coast", null, message, "voicemail");
-
-    expect(conversationMemory.appendHistory).toHaveBeenCalledWith(
-      "iris",
-      "channel:C0REALCALLLOGS:5555.6666",
-      "assistant",
-      expect.stringContaining("+17097496049")
-    );
-  });
-
   it("does not throw, and the post still succeeds, if sendMessage's response is missing ts/channel", async () => {
     slack.sendMessage.mockResolvedValue({});
     await expect(postCallLogToSlack("3-percent-east-coast", null, message, "voicemail")).resolves.toBeUndefined();
@@ -1798,7 +1785,18 @@ describe("a transfer that dropped before it connected", () => {
       call: { id: "call-267" },
       durationSeconds: 196,
       summary: "Jerrick wants a 1-story home with 4 bedrooms and 2 bathrooms in Mount Pearl, budget $200,000-$350,000, not pre-approved.",
-      messages: [turn("bot", "Hi. This is Iris."), turn("user", "Yeah. Speaking."), turn("user", "None."), turn("user", "Mount Pearl."), turn("user", "Right."), ask],
+      messages: [
+        turn("bot", "Hi. This is Iris."),
+        turn("user", "Yeah. Speaking."),
+        turn("bot", "And you put down 3 to 6 months as your timeline. Is there a particular month you're aiming for?"),
+        turn("user", "None."),
+        turn("bot", "And on budget, what number are you really thinking?"),
+        turn("bot", "What area are you interested in?"),
+        turn("user", "Mount Pearl."),
+        turn("bot", "And are you preapproved for a mortgage yet?"),
+        turn("user", "Right."),
+        ask,
+      ],
     };
     const finish = (r: any) => getRootHandler()({ body: { message: r }, headers: {} }, res());
 

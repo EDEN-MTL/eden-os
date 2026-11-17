@@ -359,12 +359,7 @@ export abstract class BaseAgent {
    * here must never surface as a failure to post the message itself.
    */
   async post(channel: string, text: string): Promise<void> {
-    const result = await sendMessage(this.id, { channel, text });
-    if (result?.channel && result?.ts) {
-      const historyKey = `channel:${result.channel}:${result.ts}`;
-      await appendHistory(this.id, historyKey, "assistant", text).catch((error) => {
-        console.error(`[${this.code}] Failed to seed thread history after a proactive post:`, error instanceof Error ? error.message : error);
-      });
-    }
+    // sendMessage itself remembers the post for replies in its thread (shared/slack rememberPost).
+    await sendMessage(this.id, { channel, text });
   }
 }

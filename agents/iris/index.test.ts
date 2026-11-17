@@ -57,6 +57,33 @@ beforeEach(() => {
   readFileSyncMock.mockReturnValue(CLIENT_CONFIG);
 });
 
+/**
+ * Mark, 2026-11-18 (Daniel Eiriz): Iris posted "Daniel was qualified", then answered "when did you qualify him?" with
+ * "he hasn't been qualified in the system" (judging from tags) after first asking for the lead's name, which her own post
+ * had just given. Qualified (details gathered) and booked/transferred (tags) are different things, and her own earlier
+ * words in the thread are facts she must not contradict silently.
+ */
+describe("IrisAgent.getSystemPrompt consistency", () => {
+  const prompt = irisAgent.getSystemPrompt({ senderName: "Mark" });
+
+  it("keeps 'qualified' (details gathered) apart from 'booked or transferred' (tags)", () => {
+    expect(prompt).toMatch(/A lead can be qualified\s+and not yet booked or transferred/);
+    expect(prompt).not.toMatch(/a lead counts as\s+qualified when it carries the/);
+  });
+
+  it("tells her not to ask who the lead is when her own post names them, and to pull the call before answering", () => {
+    expect(prompt).toMatch(/Never ask who the lead is when your own post\s+already names them/);
+    expect(prompt).toMatch(/pull the real call \(iris_call_transcript, iris_lead_overview\)/);
+    expect(prompt).toMatch(/Never answer a question about\s+what you claimed from tags alone/);
+  });
+
+  it("makes her own up to a wrong earlier claim first, and use Slack bold, not **double**", () => {
+    expect(prompt).toMatch(/I was wrong earlier/);
+    expect(prompt).toMatch(/Never contradict yourself without saying what changed/);
+    expect(prompt).toMatch(/bold is \*single asterisks\*, never \*\*double\*\*/);
+  });
+});
+
 describe("IrisAgent.getSystemPrompt sender recognition", () => {
   it("names the sender as a known coworker when a real name resolved", () => {
     const prompt = irisAgent.getSystemPrompt({ senderName: "Mark" });

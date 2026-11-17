@@ -88,6 +88,22 @@ const TRANSFER_ASK = /\b(connect you with|connecting you|transfer you|transferri
 const MIN_LEAD_TURNS = 3;
 
 /**
+ * What Iris asks while qualifying. A call only counts as qualified when she had asked about at least this many different
+ * things before the transfer ask. Daniel Eiriz, 2026-11-17: her opening line itself says "we can get you connected with
+ * someone who can send over some listings"; he said hello three times and hung up, and the call was reported as
+ * "qualified and hung up when Iris asked to connect them", which was false. A greeting is not a qualification.
+ */
+const QUALIFYING_TOPICS: RegExp[] = [
+  /budget|dollars|price range/i,
+  /timeline|time ?frame|what month|how soon/i,
+  /what area|which area|where are you|looking in|neighbou?rhood/i,
+  /type of home|what kind of home|bedroom|bungalow|town ?house/i,
+  /pre-?approv|mortgage/i,
+  /working with (?:a |an )?(?:realtor|agent)|have an agent/i,
+];
+const MIN_QUALIFYING_TOPICS = 3;
+
+/**
  * The lead hung up at the moment Iris asked to connect them to an agent, before any transfer started (Jerrick Mendoza,
  * 2026-11-16: qualified, Iris asked "Is that okay?", he hung up ten seconds later). Vapi reports that as a plain
  * "customer-ended-call", not one of the transfer reasons, so nothing followed. True only when Iris spoke last, what she
@@ -99,7 +115,10 @@ export function hungUpAtTransferAsk(message: Record<string, any>, endedReason: s
   const spoken = msgs.filter((m) => (m?.role === "user" || m?.role === "bot" || m?.role === "assistant") && typeof m?.message === "string" && m.message.trim());
   const last = spoken[spoken.length - 1];
   if (!last || last.role === "user" || !TRANSFER_ASK.test(last.message)) return false;
-  return spoken.filter((m) => m.role === "user").length >= MIN_LEAD_TURNS;
+  if (spoken.filter((m) => m.role === "user").length < MIN_LEAD_TURNS) return false;
+  // Her lines before the ask must have covered real qualifying questions, not just the greeting.
+  const before = spoken.slice(0, -1).filter((m) => m.role !== "user").map((m) => m.message).join(" ");
+  return QUALIFYING_TOPICS.filter((re) => re.test(before)).length >= MIN_QUALIFYING_TOPICS;
 }
 
 /**

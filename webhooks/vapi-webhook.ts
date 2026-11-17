@@ -355,20 +355,10 @@ export async function postCallLogToSlack(clientId: string, contactId: string | n
       `Duration: ${formatDuration(message?.durationSeconds)}` +
       (links ? `\n${links}` : "");
 
-    // Seeds this post into Iris's own conversation history, keyed by
-    // Slack's real resolved channel id + this message's own ts — the
-    // exact key a future THREAD REPLY under this post will look up (see
-    // BaseAgent.post()'s doc comment for the full story; this call site
-    // can't use that helper directly since it's a standalone webhook
-    // function, not a method on an agent instance). Without this, Mark
-    // asking a follow-up in the thread ("what time was that call?") finds
-    // no history at all and Iris has zero idea which lead he means —
-    // confirmed live 2026-09-23.
+    // sendMessage remembers this post in Iris's conversation history for the thread (shared/slack), so Mark asking a
+    // follow-up in the thread ("what time was that call?") has the post in front of Iris — confirmed live 2026-09-23.
     const result = await sendMessage("iris", { channel: CALL_LOG_CHANNEL, text });
     if (result?.channel && result?.ts) {
-      await appendHistory("iris", `channel:${result.channel}:${result.ts}`, "assistant", text).catch((error) => {
-        console.error("[VAPI] Failed to seed call-log thread history:", error instanceof Error ? error.message : error);
-      });
       await attachRecording(message, result.channel, result.ts);
     }
     // Handed back so the call review can reply in this post's thread.

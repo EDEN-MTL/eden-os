@@ -1,5 +1,6 @@
 import { WebClient } from "@slack/web-api";
 import { AgentId, SlackOutgoingMessage } from "../types";
+import { appendHistory } from "../conversation-memory";
 
 // ─── Agent Slack Clients ───
 // Each agent has its own WebClient with its own bot token
@@ -113,11 +114,29 @@ export async function sendMessage(
     // seed conversation history for a future thread reply (see
     // BaseAgent.post()) need this exact id, not whatever string was passed
     // in, or the history key a later reply constructs will never match.
+    await rememberPost(agentId, message, response.channel, response.ts);
     return { ts: response.ts, channel: response.channel };
   } catch (error) {
     console.error(`[SLACK] Error sending as ${agentId}:`, error);
     throw error;
   }
+}
+
+/**
+ * Whatever an agent posts, it must remember having posted when someone replies to it (Mark, 2026-11-18, Daniel Eiriz):
+ * Iris posted "Daniel Eiriz was qualified and hung up when Iris asked to connect them to an agent", Mark replied in the
+ * thread "when did you qualify this lead?", and she answered "could you give me the lead's name?" and then said the
+ * opposite of her own post, because only a few call sites seeded the thread's history themselves. Doing it here covers
+ * every post: a top-level post (or a reply in a thread) is added to that thread's history, a DM to the person's DM
+ * history, under the exact keys BaseAgent.handleMessage reads a reply with. Best-effort: never fails the post.
+ */
+async function rememberPost(agentId: AgentId, message: SlackOutgoingMessage, resolvedChannel?: string, ts?: string): Promise<void> {
+  if (!resolvedChannel || !ts) return;
+  const isDM = /^[UW][A-Z0-9]+$/.test(message.channel) || resolvedChannel.startsWith("D");
+  const historyKey = isDM ? `dm:${message.channel}` : `channel:${resolvedChannel}:${message.threadTs ?? ts}`;
+  await appendHistory(agentId, historyKey, "assistant", message.text).catch((error) => {
+    console.error(`[SLACK] Failed to remember ${agentId}'s post for replies:`, error instanceof Error ? error.message : error);
+  });
 }
 
 /**

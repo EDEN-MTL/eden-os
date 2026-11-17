@@ -23,7 +23,17 @@ describe("isaNotesFromCall", () => {
 /** Jerrick Mendoza, 2026-11-16: qualified, Iris asked "Is that okay?", he hung up ten seconds later. */
 describe("hungUpAtTransferAsk", () => {
   const turn = (role: "user" | "bot", message: string) => ({ role, message });
-  const qualified = [turn("bot", "Hi. This is Iris with 3 percent East Coast."), turn("user", "Yeah. Speaking."), turn("user", "None."), turn("user", "Mount Pearl."), turn("user", "Right.")];
+  const qualified = [
+    turn("bot", "Hi. This is Iris with 3 percent East Coast."),
+    turn("user", "Yeah. Speaking."),
+    turn("bot", "And you put down 3 to 6 months as your timeline. Is there a particular month you're aiming for?"),
+    turn("user", "None."),
+    turn("bot", "And on budget, what number are you really thinking?"),
+    turn("bot", "What area are you interested in?"),
+    turn("user", "Mount Pearl."),
+    turn("bot", "Are you preapproved for a mortgage yet?"),
+    turn("user", "Right."),
+  ];
   const ask = turn("bot", "Perfect. We'll connect you with 1 of our buyer agents to send over some available home options. Is that okay?");
 
   it("is true when the lead hung up on the transfer question without answering", () => {
@@ -41,6 +51,25 @@ describe("hungUpAtTransferAsk", () => {
 
   it("is false when her last line was not the transfer ask, e.g. she said goodbye after a no", () => {
     expect(hungUpAtTransferAsk({ messages: [...qualified, ask, turn("user", "No thanks."), turn("bot", "No problem, have a great day!")] }, "customer-ended-call")).toBe(false);
+  });
+
+  // Daniel Eiriz, 2026-11-17: the greeting itself says "we can get you connected with someone who can send over some
+  // listings". He said hello three times and hung up; Slack said he "was qualified and hung up when Iris asked to connect".
+  it("is false when the only mention of connecting is in the greeting (Daniel Eiriz)", () => {
+    const daniel = [
+      turn("user", "Hello?"),
+      turn("bot", "Hi. This is Iris with 3 percent East Coast. Am I speaking with Daniel?"),
+      turn("user", "Yeah. That's right."),
+      turn("bot", "How are you doing today?"),
+      turn("user", "Good good."),
+      turn("bot", "Awesome. We'd love to get some options over to you. I'm just going to confirm a few details from what you submitted, and then we can get you connected with someone who can send over some listings. So I see you're looking to buy still the case?"),
+    ];
+    expect(hungUpAtTransferAsk({ messages: daniel }, "customer-ended-call")).toBe(false);
+  });
+
+  it("is false when she asked only one or two qualifying questions before the ask", () => {
+    const early = [turn("bot", "Hi, am I speaking with Pat?"), turn("user", "Yes."), turn("bot", "What is your budget?"), turn("user", "Around 400."), turn("bot", "And the timeline?"), turn("user", "Soon.")];
+    expect(hungUpAtTransferAsk({ messages: [...early, ask] }, "customer-ended-call")).toBe(false);
   });
 
   it("is false for a call that never got as far as qualifying, and for any other end reason", () => {
