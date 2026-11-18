@@ -123,6 +123,7 @@ describe("getCheckinData", () => {
       deal_closed: false,
       contract_signed: false,
       lost: false,
+      not_responding: false,
     });
     expect(data!.teams[0].members[0].appointments[0].potentialCommission).toBeNull();
   });
@@ -139,6 +140,7 @@ describe("getCheckinData", () => {
           deal_closed: false,
           contract_signed: false,
           lost: true,
+          not_responding: true,
           // node-postgres returns NUMERIC columns as strings.
           potential_commission: "8500.00",
         },
@@ -161,6 +163,7 @@ describe("getCheckinData", () => {
 
     expect(data!.teams[0].members[0].appointments[0].checkboxes.showed_up).toBe(true);
     expect(data!.teams[0].members[0].appointments[0].checkboxes.lost).toBe(true);
+    expect(data!.teams[0].members[0].appointments[0].checkboxes.not_responding).toBe(true);
     expect(data!.teams[0].members[0].appointments[0].potentialCommission).toBe(8500);
   });
 
@@ -903,6 +906,21 @@ describe("updateCheckinItem", () => {
 
     expect(result).toBe("ok");
     expect(db.query).toHaveBeenLastCalledWith(expect.stringContaining("lost"), ["3-percent-east-coast", "evt-1", true]);
+  });
+
+  it("accepts the not_responding checkbox and writes it to its own column", async () => {
+    db.query
+      .mockResolvedValueOnce([{ client_id: "3-percent-east-coast" }]) // resolveClientId
+      .mockResolvedValueOnce([]); // the upsert itself
+
+    const result = await updateCheckinItem("good-token", "evt-1", { not_responding: true });
+
+    expect(result).toBe("ok");
+    expect(db.query).toHaveBeenLastCalledWith(expect.stringContaining("not_responding"), [
+      "3-percent-east-coast",
+      "evt-1",
+      true,
+    ]);
   });
 
   it("accepts a numeric potential_commission alongside checkboxes in one call", async () => {
