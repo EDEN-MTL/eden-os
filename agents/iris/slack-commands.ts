@@ -161,7 +161,7 @@ export async function prepareCallCommand(
 
   // Things worth knowing before saying yes — shown, not blocking.
   const warnings: string[] = [];
-  const touch = await checkHumanTouch(contact.id, ghl.locationId, ghl.apiKey, settings.humanHandsOffDays);
+  const touch = await checkHumanTouch(contact.id, ghl.locationId, ghl.apiKey, settings.humanHandsOffDays, new Date(), { includeAssignment: false }); // the assignment is its own warning below
   if (touch.status === "human") warnings.push(`a teammate texted them on ${formatLocal(touch.at, settings.timezone)}`);
   if (touch.status === "unknown") warnings.push("I couldn't check whether a teammate has texted them");
   if (tags.includes("live transferred") || tags.includes("appt booked")) warnings.push(`they're already tagged "${tags.includes("appt booked") ? "appt booked" : "live transferred"}"`);
@@ -300,7 +300,7 @@ export async function prepareFollowUpCommand(
     else if (tags.includes("appt booked") || tags.includes("live transferred")) left.push(`${c.name} (already ${tags.includes("appt booked") ? "booked" : "live transferred"})`);
     else {
       // Texts only: the teammate's own unanswered call is exactly why this lead is on the list.
-      const touch = await checkHumanTouch(c.contactId, ghl.locationId, ghl.apiKey, settings.humanHandsOffDays, now, { includeCalls: false });
+      const touch = await checkHumanTouch(c.contactId, ghl.locationId, ghl.apiKey, settings.humanHandsOffDays, now, { includeCalls: false, includeAssignment: false });
       if (touch.status !== "none") left.push(`${c.name} (a teammate has texted them)`);
       else eligible.push({ id: c.contactId, name: c.name });
     }

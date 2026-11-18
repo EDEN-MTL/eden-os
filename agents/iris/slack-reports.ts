@@ -100,7 +100,7 @@ export async function leadOverview(clientId: string, contactId: string, timezone
     getContact(contactId, ghl.locationId, ghl.apiKey).catch(() => null),
     listLocationUsers(ghl.locationId, ghl.apiKey).catch(() => []),
     getContactAppointments(contactId, ghl.locationId, ghl.apiKey).catch(() => []),
-    checkHumanTouch(contactId, ghl.locationId, ghl.apiKey, humanDays),
+    checkHumanTouch(contactId, ghl.locationId, ghl.apiKey, humanDays, new Date(), { includeAssignment: false }), // the overview reports the assignment itself
     recentTexts(contactId, ghl.locationId, ghl.apiKey, 6),
     query<QueueRow>(
       `SELECT contact_id, lead->>'name' AS name, call_after, status, attempts_made, callback_misses, is_explicit_callback, source, resolution_reason

@@ -30,7 +30,11 @@ vi.mock("../agents/iris/dial-pending", () => dialPending);
 const db = vi.hoisted(() => ({ query: vi.fn(async () => []) }));
 vi.mock("../shared/db", () => db);
 
-const humanTouch = vi.hoisted(() => ({ checkHumanTouch: vi.fn(async () => ({ status: "none" })), DEFAULT_HUMAN_HANDS_OFF_DAYS: 7 }));
+const humanTouch = vi.hoisted(() => ({
+  checkHumanTouch: vi.fn(async () => ({ status: "none" })),
+  DEFAULT_HUMAN_HANDS_OFF_DAYS: 7,
+  describeHumanTouch: (t: any) => (t.kind === "assigned" ? "they are assigned to an agent" : `a teammate ${t.kind === "call" ? "called" : "texted"} them on ${t.at}`),
+}));
 vi.mock("../agents/iris/human-touch", () => humanTouch);
 
 const sweepText = vi.hoisted(() => ({ recentSweepText: vi.fn(async () => ({ status: "none" })) }));

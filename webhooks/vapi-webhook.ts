@@ -27,7 +27,7 @@ import { extractFirstName, buildCallOpeningLine } from "../agents/iris/scripts";
 import { buildKeyToId, readField } from "../agents/scout/intake";
 import { loadScoutConfig } from "../agents/scout";
 import { appendNoteToContact } from "../agents/iris/notes";
-import { checkHumanTouch, DEFAULT_HUMAN_HANDS_OFF_DAYS } from "../agents/iris/human-touch";
+import { checkHumanTouch, DEFAULT_HUMAN_HANDS_OFF_DAYS, describeHumanTouch } from "../agents/iris/human-touch";
 import { recentSweepText, type RecentSweepText } from "../agents/iris/sweep-text";
 import { clampToLegalCallingWindow, formatLocal } from "../agents/iris/cadence";
 import { handleInboundCall } from "../agents/iris/inbound";
@@ -665,7 +665,7 @@ export async function reasonToLeaveLead(clientId: string, contactId: string, cur
   const protectedStages = scout?.historyStageIds?.length ? scout.historyStageIds : scout?.touchedStageIds ?? [];
   if (currentStageId && protectedStages.includes(currentStageId)) return "their card is in a column a person works";
   const touch = await checkHumanTouch(contactId, ghlConfig.locationId, ghlConfig.apiKey, config.humanHandsOffDays ?? DEFAULT_HUMAN_HANDS_OFF_DAYS);
-  if (touch.status === "human") return `a teammate ${touch.kind === "call" ? "called" : "texted"} them on ${touch.at}`;
+  if (touch.status === "human") return describeHumanTouch(touch);
   if (touch.status === "unknown") return "couldn't verify no teammate is talking to them";
   return null;
 }

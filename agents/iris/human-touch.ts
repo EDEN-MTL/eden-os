@@ -18,10 +18,14 @@
  * outright. A text that failed
  * to send doesn't count — nobody actually reached the lead.
  *
+ * A lead ASSIGNED to an agent also counts (Jacob, 2026-11-19, after Ember texted Sabrina Marie, who was assigned to
+ * Justin Penney): "if they are assigned to an agent, the AI leaves them alone." Read from the contact and from any open
+ * opportunity, so it holds however the assignment was made.
+ *
  * A teammate who CALLED from GHL also counts (calls carry their userId); Iris's own calls never appear
  * in GHL. A person texting or calling from their own phone, outside GHL, can't be seen here.
  */
-import { getConversationMessages, getConversations } from "../../shared/ghl";
+import { findOpenOpportunitiesForContact, getContact, getConversationMessages, getConversations } from "../../shared/ghl";
 
 export const DEFAULT_HUMAN_HANDS_OFF_DAYS = 7;
 
@@ -39,7 +43,7 @@ function isConversation(call: any): boolean {
 }
 
 export type HumanTouch =
-  | { status: "human"; at: string; userId: string; kind: "text" | "call" }
+  | { status: "human"; at: string; userId: string; kind: "text" | "call" | "assigned" }
   | { status: "none" }
   /** The thread couldn't be read — callers fail closed (don't act), same as the rest of Iris. */
   | { status: "unknown" };
@@ -55,10 +59,16 @@ export async function checkHumanTouch(
    * after Jacob had phoned and texted her). Off only for the Slack follow-up on leads a teammate
    * called and did not reach, where the call is the whole point.
    */
-  options: { includeCalls?: boolean } = {}
+  options: { includeCalls?: boolean; includeAssignment?: boolean } = {}
 ): Promise<HumanTouch> {
   const includeCalls = options.includeCalls !== false;
   try {
+    // Off only where an assigned agent is expected and the lead is still Iris's to message: a no-show rebook, and
+    // the Slack commands where a teammate has explicitly asked (they are shown the assignment as a warning).
+    if (options.includeAssignment !== false) {
+      const assigned = await assignedAgentOf(contactId, locationId, apiKey);
+      if (assigned) return { status: "human", at: now.toISOString(), userId: assigned, kind: "assigned" };
+    }
     const convoResult = await getConversations(contactId, locationId, apiKey);
     const conversationId: string | undefined = convoResult?.conversations?.[0]?.id;
     if (!conversationId) return { status: "none" };
@@ -96,4 +106,24 @@ export async function checkHumanTouch(
     console.error(`[IRS] checkHumanTouch failed for contact ${contactId}:`, error instanceof Error ? error.message : error);
     return { status: "unknown" };
   }
+}
+
+/**
+ * The agent a lead is assigned to, from the contact or any open opportunity (GHL keeps both, and an account migration
+ * once wiped one of them), or null. A read that fails throws, so checkHumanTouch answers "unknown" and callers fail
+ * closed like everywhere else in Iris.
+ */
+export async function assignedAgentOf(contactId: string, locationId: string, apiKey: string): Promise<string | null> {
+  const payload = await getContact(contactId, locationId, apiKey);
+  const contact = payload?.contact ?? payload ?? {};
+  if (typeof contact.assignedTo === "string" && contact.assignedTo) return contact.assignedTo;
+  const opportunities = await findOpenOpportunitiesForContact(contactId, locationId, apiKey);
+  const assignedOpp = (opportunities ?? []).find((o: any) => typeof o?.assignedTo === "string" && o.assignedTo);
+  return assignedOpp ? (assignedOpp as any).assignedTo : null;
+}
+
+/** What the touch was, for a message to the team: "a teammate texted them on …", "…called…", "they are assigned to an agent". */
+export function describeHumanTouch(touch: Extract<HumanTouch, { status: "human" }>): string {
+  if (touch.kind === "assigned") return "they are assigned to an agent";
+  return `a teammate ${touch.kind === "call" ? "called" : "texted"} them on ${touch.at}`;
 }

@@ -118,6 +118,15 @@ describe("diagnoseStuckLead: leave it alone", () => {
   });
 });
 
+describe("diagnoseStuckLead: an assigned lead (Jacob, 2026-11-19)", () => {
+  it("is left to their agent, even a live-transferred card still in Replied and a qualified lead", () => {
+    expect(act(facts({ assignedTo: "user-justin" }))).toBe("leave");
+    expect(act(facts({ assignedTo: "user-justin", tags: ["buyer lead", "live transferred"] }))).toBe("leave");
+    expect(act(facts({ assignedTo: "user-justin", notes: "Budget $400k, timeline 3 months, area Paradise, pre-approved", calls: [call(9)], events: [irisText(9)] }))).toBe("leave");
+    expect(diagnoseStuckLead(facts({ assignedTo: "user-justin" }), cfg, NOW).diagnosis.why).toMatch(/assigned to an agent/);
+  });
+});
+
 describe("diagnoseStuckLead: a person decides", () => {
   it("no phone", () => expect(act(facts({ hasPhone: false }))).toBe("person"));
   it("live transferred but the card never moved", () => expect(act(facts({ tags: ["buyer lead", "live transferred"] }))).toBe("person"));

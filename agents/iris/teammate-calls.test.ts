@@ -142,7 +142,7 @@ describe("the Slack commands", () => {
   it("asks the teammate check about texts only, so Jacob's own unanswered call doesn't exclude the lead", async () => {
     await prepareFollowUpCommand("c", { person: "Jacob" }, CTX, loader, NOW);
     expect(touch.checkHumanTouch).toHaveBeenCalled();
-    for (const call of touch.checkHumanTouch.mock.calls as unknown as unknown[][]) expect(call[5]).toEqual({ includeCalls: false });
+    for (const call of touch.checkHumanTouch.mock.calls as unknown as unknown[][]) expect(call[5]).toEqual({ includeCalls: false, includeAssignment: false });
   });
 
   it("leaves out a lead a teammate has since texted", async () => {

@@ -130,6 +130,8 @@ export interface StuckFacts {
   createdAt: number | null;
   tags: string[];
   dnd: boolean;
+  /** The agent the contact or its card is assigned to (Jacob, 2026-11-19: an assigned lead is left to their agent). */
+  assignedTo?: string | null;
   hasPhone: boolean;
   notes: string;
   events: ReviewEvent[];
@@ -222,6 +224,7 @@ export function diagnoseStuckLead(f: StuckFacts, cfg: Pick<StuckLeadsConfig, "st
   const done = (diagnosis: Diagnosis, tagsToo = true): Diagnosed => ({ diagnosis, problems, tagsToAdd: tagsToo ? tagsToAdd : [] });
 
   if (f.dnd || tags.includes("do not call")) return done({ action: "leave", why: "do not call" }, false);
+  if (f.assignedTo) return done({ action: "leave", why: "assigned to an agent: the AI leaves them alone" }, false);
   if (!f.hasPhone) return done({ action: "person", why: "there is no phone number on the record" });
   if (f.hasUpcomingAppointment || tags.includes("appt booked")) return done({ action: "leave", why: "has an appointment booked" });
   if (tags.includes("live transferred")) return done({ action: "person", why: `tagged live transferred but the card is still in ${f.stageName.trim()}: move it` });
@@ -472,6 +475,7 @@ export async function runStuckLeadCheck(
         tags: (contact.tags ?? []).map((x: string) => String(x)),
         dnd: contact.dnd === true,
         hasPhone: Boolean(contact.phone),
+        assignedTo: (typeof contact.assignedTo === "string" && contact.assignedTo) || (typeof (opp as any).assignedTo === "string" && (opp as any).assignedTo) || null,
         notes: String(readField(contact.customFields, irisConfig.callbackNotesFieldKey, keyToId) ?? ""),
         events,
         calls: irisCalls.map((c) => ({

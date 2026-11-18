@@ -45,6 +45,7 @@ export async function buildOutreachDeps(clientId: string, config: EmberConfig): 
           email: c.email ?? null,
           dnd: c.dnd,
           dndSettings: c.dndSettings,
+          assignedTo: c.assignedTo ?? null,
         },
         opportunity: {
           id: opp.id,
@@ -55,6 +56,7 @@ export async function buildOutreachDeps(clientId: string, config: EmberConfig): 
           lastStageChangeAt: opp.lastStageChangeAt ?? null,
           createdAt: opp.createdAt ?? null,
           updatedAt: opp.updatedAt ?? null,
+          assignedTo: opp.assignedTo ?? null,
           // Tags come from the full contact read, so a renewed-interest tag
           // added since the last scan is caught at send time too.
           contact: { name: c.contactName ?? null, phone: c.phone, email: c.email, tags: c.tags ?? [] },

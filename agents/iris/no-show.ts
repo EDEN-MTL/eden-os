@@ -235,7 +235,8 @@ async function handleNewNoShow(clientId: string, card: Card): Promise<void> {
   }
 
   // A teammate already texting them means the person is handling it.
-  const humanTouch = await checkHumanTouch(card.contactId, ghl.locationId, ghl.apiKey, config.humanHandsOffDays ?? DEFAULT_HUMAN_HANDS_OFF_DAYS);
+  // A no-show lead's agent is assigned (they booked with that agent), so assignment is not a reason to stay out here.
+  const humanTouch = await checkHumanTouch(card.contactId, ghl.locationId, ghl.apiKey, config.humanHandsOffDays ?? DEFAULT_HUMAN_HANDS_OFF_DAYS, new Date(), { includeAssignment: false });
   if (humanTouch.status === "unknown") return;
   if (humanTouch.status === "human") {
     await record(clientId, card, "skipped", "a teammate has texted them");

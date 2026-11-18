@@ -53,6 +53,8 @@ export interface LiveContact {
    */
   dnd?: boolean;
   dndSettings?: Record<string, { status?: string } | undefined>;
+  /** The agent the contact is assigned to, if any. */
+  assignedTo?: string | null;
 }
 
 export interface LiveContext {
@@ -302,6 +304,12 @@ export async function sendTouch(lead: NurtureLead, deps: OutreachDeps, ctx: Touc
   if (!live) {
     await markExited(lead, "opportunity no longer exists in GHL");
     return skip("opportunity gone");
+  }
+
+  // Jacob, 2026-11-19 (Sabrina Marie): a lead assigned to an agent is never nurtured, whatever stage the card is in.
+  if (live.contact.assignedTo || live.opportunity.assignedTo) {
+    await updateLead(lead.id, { status: "exited", statusReason: "assigned to an agent — Ember stays out", nextTouchAt: null });
+    return skip("assigned to an agent");
   }
 
   const change = detectChange(lead, live.opportunity, ctx);

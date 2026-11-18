@@ -22,6 +22,9 @@ vi.mock("./deps", async () => {
   return { resolveStageNames: vi.fn(async () => STAGES), buildMoveStage: () => vi.fn(async () => {}) };
 });
 
+const assignedMod = vi.hoisted(() => ({ assignedAgentName: vi.fn(async () => null as string | null) }));
+vi.mock("./assigned", () => assignedMod);
+
 const replyDeps = vi.hoisted(() => ({ buildReplyContext: vi.fn(async () => ({ marker: "ctx" })) }));
 vi.mock("./reply-deps", () => replyDeps);
 const outreachMod = vi.hoisted(() => ({ handleReply: vi.fn(async () => "positive") }));
@@ -49,6 +52,21 @@ describe("while ember.enabled is off", () => {
     expect(store.updateLead).not.toHaveBeenCalled();
     expect(store.transitionStatus).not.toHaveBeenCalled();
     expect(alert).not.toHaveBeenCalled();
+  });
+});
+
+describe("a reply from a lead assigned to an agent (Jacob, 2026-11-19, Sabrina Marie)", () => {
+  it("is not answered by Ember: the lead exits, and the team is told it is the agent's to answer", async () => {
+    enabled();
+    assignedMod.assignedAgentName.mockResolvedValueOnce("Justin Penney");
+    store.listOpenLeadsByContactId.mockResolvedValueOnce([lead()]);
+
+    expect(await emberHandleInboundMessage("c1", "I'm working with someone, thank you")).toBe(true);
+
+    expect(outreachMod.handleReply).not.toHaveBeenCalled();
+    expect(replyDeps.buildReplyContext).not.toHaveBeenCalled();
+    expect(store.updateLead).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ status: "exited", statusReason: "assigned to Justin Penney — Ember stays out", nextTouchAt: null }));
+    expect(alert).toHaveBeenCalledWith(expect.stringMatching(/assigned to Justin Penney, so Ember is staying out/));
   });
 });
 

@@ -158,6 +158,16 @@ describe("sendTouch", () => {
     expect(store.transitionStatus).toHaveBeenCalledWith(1, expect.any(Array), expect.objectContaining({ status: "exited" }));
   });
 
+  // Jacob, 2026-11-19: Sabrina Marie was assigned to an agent and got nurture texts anyway.
+  it("never texts a lead assigned to an agent, whether the contact or the card carries the assignment", async () => {
+    for (const d of [deps({ loadLive: vi.fn(async () => live({ assignedTo: "user-justin" })) }), deps({ loadLive: vi.fn(async () => live({}, { assignedTo: "user-justin" })) })]) {
+      const result = await sendTouch(lead(), d, ctx());
+      expect(result).toEqual({ leadId: lead().id, sent: false, skippedReason: "assigned to an agent" });
+      expect(d.sendSMS).not.toHaveBeenCalled();
+    }
+    expect(store.updateLead).toHaveBeenCalledWith(lead().id, expect.objectContaining({ status: "exited", statusReason: "assigned to an agent — Ember stays out", nextTouchAt: null }));
+  });
+
   it("opts the lead out when GHL has DND set", async () => {
     const d = deps({ loadLive: vi.fn(async () => live({ dnd: true })) });
     await sendTouch(lead(), d, ctx());

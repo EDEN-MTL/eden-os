@@ -113,6 +113,10 @@ export function classifyForEnrollment(opp: GhlOpportunityLite, ctx: EnrollContex
   // the pipeline — a reactivation text to the team would be embarrassing.
   if (isInternal(opp.contact, ctx.internal)) return { eligible: false, reason: "team member or internal number" };
 
+  // Jacob, 2026-11-19 (Sabrina Marie, assigned to an agent, was nurtured anyway): a lead assigned to an agent is that
+  // agent's, so the AI leaves them alone.
+  if (opp.assignedTo) return { eligible: false, reason: "assigned to an agent" };
+
   // A renewed-interest tag on a quiet card means someone's already on it.
   if (hasRenewedInterestTag(opp.contact?.tags, config)) return { eligible: false, reason: "renewed-interest tag" };
 

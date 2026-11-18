@@ -71,5 +71,7 @@ export interface GhlOpportunityLite {
   lastStageChangeAt: string | null;
   createdAt: string | null;
   updatedAt: string | null;
+  /** The agent this card (or its contact) is assigned to. Ember never works an assigned lead (Jacob, 2026-11-19). */
+  assignedTo?: string | null;
   contact?: { name?: string | null; phone?: string | null; email?: string | null; tags?: string[] } | null;
 }

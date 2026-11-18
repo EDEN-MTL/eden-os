@@ -634,6 +634,18 @@ describe("irisHandleInboundSms — stays out when a teammate has texted the lead
     expect(classifyInboundText).not.toHaveBeenCalled();
   });
 
+  // Jacob, 2026-11-19: a lead assigned to an agent is the agent's, whether or not anyone has texted them yet.
+  it("stays out of a lead assigned to an agent too, with no text from a teammate at all", async () => {
+    db.query.mockResolvedValueOnce([ROW]);
+    humanTouch.checkHumanTouch.mockResolvedValue({ status: "human", at: "2026-11-19T15:00:00.000Z", userId: "user-justin", kind: "assigned" });
+
+    const handled = await irisHandleInboundSms("contact-1", "Hi, still interested", { wait: async () => {} });
+
+    expect(handled).toBe(true);
+    expect(chatWithTools).not.toHaveBeenCalled();
+    expect(ghl.sendSMS).not.toHaveBeenCalled();
+  });
+
   it("also stays quiet when it can't verify the thread — never risks talking over a person", async () => {
     db.query.mockResolvedValueOnce([ROW]);
     humanTouch.checkHumanTouch.mockResolvedValue({ status: "unknown" });

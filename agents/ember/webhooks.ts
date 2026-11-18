@@ -20,6 +20,7 @@ import { detectChange } from "./scan";
 import { getLeadByOpportunityId, listOpenLeadsByContactId, updateLead } from "./store";
 import { buildReplyContext } from "./reply-deps";
 import { checkHealth } from "./health";
+import { assignedAgentName } from "./assigned";
 import { NurtureLead } from "./types";
 import { readFileSync } from "fs";
 import { join } from "path";
@@ -66,6 +67,15 @@ export async function emberHandleInboundMessage(contactId: string, text: string,
     if (!gate.ok && gate.state === "stopped") {
       await updateLead(lead.id, { status: "replied", statusReason: `replied while Ember was stopped — needs a person`, repliedAt: receivedAt.toISOString(), nextTouchAt: null });
       await alert(`📩 *${lead.contactName ?? lead.phone ?? lead.ghlContactId}* replied while Ember is stopped: "${text.slice(0, 200)}" — please answer them in GHL.`).catch(() => {});
+      handled = true;
+      continue;
+    }
+    // Jacob, 2026-11-19 (Sabrina Marie): a lead assigned to an agent is that agent's. Ember does not answer them; the
+    // team is told they wrote, so the message is not lost.
+    const agent = await assignedAgentName(lead);
+    if (agent) {
+      await updateLead(lead.id, { status: "exited", statusReason: `assigned to ${agent} — Ember stays out`, repliedAt: receivedAt.toISOString(), nextTouchAt: null });
+      await alert(`📩 *${lead.contactName ?? lead.phone ?? lead.ghlContactId}* replied "${text.slice(0, 200)}", but they are assigned to ${agent}, so Ember is staying out. It is for ${agent} to answer.`).catch(() => {});
       handled = true;
       continue;
     }

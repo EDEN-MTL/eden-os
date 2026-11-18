@@ -90,6 +90,11 @@ describe("classifyForEnrollment", () => {
     expect(classifyForEnrollment(o, ctx())).toEqual({ eligible: false, reason: "renewed-interest tag" });
   });
 
+  it("never enrolls a lead assigned to an agent (Jacob, 2026-11-19, Sabrina Marie)", () => {
+    expect(classifyForEnrollment(opp({ assignedTo: "user-justin" }), ctx())).toEqual({ eligible: false, reason: "assigned to an agent" });
+    expect(classifyForEnrollment(opp({ assignedTo: null }), ctx())).toEqual({ eligible: true });
+  });
+
   it("falls back to createdAt for a card that never changed stage", () => {
     expect(classifyForEnrollment(opp({ lastStageChangeAt: null, createdAt: daysAgo(50) }), ctx())).toEqual({ eligible: true });
     expect(classifyForEnrollment(opp({ lastStageChangeAt: null, createdAt: daysAgo(20) }), ctx()).eligible).toBe(false);

@@ -233,6 +233,23 @@ agents can talk to them to send listings (book_appointment, or request_human_fol
 `dial-pending.ts` checks the tag live before EVERY dial (sweeps, cohort and retries create fresh rows that don't know the old
 text), and Slack "call X" refuses a "no calls" lead. The classifier itself can only be checked on Render (no local Anthropic key).
 
+### A lead assigned to an agent is left alone (Jacob, 2026-11-19 — Sabrina Marie)
+
+Ember reactivated and texted Sabrina Marie (assigned to Justin Penney, tagged live transferred, with Jacob's earlier calls and
+texts) as if she were a cold inquiry, and read "I'm working with someone, thank you" as a buying signal. Jacob: "if they are assigned
+to an agent, the AI leaves them alone." The rule, checked live from the contact and from any open card (GHL keeps both):
+- **Iris:** `checkHumanTouch` (`agents/iris/human-touch.ts`) now answers `human` with `kind: "assigned"` for an assigned lead, so every
+  path that already stands down for a teammate (the pre-dial check, text replies, the stuck-lead check, the follow-up cohort, the daily
+  follow-up, ASAP and callback watch, the card moves in `reasonToLeaveLead`) stands down for assignment too. It is switched off with
+  `includeAssignment: false` only where an agent is expected and the lead is still Iris's to message (the no-show rebook) or where a
+  teammate has explicitly asked in Slack (shown to them as a warning). The stuck-lead diagnosis lists an assigned card as "leave".
+- **Ember:** a card with an assignment is never enrolled (`classifyForEnrollment`), every touch re-reads the live contact and card and
+  exits the lead if it is assigned (`sendTouch`), and a reply from an assigned lead is not answered: the lead exits and the team is
+  told in #backend-ops that it is for the agent to answer (`agents/ember/assigned.ts`, `emberHandleInboundMessage`).
+About half of the leads of the last six weeks are assigned and new leads are not, so this is a real signal, not a blanket stop. An
+assignment made to a service user (for example "Buyer Live Transfer") also counts; if that proves too broad, add an ignore list.
+"I'm working with someone" being read as interest is the same bug seen from the other side, and is not changed here.
+
 ### Iris contradicted herself in Slack (Mark, 2026-11-18 — Daniel Eiriz)
 
 Iris posted "Daniel Eiriz was qualified and hung up when Iris asked to connect them to an agent". Mark asked in the thread "when

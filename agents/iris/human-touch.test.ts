@@ -1,11 +1,16 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-const ghl = vi.hoisted(() => ({ getConversations: vi.fn(), getConversationMessages: vi.fn() }));
+const ghl = vi.hoisted(() => ({ getConversations: vi.fn(), getConversationMessages: vi.fn(), getContact: vi.fn(), findOpenOpportunitiesForContact: vi.fn() }));
 vi.mock("../../shared/ghl", () => ghl);
 
-import { checkHumanTouch } from "./human-touch";
+import { checkHumanTouch, describeHumanTouch } from "./human-touch";
 
 afterEach(() => vi.clearAllMocks());
+// Most leads are not assigned to anyone.
+beforeEach(() => {
+  ghl.getContact.mockResolvedValue({ contact: { assignedTo: null } });
+  ghl.findOpenOpportunitiesForContact.mockResolvedValue([{ id: "opp-1", assignedTo: null }]);
+});
 
 const NOW = new Date("2026-10-10T15:00:00.000Z");
 const sms = (over: Record<string, unknown>) => ({ messageType: "TYPE_SMS", direction: "outbound", status: "delivered", dateAdded: "2026-10-08T15:00:00.000Z", body: "hi", ...over });
@@ -101,5 +106,47 @@ describe("checkHumanTouch", () => {
     expect(await checkHumanTouch("c", "loc", "key", 7, NOW)).toEqual({ status: "none" });
     thread([sms({ messageType: "TYPE_CALL", direction: "inbound", userId: "user-jacob", dateAdded: "2026-10-09T10:00:00.000Z", meta: { call: { duration: 240, status: "completed" } } })]);
     expect(await checkHumanTouch("c", "loc", "key", 7, NOW)).toMatchObject({ status: "human", kind: "call" });
+  });
+});
+
+/**
+ * Jacob, 2026-11-19: Ember reactivated and texted Sabrina Marie, who was assigned to Justin Penney. "If they are assigned
+ * to an agent, the AI leaves them alone." Read from the contact and from the open card.
+ */
+describe("checkHumanTouch — a lead assigned to an agent", () => {
+  it("counts a contact assigned to an agent, with no text or call at all", async () => {
+    ghl.getContact.mockResolvedValue({ contact: { assignedTo: "user-justin" } });
+    thread([]);
+    expect(await checkHumanTouch("c", "loc", "key", 7, NOW)).toEqual({ status: "human", at: NOW.toISOString(), userId: "user-justin", kind: "assigned" });
+  });
+
+  it("counts a card assigned to an agent even when the contact is not (an account migration once wiped one of them)", async () => {
+    ghl.findOpenOpportunitiesForContact.mockResolvedValue([{ id: "o1", assignedTo: null }, { id: "o2", assignedTo: "user-genna" }]);
+    thread([]);
+    expect(await checkHumanTouch("c", "loc", "key", 7, NOW)).toMatchObject({ status: "human", kind: "assigned", userId: "user-genna" });
+  });
+
+  it("does not count an unassigned lead", async () => {
+    thread([]);
+    expect(await checkHumanTouch("c", "loc", "key", 7, NOW)).toEqual({ status: "none" });
+  });
+
+  it("can be told to ignore the assignment (a no-show rebook, a teammate's own Slack command)", async () => {
+    ghl.getContact.mockResolvedValue({ contact: { assignedTo: "user-justin" } });
+    thread([]);
+    expect(await checkHumanTouch("c", "loc", "key", 7, NOW, { includeAssignment: false })).toEqual({ status: "none" });
+    expect(ghl.getContact).not.toHaveBeenCalled();
+  });
+
+  it("answers 'unknown' when the assignment cannot be read, so callers fail closed", async () => {
+    ghl.getContact.mockRejectedValue(new Error("GHL down"));
+    thread([]);
+    expect((await checkHumanTouch("c", "loc", "key", 7, NOW)).status).toBe("unknown");
+  });
+
+  it("describes an assignment, a text and a call for a message to the team", () => {
+    expect(describeHumanTouch({ status: "human", at: "x", userId: "u", kind: "assigned" })).toBe("they are assigned to an agent");
+    expect(describeHumanTouch({ status: "human", at: "Nov 11", userId: "u", kind: "text" })).toBe("a teammate texted them on Nov 11");
+    expect(describeHumanTouch({ status: "human", at: "Nov 11", userId: "u", kind: "call" })).toBe("a teammate called them on Nov 11");
   });
 });

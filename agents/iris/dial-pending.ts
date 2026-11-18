@@ -469,10 +469,10 @@ async function resolveOne(row: PendingCallRow): Promise<void> {
   if (ghlConfig && config.humanTextBlocksCalls && !humanAsked) {
     const humanTouch = await checkHumanTouch(row.contact_id, ghlConfig.locationId, ghlConfig.apiKey, config.humanHandsOffDays ?? DEFAULT_HUMAN_HANDS_OFF_DAYS);
     if (humanTouch.status === "human") {
-      await finish(row.id, "skipped", `a teammate is talking to this lead (${humanTouch.kind} ${humanTouch.at}) — Iris stays out`);
+      await finish(row.id, "skipped", humanTouch.kind === "assigned" ? "this lead is assigned to an agent — Iris stays out" : `a teammate is talking to this lead (${humanTouch.kind} ${humanTouch.at}) — Iris stays out`);
       await sendMessage("iris", {
         channel: CALL_LOG_CHANNEL,
-        text: `🤝 Not calling *${row.lead?.name ?? row.contact_id}*: a teammate ${humanTouch.kind === "call" ? "called" : "texted"} them recently, so Iris is leaving the lead alone (no call, no stage move).`,
+        text: `🤝 Not calling *${row.lead?.name ?? row.contact_id}*: ${humanTouch.kind === "assigned" ? "they are assigned to an agent" : `a teammate ${humanTouch.kind === "call" ? "called" : "texted"} them recently`}, so Iris is leaving the lead alone (no call, no stage move).`,
       }).catch(() => {});
       return;
     }
