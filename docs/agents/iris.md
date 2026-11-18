@@ -233,6 +233,15 @@ agents can talk to them to send listings (book_appointment, or request_human_fol
 `dial-pending.ts` checks the tag live before EVERY dial (sweeps, cohort and retries create fresh rows that don't know the old
 text), and Slack "call X" refuses a "no calls" lead. The classifier itself can only be checked on Render (no local Anthropic key).
 
+### The client's own agents are not leads (Mark, 2026-11-19)
+
+Genna, Candice, Ashley Fleming, Stephanie Mcgrath, "andrew@ateamnl.ca", Chelsea and five bare phone numbers sat in Replied and were
+listed by the stuck-lead check as old inquiries for Jacob to decide on. They are 3% Realty's agents (their phones and emails are
+the GHL users'). Ember already skipped team members by phone and email at enrollment; the lead review, the stuck-lead check and the
+ASAP watch only skipped Eden's own test emails. `isTestContact` (`agents/iris/lead-review.ts`) now also takes the team
+(`loadTeamIdentity`: every GHL user's phone, last ten digits, and email, read once per run; a failed read excludes nobody and
+fails nothing) and skips any contact whose phone or email is a team member's. 11 of the 33 early-stage cards were team members.
+
 ### Magar still in Buyer Leads two weeks on (Mark, 2026-11-19)
 
 Three calls and two texts and the card never left Buyer Leads. Why: (1) the move to a follow-up column ran only for an unanswered

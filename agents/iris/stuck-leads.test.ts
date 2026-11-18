@@ -12,6 +12,7 @@ const ghl = vi.hoisted(() => ({
   getConversations: vi.fn(async () => ({ conversations: [] })),
   getCustomFieldDefs: vi.fn(async () => []),
   getGhlConfig: vi.fn(async () => ({ locationId: "loc", apiKey: "key" })),
+  listLocationUsers: vi.fn(async () => []),
   listOpportunitiesForContact: vi.fn(async () => []),
   listOpportunitiesInStage: vi.fn(),
   listPipelines: vi.fn(),
@@ -396,6 +397,18 @@ describe("runStuckLeadCheck", () => {
       await runStuckLeadCheck("c", { now: NOW });
       expect(ghl.updateOpportunityStage).not.toHaveBeenCalled();
     });
+  });
+
+  // Mark, 2026-11-19: Genna, Candice, Ashley Fleming, Stephanie Mcgrath and agents' own numbers were being listed as old
+  // leads for Jacob to decide on. They are the client's agents.
+  it("never treats the client's own agents as leads: a contact with a team member's phone or email is skipped", async () => {
+    world({ genna: { calls: [hungCall(8)] }, chris: { calls: [hungCall(8)] } });
+    ghl.listLocationUsers.mockResolvedValue([{ id: "u1", name: "Genna Hickey", phone: "+1 (709) 765-3187", email: "genna.hickey@3percentrealty.ca" }]);
+    ghl.getContact.mockImplementation(async (id: string) => ({ contact: { firstName: id, phone: id === "genna" ? "7097653187" : "+17095550101", tags: ["buyer lead"], dateAdded: created } }));
+    const r = await runStuckLeadCheck("c", { now: NOW });
+    expect(r.entries.map((e) => e.contactId)).toEqual(["chris"]);
+    expect(dial.queueColdLeadSweep).toHaveBeenCalledTimes(1);
+    ghl.listLocationUsers.mockResolvedValue([]);
   });
 
   it("holds the extra leads over the daily call limit for tomorrow", async () => {

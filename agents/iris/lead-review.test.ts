@@ -20,6 +20,7 @@ import {
   eventsFromIrisCalls,
   eventsFromMessages,
   formatFindings,
+  buildTeamIdentity,
   isTestContact,
   latestReview,
   qualifiedSignals,
@@ -211,5 +212,26 @@ describe("stored runs and snoozes", () => {
     expect(db.query.mock.calls.some((c) => /INSERT INTO lead_review_snoozes/.test(String(c[0])))).toBe(true);
     expect(await snoozeByName("c", "sabrina", 14, "", "U1")).toMatchObject({ status: "ambiguous" });
     expect(await snoozeByName("c", "nobody", 14, "", "U1")).toEqual({ status: "not_found" });
+  });
+});
+
+describe("isTestContact — the client's own agents (Mark, 2026-11-19)", () => {
+  const team = buildTeamIdentity([
+    { phone: "+1 (709) 765-3187", email: "Genna.Hickey@3percentrealty.ca" },
+    { phone: "7097437578", email: null },
+    { phone: null, email: "andrew@ateamnl.ca" },
+  ]);
+
+  it("matches a team member's phone (any format) or email (any case)", () => {
+    expect(isTestContact({ phone: "7097653187" }, [], team)).toBe(true);
+    expect(isTestContact({ phone: "+17097653187" }, [], team)).toBe(true);
+    expect(isTestContact({ email: "genna.hickey@3percentrealty.ca" }, [], team)).toBe(true);
+    expect(isTestContact({ email: "ANDREW@ateamnl.ca" }, [], team)).toBe(true);
+  });
+
+  it("does not match a real lead, a missing phone, or when no team is given", () => {
+    expect(isTestContact({ phone: "7095550101", email: "lead@gmail.com" }, [], team)).toBe(false);
+    expect(isTestContact({ phone: null, email: null }, [], team)).toBe(false);
+    expect(isTestContact({ phone: "7097653187" })).toBe(false);
   });
 });

@@ -21,6 +21,7 @@ import {
   getConversations,
   getCustomFieldDefs,
   getGhlConfig,
+  listLocationUsers,
   listOpportunitiesInStage,
   listPipelines,
 } from "../../shared/ghl";
@@ -261,10 +262,54 @@ export function formatFindings(findings: Finding[], scanned: number, max = 10): 
 // and No-Show cards have their own follow-up (agents/iris/no-show.ts).
 export const DEFAULT_SKIP_STAGES = ["Deal Closed", "Not Qualified/Not Interested", "International Numbers", "Listing Active", "Buyer Confirmed", "Seller Confirmed", "Showed Up", "No-Show"];
 
-/** Eden's own test leads (Mark's and Jacob's test numbers and emails) must never show up as leads worth checking in on. */
-export function isTestContact(contact: { email?: string | null; tags?: string[] }, emailDomains: string[] = []): boolean {
+/** The phone numbers and emails of everyone on the client's team (the GHL users), so their own contacts are not worked as leads. */
+export interface TeamIdentity {
+  phones: Set<string>;
+  emails: Set<string>;
+}
+
+const last10 = (phone: string | null | undefined): string | null => {
+  const digits = String(phone ?? "").replace(/\D/g, "");
+  return digits.length >= 10 ? digits.slice(-10) : null;
+};
+
+export function buildTeamIdentity(users: { phone?: string | null; email?: string | null }[]): TeamIdentity {
+  const phones = new Set<string>();
+  const emails = new Set<string>();
+  for (const u of users) {
+    const p = last10(u.phone);
+    if (p) phones.add(p);
+    if (u.email?.trim()) emails.add(u.email.trim().toLowerCase());
+  }
+  return { phones, emails };
+}
+
+/**
+ * Read the team once per run. A failed read gives an empty team (nothing excluded), never a failed run: the explicit
+ * excludeContactIds and email domains still apply.
+ */
+export async function loadTeamIdentity(locationId: string, apiKey: string): Promise<TeamIdentity> {
+  try {
+    return buildTeamIdentity(await listLocationUsers(locationId, apiKey));
+  } catch (error) {
+    console.error("[IRS] couldn't read the team's phones and emails:", error instanceof Error ? error.message : error);
+    return { phones: new Set(), emails: new Set() };
+  }
+}
+
+/**
+ * Eden's own test leads (Mark's and Jacob's test numbers and emails) must never show up as leads worth checking in on.
+ * Nor may the client's own agents (Mark, 2026-11-19: Genna, Candice, Ashley Fleming, Stephanie Mcgrath and agents' phone
+ * numbers sat in Replied and were listed as old leads for Jacob to decide on): a contact whose phone or email is a team
+ * member's is not a lead.
+ */
+export function isTestContact(contact: { email?: string | null; phone?: string | null; tags?: string[] }, emailDomains: string[] = [], team?: TeamIdentity): boolean {
   const email = String(contact.email ?? "").toLowerCase();
   if (emailDomains.some((d) => email.endsWith(`@${d.toLowerCase()}`))) return true;
+  if (team) {
+    const phone = last10(contact.phone);
+    if ((phone && team.phones.has(phone)) || (email && team.emails.has(email))) return true;
+  }
   return (contact.tags ?? []).some((t) => /^test$|test lead/i.test(String(t)));
 }
 
@@ -290,6 +335,7 @@ export async function reviewClient(clientId: string, options: { now?: Date; only
 
   const defs = await getCustomFieldDefs(ghl.locationId, ghl.apiKey);
   const keyToId = buildKeyToId(defs);
+  const team = await loadTeamIdentity(ghl.locationId, ghl.apiKey);
   const cards: { opp: any; stageName: string }[] = [];
   for (const p of await listPipelines(ghl.locationId, ghl.apiKey)) {
     for (const s of p.stages ?? []) {
@@ -323,7 +369,7 @@ export async function reviewClient(clientId: string, options: { now?: Date; only
       const rawContact = await getContact(contactId, ghl.locationId, ghl.apiKey);
       const contact = rawContact?.contact ?? rawContact;
       if (!contact) return [];
-      if (config.leadReview?.excludeContactIds?.includes(contactId) || isTestContact(contact, config.leadReview?.excludeEmailDomains)) return [];
+      if (config.leadReview?.excludeContactIds?.includes(contactId) || isTestContact(contact, config.leadReview?.excludeEmailDomains, team)) return [];
       const convo = await getConversations(contactId, ghl.locationId, ghl.apiKey);
       const convId = convo?.conversations?.[0]?.id;
       const messages: any[] = convId ? (await getConversationMessages(convId, ghl.locationId, ghl.apiKey, 80))?.messages?.messages ?? [] : [];

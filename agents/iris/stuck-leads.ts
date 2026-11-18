@@ -53,7 +53,7 @@ import { queueColdLeadSweep } from "./dial-pending";
 import { callAnswered } from "./followup-cohort";
 import { checkHumanTouch, DEFAULT_HUMAN_HANDS_OFF_DAYS } from "./human-touch";
 import { loadIrisConfig } from "./index";
-import { eventsFromIrisCalls, eventsFromMessages, isTestContact, qualifiedSignals, ReviewEvent } from "./lead-review";
+import { eventsFromIrisCalls, eventsFromMessages, isTestContact, loadTeamIdentity, qualifiedSignals, ReviewEvent } from "./lead-review";
 import { appendNoteToContact } from "./notes";
 import { moveToNotInterested } from "./opt-out";
 import { readAppointments } from "./no-show-state";
@@ -433,6 +433,7 @@ export async function runStuckLeadCheck(
   const patterns = cfg.stagePatterns.map((p) => new RegExp(p, "i"));
   const handsOff = irisConfig.humanHandsOffDays ?? DEFAULT_HUMAN_HANDS_OFF_DAYS;
   const keyToId = buildKeyToId(await getCustomFieldDefs(ghl.locationId, ghl.apiKey));
+  const team = await loadTeamIdentity(ghl.locationId, ghl.apiKey);
 
   const byContact = new Map<string, { opp: any; stageName: string }>();
   for (const p of await listPipelines(ghl.locationId, ghl.apiKey)) {
@@ -476,7 +477,7 @@ export async function runStuckLeadCheck(
       const raw = await getContact(contactId, ghl.locationId, ghl.apiKey);
       const contact = raw?.contact ?? raw;
       if (!contact) return null;
-      if (irisConfig.leadReview?.excludeContactIds?.includes(contactId) || isTestContact(contact, irisConfig.leadReview?.excludeEmailDomains)) return null;
+      if (irisConfig.leadReview?.excludeContactIds?.includes(contactId) || isTestContact(contact, irisConfig.leadReview?.excludeEmailDomains, team)) return null;
       const convo = await getConversations(contactId, ghl.locationId, ghl.apiKey);
       const convId = convo?.conversations?.[0]?.id;
       const messages: any[] = convId ? (await getConversationMessages(convId, ghl.locationId, ghl.apiKey, 80))?.messages?.messages ?? [] : [];

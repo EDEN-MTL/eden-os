@@ -33,7 +33,7 @@ import { isWithinLegalCallingWindow } from "./cadence";
 import { CALL_LOG_CHANNEL } from "./channels";
 import { checkHumanTouch, DEFAULT_HUMAN_HANDS_OFF_DAYS } from "./human-touch";
 import { loadClientBranding, loadIrisConfig } from "./index";
-import { eventsFromIrisCalls, eventsFromMessages, isTestContact, ReviewEvent } from "./lead-review";
+import { eventsFromIrisCalls, eventsFromMessages, isTestContact, loadTeamIdentity, ReviewEvent } from "./lead-review";
 import { appendNoteToContact } from "./notes";
 import { readAppointments } from "./no-show-state";
 import { holdForTextReply } from "./dial-pending";
@@ -359,6 +359,7 @@ export async function runAsapWatch(clientId: string, options: { now?: Date; dryR
     (await query<{ contact_id: string }>(`SELECT contact_id FROM lead_review_snoozes WHERE client_id = $1 AND until > now()`, [clientId])).map((r) => r.contact_id)
   );
 
+  const team = await loadTeamIdentity(ghl.locationId, ghl.apiKey);
   const ids = [...cards.keys()].filter((id) => !options.only || options.only.includes(id));
   const results = await pool(ids, 4, async (contactId): Promise<AsapWatchEntry | null> => {
     try {
@@ -367,7 +368,7 @@ export async function runAsapWatch(clientId: string, options: { now?: Date; dryR
       const rawContact = await getContact(contactId, ghl.locationId, ghl.apiKey);
       const contact = rawContact?.contact ?? rawContact;
       if (!contact) return null;
-      if (snoozed.has(contactId) || isTestContact(contact, irisConfig.leadReview?.excludeEmailDomains) || irisConfig.leadReview?.excludeContactIds?.includes(contactId)) return null;
+      if (snoozed.has(contactId) || isTestContact(contact, irisConfig.leadReview?.excludeEmailDomains, team) || irisConfig.leadReview?.excludeContactIds?.includes(contactId)) return null;
 
       const convo = await getConversations(contactId, ghl.locationId, ghl.apiKey);
       const convId = convo?.conversations?.[0]?.id;
