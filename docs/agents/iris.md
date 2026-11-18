@@ -233,6 +233,19 @@ agents can talk to them to send listings (book_appointment, or request_human_fol
 `dial-pending.ts` checks the tag live before EVERY dial (sweeps, cohort and retries create fresh rows that don't know the old
 text), and Slack "call X" refuses a "no calls" lead. The classifier itself can only be checked on Render (no local Anthropic key).
 
+### Magar still in Buyer Leads two weeks on (Mark, 2026-11-19)
+
+Three calls and two texts and the card never left Buyer Leads. Why: (1) the move to a follow-up column ran only for an unanswered
+normal-cadence call or (since 11-17) a connected one; Magar's later calls were unanswered SWEEP/callback calls, which never moved a
+card. `moveIntakeCardAfterCall` now runs for every automatic call that did not end in a transfer (not an error). (2) The stuck-lead
+check "waited on the reply to Iris's text" and never looked at the column. It now also moves any card still in an intake column
+that Iris has already tried to the follow-up column for her attempts (`advanceAttempt`, action `advance_stage`, a note on the card),
+whatever else it decides about the lead; assigned, booked, transferred, do-not-call leads and leads a teammate is on are left
+alone. (3) **GHL rate limiting**: a scan of ~30 leads got "429 Too Many Requests" on a third of them (Magar, Jerrick, Daniel...)
+and skipped them silently; there is no sign the 11-18 10:20 run did anything (no action rows, no Slack post). `ghlRequest` now
+repeats a 429 (waits Retry-After, else 1/2/4 s, three times; a 429 means nothing was processed), the scan runs three cards at a time,
+and the post says how many cards it could not read.
+
 ### A lead assigned to an agent is left alone (Jacob, 2026-11-19 — Sabrina Marie)
 
 Ember reactivated and texted Sabrina Marie (assigned to Justin Penney, tagged live transferred, with Jacob's earlier calls and
@@ -281,7 +294,7 @@ Mark to approve; then she applies only reversible fixes herself. The call prompt
 
 Magar's two first-day calls connected (one ended when they said "hold on, important call", one was the "I'm Claude" slip), neither
 reached a transfer, and the card sat in Buyer Leads for eleven days. `moveToFollowUpStage` only ran for a call nobody picked up, and a
-connected call leaves the row `placed`, so nothing watched it. `moveIntakeCardAfterConnectedCall` (`webhooks/vapi-webhook.ts`) now runs
+connected call leaves the row `placed`, so nothing watched it. `moveIntakeCardAfterCall` (`webhooks/vapi-webhook.ts`) now runs
 after every automatic call that connected (or whose transfer was abandoned) and did not end in a successful transfer: if the card is
 still in an intake column (`iris.moveAfterConnectedCall.fromStagePatterns`: Buyer/Seller/Downsize/Upgrading Leads) it moves to the
 follow-up column for that attempt, with a note. Cards the call itself moved (booked, live transferred, not interested) are not in an

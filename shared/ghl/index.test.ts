@@ -3,7 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 const queryMock = vi.fn();
 vi.mock("../db", () => ({ query: (...args: unknown[]) => queryMock(...args) }));
 
-import { getGhlConfig, getLocationBusinessProfile, searchContacts } from "./index";
+import { getContact, getGhlConfig, getLocationBusinessProfile, searchContacts } from "./index";
 
 const ENV_KEYS = ["GHL_API_KEY", "GHL_LOCATION_ID", "GHL_ATTRIBUTION_PIPELINE_NAME"] as const;
 const originalEnv: Record<string, string | undefined> = {};
@@ -128,5 +128,61 @@ describe("getLocationBusinessProfile", () => {
     })) as any;
 
     expect(await getLocationBusinessProfile("loc1", "key1")).toEqual({ name: null, address: null });
+  });
+});
+
+/**
+ * Mark, 2026-11-19: a stuck-lead scan of ~30 leads got "429 Too Many Requests" on a third of them and silently skipped
+ * them (Magar Bhuma among them). A 429 means nothing was processed, so the request is repeated.
+ */
+describe("ghlRequest — rate limiting", () => {
+  const res = (status: number, body: unknown = {}, headers: Record<string, string> = {}) => ({
+    ok: status >= 200 && status < 300,
+    status,
+    headers: { get: (k: string) => headers[k.toLowerCase()] ?? null },
+    json: async () => body,
+    text: async () => JSON.stringify(body),
+  });
+
+  beforeEach(() => vi.useFakeTimers());
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.unstubAllGlobals();
+  });
+
+  it("waits and repeats a 429, then returns the answer", async () => {
+    const fetchMock = vi.fn().mockResolvedValueOnce(res(429)).mockResolvedValueOnce(res(429)).mockResolvedValueOnce(res(200, { contact: { id: "c1" } }));
+    vi.stubGlobal("fetch", fetchMock);
+    const p = getContact("c1", "loc", "key");
+    await vi.advanceTimersByTimeAsync(1000);
+    await vi.advanceTimersByTimeAsync(2000);
+    await expect(p).resolves.toEqual({ contact: { id: "c1" } });
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+  });
+
+  it("waits as long as GHL asks in Retry-After", async () => {
+    const fetchMock = vi.fn().mockResolvedValueOnce(res(429, {}, { "retry-after": "5" })).mockResolvedValueOnce(res(200, { contact: {} }));
+    vi.stubGlobal("fetch", fetchMock);
+    const p = getContact("c1", "loc", "key");
+    await vi.advanceTimersByTimeAsync(4900);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    await vi.advanceTimersByTimeAsync(200);
+    await expect(p).resolves.toBeDefined();
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("gives up after three repeats with the usual error, and never repeats any other failure", async () => {
+    const always429 = vi.fn().mockResolvedValue(res(429, { message: "Too Many Requests" }));
+    vi.stubGlobal("fetch", always429);
+    const p = getContact("c1", "loc", "key");
+    const assertion = expect(p).rejects.toThrow(/GHL API Error 429/);
+    await vi.advanceTimersByTimeAsync(1000 + 2000 + 4000);
+    await assertion;
+    expect(always429).toHaveBeenCalledTimes(4);
+
+    const notFound = vi.fn().mockResolvedValue(res(404, { message: "nope" }));
+    vi.stubGlobal("fetch", notFound);
+    await expect(getContact("c1", "loc", "key")).rejects.toThrow(/GHL API Error 404/);
+    expect(notFound).toHaveBeenCalledTimes(1);
   });
 });

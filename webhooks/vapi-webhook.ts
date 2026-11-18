@@ -478,8 +478,10 @@ async function handleEndOfCallReport(message: Record<string, any>): Promise<void
   if (row?.contact_id && row.triggered_by === "automatic") {
     // A call that connected but did not end in a transfer leaves the card in its intake column unless something moves
     // it (Mark, 2026-11-17, Magar Bhuma): the move to a follow-up column only ran for a call nobody picked up.
-    if (endedReason !== TRANSFER_SUCCEEDED_REASON && (TRANSFER_ABANDONED_REASONS.has(endedReason ?? "") || genuinelyAnswered(endedReason, message))) {
-      await moveIntakeCardAfterConnectedCall(row.client_id, row.contact_id);
+    // Any call that did not end in a transfer, answered or not (Mark, 2026-11-19, Magar Bhuma: his later calls were
+    // unanswered sweep calls, which never moved the card either). A real error is not an attempt.
+    if (endedReason !== TRANSFER_SUCCEEDED_REASON && !/error|failed/i.test(endedReason ?? "")) {
+      await moveIntakeCardAfterCall(row.client_id, row.contact_id);
     }
     if (TRANSFER_ABANDONED_REASONS.has(endedReason ?? "")) {
       // They agreed to an agent and the call ended while the transfer was still going (Mark, 2026-11-11).
@@ -672,15 +674,15 @@ export async function reasonToLeaveLead(clientId: string, contactId: string, cur
 
 /**
  * Mark, 2026-11-17 (Magar Bhuma): "she should have been moved the moment we did not successfully transfer her at that
- * first touch." The card moves to a follow-up column only when a call goes UNANSWERED, so a lead who picked up but did
- * not end up transferred or booked (put Iris on hold, hung up, bad line) sat in Buyer Leads for eleven days with
- * nobody watching it. Now any connected automatic call that did not end in a transfer moves a card still sitting in
- * an intake column to the follow-up column for that attempt. Only the intake columns (config
+ * first touch." The card moved to a follow-up column only when a normal-cadence call went UNANSWERED, so a lead who
+ * picked up but did not end up transferred or booked (put Iris on hold, hung up, bad line), or whose later calls were
+ * sweep or callback calls, sat in Buyer Leads with nobody watching it. Now any automatic call that did not end in a
+ * transfer moves a card still sitting in an intake column to the follow-up column for that attempt. Only the intake columns (config
  * iris.moveAfterConnectedCall.fromStagePatterns): anything the call itself did (a booking, a live transfer, a "not
  * interested") has already moved the card out of them, so nothing is pulled back. Never touches a lead a teammate has
  * (reasonToLeaveLead). Best-effort.
  */
-export async function moveIntakeCardAfterConnectedCall(clientId: string, contactId: string): Promise<void> {
+export async function moveIntakeCardAfterCall(clientId: string, contactId: string): Promise<void> {
   try {
     const config = loadIrisConfig(clientId);
     const cfg = config?.moveAfterConnectedCall;

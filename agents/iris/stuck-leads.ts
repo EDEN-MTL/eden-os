@@ -137,6 +137,8 @@ export interface StuckFacts {
   events: ReviewEvent[];
   calls: IrisCallFact[];
   irisQueue: { status: string; callAfter: number | null; source: string | null } | null;
+  /** How many times Iris has tried this lead (the queue row's count). */
+  attempts?: number;
   hasUpcomingAppointment: boolean;
   /** A person texted or called them inside the hands-off window. */
   teammateInTouch: boolean;
@@ -209,6 +211,23 @@ export function listProblems(f: StuckFacts, stageTags: Record<string, string>): 
 
 /** Whether a call should be placed from the stage names' point of view: not at all when the lead asked for no calls. */
 const canCall = (tags: string[]): boolean => !tags.some((t) => /^no calls$/i.test(t));
+
+/**
+ * A card still in an intake column (Buyer Leads, ...) after Iris has already tried the lead belongs in the follow-up
+ * column for that attempt, whatever else is decided about them (Mark, 2026-11-19, Magar Bhuma: three calls and two
+ * texts over two weeks, and the card never left Buyer Leads). Returns the attempt number to move to, or null when the
+ * card should stay put: not in an intake column, never tried, or somebody else's (assigned, booked, transferred, a
+ * teammate in touch, do not call).
+ */
+export function advanceAttempt(f: StuckFacts, move: { enabled: boolean; fromStagePatterns: string[] } | undefined, followUpStageCount: number): number | null {
+  if (!move?.enabled || followUpStageCount < 1) return null;
+  if (!move.fromStagePatterns.some((p) => new RegExp(p, "i").test(f.stageName.trim()))) return null;
+  const tags = f.tags.map((x) => x.toLowerCase());
+  if (f.dnd || f.assignedTo || f.hasUpcomingAppointment || f.teammateInTouch) return null;
+  if (tags.includes("do not call") || tags.includes("live transferred") || tags.includes("appt booked")) return null;
+  const tried = Math.max(f.attempts ?? 0, f.calls.length);
+  return tried >= 1 ? Math.min(tried, followUpStageCount) : null;
+}
 
 /**
  * What to do about one card. Pure: everything it needs is in `f`.
@@ -348,6 +367,8 @@ export interface StuckEntry {
   diagnosed: Diagnosed;
   /** What was actually done (or, in a dry run, what would be). */
   did?: string;
+  /** The card was moved out of its intake column to the follow-up column for Iris's attempts so far. */
+  advanced?: string;
   text?: string;
   /** Not acted on today because a daily limit was reached: it goes first tomorrow. */
   deferred?: boolean;
@@ -359,6 +380,8 @@ export interface StuckResult {
   entries: StuckEntry[];
   timeZone: string;
   startAts: Record<string, Date>;
+  /** Cards that could not be read (GHL error), so they were not checked today. */
+  failed?: number;
 }
 
 async function pool<T, R>(items: T[], size: number, fn: (item: T) => Promise<R>): Promise<R[]> {
@@ -433,7 +456,7 @@ export async function runStuckLeadCheck(
   );
   const callsBy = new Map<string, typeof callRows>();
   for (const c of callRows) callsBy.set(c.contact_id, [...(callsBy.get(c.contact_id) ?? []), c]);
-  const queue = await query<{ contact_id: string; status: string; call_after: unknown; source: string | null }>(`SELECT contact_id, status, call_after, source FROM iris_pending_calls WHERE client_id = $1`, [clientId]);
+  const queue = await query<{ contact_id: string; status: string; call_after: unknown; source: string | null; attempts_made: number | null }>(`SELECT contact_id, status, call_after, source, attempts_made FROM iris_pending_calls WHERE client_id = $1`, [clientId]);
   const queueBy = new Map(queue.map((r) => [r.contact_id, r]));
   const actionRows = await query<{ contact_id: string; action: string; created_at: Date }>(
     `SELECT contact_id, action, created_at FROM iris_stuck_actions WHERE client_id = $1 AND created_at > now() - interval '60 days' ORDER BY created_at`,
@@ -446,7 +469,8 @@ export async function runStuckLeadCheck(
   const actionsBy = new Map<string, typeof actionRows>();
   for (const a of actionRows) actionsBy.set(a.contact_id, [...(actionsBy.get(a.contact_id) ?? []), a]);
 
-  const results = await pool(ids, 4, async (contactId): Promise<(StuckEntry & { facts: StuckFacts }) | null> => {
+  let failed = 0;
+  const results = await pool(ids, 3, async (contactId): Promise<(StuckEntry & { facts: StuckFacts }) | null> => {
     try {
       const { opp, stageName } = byContact.get(contactId)!;
       const raw = await getContact(contactId, ghl.locationId, ghl.apiKey);
@@ -464,7 +488,8 @@ export async function runStuckLeadCheck(
       const callAfter = rawAfter instanceof Date ? rawAfter.getTime() : typeof rawAfter === "string" ? (/inf/i.test(rawAfter) ? null : Date.parse(rawAfter)) : typeof rawAfter === "number" && Number.isFinite(rawAfter) ? rawAfter : null;
       const mine = actionsBy.get(contactId) ?? [];
       const nudges = mine.filter((a) => a.action === "text_follow_up");
-      const acted = mine.filter((a) => a.action !== "person");
+      // A listing for a person or a column move is not a try: neither holds back the next real action.
+      const acted = mine.filter((a) => a.action !== "person" && a.action !== "advance_stage");
       const lastStageChange = Date.parse(opp.lastStageChangeAt ?? "");
       const facts: StuckFacts = {
         contactId,
@@ -487,6 +512,7 @@ export async function runStuckLeadCheck(
           transcript: String(c.transcript ?? ""),
         })),
         irisQueue: q ? { status: q.status, callAfter: callAfter !== null && Number.isFinite(callAfter) ? callAfter : null, source: q.source } : null,
+        attempts: Number(q?.attempts_made) || 0,
         hasUpcomingAppointment: Boolean(readAppointments(appointments, now, timeZone).upcoming),
         teammateInTouch: events.some((e) => e.direction === "out" && e.actor === "human" && now.getTime() - e.at < handsOff * DAY),
         nudges: nudges.length,
@@ -502,6 +528,7 @@ export async function runStuckLeadCheck(
       return { contactId, name: facts.name, stageName, diagnosed, facts };
     } catch (error) {
       console.error(`[STUCK] ${contactId}:`, error instanceof Error ? error.message : error);
+      failed++;
       return null;
     }
   });
@@ -521,6 +548,26 @@ export async function runStuckLeadCheck(
     const d = diagnosed.diagnosis;
     const entry: StuckEntry = { contactId: r.contactId, name: r.name, stageName: r.stageName, diagnosed };
     entries.push(entry);
+    // Housekeeping first: a card Iris has already tried leaves the intake column, whatever else happens to the lead.
+    // (Closing a wrong number and parking in Not Ready move the card themselves.)
+    const attempt = d.action === "close_wrong_number" || d.action === "park_not_ready" ? null : advanceAttempt(facts, irisConfig.moveAfterConnectedCall, irisConfig.followUpStageIds?.length ?? 0);
+    if (attempt !== null) {
+      const stageId = irisConfig.followUpStageIds![attempt - 1];
+      const hands = options.dryRun ? { status: "none" } : await checkHumanTouch(r.contactId, ghl.locationId, ghl.apiKey, handsOff, now);
+      if (hands.status === "none") {
+        entry.advanced = `moved out of ${r.stageName.trim()} to follow-up column ${attempt}`;
+        if (!options.dryRun) {
+          try {
+            await updateOpportunityStage(byContact.get(r.contactId)!.opp.id, stageId, ghl.locationId, ghl.apiKey);
+            await createContactNote(r.contactId, `Iris: ${attempt === 1 ? "one try" : `${attempt} tries`} so far and the card was still in ${r.stageName.trim()}, so it moved to the follow-up column for those tries.`, ghl.locationId, ghl.apiKey).catch(() => {});
+            await recordAction(clientId, r.contactId, r.name, "advance_stage", `from ${r.stageName.trim()}, ${attempt} tries`).catch(() => {});
+          } catch (error) {
+            entry.advanced = undefined;
+            console.error(`[STUCK] couldn't move ${r.contactId} out of ${r.stageName}:`, error instanceof Error ? error.message : error);
+          }
+        }
+      }
+    }
     if (d.action === "leave") continue;
     if (d.action === "person") {
       if (!options.dryRun) await recordAction(clientId, r.contactId, r.name, "person", d.why).catch(() => {});
@@ -633,29 +680,34 @@ export async function runStuckLeadCheck(
       }
     }
   }
-  return { scanned: scanned.length, entries, timeZone, startAts };
+  return { scanned: scanned.length, entries, timeZone, startAts, failed };
 }
 
 /** The Slack post: what was fixed, what waits for tomorrow, what needs a person. Null when there is nothing to say. */
 export function formatStuckPost(r: StuckResult): string | null {
   if (r.skipped) return null;
-  const did = r.entries.filter((e) => e.did && !e.deferred);
+  const did = r.entries.filter((e) => (e.did && !e.deferred) || e.advanced);
   const deferred = r.entries.filter((e) => e.deferred);
   const person = r.entries.filter((e) => e.diagnosed.diagnosis.action === "person");
-  if (did.length === 0 && deferred.length === 0 && person.length === 0) return null;
+  const failed = r.failed ?? 0;
+  if (did.length === 0 && deferred.length === 0 && person.length === 0 && failed === 0) return null;
   const left = r.entries.filter((e) => e.diagnosed.diagnosis.action === "leave").length;
   const lines = [`🧭 *Stuck-lead check:* I went through ${r.scanned} cards in the early stages; ${did.length} fixed, ${person.length} need a person, ${left} fine for now.`];
   const why = (e: StuckEntry) => e.diagnosed.diagnosis.why;
   const stage = (e: StuckEntry) => e.stageName.trim();
   if (did.length) {
     lines.push("", "*What I did:*");
-    for (const e of did) lines.push(`• *${e.name}* (${stage(e)}): ${why(e)} → ${e.did}`);
+    for (const e of did) {
+      const actions = [e.advanced, e.did && !e.deferred ? e.did : null].filter(Boolean).join("; ");
+      lines.push(e.did && !e.deferred ? `• *${e.name}* (${stage(e)}): ${why(e)} → ${actions}` : `• *${e.name}* (${stage(e)}): ${actions}`);
+    }
   }
   if (deferred.length) lines.push("", `Over today's limit, first in line tomorrow: ${deferred.map((e) => `*${e.name}*`).join(", ")}.`);
   if (person.length) {
     lines.push("", "*Needs a person:*");
     for (const e of person) lines.push(`• *${e.name}* (${stage(e)}): ${why(e)}${e.diagnosed.problems.length ? ` _(${e.diagnosed.problems.join("; ")})_` : ""}`);
   }
+  if (failed > 0) lines.push("", `⚠️ I couldn't read ${failed} card${failed === 1 ? "" : "s"} (GHL kept refusing the request), so ${failed === 1 ? "it was" : "they were"} not checked today. They are checked again tomorrow.`);
   return lines.join("\n");
 }
 
@@ -672,7 +724,7 @@ export async function runStuckLeadCheckAll(): Promise<void> {
     if (!loadIrisConfig(clientId)?.stuckLeads?.enabled) continue;
     try {
       const result = await runStuckLeadCheck(clientId);
-      console.log(`[STUCK] ${clientId}: ${result.skipped ?? `${result.scanned} scanned, ${result.entries.filter((e) => e.did && !e.deferred).length} fixed`}.`);
+      console.log(`[STUCK] ${clientId}: ${result.skipped ?? `${result.scanned} scanned, ${result.entries.filter((e) => (e.did && !e.deferred) || e.advanced).length} fixed`}.`);
       const post = formatStuckPost(result);
       if (post) await sendMessage("iris", { channel: CALL_LOG_CHANNEL, text: post }).catch((error) => console.error("[STUCK] Slack post failed:", error instanceof Error ? error.message : error));
     } catch (error) {

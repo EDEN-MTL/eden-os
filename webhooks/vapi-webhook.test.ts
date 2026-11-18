@@ -67,7 +67,7 @@ import {
   formatLiveTransferPost,
   postLiveTransferToSlack,
   moveToFollowUpStage,
-  moveIntakeCardAfterConnectedCall,
+  moveIntakeCardAfterCall,
   smsConfirmation,
   postCallLogToSlack,
   tagSequenceExhausted,
@@ -267,14 +267,14 @@ describe("a call that connected but did not end in a transfer (Magar Bhuma)", ()
   });
 
   it("moves a card still in Buyer Leads to the follow-up column for that attempt, and notes why", async () => {
-    await moveIntakeCardAfterConnectedCall("3-percent-east-coast", "contact-1");
+    await moveIntakeCardAfterCall("3-percent-east-coast", "contact-1");
 
     expect(ghl.updateOpportunityStage).toHaveBeenCalledWith("opp-1", "stage-day1-am", "loc-1", "key-1");
   });
 
   it("uses the attempt number: a second call that also connected goes to the second column", async () => {
     db.query.mockImplementation(async (...args: unknown[]) => (/SELECT attempts_made/.test(String(args[0])) ? [{ attempts_made: 2 }] : []));
-    await moveIntakeCardAfterConnectedCall("3-percent-east-coast", "contact-1");
+    await moveIntakeCardAfterCall("3-percent-east-coast", "contact-1");
 
     expect(ghl.updateOpportunityStage).toHaveBeenCalledWith("opp-1", "stage-day1-pm", "loc-1", "key-1");
   });
@@ -283,7 +283,7 @@ describe("a call that connected but did not end in a transfer (Magar Bhuma)", ()
     ghl.findOpenOpportunitiesForContact.mockResolvedValue([{ id: "opp-1", pipelineStageId: "stage-appt" }]);
     ghl.listPipelines.mockResolvedValue(stagesNamed("stage-appt", "Appointment Set"));
 
-    await moveIntakeCardAfterConnectedCall("3-percent-east-coast", "contact-1");
+    await moveIntakeCardAfterCall("3-percent-east-coast", "contact-1");
 
     expect(ghl.updateOpportunityStage).not.toHaveBeenCalled();
   });
@@ -291,7 +291,7 @@ describe("a call that connected but did not end in a transfer (Magar Bhuma)", ()
   it("leaves a card in a column that is not an intake column, such as one already in follow-up", async () => {
     ghl.findOpenOpportunitiesForContact.mockResolvedValue([{ id: "opp-1", pipelineStageId: "stage-day1-am" }]);
 
-    await moveIntakeCardAfterConnectedCall("3-percent-east-coast", "contact-1");
+    await moveIntakeCardAfterCall("3-percent-east-coast", "contact-1");
 
     expect(ghl.updateOpportunityStage).not.toHaveBeenCalled();
   });
@@ -299,7 +299,7 @@ describe("a call that connected but did not end in a transfer (Magar Bhuma)", ()
   it("does nothing when the client has not turned it on", async () => {
     iris.loadIrisConfig.mockReturnValue({ followUpStageIds });
 
-    await moveIntakeCardAfterConnectedCall("3-percent-east-coast", "contact-1");
+    await moveIntakeCardAfterCall("3-percent-east-coast", "contact-1");
 
     expect(ghl.updateOpportunityStage).not.toHaveBeenCalled();
   });
@@ -308,7 +308,7 @@ describe("a call that connected but did not end in a transfer (Magar Bhuma)", ()
     iris.loadIrisConfig.mockReturnValue({ ...CONFIG, humanTextBlocksCalls: true, humanHandsOffDays: 7 });
     humanTouch.checkHumanTouch.mockResolvedValue({ status: "human", kind: "call", at: "Nov 16" } as any);
 
-    await moveIntakeCardAfterConnectedCall("3-percent-east-coast", "contact-1");
+    await moveIntakeCardAfterCall("3-percent-east-coast", "contact-1");
 
     expect(ghl.updateOpportunityStage).not.toHaveBeenCalled();
   });
@@ -329,6 +329,16 @@ describe("a call that connected but did not end in a transfer (Magar Bhuma)", ()
     it("moves the card after an answered call that Iris ended", async () => {
       await finish("assistant-ended-call");
       expect(ghl.updateOpportunityStage).toHaveBeenCalledWith("opp-1", "stage-day1-am", "loc-1", "key-1");
+    });
+
+    it("moves the card after an UNANSWERED call too, such as a sweep call (Magar's later calls)", async () => {
+      await finish("customer-did-not-answer", "automatic", []);
+      expect(ghl.updateOpportunityStage).toHaveBeenCalledWith("opp-1", "stage-day1-am", "loc-1", "key-1");
+    });
+
+    it("does not count a call that failed or errored as a try", async () => {
+      await finish("twilio-failed-to-connect-call", "automatic", []);
+      expect(ghl.updateOpportunityStage).not.toHaveBeenCalled();
     });
 
     it("does not run for a manual test call", async () => {

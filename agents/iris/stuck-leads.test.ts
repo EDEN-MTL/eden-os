@@ -37,7 +37,7 @@ vi.mock("./notes", () => notes);
 const optOut = vi.hoisted(() => ({ moveToNotInterested: vi.fn(async () => ({ moved: true, stageName: "Not Qualified/Not Interested" })) }));
 vi.mock("./opt-out", () => optOut);
 
-import { diagnoseStuckLead, formatStuckPost, isUnfinishedCall, retryStartAt, runStuckLeadCheck, saidWrongNumber, StuckFacts } from "./stuck-leads";
+import { advanceAttempt, diagnoseStuckLead, formatStuckPost, isUnfinishedCall, retryStartAt, runStuckLeadCheck, saidWrongNumber, StuckFacts } from "./stuck-leads";
 import type { ReviewEvent } from "./lead-review";
 
 // Tuesday 2026-11-17, 10:20 NST (13:50 UTC)
@@ -227,6 +227,37 @@ describe("diagnoseStuckLead: the fixes", () => {
   });
 });
 
+/**
+ * Mark, 2026-11-19 (Magar Bhuma): three calls and two texts over two weeks and the card never left Buyer Leads. A card
+ * Iris has already tried leaves the intake column for the follow-up column of that attempt.
+ */
+describe("advanceAttempt", () => {
+  const move = { enabled: true, fromStagePatterns: ["^buyer leads", "^seller leads"] };
+  const tried = (over: Partial<StuckFacts> = {}) => facts({ stageName: "Buyer Leads", attempts: 4, calls: [call(9), call(8), call(1)], ...over });
+
+  it("moves a tried card out of Buyer Leads to the column for its attempts", () => {
+    expect(advanceAttempt(tried(), move, 8)).toBe(4);
+    expect(advanceAttempt(tried({ attempts: 0, calls: [hungUp(3)] }), move, 8)).toBe(1);
+    expect(advanceAttempt(tried({ attempts: 12 }), move, 8)).toBe(8);
+  });
+
+  it("leaves a card that is not in an intake column, was never tried, or is somebody else's", () => {
+    expect(advanceAttempt(tried({ stageName: "DAY 1 - AM FOLLOWUP" }), move, 8)).toBeNull();
+    expect(advanceAttempt(tried({ attempts: 0, calls: [] }), move, 8)).toBeNull();
+    expect(advanceAttempt(tried({ assignedTo: "user-justin" }), move, 8)).toBeNull();
+    expect(advanceAttempt(tried({ teammateInTouch: true }), move, 8)).toBeNull();
+    expect(advanceAttempt(tried({ hasUpcomingAppointment: true }), move, 8)).toBeNull();
+    expect(advanceAttempt(tried({ tags: ["buyer lead", "live transferred"] }), move, 8)).toBeNull();
+    expect(advanceAttempt(tried({ dnd: true }), move, 8)).toBeNull();
+  });
+
+  it("does nothing when it is switched off or no follow-up columns are configured", () => {
+    expect(advanceAttempt(tried(), { ...move, enabled: false }, 8)).toBeNull();
+    expect(advanceAttempt(tried(), undefined, 8)).toBeNull();
+    expect(advanceAttempt(tried(), move, 0)).toBeNull();
+  });
+});
+
 describe("retryStartAt", () => {
   it("calls a lead who last answered in the morning in the afternoon, and vice versa", () => {
     const morning = new Date("2026-11-16T14:00:00Z").getTime(); // 11:30 NST
@@ -236,6 +267,15 @@ describe("retryStartAt", () => {
   });
   it("calls a lead nobody has called within minutes", () => {
     expect(retryStartAt(NOW, "America/St_Johns", null).getTime()).toBe(NOW.getTime() + 10 * 60_000);
+  });
+});
+
+describe("formatStuckPost — cards it could not read", () => {
+  it("says so, even when there was nothing else to report, so a skipped card is never silent", () => {
+    const text = formatStuckPost({ scanned: 20, entries: [], timeZone: "America/St_Johns", startAts: {}, failed: 3 });
+    expect(text).toMatch(/couldn't read 3 cards/);
+    expect(text).toMatch(/checked again tomorrow/);
+    expect(formatStuckPost({ scanned: 20, entries: [], timeZone: "America/St_Johns", startAts: {}, failed: 0 })).toBeNull();
   });
 });
 
@@ -314,6 +354,48 @@ describe("runStuckLeadCheck", () => {
     const r = await runStuckLeadCheck("c", { now: NOW });
     expect(dial.queueColdLeadSweep).not.toHaveBeenCalled();
     expect(r.entries[0].diagnosed.diagnosis.action).toBe("leave");
+  });
+
+  // Mark, 2026-11-19 (Magar Bhuma): tried four times over two weeks, still in Buyer Leads.
+  describe("a tried card still in an intake column", () => {
+    const FOLLOW_UP = ["stage-day1-am", "stage-day1-pm", "stage-day2-am", "stage-day2-pm"];
+    const missed = (daysAgo: number) => ({ created_at: new Date(ago(daysAgo)), ended_at: new Date(ago(daysAgo) + 30_000), ended_reason: "customer-did-not-answer", transcript: "" });
+
+    beforeEach(() => {
+      iris.loadIrisConfig.mockReturnValue({
+        timezone: "America/St_Johns",
+        callbackNotesFieldKey: "contact.isa_notes",
+        followUpCohort: { notReadyStage: "Not Ready - [Endless Loop]", notInterestedStage: "Not Qualified/Not Interested" },
+        followUpStageIds: FOLLOW_UP,
+        moveAfterConnectedCall: { enabled: true, fromStagePatterns: ["^buyer leads"] },
+        stuckLeads: { ...stuckCfg, stagePatterns: ["^buyer leads"] },
+      });
+      ghl.listPipelines.mockResolvedValue([{ id: "p1", stages: [{ id: "s3", name: "Buyer Leads" }] }]);
+      ghl.listOpportunitiesInStage.mockImplementation(async () => [opp("magar")]);
+      ghl.getContact.mockResolvedValue({ contact: { firstName: "Magar", phone: "+17095550101", tags: ["buyer lead"], dateAdded: created } });
+      ghl.getConversations.mockResolvedValue({ conversations: [{ id: "conv" }] });
+      db.query.mockImplementation(async (sql: string) => {
+        if (/FROM iris_call_log/.test(sql)) return [14, 13, 6].map((d) => ({ contact_id: "magar", ...missed(d) }));
+        if (/FROM iris_pending_calls/.test(sql)) return [{ contact_id: "magar", status: "pending", call_after: "infinity", source: "sweep", attempts_made: 4 }];
+        return [];
+      });
+    });
+
+    it("moves out of Buyer Leads to the follow-up column for its attempts, notes it and records it", async () => {
+      const r = await runStuckLeadCheck("c", { now: NOW });
+      expect(ghl.updateOpportunityStage).toHaveBeenCalledWith("opp-magar", "stage-day2-pm", "loc", "key");
+      expect(r.entries[0].advanced).toMatch(/moved out of Buyer Leads to follow-up column 4/);
+      expect(db.query.mock.calls.some(([sql, params]) => /INSERT INTO iris_stuck_actions/.test(String(sql)) && (params as unknown[]).includes("advance_stage"))).toBe(true);
+      expect(formatStuckPost(r)).toMatch(/\*magar\*.*moved out of Buyer Leads/i);
+    });
+
+    it("changes nothing in a dry run, and leaves a lead a teammate is on", async () => {
+      await runStuckLeadCheck("c", { now: NOW, dryRun: true });
+      expect(ghl.updateOpportunityStage).not.toHaveBeenCalled();
+      touch.checkHumanTouch.mockResolvedValue({ status: "human", at: NOW.toISOString() });
+      await runStuckLeadCheck("c", { now: NOW });
+      expect(ghl.updateOpportunityStage).not.toHaveBeenCalled();
+    });
   });
 
   it("holds the extra leads over the daily call limit for tomorrow", async () => {

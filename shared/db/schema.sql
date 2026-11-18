@@ -904,7 +904,7 @@ CREATE TABLE IF NOT EXISTS iris_stuck_actions (
     client_id TEXT NOT NULL,
     contact_id TEXT NOT NULL,
     contact_name TEXT,
-    action TEXT NOT NULL, -- call_again | text_follow_up | park_not_ready | close_wrong_number | person
+    action TEXT NOT NULL, -- call_again | text_follow_up | park_not_ready | close_wrong_number | person | advance_stage
     detail TEXT,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );

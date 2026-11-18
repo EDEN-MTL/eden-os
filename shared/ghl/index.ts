@@ -16,6 +16,9 @@ interface GHLRequestOptions {
   apiKey?: string;
 }
 
+/** Times a rate-limited (429) request is repeated before the error is thrown. */
+const RATE_LIMIT_RETRIES = 3;
+
 async function ghlRequest(
   endpoint: string,
   options: GHLRequestOptions = {}
@@ -35,11 +38,16 @@ async function ghlRequest(
     headers["Location"] = locationId;
   }
 
-  const response = await fetch(`${GHL_BASE_URL}${endpoint}`, {
-    method,
-    headers,
-    body: body ? JSON.stringify(body) : undefined,
-  });
+  // GHL answers 429 "Too Many Requests" when a burst crosses its rate limit (Mark, 2026-11-19: a scan of ~30 leads lost a third of
+  // them to it, Magar Bhuma among them, with nothing to say they were skipped). A 429 means the request was NOT processed, so
+  // it is safe to repeat for any method: wait as GHL asks (Retry-After), else 1 s, 2 s, 4 s, then give up with the usual error.
+  let response = await fetch(`${GHL_BASE_URL}${endpoint}`, { method, headers, body: body ? JSON.stringify(body) : undefined });
+  for (let attempt = 0; response.status === 429 && attempt < RATE_LIMIT_RETRIES; attempt++) {
+    const asked = Number(response.headers?.get?.("retry-after"));
+    const waitMs = Number.isFinite(asked) && asked > 0 ? Math.min(asked * 1000, 10_000) : 1000 * 2 ** attempt;
+    await new Promise((resolve) => setTimeout(resolve, waitMs));
+    response = await fetch(`${GHL_BASE_URL}${endpoint}`, { method, headers, body: body ? JSON.stringify(body) : undefined });
+  }
 
   if (!response.ok) {
     const errorText = await response.text();
