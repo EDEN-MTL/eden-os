@@ -573,6 +573,9 @@ ALTER TABLE scout_appointment_checkins ADD COLUMN IF NOT EXISTS potential_commis
 -- A sixth checkbox, "Lost", 2026-11-19 per Jacob: lets a team lead mark a lead
 -- that fell through. Purely a tracked flag on this page — nothing is pushed to GHL.
 ALTER TABLE scout_appointment_checkins ADD COLUMN IF NOT EXISTS lost BOOLEAN NOT NULL DEFAULT FALSE;
+-- A seventh checkbox, "Not responding", per Jacob: marks a lead who has gone
+-- quiet. Same shape as lost: a tracked flag on this page only, defaulting false.
+ALTER TABLE scout_appointment_checkins ADD COLUMN IF NOT EXISTS not_responding BOOLEAN NOT NULL DEFAULT FALSE;
 
 -- ─────────────────────────────────────────────────────────────────────
 -- EMBER — long-term nurture and reactivation of dormant client leads.
