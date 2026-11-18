@@ -570,6 +570,9 @@ CREATE TABLE IF NOT EXISTS scout_appointment_checkins (
 -- can tell "nothing filled in" apart from "worth $0" — shown on the card as
 -- "Value: $X" only once actually set.
 ALTER TABLE scout_appointment_checkins ADD COLUMN IF NOT EXISTS potential_commission NUMERIC(12, 2);
+-- A sixth checkbox, "Lost", 2026-11-19 per Jacob: lets a team lead mark a lead
+-- that fell through. Purely a tracked flag on this page — nothing is pushed to GHL.
+ALTER TABLE scout_appointment_checkins ADD COLUMN IF NOT EXISTS lost BOOLEAN NOT NULL DEFAULT FALSE;
 
 -- ─────────────────────────────────────────────────────────────────────
 -- EMBER — long-term nurture and reactivation of dormant client leads.

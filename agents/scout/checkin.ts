@@ -36,6 +36,7 @@ export const CHECKBOX_FIELDS = [
   "deal_progressing",
   "deal_closed",
   "contract_signed",
+  "lost",
 ] as const;
 export type CheckboxField = (typeof CHECKBOX_FIELDS)[number];
 
@@ -217,6 +218,7 @@ interface CheckinRow {
   deal_progressing: boolean;
   deal_closed: boolean;
   contract_signed: boolean;
+  lost: boolean;
   // node-postgres returns NUMERIC as a string (avoids silent float
   // precision loss on a dollar value) — parsed to a number when mapped
   // onto CheckinAppointment.
@@ -570,7 +572,7 @@ export async function getCheckinData(token: string): Promise<CheckinData | null>
   const itemIds = items.map((i) => i.id);
   const checkinRows = itemIds.length
     ? await query<CheckinRow>(
-        `SELECT ghl_event_id, still_in_conversation, showed_up, deal_progressing, deal_closed, contract_signed, potential_commission
+        `SELECT ghl_event_id, still_in_conversation, showed_up, deal_progressing, deal_closed, contract_signed, lost, potential_commission
          FROM scout_appointment_checkins WHERE client_id = $1 AND ghl_event_id = ANY($2)`,
         [clientId, itemIds]
       )
@@ -591,6 +593,7 @@ export async function getCheckinData(token: string): Promise<CheckinData | null>
         deal_progressing: saved?.deal_progressing ?? false,
         deal_closed: saved?.deal_closed ?? false,
         contract_signed: saved?.contract_signed ?? false,
+        lost: saved?.lost ?? false,
       },
       potentialCommission:
         saved?.potential_commission != null && saved.potential_commission !== ""
@@ -823,7 +826,8 @@ export function renderCheckinPage(): string {
     ["showed_up", "Showed up to appointment"],
     ["deal_progressing", "Deal is moving forward"],
     ["deal_closed", "Deal closed / won"],
-    ["contract_signed", "Signed contract"]
+    ["contract_signed", "Signed contract"],
+    ["lost", "Lost"]
   ];
 
   function fmtDate(iso) {
