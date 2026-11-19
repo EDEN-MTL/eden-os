@@ -233,6 +233,18 @@ agents can talk to them to send listings (book_appointment, or request_human_fol
 `dial-pending.ts` checks the tag live before EVERY dial (sweeps, cohort and retries create fresh rows that don't know the old
 text), and Slack "call X" refuses a "no calls" lead. The classifier itself can only be checked on Render (no local Anthropic key).
 
+### Her name cut off on a call screener (Mark, 2026-11-20 — OG Phranky)
+
+A phone-company call screener asked OG Phranky's caller for a name and reason; Iris began "Iris." and the call log shows only "I"
+(Mark heard it too). Her instructions were right (say only "Iris."), and Vapi had been given all five characters. Cause: her
+`stopSpeakingPlan` had `numWords: 0`, which makes Vapi stop her on any voice activity lasting `voiceSeconds` (0.3 s), so a beep
+or line noise chops a half-second word. It is now `numWords: 1`: she stops only for a real transcribed word ("stop", "no", "wait",
+"actually" always interrupt at once, "okay"/"yeah" never do, per Vapi's schema); `voiceSeconds` is not used once `numWords` is above
+0. Cost: a person talking over her is heard after their first word is transcribed (a fraction of a second later). The automatic call
+review also flags a bot line that is only a fragment of her name ("I", "Ir", "Iri"), so a cut-off is never silent again. The
+transcript can also drop the name entirely (call 277 shows no bot line though five characters were synthesised), so a missing line
+on a screener call is not proof it was not said; a fragment is.
+
 ### The client's own agents are not leads (Mark, 2026-11-19)
 
 Genna, Candice, Ashley Fleming, Stephanie Mcgrath, "andrew@ateamnl.ca", Chelsea and five bare phone numbers sat in Replied and were

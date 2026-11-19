@@ -63,9 +63,14 @@ export function reviewCall(input: CallReviewInput): CallReview {
   const narration = bot.find((l) => NARRATION.test(l.message));
   if (narration) flags.push(`Iris spoke her own instruction out loud: ${quote(narration.message)}`);
 
+  // 1b. Her name was cut off (OG Phranky, 2026-11-19: a screener asked for her name and the call log shows only "I").
+  // Said into a screener, "Iris." is the whole answer, so a fragment of it means the screener never heard her.
+  const cutOff = bot.find((l) => /^\s*(?:i|ir|iri)[.,!?…-]*\s*$/i.test(l.message));
+  if (cutOff) flags.push(`Iris was cut off while saying her name (the call shows only ${quote(cutOff.message)}), so a screener or person never heard it`);
+
   // 2. Anything beyond "Iris." said into a machine.
   if (input.machineOnly) {
-    const extra = bot.filter((l) => !IRIS_ONLY.test(l.message) && !NARRATION.test(l.message));
+    const extra = bot.filter((l) => !IRIS_ONLY.test(l.message) && !NARRATION.test(l.message) && l !== cutOff);
     if (extra.length > 0) flags.push(`Iris spoke into a screener/voicemail (should be silent or just “Iris.”): ${quote(extra[0].message)}`);
   }
 

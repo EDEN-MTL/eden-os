@@ -47,6 +47,13 @@ describe("buildCallPayload", () => {
    * "Hi!" firstMessage was the exact bug. Fixed by making firstMessage the
    * full canonical opening line (buildCallOpeningLine) instead.
    */
+  // OG Phranky, 2026-11-19: a screener asked for her name, she began "Iris." and the line shows only "I". With numWords 0
+  // Vapi cuts her off on any voice activity (a beep, line noise); she must hear a real word before she stops.
+  it("only stops talking for a transcribed word, so a beep or line noise cannot cut off her name on a screener", () => {
+    const plan = (buildCallPayload(BASE_PARAMS, VAPI_CONFIG) as any).assistant.stopSpeakingPlan;
+    expect(plan.numWords).toBeGreaterThanOrEqual(1);
+  });
+
   it("sends NO firstMessage on a normal outbound call, and waits for the other side to speak — so the model can tell a screener from a person", () => {
     const payload = buildCallPayload(BASE_PARAMS, VAPI_CONFIG);
 

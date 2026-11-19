@@ -17,6 +17,26 @@ describe("reviewCall — the real failures it exists to catch", () => {
     expect(r.flags[0]).toMatch(/spoke into a screener\/voicemail.*Goodbye/);
   });
 
+  // OG Phranky, Nov 19: a screener asked for her name and the call log shows only "I". Her name was cut off.
+  it("OG Phranky, Nov 19: her name was cut off after 'I' on a screener", () => {
+    const r = reviewCall({
+      ...base,
+      endedReason: "customer-did-not-answer",
+      machineOnly: true,
+      lines: [u("Hi. If you record your name and reason for calling, I'll see if this person is available."), b("I"), u("Thanks. Please stay on the line.")],
+    });
+    expect(r.verdict).toBe("attention");
+    expect(r.flags).toHaveLength(1);
+    expect(r.flags[0]).toMatch(/cut off while saying her name.*“I”/);
+  });
+
+  it("a whole 'Iris.' on a screener is still fine, and so is an ordinary line that merely starts with I", () => {
+    const ok = reviewCall({ ...base, machineOnly: true, lines: [u("Please say your name after the tone."), b("Iris.")] });
+    expect(ok.verdict).toBe("ok");
+    const person = reviewCall({ ...base, expectedOpener: OPENER, lines: [u("Hello?"), b(OPENER), u("Yes."), b("I see you're looking to buy.")] });
+    expect(person.flags.some((f) => /cut off/.test(f))).toBe(false);
+  });
+
   it("Koren Pye, Oct 12: read her own instruction aloud and asked a screener if it could hear her", () => {
     const r = reviewCall({
       ...base,

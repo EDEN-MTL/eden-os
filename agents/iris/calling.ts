@@ -919,7 +919,11 @@ export function buildCallPayload(
       // — only voiceSeconds is nudged up slightly to cut down on false
       // interrupts from background noise on a real phone line.
       startSpeakingPlan: { waitSeconds: 0.7 },
-      stopSpeakingPlan: { numWords: 0, voiceSeconds: 0.3, backoffSeconds: 1 },
+      // numWords 1, not 0 (Mark, 2026-11-20, OG Phranky): with 0 Vapi cuts her off on any voice activity lasting
+      // voiceSeconds, so a screener's beep or line noise chopped "Iris." after "I" and the screener never heard her name.
+      // With 1 she stops only for a real transcribed word: "stop", "no", "wait", "actually" still interrupt at once and
+      // "okay"/"yeah" never do (Vapi's own lists). voiceSeconds is not used once numWords is above 0.
+      stopSpeakingPlan: { numWords: 1, voiceSeconds: 0.3, backoffSeconds: 1 },
       server: vapiConfig.serverUrl ? { url: vapiConfig.serverUrl, secret: vapiConfig.webhookSecret } : undefined,
       // Without this, Vapi has no way to tell the call apart from a live
       // pickup — Iris just talks into the machine as if a person answered,
