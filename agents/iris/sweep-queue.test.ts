@@ -78,7 +78,8 @@ describe("runDialPendingCalls — sweep rows go out one at a time", () => {
 
     await runDialPendingCalls();
 
-    expect(db.query).toHaveBeenCalledTimes(2); // nothing else — no UPDATE, no refresh
+    expect(db.query).toHaveBeenCalledTimes(3); // the claim, the in-flight check, the lease handed back — no schedule UPDATE, no refresh
+    expect(String(db.query.mock.calls[2][0])).toMatch(/SET dial_lease_until = NULL/);
     expect(scout.refreshLead).not.toHaveBeenCalled();
     expect(String(db.query.mock.calls[1][0])).toMatch(/status = 'initiated'/);
   });

@@ -12,7 +12,7 @@ vi.mock("./calling", () => ({ ...calling, CallingDisabledError: class extends Er
 vi.mock("./qualification", () => ({ transferNumberForIntent: vi.fn(), callbackCalendarForIntent: vi.fn() }));
 vi.mock("./text-signals", () => ({ classifyInboundText: vi.fn(async () => ({ type: "none" })), lastInboundText: vi.fn(async () => null) }));
 vi.mock("./sms", () => ({ hasActiveSmsConversation: vi.fn(async () => false), markLeadNoCalls: vi.fn(async () => {}), NO_CALLS_TAG: "no calls" }));
-const touch = vi.hoisted(() => ({ checkHumanTouch: vi.fn(), DEFAULT_HUMAN_HANDS_OFF_DAYS: 7 }));
+const touch = vi.hoisted(() => ({ checkHumanTouch: vi.fn(), assignedAgentOf: vi.fn(async () => null as string | null), DEFAULT_HUMAN_HANDS_OFF_DAYS: 7 }));
 vi.mock("./human-touch", () => touch);
 const slack = vi.hoisted(() => ({ sendMessage: vi.fn(async () => ({})) }));
 vi.mock("../../shared/slack", () => slack);
@@ -44,7 +44,7 @@ beforeEach(() => {
 afterEach(() => vi.clearAllMocks());
 
 function dueRows(r: unknown) {
-  db.query.mockImplementation(async (...args: unknown[]) => (/FROM iris_pending_calls/.test(String(args[0])) && /call_after <= now/.test(String(args[0])) ? [r] : []));
+  db.query.mockImplementation(async (...args: unknown[]) => (/FROM iris_pending_calls/.test(String(args[0])) && /call_after <= now/.test(String(args[0])) ? [r] : /'dialing'/.test(String(args[0])) ? [{ id: (r as { id: number }).id }] : []));
 }
 
 describe("a due call to a lead a teammate is talking to", () => {
@@ -73,11 +73,21 @@ describe("a due call to a lead a teammate is talking to", () => {
     expect(calling.placeCall).toHaveBeenCalledTimes(1);
   });
 
-  it("goes ahead for a cold-lead sweep Mark lined up by hand", async () => {
+  it("goes ahead for a cold-lead sweep Mark lined up by hand, even if a teammate texted them", async () => {
     dueRows(row({ source: "sweep" }));
     touch.checkHumanTouch.mockResolvedValue({ status: "human", kind: "text", at: "x", userId: "jacob" });
+    touch.assignedAgentOf.mockResolvedValue(null);
     await runDialPendingCalls();
+    expect(touch.checkHumanTouch).not.toHaveBeenCalled();
     expect(calling.placeCall).toHaveBeenCalledTimes(1);
+  });
+
+  it("does NOT go ahead for a sweep lead who is assigned to an agent (audit, 2026-11-20)", async () => {
+    dueRows(row({ source: "sweep" }));
+    touch.assignedAgentOf.mockResolvedValue("justin-penney");
+    await runDialPendingCalls();
+    expect(calling.placeCall).not.toHaveBeenCalled();
+    expect(db.query.mock.calls.some((c) => /SET status = \$2, resolution_reason = \$3/.test(String(c[0])) && /assigned to an agent/.test(String((c[1] as unknown[])[2])))).toBe(true);
   });
 
   it("goes ahead when nobody on the team has been in touch", async () => {

@@ -382,7 +382,7 @@ export function startScheduler(): void {
   // (agents/iris/index.ts's CALL_DELAY_MINUTES), so it needs to actually
   // catch rows close to when they become due, not up to an hour late.
   // The heartbeat is written AFTER each run, so the watchdog can tell "the job stopped" from "nothing was due".
-  cron.schedule("* * * * *", async () => { await runDialPendingCalls(); await recordHeartbeat("dial-pending"); }, { timezone: TIMEZONE });
+  cron.schedule("* * * * *", async () => { await runDialPendingCalls(); await recordHeartbeat("dial-pending"); }, { timezone: TIMEZONE, noOverlap: true });
   // Every 5 minutes: looks for trouble (stalled scheduler, overdue calls, calls that never reported) and DMs once.
   cron.schedule("*/5 * * * *", () => runWatchdog(), { timezone: TIMEZONE });
   // 8:15 AM St. John's time: Iris's morning summary in #backend-ops, before the 10:00 AM calls.
@@ -417,13 +417,13 @@ export function startScheduler(): void {
   cron.schedule("*/10 * * * *", () => runApprovalNudges().catch((e) => console.error("[SCHEDULER] Approval nudges failed:", e instanceof Error ? e.message : e)), { timezone: TIMEZONE });
   // Every 5 minutes: finds cards the team just moved to No-Show and starts Iris's follow-up (text now,
   // calls later). The first scan only records what is already in the column. See agents/iris/no-show.ts.
-  cron.schedule("*/5 * * * *", runNoShowScan, { timezone: TIMEZONE });
+  cron.schedule("*/5 * * * *", runNoShowScan, { timezone: TIMEZONE, noOverlap: true });
   // Hourly at :25, after the lead sync: copies each client's GHL appointments (with their showed / no-show outcomes)
   // into our database for the Lens dashboard. See agents/lens/dashboard/appointments-sync.ts.
   cron.schedule("25 * * * *", () => runAppointmentSync(), { timezone: TIMEZONE });
   // Hourly at :35: the week-long follow-up on a hand-picked group (next call rounds, and the final move to
   // Not Ready / Not Interested). Does nothing while no group is enrolled. See agents/iris/followup-cohort.ts.
-  cron.schedule("35 * * * *", () => runFollowUpCohortCheck(), { timezone: TIMEZONE });
+  cron.schedule("35 * * * *", () => runFollowUpCohortCheck(), { timezone: TIMEZONE, noOverlap: true });
   // 20 past, clear of the Meta sync (:00) and rule evaluation (:05) — the
   // scan paginates a whole pipeline through GHL and shouldn't compete.
   cron.schedule("20 * * * *", runEmberScan, { timezone: TIMEZONE });

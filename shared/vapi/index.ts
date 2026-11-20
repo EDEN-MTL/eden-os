@@ -354,6 +354,8 @@ export function getVapiEnvConfig(): {
   };
 }
 
+const VAPI_REQUEST_TIMEOUT_MS = 30_000;
+
 /** Places an outbound call. No gating here by design — see agents/iris/calling.ts. */
 export async function createCall(payload: CreateCallPayload, apiKey: string): Promise<VapiCallResult> {
   const response = await fetch(`${VAPI_BASE_URL}/call`, {
@@ -363,6 +365,10 @@ export async function createCall(payload: CreateCallPayload, apiKey: string): Pr
       "Content-Type": "application/json",
     },
     body: JSON.stringify(payload),
+    // A request that never answers would hold the whole dial run (and, with noOverlap on the cron, every later run) for ever.
+    // If this fires the call may still have been placed: the row is closed as failed rather than retried, because a lead
+    // phoned twice is worse than one not phoned.
+    signal: AbortSignal.timeout(VAPI_REQUEST_TIMEOUT_MS),
   });
 
   if (!response.ok) {

@@ -387,3 +387,15 @@ single global env var; it moves into client config when a second client needs Ir
 
 ## A stop is honored whatever state the row is in
 A clear stop runs `recordOptOut` (`agents/iris/opt-out.ts`): tag "do not call", card to Not Interested, row closed, words to Slack. It now also covers a lead whose row is `placed` (Beverley Bradbury, 2026-11-11: texted "do not reach out" right after a connected call and was ignored).
+
+## Dial safety: one call, at a legal hour, to a lead who can still be called (audit, 2026-11-20)
+The self-audit found ways a lead could be rung twice, at night, or after they had said no. The dial path (`agents/iris/dial-pending.ts`) now works like this:
+
+- **One run per row.** `runDialPendingCalls` claims due rows with `FOR UPDATE SKIP LOCKED` and stamps them (`dial_lease_until`, `dial_lease_token`, 10 minutes). Two runs in flight (a deploy overlapping the old process, a slow run) never take the same lead. The last step before `placeCall` is one `UPDATE ... WHERE dial_lease_token = $token AND status = 'pending'` that flips the row to `placed` ("dialing"); no row back means someone else has it and nothing dials. A crash between the Vapi request and `markPlaced` therefore leaves a lead uncalled, never called twice. **If a row sits at `placed` with reason `dialing` and no call in `iris_call_log`, that is what happened: call the lead by hand.** The lease is handed back after each row, so a row left due is retried next minute.
+- **No overlap, no hang.** The dial, no-show and follow-up-cohort crons run with `noOverlap: true`. Because a hung request would now stall every later run, every GHL request and the Vapi create-call request time out after 30 s. A timeout on create-call closes the row as failed (the call may exist; do not retry blind).
+- **Calling hours at dial time.** If the clock is outside 8 AM to 9 PM in the lead's timezone when the row is processed, the row moves to the next opening (not an attempt). Nothing used to check this at the moment of the dial (Corinne Wade's callback went out at 10:12 PM).
+- **Last-moment checks, fail closed.** Right before the dial the live contact is read: GHL do-not-disturb (`dnd`, or `dndSettings.Call` active/permanent), the "do not call" and "no calls" tags, and assignment to an agent. No GHL connection, an unreadable contact, or an unreadable thread leaves the row due and nothing dials. Before, a missing connection skipped every check and dialed.
+- **Sweeps and assignment.** A cold-lead sweep still skips the teammate text/call check (Mark's decision, 2026-10-10) but no longer skips the assignment check: an old lead since assigned to an agent is left alone. Only a call a teammate asked for in Slack bypasses both.
+- **A bad config no longer fails every lead.** An unreadable client JSON used to close each due row as failed. Now the rows stay due and the error is logged; they dial once the file loads. `iris.writeFields` is no longer required (nothing reads it).
+
+Tests: `agents/iris/dial-pending.test.ts` ("dial safety"), `leave-lead.test.ts`, `sweep-queue.test.ts`, `shared/vapi/index.test.ts`.

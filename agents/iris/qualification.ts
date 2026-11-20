@@ -117,7 +117,8 @@ export interface IrisConfig {
    * Defaults to St. John's for existing clients that never set this.
    */
   timezone?: string;
-  writeFields: IrisWriteFields;
+  /** Nothing reads this any more (Iris writes no structured fields after a call); optional so a client without it still loads. */
+  writeFields?: IrisWriteFields;
   outreachCadence: OutreachCadenceConfig;
   /**
    * How a text-qualification conversation ends for a QUALIFIED lead (Mark,

@@ -1,5 +1,5 @@
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { getVapiEnvConfig } from "./index";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { createCall, getVapiEnvConfig } from "./index";
 
 const REQUIRED_ENV = {
   VAPI_API_KEY: "test-key",
@@ -55,5 +55,16 @@ describe("getVapiEnvConfig", () => {
   it("passes through a real VAPI_WEBHOOK_SECRET unchanged", () => {
     process.env.VAPI_WEBHOOK_SECRET = "shh-its-a-secret";
     expect(getVapiEnvConfig().webhookSecret).toBe("shh-its-a-secret");
+  });
+});
+
+describe("createCall", () => {
+  it("gives up on a Vapi request that never answers, so one hang cannot hold the dial run", async () => {
+    const fetchMock = vi.fn(async () => ({ ok: true, json: async () => ({ id: "call-1" }) }));
+    vi.stubGlobal("fetch", fetchMock);
+    await createCall({} as any, "key");
+    const init = (fetchMock.mock.calls[0] as unknown as [string, RequestInit])[1];
+    expect(init.signal).toBeInstanceOf(AbortSignal);
+    vi.unstubAllGlobals();
   });
 });

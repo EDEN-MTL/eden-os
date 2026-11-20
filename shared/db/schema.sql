@@ -935,3 +935,9 @@ CREATE TABLE IF NOT EXISTS callback_texts (
     UNIQUE (client_id, call_message_id)
 );
 CREATE INDEX IF NOT EXISTS idx_callback_texts_contact ON callback_texts(client_id, contact_id, created_at);
+
+-- Dial lease (audit, 2026-11-20): runDialPendingCalls claims its due rows with FOR UPDATE SKIP LOCKED and stamps them, so two
+-- runs in flight (a deploy overlapping the old process, a slow run) never dial the same lead. The lease frees itself if a
+-- process dies; the token says which run holds the row.
+ALTER TABLE iris_pending_calls ADD COLUMN IF NOT EXISTS dial_lease_until TIMESTAMPTZ;
+ALTER TABLE iris_pending_calls ADD COLUMN IF NOT EXISTS dial_lease_token TEXT;

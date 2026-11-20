@@ -21,16 +21,17 @@
  * the sequence, whatever the outcome. webhooks/vapi-webhook.ts's
  * end-of-call handler is the only place that knows which happened.
  */
+import { randomUUID } from "crypto";
 import { query } from "../../shared/db";
 import { recheckFirstTouch, refreshLead } from "../scout";
 import { NormalisedLead } from "../scout/intake";
 import { loadIrisConfig, loadClientBranding } from "./index";
 import { buildLeadQualificationPrompt, extractFirstName } from "./scripts";
 import { placeCall, CallingDisabledError } from "./calling";
-import { applyPreferredTime, decideNextAttempt, isStatedCallbackTime, nextAttemptTime, nextFirstSlotTime, nextSlotAfter, clampToLegalCallingWindow, nextOpenCallDay, timeOfDayLocal } from "./cadence";
+import { applyPreferredTime, decideNextAttempt, isStatedCallbackTime, nextAttemptTime, nextFirstSlotTime, nextSlotAfter, clampToLegalCallingWindow, nextOpenCallDay, timeOfDayLocal, isWithinLegalCallingWindow } from "./cadence";
 import { transferNumberForIntent, callbackCalendarForIntent } from "./qualification";
 import { classifyInboundText, lastInboundText } from "./text-signals";
-import { checkHumanTouch, DEFAULT_HUMAN_HANDS_OFF_DAYS } from "./human-touch";
+import { checkHumanTouch, assignedAgentOf, DEFAULT_HUMAN_HANDS_OFF_DAYS } from "./human-touch";
 import { hasActiveSmsConversation, markLeadNoCalls, NO_CALLS_TAG } from "./sms";
 import { sendMessage } from "../../shared/slack";
 import { CALL_LOG_CHANNEL } from "./channels";
@@ -336,7 +337,20 @@ export async function holdForTextReply(id: number): Promise<void> {
   );
 }
 
-async function resolveOne(row: PendingCallRow): Promise<void> {
+/**
+ * Why GHL says this contact must not be phoned, or null. dnd=true is "do not disturb" on every channel; dndSettings.Call
+ * is the call channel alone ("active" and "permanent" both block); "do not call" is the tag Iris and the team use.
+ */
+export function callBlockedReason(contact: any): string | null {
+  if (contact?.dnd === true) return "GHL do-not-disturb is on";
+  const callStatus = contact?.dndSettings?.Call?.status;
+  if (callStatus === "active" || callStatus === "permanent") return "GHL do-not-disturb is on for calls";
+  const tags: unknown[] = Array.isArray(contact?.tags) ? contact.tags : [];
+  if (tags.some((t) => String(t).toLowerCase() === "do not call")) return 'the lead is tagged "do not call"';
+  return null;
+}
+
+async function resolveOne(row: PendingCallRow, leaseToken: string): Promise<void> {
   // Sweep rows go out one at a time: leave this one due and untouched while
   // any call is still ringing or in progress, so the next scheduler run (every
   // minute) tries again — and picks them up in their original order.
@@ -345,7 +359,10 @@ async function resolveOne(row: PendingCallRow): Promise<void> {
   const config = loadIrisConfig(row.client_id);
   const branding = loadClientBranding(row.client_id);
   if (!config || !branding) {
-    await finish(row.id, "failed", "no iris config or client branding for this client");
+    // Leave the row due. Failing it closed it for good, so one bad edit to the client JSON (or a file that could not
+    // be read for a moment) used to fail every lead that came due while it lasted, with nothing left to retry them.
+    // Nothing dials meanwhile, and the next run tries again once the file reads cleanly.
+    console.error(`[IRS] Not dialling pending call ${row.id}: iris config or client branding for ${row.client_id} did not load. Leaving it due.`);
     return;
   }
 
@@ -453,6 +470,25 @@ async function resolveOne(row: PendingCallRow): Promise<void> {
   const timezone = liveTimezone || config.timezone || CLIENT_TIMEZONE;
   const promptConfig = { ...config, timezone };
 
+  // Every check below reads the lead's live state in GHL. Without it Iris cannot tell a lead who asked for no calls,
+  // is assigned to an agent, or is on do-not-disturb from one who is fair game, and used to dial anyway. Leave the
+  // row due and look again next run.
+  if (!ghlConfig) {
+    console.error(`[IRS] Not dialling pending call ${row.id}: no GHL connection for ${row.client_id}, so the lead's live state cannot be checked. Leaving it due.`);
+    return;
+  }
+
+  // Calling hours are checked at the moment of the dial, not only when the time was chosen. A row can come due late (the
+  // scheduler was down, a pause ran past 9 PM, a retry landed in the evening), and a call at 10:12 PM went out that way.
+  // Not an attempt, so attempts_made stays put.
+  if (!isWithinLegalCallingWindow(new Date(), timezone)) {
+    await query(
+      `UPDATE iris_pending_calls SET call_after = $2, resolution_reason = 'outside calling hours — moved to the next opening' WHERE id = $1`,
+      [row.id, clampToLegalCallingWindow(new Date(), timezone)]
+    );
+    return;
+  }
+
   // Mark's spec, 2026-09-22: a real example — Catherine texting to ask for
   // a 6pm callback — before Iris ever calls a lead, check whether they've
   // already told us (by text) not to call, or to call at a specific time
@@ -463,11 +499,18 @@ async function resolveOne(row: PendingCallRow): Promise<void> {
   // fail-toward-"proceed as before" philosophy as the rest of this file.
   // A teammate talking to this lead means Iris leaves them alone, calls included (Mark, 2026-10-21, after
   // Iris called and moved Sabrina Marie the day after Jacob phoned and texted her). Goes ahead only when a
-  // teammate asked for THIS call in Slack, or for a cold-lead sweep Mark lined up by hand: those people
-  // have already been shown that a teammate is in touch.
-  const humanAsked = row.human_requested === true || row.source === SWEEP_SOURCE;
-  if (ghlConfig && config.humanTextBlocksCalls && !humanAsked) {
-    const humanTouch = await checkHumanTouch(row.contact_id, ghlConfig.locationId, ghlConfig.apiKey, config.humanHandsOffDays ?? DEFAULT_HUMAN_HANDS_OFF_DAYS);
+  // teammate asked for THIS call in Slack: they have been shown who else is in touch.
+  // A cold-lead sweep Mark lined up by hand still skips the teammate text/call check (his call, 2026-10-10), but NOT
+  // the assignment check: a lead assigned to an agent is that agent's, however the call was queued. The sweep
+  // used to bypass everything here, so an old lead since assigned to an agent would still have been rung.
+  const humanAsked = row.human_requested === true;
+  if (!humanAsked) {
+    const fullCheck = config.humanTextBlocksCalls === true && row.source !== SWEEP_SOURCE;
+    const humanTouch: Awaited<ReturnType<typeof checkHumanTouch>> = fullCheck
+      ? await checkHumanTouch(row.contact_id, ghlConfig.locationId, ghlConfig.apiKey, config.humanHandsOffDays ?? DEFAULT_HUMAN_HANDS_OFF_DAYS)
+      : await assignedAgentOf(row.contact_id, ghlConfig.locationId, ghlConfig.apiKey)
+          .then((who) => (who ? ({ status: "human", at: new Date().toISOString(), userId: who, kind: "assigned" } as const) : ({ status: "none" } as const)))
+          .catch(() => ({ status: "unknown" } as const));
     if (humanTouch.status === "human") {
       await finish(row.id, "skipped", humanTouch.kind === "assigned" ? "this lead is assigned to an agent — Iris stays out" : `a teammate is talking to this lead (${humanTouch.kind} ${humanTouch.at}) — Iris stays out`);
       await sendMessage("iris", {
@@ -484,9 +527,23 @@ async function resolveOne(row: PendingCallRow): Promise<void> {
     // path queued this row — the sweeps, the follow-up cohort and the retry cadence all land here, and the
     // new row they create knows nothing about the old text. The tag is the lasting record of it.
     const contactNow: any = await getContact(row.contact_id, ghlConfig.locationId, ghlConfig.apiKey).catch(() => null);
-    const tagsNow: string[] = (contactNow?.contact ?? contactNow)?.tags ?? [];
+    if (!contactNow) return; // cannot read the contact, so cannot tell if they said no: leave it due, never dial blind
+    const contactBody = contactNow.contact ?? contactNow;
+    const tagsNow: string[] = contactBody?.tags ?? [];
     if ((row.lead as any)?.noCalls === true || tagsNow.some((t) => String(t).toLowerCase() === NO_CALLS_TAG)) {
       await markLeadNoCalls(row.client_id, row.contact_id, ghlConfig, "lead asked for no calls — not dialling");
+      return;
+    }
+    // GHL's own do-not-disturb (all channels, or the Call channel) and the "do not call" tag a teammate or Iris puts
+    // on a lead. Every dial path ends here (cadence, sweeps, the follow-up cohort, a call resumed after a drop), so this
+    // is the last place any of them can be stopped, and the row's own snapshot may be weeks old.
+    const blockedWhy = callBlockedReason(contactBody);
+    if (blockedWhy) {
+      await finish(row.id, "skipped", `${blockedWhy} — not dialling`);
+      await sendMessage("iris", {
+        channel: CALL_LOG_CHANNEL,
+        text: `🚫 Not calling *${row.lead?.name ?? row.contact_id}*: ${blockedWhy}.`,
+      }).catch(() => {});
       return;
     }
 
@@ -628,6 +685,19 @@ async function resolveOne(row: PendingCallRow): Promise<void> {
     return;
   }
 
+  // The atomic last step: take the row for this dial in one statement, and only if this run still holds it. A second
+  // process (a deploy overlapping the old one, a slow run still going when the lease ran out) cannot also have it, so
+  // the lead is rung once. The row reads 'placed' from here on, so a crash between the Vapi request and markPlaced
+  // leaves a lead uncalled rather than called twice (a person phoned twice is the worse mistake).
+  const taken = await query<{ id: number }>(
+    `UPDATE iris_pending_calls
+     SET status = 'placed', resolution_reason = 'dialing', resolved_at = now(), dial_lease_until = NULL, dial_lease_token = NULL
+     WHERE id = $1 AND dial_lease_token = $2 AND status = 'pending'
+     RETURNING id`,
+    [row.id, leaseToken]
+  );
+  if (taken.length === 0) return;
+
   try {
     const result = await placeCall({
       clientId: row.client_id,
@@ -706,23 +776,48 @@ export async function scheduleExplicitCallback(clientId: string, contactId: stri
   return true;
 }
 
+/** A claimed row stays ours this long. Long enough for a slow run (GHL retries on 429), short enough that a crashed process does not strand a lead. */
+const DIAL_LEASE_MINUTES = 10;
+
+/**
+ * Takes the due rows for this run and marks them as ours in one statement. FOR UPDATE SKIP LOCKED means two runs in
+ * flight (two processes during a deploy, or a run that outlasts its minute) never pick the same row, which is how a lead
+ * gets two calls at once. Oldest first, as before: sweeps depend on that order.
+ */
+async function claimDueRows(leaseToken: string): Promise<PendingCallRow[]> {
+  const rows = await query<PendingCallRow & { call_after: Date }>(
+    `UPDATE iris_pending_calls
+     SET dial_lease_until = now() + ($2 || ' minutes')::interval, dial_lease_token = $1
+     WHERE id IN (
+       SELECT id FROM iris_pending_calls
+       WHERE status = 'pending' AND call_after <= now() AND (dial_lease_until IS NULL OR dial_lease_until < now())
+       ORDER BY call_after ASC, id ASC
+       LIMIT 25
+       FOR UPDATE SKIP LOCKED
+     )
+     RETURNING id, client_id, contact_id, lead, attempts_made, created_at, is_explicit_callback, source, sms_scheduled, human_requested, call_after`,
+    [leaseToken, String(DIAL_LEASE_MINUTES)]
+  );
+  // RETURNING has no order of its own.
+  return [...rows].sort((a, b) => new Date(a.call_after).getTime() - new Date(b.call_after).getTime() || a.id - b.id);
+}
+
 /** Entry point called by the scheduler. Each row's failure is isolated — one bad row must not block the rest. */
 export async function runDialPendingCalls(): Promise<void> {
-  const due = await query<PendingCallRow>(
-    `SELECT id, client_id, contact_id, lead, attempts_made, created_at, is_explicit_callback, source, sms_scheduled, human_requested FROM iris_pending_calls
-     WHERE status = 'pending' AND call_after <= now()
-     ORDER BY call_after ASC, id ASC
-     LIMIT 25`
-  );
+  const leaseToken = randomUUID();
+  const due = await claimDueRows(leaseToken);
 
   if (due.length === 0) return;
   console.log(`[IRS] Resolving ${due.length} due pending call(s).`);
 
   for (const row of due) {
     try {
-      await resolveOne(row);
+      await resolveOne(row, leaseToken);
     } catch (error) {
       console.error(`[IRS] Unexpected error resolving pending call ${row.id}:`, error instanceof Error ? error.message : error);
+    } finally {
+      // Hand the row back: a row left due (a check that could not be read) must be retried next run, not in ten minutes.
+      await query(`UPDATE iris_pending_calls SET dial_lease_until = NULL, dial_lease_token = NULL WHERE id = $1 AND dial_lease_token = $2`, [row.id, leaseToken]).catch(() => {});
     }
   }
 }

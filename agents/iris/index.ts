@@ -693,7 +693,6 @@ export function loadIrisConfig(clientId: string): IrisConfig | null {
     );
     if (
       !raw?.iris?.qualificationQuestions ||
-      !raw?.iris?.writeFields ||
       !raw?.iris?.outreachCadence ||
       !raw?.iris?.transferNumbers ||
       !raw?.iris?.callbacks?.notesFieldKey ||
@@ -712,7 +711,7 @@ export function loadIrisConfig(clientId: string): IrisConfig | null {
       callbackNotesFieldKey: raw.iris.callbacks.notesFieldKey,
       callbackCalendarIds: raw.iris.callbacks.calendarIds || undefined,
       timezone: raw.iris.timezone || undefined,
-      writeFields: raw.iris.writeFields,
+      writeFields: raw.iris.writeFields || undefined,
       outreachCadence: raw.iris.outreachCadence,
       smsCallHandoff: raw.iris.sms?.callHandoff === true,
       smsFromNumber: raw.iris.sms?.fromNumber || undefined,

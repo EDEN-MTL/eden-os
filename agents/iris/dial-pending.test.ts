@@ -19,7 +19,16 @@ vi.mock("./cadence", () => ({
   nextAttemptTime: vi.fn(),
   clampToLegalCallingWindow: vi.fn((d: Date) => d),
   nextOpenCallDay: vi.fn(() => null),
+  isWithinLegalCallingWindow: vi.fn(() => true),
 }));
+import { isWithinLegalCallingWindow, clampToLegalCallingWindow } from "./cadence";
+
+const humanTouch = vi.hoisted(() => ({
+  checkHumanTouch: vi.fn(async () => ({ status: "none" })),
+  assignedAgentOf: vi.fn(async () => null as string | null),
+  DEFAULT_HUMAN_HANDS_OFF_DAYS: 7,
+}));
+vi.mock("./human-touch", () => humanTouch);
 
 vi.mock("./qualification", () => ({ transferNumberForIntent: vi.fn(() => undefined), callbackCalendarForIntent: vi.fn(() => undefined) }));
 
@@ -40,7 +49,7 @@ const ghl = vi.hoisted(() => ({
 }));
 vi.mock("../../shared/ghl", () => ghl);
 
-import { runDialPendingCalls } from "./dial-pending";
+import { runDialPendingCalls, callBlockedReason } from "./dial-pending";
 import { buildLeadQualificationPrompt } from "./scripts";
 import { transferNumberForIntent } from "./qualification";
 
@@ -74,9 +83,13 @@ const DUE_ROW = {
 beforeEach(() => {
   vi.clearAllMocks();
   db.query.mockImplementation(async (sql: string) => {
-    if (sql.includes("WHERE status = 'pending' AND call_after <= now()")) return [DUE_ROW];
+    if (sql.includes("FOR UPDATE SKIP LOCKED")) return [DUE_ROW];
+    if (sql.includes("'dialing'")) return [{ id: 42 }]; // this run holds the row, so the dial goes ahead
     return [];
   });
+  vi.mocked(isWithinLegalCallingWindow).mockReturnValue(true);
+  humanTouch.checkHumanTouch.mockResolvedValue({ status: "none" });
+  humanTouch.assignedAgentOf.mockResolvedValue(null);
   scout.recheckFirstTouch.mockResolvedValue(true);
   irisIndex.loadIrisConfig.mockReturnValue({
     questions: ["q1"],
@@ -149,7 +162,7 @@ describe("resolveOne — pause-while-texting gate (Mark's confirmed design, 2026
 describe("resolveOne — call_consent signal (Mark, 2026-10-01)", () => {
   const withRow = (over: any) =>
     db.query.mockImplementation(async (sql: string) =>
-      sql.includes("WHERE status = 'pending' AND call_after <= now()") ? [{ ...DUE_ROW, ...over }] : []
+      sql.includes("FOR UPDATE SKIP LOCKED") ? [{ ...DUE_ROW, ...over }] : sql.includes("'dialing'") ? [{ id: 42 }] : []
     );
 
   it("schedules the call a few minutes out and marks sms_scheduled, rather than dialing immediately or pausing", async () => {
@@ -192,7 +205,7 @@ describe("resolveOne — Ember handoffs and text-agreed calls (Mark, 2026-09-24)
   const scripts = () => import("./scripts");
   const withRow = (over: any) =>
     db.query.mockImplementation(async (sql: string) =>
-      sql.includes("WHERE status = 'pending' AND call_after <= now()") ? [{ ...DUE_ROW, ...over }] : []
+      sql.includes("FOR UPDATE SKIP LOCKED") ? [{ ...DUE_ROW, ...over }] : sql.includes("'dialing'") ? [{ id: 42 }] : []
     );
 
   it("calls an Ember-handed old lead even though they're tagged live-transferred from months ago", async () => {
@@ -301,7 +314,8 @@ describe("resolveOne — a time the lead asked for by text (Jesse Noseworthy, 20
 describe("resolveOne — an explicit callback is not paused by the lead texting afterwards (Jesse Noseworthy, 2026-10-14)", () => {
   it("still places the call when the lead texted recently and a text exchange is active", async () => {
     db.query.mockImplementation(async (sql: string) => {
-      if (sql.includes("WHERE status = 'pending' AND call_after <= now()")) return [{ ...DUE_ROW, is_explicit_callback: true }];
+      if (sql.includes("FOR UPDATE SKIP LOCKED")) return [{ ...DUE_ROW, is_explicit_callback: true }];
+      if (sql.includes("'dialing'")) return [{ id: 42 }];
       return [];
     });
     textSignals.lastInboundText.mockResolvedValue({ text: "That is 100% something I need to do.", precedingOutbound: null, dateAdded: new Date(Date.now() - 15 * 60 * 60 * 1000).toISOString() });
@@ -378,7 +392,7 @@ describe("resolveOne — the call back after a transfer dropped", () => {
   });
 
   function dueRow(row: unknown) {
-    db.query.mockImplementation(async (sql: string) => (sql.includes("WHERE status = 'pending' AND call_after <= now()") ? [row] : []));
+    db.query.mockImplementation(async (sql: string) => (sql.includes("FOR UPDATE SKIP LOCKED") ? [row] : sql.includes("'dialing'") ? [{ id: 42 }] : []));
   }
 
   it("places the call even though the lead now reads as qualified, and tells the prompt what they agreed to", async () => {
@@ -416,5 +430,106 @@ describe("resolveOne — the call back after a transfer dropped", () => {
     await runDialPendingCalls();
 
     expect(calling.placeCall).not.toHaveBeenCalled();
+  });
+});
+
+describe("dial safety (audit, 2026-11-20)", () => {
+  const skippedWith = (re: RegExp) => db.query.mock.calls.find((c) => String(c[0]).includes("status = $2") && re.test(String(c[1]?.[2] ?? "")));
+
+  it("claims its rows with a lease, so two runs never take the same lead", async () => {
+    await runDialPendingCalls();
+    const claim = db.query.mock.calls.find((c) => String(c[0]).includes("FOR UPDATE SKIP LOCKED"));
+    expect(String(claim?.[0])).toMatch(/dial_lease_until IS NULL OR dial_lease_until < now\(\)/);
+  });
+
+  it("does not dial when another run already holds the row at the last step", async () => {
+    db.query.mockImplementation(async (sql: string) => (sql.includes("FOR UPDATE SKIP LOCKED") ? [DUE_ROW] : []));
+    await runDialPendingCalls();
+    expect(calling.placeCall).not.toHaveBeenCalled();
+  });
+
+  it("hands every row's lease back afterwards so a row left due is retried next minute", async () => {
+    await runDialPendingCalls();
+    expect(db.query.mock.calls.some((c) => /SET dial_lease_until = NULL, dial_lease_token = NULL WHERE id = \$1 AND dial_lease_token = \$2/.test(String(c[0])))).toBe(true);
+  });
+
+  it("does not dial outside calling hours, and moves the row to the next opening instead", async () => {
+    vi.mocked(isWithinLegalCallingWindow).mockReturnValue(false);
+    const opening = new Date("2026-11-21T11:30:00.000Z");
+    vi.mocked(clampToLegalCallingWindow).mockReturnValueOnce(opening);
+    await runDialPendingCalls();
+    expect(calling.placeCall).not.toHaveBeenCalled();
+    const moved = db.query.mock.calls.find((c) => String(c[0]).includes("outside calling hours"));
+    expect(moved?.[1]).toEqual([42, opening]);
+  });
+
+  it("leaves the row due, and does not dial, when the GHL connection is missing", async () => {
+    ghl.getGhlConfig.mockResolvedValue(null as any);
+    await runDialPendingCalls();
+    expect(calling.placeCall).not.toHaveBeenCalled();
+    expect(skippedWith(/./)).toBeUndefined();
+  });
+
+  it("leaves the row due, and does not dial, when the contact cannot be read", async () => {
+    ghl.getContact.mockRejectedValueOnce(new Error("GHL down"));
+    await runDialPendingCalls();
+    expect(calling.placeCall).not.toHaveBeenCalled();
+    expect(skippedWith(/./)).toBeUndefined();
+  });
+
+  it("does not close the lead when the client config fails to load: it stays due for the next run", async () => {
+    irisIndex.loadIrisConfig.mockReturnValue(null);
+    await runDialPendingCalls();
+    expect(calling.placeCall).not.toHaveBeenCalled();
+    expect(db.query.mock.calls.some((c) => String(c[0]).includes("resolution_reason = $3"))).toBe(false);
+  });
+
+  it("never dials a contact on GHL do-not-disturb, whatever queued the row", async () => {
+    ghl.getContact.mockResolvedValueOnce({ contact: { tags: [], dnd: true } } as any);
+    await runDialPendingCalls();
+    expect(calling.placeCall).not.toHaveBeenCalled();
+    expect(skippedWith(/do-not-disturb/)).toBeDefined();
+  });
+
+  it("never dials a contact tagged 'do not call'", async () => {
+    ghl.getContact.mockResolvedValueOnce({ contact: { tags: ["Do Not Call"] } } as any);
+    await runDialPendingCalls();
+    expect(calling.placeCall).not.toHaveBeenCalled();
+    expect(skippedWith(/do not call/)).toBeDefined();
+  });
+
+  it("a cold-lead sweep still stops for a lead assigned to an agent", async () => {
+    db.query.mockImplementation(async (sql: string) => (sql.includes("FOR UPDATE SKIP LOCKED") ? [{ ...DUE_ROW, source: "sweep", is_explicit_callback: true }] : sql.includes("iris_call_log") ? [] : []));
+    scout.refreshLead.mockResolvedValue({ ...LEAD, qualified: false, firstTouch: true });
+    humanTouch.assignedAgentOf.mockResolvedValue("user-agent-1");
+    await runDialPendingCalls();
+    expect(calling.placeCall).not.toHaveBeenCalled();
+    expect(humanTouch.checkHumanTouch).not.toHaveBeenCalled(); // sweeps keep skipping the text/call check (Mark's call)
+  });
+
+  it("a call a teammate asked for in Slack is not stopped by the assignment check", async () => {
+    db.query.mockImplementation(async (sql: string) => (sql.includes("FOR UPDATE SKIP LOCKED") ? [{ ...DUE_ROW, human_requested: true, is_explicit_callback: true }] : sql.includes("'dialing'") ? [{ id: 42 }] : []));
+    scout.refreshLead.mockResolvedValue({ ...LEAD, qualified: false, firstTouch: true });
+    humanTouch.assignedAgentOf.mockResolvedValue("user-agent-1");
+    await runDialPendingCalls();
+    expect(humanTouch.assignedAgentOf).not.toHaveBeenCalled();
+    expect(calling.placeCall).toHaveBeenCalledTimes(1);
+  });
+
+  it("an ordinary lead assigned to an agent is left alone even when the text/call check is switched off", async () => {
+    humanTouch.assignedAgentOf.mockResolvedValue("user-agent-1");
+    await runDialPendingCalls();
+    expect(calling.placeCall).not.toHaveBeenCalled();
+  });
+});
+
+describe("callBlockedReason", () => {
+  it("reads GHL's do-not-disturb flags and the 'do not call' tag, and nothing else", () => {
+    expect(callBlockedReason({ dnd: true })).toMatch(/do-not-disturb/);
+    expect(callBlockedReason({ dndSettings: { Call: { status: "active" } } })).toMatch(/calls/);
+    expect(callBlockedReason({ dndSettings: { Call: { status: "permanent" } } })).toMatch(/calls/);
+    expect(callBlockedReason({ tags: ["do not call"] })).toMatch(/do not call/);
+    expect(callBlockedReason({ dndSettings: { Call: { status: "inactive" }, SMS: { status: "active" } }, tags: ["buyer lead"] })).toBeNull();
+    expect(callBlockedReason(null)).toBeNull();
   });
 });
