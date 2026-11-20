@@ -154,6 +154,27 @@ describe("buildCallPayload", () => {
     expect(spoken("Thanks so much for your time, have a great day. Goodbye.")).toBe("Thanks so much for your time, have a great day. Goodbye.");
   });
 
+  /** Oluwadare Ogunbiyi, 2026-11-20: asked "Who is this?" (heard as "With this"), she read her own instructions aloud for 13 seconds. */
+  it("drops sentences about her own instructions, protocol and turns before the voice reads them, and a stray list number", () => {
+    const spoken = (text: string) => SPEECH_REPLACEMENTS.reduce((t, r) => t.replace(new RegExp(r.regex, "gi"), r.value), text).replace(/\s+/g, " ").trim();
+    const leaked =
+      "I'm ready to help. I have all my instructions loaded, and I'm waiting for the call to connect. Once a real person picks up, I'll follow the exact protocol. 1, 1st turn. I'll say my opening line exactly once.";
+    expect(spoken(leaked)).toBe("");
+    expect(spoken("Hi. This is Iris with 3 percent East Coast. Am I speaking with Oluwadare? 2.")).toBe("Hi. This is Iris with 3 percent East Coast. Am I speaking with Oluwadare?");
+    expect(spoken("2.")).toBe("");
+    expect(spoken("1,")).toBe("");
+    // Ordinary speech is untouched, including words that sit near the patterns.
+    for (const line of [
+      "I'd be happy to help with that.",
+      "Are you still waiting for the agent to call you back?",
+      "You'll get the instructions by text.",
+      "Sounds good, I'll call you at two o'clock.",
+      "So you're looking for 3 bedrooms. Is that right?",
+    ]) {
+      expect(spoken(line)).toBe(line);
+    }
+  });
+
   /** Magar Bhuma, 2026-11-05: a `say` hook with a `prompt` made the model answer as "Claude, an AI assistant" mid-call and the call ended. */
   it("speaks a fixed check-in line, never a model-generated one", () => {
     const hook = buildCallPayload(BASE_PARAMS, VAPI_CONFIG).assistant.hooks?.[0] as any;

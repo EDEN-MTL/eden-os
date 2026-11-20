@@ -990,6 +990,20 @@ export const SPEECH_REPLACEMENTS = [
   [escapeRegex(SILENT_MARKER), ""],
   ["\\bI(?:'|’)?(?:ll| will| am|'m|’m) (?:stay(?:ing)?|remain(?:ing)?|keep(?:ing)?) (?:silent|quiet)[^.!?]*[.!?]?", ""],
   ["\\bI(?:'|’)?(?:ll| will|'m|’m| am) (?:wait|waiting) (?:for|until) (?:a|the) (?:real|live|actual) (?:person|human)[^.!?]*[.!?]?", ""],
+  // Her own instructions read aloud (Oluwadare Ogunbiyi, 2026-11-20: asked "Who is this?", she spoke for 13 seconds:
+  // "I'm ready to help ... I have all my instructions loaded, and I'm waiting for the call to connect ... exact protocol.
+  // 1, 1st turn. I'll say my opening line exactly once."). No real sentence of hers mentions her instructions, protocol,
+  // turns or opening line, so each sentence that does is dropped before the voice reads it.
+  ["[^.!?\\n]*\\b(?:I(?:'|’)?m|I am) ready to help[^.!?\\n]*[.!?]?", ""],
+  ["[^.!?\\n]*\\bmy (?:instructions|system prompt|protocol)\\b[^.!?\\n]*[.!?]?", ""],
+  ["[^.!?\\n]*\\b(?:exact protocol|my opening line|first turn|\\d(?:st|nd|rd|th) turn|waiting for the call to (?:connect|go through))\\b[^.!?\\n]*[.!?]?", ""],
+  ["[^.!?\\n]*\\bonce a (?:real|live) (?:person|human)\\b[^.!?\\n]*[.!?]?", ""],
+  // A chunk that is only a list number ("2.", "1,") — she wrote "...Am I speaking with Oluwadare? 2." on the same call.
+  // Figures are always words, so a bare number is never speech.
+  ["^\\s*\\d{1,2}[.,)]?\\s*$", ""],
+  // The same number stuck on the end of a sentence, after a space ("... with Oluwadare? 2."). No lookbehind: Vapi
+  // compiles these itself, and a pattern its engine cannot read could refuse the whole call.
+  ["\\s+\\d{1,2}[.,]\\s*$", ""],
   // A turn that is nothing but "Goodbye." — what she said into a screener and a voicemail
   // greeting (2026-10-13, 2026-10-14) when she should have hung up silently. Anchored to
   // the whole chunk, so a real goodbye inside a full sentence is untouched.

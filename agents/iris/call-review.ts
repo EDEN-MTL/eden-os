@@ -45,7 +45,9 @@ const norm = (text: string): string =>
 
 const AI_QUESTION = /\b(?:are|is|am)\b.{0,25}\b(?:ai|a\.i\.|artificial|robot|bot|automated|computer|real person|human|machine)\b|\b(?:ai|robot|bot)\b\?/i;
 const AI_ANSWER = /\b(?:ai|a\.i\.|artificial|virtual assistant|automated)\b/i;
-const NARRATION = /(?:stay(?:ing)?|remain(?:ing)?|keep(?:ing)?) (?:silent|quiet)|wait(?:ing)? for (?:a|the) (?:real|live|actual) (?:person|human)|\[silent\]/i;
+const NARRATION = /(?:stay(?:ing)?|remain(?:ing)?|keep(?:ing)?) (?:silent|quiet)|wait(?:ing)? for (?:a|the) (?:real|live|actual) (?:person|human)|\[silent\]|ready to help[^.!?]*instructions|my instructions|exact protocol|my opening line|\d(?:st|nd|rd|th) turn|waiting for the call to (?:connect|go through)/i;
+/** A list number she said aloud ("... Am I speaking with Oluwadare? 2."): never part of real speech, since figures are words. */
+const STRAY_NUMBER = /^\s*\d{1,2}[.,)]?\s*$|[?!.]\s+\d{1,2}[.,]\s*$/;
 const IRIS_ONLY = /^\s*iris[.,!]?\s*$/i;
 /** Digits a voice reads one by one, a $ on a figure, or a currency that isn't ours. */
 const SPOKEN_FIGURE_PROBLEM = /\d{5,}|(?:\d ){3,}\d|\$\s?\d|\b(?:euros?|pounds|pesos)\b|[€£]/i;
@@ -62,6 +64,10 @@ export function reviewCall(input: CallReviewInput): CallReview {
   // 1. Her own instructions, read aloud.
   const narration = bot.find((l) => NARRATION.test(l.message));
   if (narration) flags.push(`Iris spoke her own instruction out loud: ${quote(narration.message)}`);
+
+  // 1a. A list number read aloud after a sentence (Oluwadare Ogunbiyi, 2026-11-20).
+  const stray = bot.find((l) => STRAY_NUMBER.test(l.message));
+  if (stray) flags.push(`Iris said a stray number out loud: ${quote(stray.message)}`);
 
   // 1b. Her name was cut off (OG Phranky, 2026-11-19: a screener asked for her name and the call log shows only "I").
   // Said into a screener, "Iris." is the whole answer, so a fragment of it means the screener never heard her.

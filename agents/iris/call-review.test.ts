@@ -17,6 +17,28 @@ describe("reviewCall — the real failures it exists to catch", () => {
     expect(r.flags[0]).toMatch(/spoke into a screener\/voicemail.*Goodbye/);
   });
 
+  // Oluwadare Ogunbiyi, Nov 20: asked "Who is this?" (heard as "With this"), she read her instructions aloud, then said a stray "2.".
+  it("Oluwadare Ogunbiyi, Nov 20: read her own instructions aloud to a person, and said a stray number", () => {
+    const r = reviewCall({
+      ...base,
+      expectedOpener: OPENER,
+      lines: [
+        u("With this"),
+        b("I'm ready to help. I'm Iris in AI ISA for 3 percent East Coast. I have all my instructions loaded, and I'm waiting for the call to connect. Once a real person picks up, I'll follow the exact protocol. 1, 1st turn. I'll say my opening line exactly once."),
+        u("This"),
+        b("Hi. This is Iris with 3 percent East Coast. Am I speaking with Amanda? 2."),
+      ],
+    });
+    expect(r.verdict).toBe("attention");
+    expect(r.flags.join(" | ")).toMatch(/spoke her own instruction out loud.*ready to help/);
+    expect(r.flags.join(" | ")).toMatch(/stray number out loud.*2\./);
+  });
+
+  it("does not flag an ordinary opener and a real number-free call", () => {
+    const r = reviewCall({ ...base, expectedOpener: OPENER, lines: [u("Hello?"), b(OPENER), u("Yes."), b("Great, how are you doing today?")] });
+    expect(r.flags.join(" | ")).not.toMatch(/stray number|own instruction/);
+  });
+
   // OG Phranky, Nov 19: a screener asked for her name and the call log shows only "I". Her name was cut off.
   it("OG Phranky, Nov 19: her name was cut off after 'I' on a screener", () => {
     const r = reviewCall({
