@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-const db = vi.hoisted(() => ({ query: vi.fn(async () => []) }));
+const db = vi.hoisted(() => ({ query: vi.fn(async (..._args: unknown[]): Promise<any[]> => [{ id: 1 }]) }));
 vi.mock("../../shared/db", () => db);
 vi.mock("../scout", () => ({ recheckFirstTouch: vi.fn(), refreshLead: vi.fn() }));
 const irisIndex = vi.hoisted(() => ({ loadIrisConfig: vi.fn(), loadClientBranding: vi.fn() }));
@@ -29,6 +29,7 @@ function at(iso: string) {
 
 beforeEach(() => {
   irisIndex.loadIrisConfig.mockReturnValue(CONFIG);
+  db.query.mockResolvedValue([{ id: 1 }]); // the UPDATE ... RETURNING id found the row
 });
 afterEach(() => {
   vi.useRealTimers();
@@ -128,5 +129,14 @@ describe("preferred callback time helpers", () => {
     expect(applyPreferredTime(new Date("2026-11-03T13:30:00.000Z"), "22:00", TZ, now).getTime()).toBeGreaterThan(new Date("2026-11-03T22:30:00.000Z").getTime() - 1);
     const unchanged = new Date("2026-11-03T13:30:00.000Z");
     expect(applyPreferredTime(unchanged, "soon", TZ, now)).toBe(unchanged);
+  });
+});
+
+describe("a row a teammate stopped is not reopened (Slack stop audit, 2026-11-20)", () => {
+  it("reports no retry, so nothing announces one, when the row was closed while the call was ringing", async () => {
+    at("2026-10-05T21:30:00Z");
+    db.query.mockResolvedValue([]); // UPDATE ... AND status <> 'skipped' matched nothing
+    expect(await reopenAfterMissedCallback(1, "3pc", 1, CREATED, 0)).toEqual({ reopened: false });
+    expect(String((db.query.mock.calls[0] as unknown[])[0])).toMatch(/status <> 'skipped'/);
   });
 });

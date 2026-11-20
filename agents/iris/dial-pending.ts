@@ -114,6 +114,10 @@ async function markPlaced(id: number, attemptsMade: number, vapiCallId: string):
 }
 
 /**
+ * Every reopen below carries `AND status <> 'skipped'`: a row a teammate stopped in Slack (or that was closed as skipped for any
+ * other reason) while its call was still ringing must stay closed. The end-of-call retry used to flip it straight back to
+ * 'pending' and Iris called again.
+ *
  * Reopens a row for its next scheduled attempt — called by
  * webhooks/vapi-webhook.ts's end-of-call handler once it knows the call
  * genuinely wasn't answered (voicemail, no pickup, busy, or a technical
@@ -162,13 +166,15 @@ export async function reopenForNextAttempt(
     callAfter = clampToLegalCallingWindow(nextSlotAfter(config.outreachCadence, timeZone, new Date(Date.now() + 60 * 60 * 1000)), timeZone);
   }
 
-  await query(
+  const reopened = await query<{ id: number }>(
     `UPDATE iris_pending_calls
      SET call_after = $2, status = 'pending', resolution_reason = 'not answered — retrying', resolved_at = NULL
-     WHERE id = $1`,
+     WHERE id = $1 AND status <> 'skipped'
+     RETURNING id`,
     [id, callAfter]
   );
-  return true;
+  // Nothing updated = the row was closed meanwhile (a teammate's stop): no retry, and the caller must not announce one.
+  return reopened.length > 0;
 }
 
 /**
@@ -181,13 +187,14 @@ export async function reopenNoShowAfterMiss(id: number, clientId: string, attemp
   if (!config?.noShowFollowUp || attemptsMade >= config.noShowFollowUp.maxCalls) return null;
   const timeZone = config.timezone || CLIENT_TIMEZONE;
   const callAfter = clampToLegalCallingWindow(nextSlotAfter(config.outreachCadence, timeZone, new Date(Date.now() + 60 * 60 * 1000)), timeZone);
-  await query(
+  const reopened = await query<{ id: number }>(
     `UPDATE iris_pending_calls
      SET call_after = $2, status = 'pending', resolution_reason = 'no-show follow-up: not answered, trying again', resolved_at = NULL
-     WHERE id = $1`,
+     WHERE id = $1 AND status <> 'skipped'
+     RETURNING id`,
     [id, callAfter]
   );
-  return callAfter;
+  return reopened.length > 0 ? callAfter : null;
 }
 
 /** Ends a no-show follow-up whose calls are used up. */
@@ -250,13 +257,15 @@ export async function reopenAfterMissedCallback(
     if (preferredTime) callAfter = applyPreferredTime(callAfter, preferredTime, timeZone, now);
   }
 
-  await query(
+  const reopened = await query<{ id: number }>(
     `UPDATE iris_pending_calls
      SET call_after = $2, status = 'pending', callback_misses = $3,
          resolution_reason = 'callback not answered — retrying', resolved_at = NULL
-     WHERE id = $1`,
+     WHERE id = $1 AND status <> 'skipped'
+     RETURNING id`,
     [id, callAfter, misses]
   );
+  if (reopened.length === 0) return { reopened: false };
   return { reopened: true, callAfter, misses, phase: misses === 1 ? "quick-retry" : "cadence" };
 }
 
@@ -332,7 +341,7 @@ export async function holdForTextReply(id: number): Promise<void> {
   await query(
     `UPDATE iris_pending_calls
      SET call_after = 'infinity', status = 'pending', resolution_reason = 'no answer — texted instead, waiting for a reply', resolved_at = NULL
-     WHERE id = $1`,
+     WHERE id = $1 AND status <> 'skipped'`,
     [id]
   );
 }

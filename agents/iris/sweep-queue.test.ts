@@ -54,6 +54,7 @@ describe("holdForTextReply", () => {
     const [sql, params] = db.query.mock.calls[0] as unknown as [string, unknown[]];
     expect(sql).toMatch(/'infinity'/);
     expect(sql).toMatch(/status = 'pending'/);
+    expect(sql).toMatch(/status <> 'skipped'/); // a row a teammate stopped is never reopened
     expect(params).toEqual([77]);
   });
 });

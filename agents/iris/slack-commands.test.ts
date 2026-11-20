@@ -23,6 +23,12 @@ vi.mock("./lead-review", () => review);
 const humanTouch = vi.hoisted(() => ({ checkHumanTouch: vi.fn(async () => ({ status: "none" })), DEFAULT_HUMAN_HANDS_OFF_DAYS: 7 }));
 vi.mock("./human-touch", () => humanTouch);
 
+const stopLead = vi.hoisted(() => ({
+  readStopState: vi.fn(async () => ({ openRows: 1, emberLeads: 0, tagged: false })),
+  carryOutStop: vi.fn(async () => ({ closedRows: 1, emberStopped: 0, tagged: true })),
+}));
+vi.mock("./stop-lead", () => stopLead);
+
 import { handleCommandReply, isNo, isYes, prepareCallCommand, prepareReviewActionCommand, prepareStopCommand, SettingsLoader } from "./slack-commands";
 
 const MARK = "U07H26WUGP5";
@@ -157,19 +163,47 @@ describe("prepareCallCommand", () => {
   });
 });
 
+describe("prepareCallCommand — a time with no offset (audit, 2026-11-20)", () => {
+  it("reads it in the client's timezone, not the server's UTC", async () => {
+    db.query.mockResolvedValue([{ id: "5" }]);
+    const out = await prepareCallCommand("3pc", { nameOrPhone: "Koren", whenIso: "2026-10-14T16:00:00" }, CTX, loader, NOW);
+    expect(out.status).toBe("needs_confirmation");
+    const insert = db.query.mock.calls.find((c) => String(c[0]).includes("INSERT INTO iris_slack_commands"));
+    // 16:00 on Oct 14 in St. John's (NDT, UTC-2:30) is 18:30 UTC. Read as UTC it would have been 13:30 there.
+    expect((insert?.[1] as unknown[])[7]).toEqual(new Date("2026-10-14T18:30:00.000Z"));
+  });
+});
+
 describe("prepareStopCommand", () => {
-  it("prepares a stop for a lead with a pending queue row, without stopping anything yet", async () => {
-    db.query.mockResolvedValueOnce([{ status: "pending", call_after: new Date("2026-10-15T14:00:00Z") }]).mockResolvedValueOnce([]).mockResolvedValueOnce([]).mockResolvedValueOnce([{ id: "5" }]);
+  beforeEach(() => {
+    stopLead.readStopState.mockResolvedValue({ openRows: 1, emberLeads: 0, tagged: false });
+  });
+
+  it("prepares a stop for a lead with an open queue row, without stopping anything yet", async () => {
+    db.query.mockResolvedValueOnce([]).mockResolvedValueOnce([]).mockResolvedValueOnce([{ id: "5" }]);
 
     const out = await prepareStopCommand("3pc", { nameOrPhone: "Koren" }, CTX, loader);
 
     expect(out.status).toBe("needs_confirmation");
-    expect(out.summary).toMatch(/Stop Iris calling and texting \*Koren Pye\*/);
-    expect(db.query.mock.calls.some((c) => String(c[0]).includes("UPDATE iris_pending_calls"))).toBe(false);
+    expect(out.summary).toMatch(/Stop Iris and Ember calling and texting \*Koren Pye\* for good/);
+    expect(out.summary).toMatch(/do not call/);
+    expect(stopLead.carryOutStop).not.toHaveBeenCalled();
   });
 
-  it("says there's nothing to stop when Iris has nothing queued", async () => {
-    db.query.mockResolvedValue([]);
+  it("still offers the stop when nothing is queued: the tag is what keeps a new form or a sweep away (Slack stop audit, 2026-11-20)", async () => {
+    stopLead.readStopState.mockResolvedValue({ openRows: 0, emberLeads: 0, tagged: false });
+    db.query.mockResolvedValue([{ id: "5" }]);
+    expect((await prepareStopCommand("3pc", { nameOrPhone: "Koren" }, CTX, loader)).status).toBe("needs_confirmation");
+  });
+
+  it("offers it when only Ember is nurturing them", async () => {
+    stopLead.readStopState.mockResolvedValue({ openRows: 0, emberLeads: 1, tagged: false });
+    db.query.mockResolvedValue([{ id: "5" }]);
+    expect((await prepareStopCommand("3pc", { nameOrPhone: "Koren" }, CTX, loader)).status).toBe("needs_confirmation");
+  });
+
+  it("says there's nothing to stop only when they are already tagged and nothing is open", async () => {
+    stopLead.readStopState.mockResolvedValue({ openRows: 0, emberLeads: 0, tagged: true });
     expect((await prepareStopCommand("3pc", { nameOrPhone: "Koren" }, CTX, loader)).status).toBe("nothing_to_do");
   });
 
@@ -249,16 +283,26 @@ describe("handleCommandReply — the only thing that ever acts", () => {
     expect(slack.sendMessage).not.toHaveBeenCalled();
   });
 
-  it("a yes to a stop closes the lead's queue row", async () => {
+  it("a yes to a stop carries it out and says what was done", async () => {
     db.query.mockResolvedValueOnce([{ ...PENDING_CALL, kind: "stop", call_at: null }]).mockResolvedValue([]);
 
     const reply = await handleCommandReply(msg("yes"), loader, "3pc");
 
-    const close = db.query.mock.calls.find((c) => String(c[0]).includes("UPDATE iris_pending_calls"));
-    expect(String(close?.[0])).toMatch(/status = 'skipped'/);
-    expect((close?.[1] as unknown[])[2]).toBe(`stopped in Slack by ${MARK}`);
-    expect(reply).toMatch(/I've stopped/);
+    expect(stopLead.carryOutStop).toHaveBeenCalledWith("3pc", "contact-koren", MARK);
+    expect(reply).toMatch(/I've stopped.*do not call/);
+    expect(slack.sendMessage).toHaveBeenCalledWith("iris", expect.objectContaining({ text: expect.stringContaining('tagged "do not call"') }));
     expect(dialPending.scheduleExplicitCallback).not.toHaveBeenCalled();
+  });
+
+  it("a stop whose tag could not be written says so, and asks for it by hand", async () => {
+    stopLead.carryOutStop.mockResolvedValueOnce({ closedRows: 1, emberStopped: 0, tagged: false });
+    db.query.mockResolvedValueOnce([{ ...PENDING_CALL, kind: "stop", call_at: null }]).mockResolvedValue([]);
+
+    const reply = await handleCommandReply(msg("yes"), loader, "3pc");
+
+    expect(reply).toMatch(/could NOT add the "do not call" tag/);
+    expect(reply).not.toMatch(/I've stopped/);
+    expect(slack.sendMessage).toHaveBeenCalledWith("iris", expect.objectContaining({ text: expect.stringContaining("COULD NOT tag") }));
   });
 });
 

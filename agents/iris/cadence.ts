@@ -313,3 +313,28 @@ export function applyPreferredTime(candidate: Date, preferred: string, timeZone:
   }
   return clampToLegalCallingWindow(result, timeZone);
 }
+
+/**
+ * Reads a time a model (or a person typing into a tool) supplied. Confirmed live, 2026-09-06: the model's time
+ * argument routinely comes back with no UTC offset at all (e.g. "2026-09-05T18:00:00"), and a bare `new Date(...)`
+ * on a string like that parses it as the SERVER's own local time. Render runs in UTC, so a lead-intended "6 PM
+ * Toronto" silently became 6 PM UTC (2 PM Toronto). If the string already carries an offset or Z it is trusted
+ * outright; otherwise the wall-clock numbers are read as being in `timeZone`. Returns null when it is not a time.
+ * Lives here, not in the tools file, so every place Iris reads a model-written time (the live callback tool, texts,
+ * Slack commands) uses the same reading. Same round-trip technique as zonedHourToUtc, with minutes.
+ */
+export function resolveRequestedTime(raw: string, timeZone: string): Date | null {
+  const hasOffset = /Z$|[+-]\d{2}:?\d{2}$/.test(raw.trim());
+  if (hasOffset) {
+    const direct = new Date(raw);
+    return Number.isNaN(direct.getTime()) ? null : direct;
+  }
+
+  const naiveAsUtc = new Date(`${raw}Z`);
+  if (Number.isNaN(naiveAsUtc.getTime())) return null;
+
+  const renderedInZone = new Date(naiveAsUtc.toLocaleString("en-US", { timeZone }));
+  const renderedInUtc = new Date(naiveAsUtc.toLocaleString("en-US", { timeZone: "UTC" }));
+  const offsetMs = renderedInUtc.getTime() - renderedInZone.getTime();
+  return new Date(naiveAsUtc.getTime() + offsetMs);
+}

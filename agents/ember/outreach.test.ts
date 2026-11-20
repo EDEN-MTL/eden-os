@@ -168,6 +168,14 @@ describe("sendTouch", () => {
     expect(store.updateLead).toHaveBeenCalledWith(lead().id, expect.objectContaining({ status: "exited", statusReason: "assigned to an agent — Ember stays out", nextTouchAt: null }));
   });
 
+  it('never texts a lead tagged "do not call", and takes them out of the nurture (Slack stop, 2026-11-20)', async () => {
+    const d = deps({ loadLive: vi.fn(async () => live({}, { contact: { name: "J", phone: "+17095550100", email: null, tags: ["do not call"] } })) });
+    const result = await sendTouch(lead(), d, ctx());
+    expect(result).toEqual({ leadId: lead().id, sent: false, skippedReason: 'tagged "do not call"' });
+    expect(d.sendSMS).not.toHaveBeenCalled();
+    expect(store.updateLead).toHaveBeenCalledWith(lead().id, expect.objectContaining({ status: "exited", nextTouchAt: null }));
+  });
+
   it("opts the lead out when GHL has DND set", async () => {
     const d = deps({ loadLive: vi.fn(async () => live({ dnd: true })) });
     await sendTouch(lead(), d, ctx());

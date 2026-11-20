@@ -23,7 +23,7 @@ import { classifyInboundText, lastInboundText, recentTexts } from "./text-signal
 import { appendNoteToContact } from "./notes";
 import { checkHumanTouch, DEFAULT_HUMAN_HANDS_OFF_DAYS } from "./human-touch";
 import { IrisConfig, qualify, QualificationAnswers, callbackCalendarForIntent, CallIntent } from "./qualification";
-import { clampToLegalCallingWindow, formatLocal } from "./cadence";
+import { clampToLegalCallingWindow, formatLocal, resolveRequestedTime } from "./cadence";
 import { chatWithTools, ChatMessage, ToolDef } from "../../shared/claude";
 import { loadHistory, appendHistory } from "../../shared/conversation-memory";
 import { sendMessage } from "../../shared/slack";
@@ -275,8 +275,8 @@ async function scheduleTransferCall(
   const now = Date.now();
   let when = new Date(now + TRANSFER_CALL_MIN_DELAY_MINUTES * 60_000);
   if (typeof input?.when === "string" && input.when.trim().toLowerCase() !== "now") {
-    const asked = new Date(input.when);
-    if (Number.isNaN(asked.getTime())) {
+    const asked = resolveRequestedTime(input.when.trim(), timezone);
+    if (!asked) {
       return 'NOT scheduled — that time could not be read. Ask them again for a time, then call this tool with "now" or a full ISO 8601 timestamp.';
     }
     if (asked.getTime() - now > TRANSFER_CALL_MAX_DAYS_OUT * 86_400_000) {

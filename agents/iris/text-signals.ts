@@ -17,7 +17,7 @@
  */
 import { ask } from "../../shared/claude";
 import { getConversationMessages, getConversations } from "../../shared/ghl";
-import { clampToLegalCallingWindow } from "./cadence";
+import { clampToLegalCallingWindow, resolveRequestedTime } from "./cadence";
 
 export type TextSignal = { type: "opt_out"; quote: string } | { type: "unsure_stop" } | { type: "no_calls" } | { type: "schedule_for"; when: Date } | { type: "call_consent" } | { type: "none" };
 
@@ -125,8 +125,9 @@ export async function classifyInboundText(
   if (parsed.type === "call_consent" && /\bcall\b/i.test(precedingOutbound ?? "")) return { type: "call_consent" };
 
   if (parsed.type === "schedule_for" && typeof parsed.when === "string") {
-    const when = new Date(parsed.when);
-    if (Number.isNaN(when.getTime())) return { type: "none" };
+    // Read in the client's timezone when the model sent no offset (a bare new Date() takes the server's UTC).
+    const when = resolveRequestedTime(parsed.when, timezone);
+    if (!when) return { type: "none" };
     const minutesOut = (when.getTime() - now.getTime()) / 60_000;
     if (minutesOut < MIN_MINUTES_OUT || minutesOut > MAX_DAYS_OUT * 24 * 60) return { type: "none" };
     return { type: "schedule_for", when: clampToLegalCallingWindow(when, timezone) };

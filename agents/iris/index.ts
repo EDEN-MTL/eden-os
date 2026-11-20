@@ -88,7 +88,7 @@ const IRIS_TOOLS: ToolDef[] = [
   {
     name: "iris_request_stop",
     description:
-      "PREPARES stopping all of Iris's calls and texts to a lead, when Mark or Jacob asks (\"stop calling Matthew Power\"). Like iris_request_call it only prepares: show the summary and ask them to reply yes; it takes effect only after their yes, handled outside you. Never say it's stopped yourself.",
+      "PREPARES stopping all of Iris's calls and texts to a lead, when Mark or Jacob asks (\"stop calling Matthew Power\"). Like iris_request_call it only prepares: show the summary and ask them to reply yes; it takes effect only after their yes, handled outside you. Never say it's stopped yourself. A stop is lasting (tags the lead \"do not call\", closes the queue row even if a call just ended, stops Ember's nurture texts) and is offered even when nothing is queued.",
     input_schema: {
       type: "object",
       properties: { nameOrPhone: { type: "string", description: "The lead's name or phone number, exactly as given." } },

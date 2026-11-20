@@ -410,3 +410,17 @@ Call 280 (10:24 AM NL). The lead picked up and said "Who is this?"; the transcri
 
 If it recurs, look at the call's Logs tab in Vapi for the model's raw output (we only store the transcript).
 
+## A Slack "stop" is lasting, and callback times are read in the client's timezone (audit, 2026-11-20)
+**Slack stop** (`agents/iris/stop-lead.ts`, wired in slack-commands.ts). It used to close only a `pending` queue row, and told Mark "nothing queued" for a lead whose row was `placed` (a call in flight or just ended) or who had no row at all (an Ember lead, an old lead). The end-of-call retry then reopened the row, or the next sweep or form queued the lead again. Now, after the yes:
+- rows `pending` OR `placed` are closed (`skipped`, "stopped in Slack by <user>"); every reopen in dial-pending.ts (`reopenForNextAttempt`, `reopenAfterMissedCallback`, `reopenNoShowAfterMiss`, `holdForTextReply`) carries `AND status <> 'skipped'`, so a closed row is never flipped back;
+- the lead is tagged **"do not call"** (the stop-everything tag; dial-pending reads it at the last moment, and **Ember now reads it too**, in the hourly scan and before every send);
+- Ember's open nurture leads for the contact are set to `exited`;
+- a note is left on the contact; the card is NOT moved;
+- the stop is offered even with nothing queued; it says "already stopped" only when the tag is on and nothing is open. If the tag cannot be written, Iris says so and asks for it by hand rather than reporting the lead as protected.
+
+**Times the model writes.** `resolveRequestedTime` (now in cadence.ts, re-exported from vapi-tools) reads a time with no UTC offset in the client's timezone. `handleScheduleCallback`, the SMS transfer-call time, the text-signal "call me at 6", and the Slack call command used a bare `new Date()`, which reads an offsetless time as the server's UTC: a callback asked for at 4:30 PM St. John's was queued 2.5 to 3.5 hours early.
+
+**Callback note.** `recordCallbackNote` (live callback tool) appends to the ISA notes field instead of replacing it (it wiped the qualification summary and call-status lines). Deliberately NOT changed: `save_isa_notes` (voice) and `save_qualification_notes` (text) still replace the field, because that field feeds GHL text notifications to agents billed per segment (Mark, 2026-10-06), so appending history there would lengthen every notification. Open question for Mark/Jacob if they want history kept.
+
+Tests: `stop-lead.test.ts`, `slack-commands.test.ts`, `vapi-tools.test.ts` (offsetless time, appended note), `sweep-queue.test.ts`, Ember `scan.test.ts` / `outreach.test.ts` ("do not call" tag).
+

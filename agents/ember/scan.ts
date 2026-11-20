@@ -117,6 +117,10 @@ export function classifyForEnrollment(opp: GhlOpportunityLite, ctx: EnrollContex
   // agent's, so the AI leaves them alone.
   if (opp.assignedTo) return { eligible: false, reason: "assigned to an agent" };
 
+  // The stop-everything tag (a lead who texted stop, or a teammate's "stop" in Slack, 2026-11-20). Ember used to read only
+  // GHL's do-not-disturb, so a lead Iris had been told to leave alone could still be enrolled and nurtured.
+  if ((opp.contact?.tags ?? []).some((t) => String(t).trim().toLowerCase() === "do not call")) return { eligible: false, reason: 'tagged "do not call"' };
+
   // A renewed-interest tag on a quiet card means someone's already on it.
   if (hasRenewedInterestTag(opp.contact?.tags, config)) return { eligible: false, reason: "renewed-interest tag" };
 

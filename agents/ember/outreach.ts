@@ -312,6 +312,13 @@ export async function sendTouch(lead: NurtureLead, deps: OutreachDeps, ctx: Touc
     return skip("assigned to an agent");
   }
 
+  // The stop-everything tag, read from the same fresh contact read as the assignment above. Added after a teammate's
+  // Slack "stop" had no way to reach Ember (2026-11-20).
+  if ((live.opportunity.contact?.tags ?? []).some((t: string) => String(t).trim().toLowerCase() === "do not call")) {
+    await updateLead(lead.id, { status: "exited", statusReason: 'tagged "do not call" — Ember stays out', nextTouchAt: null });
+    return skip('tagged "do not call"');
+  }
+
   const change = detectChange(lead, live.opportunity, ctx);
   if (change.kind === "exited") {
     await markExited(lead, change.reason);

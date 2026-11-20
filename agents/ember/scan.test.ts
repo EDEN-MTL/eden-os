@@ -95,6 +95,11 @@ describe("classifyForEnrollment", () => {
     expect(classifyForEnrollment(opp({ assignedTo: null }), ctx())).toEqual({ eligible: true });
   });
 
+  it('never enrolls a lead tagged "do not call" (a teammate\'s Slack stop or a text opt-out, 2026-11-20)', () => {
+    const o = opp({ contact: { name: "X", phone: "+1", email: null, tags: ["Do Not Call"] } });
+    expect(classifyForEnrollment(o, ctx())).toEqual({ eligible: false, reason: 'tagged "do not call"' });
+  });
+
   it("falls back to createdAt for a card that never changed stage", () => {
     expect(classifyForEnrollment(opp({ lastStageChangeAt: null, createdAt: daysAgo(50) }), ctx())).toEqual({ eligible: true });
     expect(classifyForEnrollment(opp({ lastStageChangeAt: null, createdAt: daysAgo(20) }), ctx()).eligible).toBe(false);

@@ -19,13 +19,14 @@ import { getContact, getGhlConfig, listContactsPaginated, listLocationUsers } fr
 import { sendMessage } from "../../shared/slack";
 import { SlackIncomingMessage } from "../../shared/types";
 import { ToolContext } from "../base-agent";
-import { clampToLegalCallingWindow, formatLocal } from "./cadence";
+import { clampToLegalCallingWindow, formatLocal, resolveRequestedTime } from "./cadence";
 import { queueColdLeadSweep, scheduleExplicitCallback } from "./dial-pending";
 import { findTeammateCalls } from "./teammate-calls";
 import { latestReview } from "./lead-review";
 import { pickFollowUpLeads, REVIEW_MAX_AGE_MS } from "./review-followup";
 import { checkHumanTouch, DEFAULT_HUMAN_HANDS_OFF_DAYS } from "./human-touch";
 import { linkLineFor } from "./links";
+import { carryOutStop, readStopState } from "./stop-lead";
 
 const DEFAULT_TTL_MINUTES = 10;
 const MAX_DAYS_OUT = 7;
@@ -150,8 +151,9 @@ export async function prepareCallCommand(
   // When: now (a minute out) unless a time was given; always inside calling hours.
   let wanted = new Date(now.getTime() + 60_000);
   if (typeof input.whenIso === "string" && input.whenIso.trim()) {
-    const parsed = new Date(input.whenIso);
-    if (Number.isNaN(parsed.getTime())) return refused(`I couldn't read "${input.whenIso}" as a time.`);
+    // In the client's timezone when the model gave no offset: a bare new Date() read "3 PM" as 3 PM server time (UTC).
+    const parsed = resolveRequestedTime(input.whenIso.trim(), settings.timezone);
+    if (!parsed) return refused(`I couldn't read "${input.whenIso}" as a time.`);
     if (parsed.getTime() < now.getTime() + 60_000) return refused("That time is already past — give me a time from a few minutes from now.");
     if (parsed.getTime() > now.getTime() + MAX_DAYS_OUT * 86_400_000) return refused(`I only schedule up to ${MAX_DAYS_OUT} days ahead.`);
     wanted = parsed;
@@ -212,16 +214,18 @@ export async function prepareStopCommand(
   if ("status" in resolved) return resolved;
   const { contact } = resolved;
 
-  const row = await query<{ status: string; call_after: Date | null }>(`SELECT status, call_after FROM iris_pending_calls WHERE client_id = $1 AND contact_id = $2`, [clientId, contact.id]);
-  if (!row[0] || row[0].status !== "pending") {
-    return { status: "nothing_to_do", reason: `Iris has nothing queued for ${contact.name}.`, instruction: `Tell them Iris has nothing queued to stop for ${contact.name} (no pending call or text conversation).` };
+  // Always offered, even with nothing queued: the "do not call" tag is what keeps the lead from being queued again
+  // (a new form, a sweep, Ember), and a lead whose call just ended has a row that is 'placed', not 'pending'.
+  const state = await readStopState(clientId, contact.id);
+  if (state.tagged && state.openRows === 0 && state.emberLeads === 0) {
+    return { status: "nothing_to_do", reason: `${contact.name} is already stopped.`, instruction: `Tell them ${contact.name} is already tagged "do not call" and nothing is queued, so there is nothing more to stop.` };
   }
   const inFlight = await query<{ one: number }>(
     `SELECT 1 AS one FROM iris_call_log WHERE client_id = $1 AND contact_id = $2 AND status = 'initiated' AND created_at > now() - interval '20 minutes' LIMIT 1`,
     [clientId, contact.id]
   );
   const summary =
-    `Stop Iris calling and texting *${contact.name}* — closes their queue row, so no further calls, retries or auto-replies go out.` +
+    `Stop Iris and Ember calling and texting *${contact.name}* for good: tag them "do not call", close their queue row${state.openRows ? "" : " (none is open)"}, stop Ember's nurture texts${state.emberLeads ? "" : " (none are running)"}, and leave a note on their record. Their card is not moved.` +
     (inFlight.length > 0 ? `\nNote: a call to them is in progress right now — I can't hang it up, but nothing further will follow it.` : "");
 
   const commandId = await storePending(clientId, ctx, "stop", contact, summary, null);
@@ -448,14 +452,14 @@ export async function handleCommandReply(message: SlackIncomingMessage, loadSett
     return `Done — I've queued the call to ${cmd.contact_name} for ${formatLocal(when.toISOString(), settings.timezone)}. It'll show up in #iris-calltext-logs when it's placed.`;
   }
 
-  await query(
-    `UPDATE iris_pending_calls SET status = 'skipped', resolution_reason = $3, resolved_at = now()
-     WHERE client_id = $1 AND contact_id = $2 AND status = 'pending'`,
-    [clientId, cmd.contact_id, `stopped in Slack by ${message.userId}`]
-  );
+  const outcome = await carryOutStop(clientId, cmd.contact_id, message.userId);
   await resolve("executed");
-  await audit(`📣 <@${message.userId}> asked me to stop calling and texting *${cmd.contact_name}* — done.${await linkSuffix(clientId, cmd.contact_id)}`);
-  return `Done — I've stopped. Nothing further will go out to ${cmd.contact_name}.`;
+  await audit(
+    `📣 <@${message.userId}> asked me to stop calling and texting *${cmd.contact_name}* — ${outcome.tagged ? 'tagged "do not call"' : '⚠️ COULD NOT tag "do not call"'}, closed ${outcome.closedRows} queue row${outcome.closedRows === 1 ? "" : "s"}, stopped ${outcome.emberStopped} nurture lead${outcome.emberStopped === 1 ? "" : "s"}.${await linkSuffix(clientId, cmd.contact_id)}`
+  );
+  return outcome.tagged
+    ? `Done — I've stopped. ${cmd.contact_name} is tagged "do not call", their queue row is closed and Ember's texts are off, so nothing further will go out.`
+    : `I closed ${cmd.contact_name}'s queue row and stopped Ember, but I could NOT add the "do not call" tag in GHL, so a new form or a sweep could still queue them. Please add the tag by hand.`;
 }
 
 async function audit(text: string): Promise<void> {

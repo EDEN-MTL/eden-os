@@ -191,6 +191,32 @@ describe("handleScheduleCallback", () => {
     expect(result).toContain("Confirm this back to the lead");
   });
 
+  // Audit, 2026-11-20: a bare new Date("2026-10-08T16:30:00") reads the time as the server's (UTC) clock, so a callback the
+  // lead asked for at 4:30 PM St. John's was queued for 1:00 PM there, 3.5 hours (2.5 in summer) early.
+  it("reads a time with no offset in the client's timezone, not the server's", async () => {
+    const result = await handleScheduleCallback("3-percent-east-coast", "contact-1", "2026-10-08T16:30:00");
+
+    // 16:30 on Oct 8 in St. John's (NDT, UTC-2:30) is 19:00 UTC.
+    expect(dialPending.scheduleExplicitCallback).toHaveBeenCalledWith("3-percent-east-coast", "contact-1", new Date("2026-10-08T19:00:00.000Z"));
+    expect(result).toContain("Confirm this back to the lead");
+  });
+
+  it("still trusts a time that carries its own offset", async () => {
+    await handleScheduleCallback("3-percent-east-coast", "contact-1", "2026-10-08T16:30:00-02:30");
+    expect(dialPending.scheduleExplicitCallback).toHaveBeenCalledWith("3-percent-east-coast", "contact-1", new Date("2026-10-08T19:00:00.000Z"));
+  });
+
+  it("adds the callback note to what the field already says instead of replacing it", async () => {
+    ghl.getContact.mockResolvedValue({ contact: { customFields: [{ id: "field-1", value: "Buyer, 400-500K, 3 bed, pre-approval in progress." }] } });
+
+    await handleScheduleCallback("3-percent-east-coast", "contact-1", "2026-10-08T16:30:00");
+
+    const write = ghl.updateContact.mock.calls.find((c) => c[1]?.customFields);
+    const value: string = write?.[1].customFields[0].value;
+    expect(value).toContain("Buyer, 400-500K, 3 bed, pre-approval in progress.");
+    expect(value).toContain("Iris scheduled a callback");
+  });
+
   it("defaults to ~1 hour out and tells the model NOT to state a time, when no callbackTime is given at all", async () => {
     const before = Date.now();
     const result = await handleScheduleCallback("3-percent-east-coast", "contact-1", undefined);

@@ -4,7 +4,8 @@ import { getGhlConfig, addContactTags, updateContact, getCustomFieldDefs, getCal
 import { buildKeyToId } from "../agents/scout/intake";
 import { loadIrisConfig } from "../agents/iris";
 import { scheduleExplicitCallback } from "../agents/iris/dial-pending";
-import { clampToLegalCallingWindow, isWithinLegalCallingWindow, formatLocal } from "../agents/iris/cadence";
+import { appendNoteToContact } from "../agents/iris/notes";
+import { clampToLegalCallingWindow, isWithinLegalCallingWindow, formatLocal, resolveRequestedTime } from "../agents/iris/cadence";
 import { postAppointmentToSlack } from "./appointment-post";
 
 /**
@@ -129,22 +130,11 @@ function formatSpoken(iso: string, timeZone: string = "America/St_Johns"): strin
  */
 async function recordCallbackNote(clientId: string, contactId: string, when: Date): Promise<void> {
   try {
-    const ghlConfig = await getGhlConfig(clientId);
     const config = loadIrisConfig(clientId);
-    if (!ghlConfig || !config) return;
-
-    const defs = await getCustomFieldDefs(ghlConfig.locationId, ghlConfig.apiKey);
-    const fieldId = buildKeyToId(defs).get(config.callbackNotesFieldKey);
-    if (!fieldId) {
-      console.warn(`[VAPI-TOOLS] callbackNotesFieldKey "${config.callbackNotesFieldKey}" did not resolve to a field id for ${clientId} — skipping note.`);
-      return;
-    }
-    await updateContact(
-      contactId,
-      { customFields: [{ id: fieldId, value: `Iris scheduled a callback for ${formatLocal(when.toISOString(), config.timezone)} — lead asked to be called back at this time.` }] },
-      ghlConfig.locationId,
-      ghlConfig.apiKey
-    );
+    if (!config) return;
+    // Appended, never written over the field (audit, 2026-11-20): this is the same field that carries Iris's qualification
+    // summary and the call-status lines, and a callback note replacing them lost what the lead had already told her.
+    await appendNoteToContact(clientId, contactId, `Iris scheduled a callback for ${formatLocal(when.toISOString(), config.timezone)} — lead asked to be called back at this time.`);
   } catch (error) {
     console.error(`[VAPI-TOOLS] Failed to write callback note for contact ${contactId}:`, error instanceof Error ? error.message : error);
   }
@@ -231,10 +221,13 @@ export async function handleScheduleCallback(clientId: string, contactId: string
   let hadSpecificTime: boolean;
 
   if (typeof callbackTime === "string" && callbackTime.trim()) {
-    when = new Date(callbackTime);
-    if (Number.isNaN(when.getTime())) {
+    // Read in the client's timezone when the model sent no offset: a bare new Date() read "3 PM" as 3 PM server time (UTC),
+    // so a callback the lead asked for at 3 PM St. John's was queued 3.5 hours early (and could land outside calling hours).
+    const resolved = resolveRequestedTime(callbackTime.trim(), timeZone);
+    if (!resolved) {
       return "Could not schedule the callback — that wasn't a valid time. Do not claim to have scheduled anything; tell the lead a teammate will follow up directly instead.";
     }
+    when = resolved;
 
     const minutesOut = (when.getTime() - Date.now()) / 60_000;
     if (minutesOut < MIN_CALLBACK_MINUTES_OUT) {
@@ -291,34 +284,8 @@ const APPOINTMENT_DURATION_MINUTES = 30;
 const APPOINTMENT_SEARCH_WINDOW_DAYS = 3;
 const MAX_ALTERNATIVES_OFFERED = 3;
 
-/**
- * Confirmed live, 2026-09-06: the model's requestedTime argument routinely
- * comes back with no UTC offset at all (e.g. "2026-09-05T18:00:00"), and
- * bare `new Date(...)` on a string like that parses it as the SERVER's own
- * local time, not the client's timezone — a Render server runs in UTC, so
- * a lead-intended "6 PM Toronto" silently became 6 PM UTC (2 PM Toronto),
- * missing every real slot by 4 hours. Iris kept saying "trouble booking"
- * because nothing ever matched, real slots included. If the string already
- * carries an offset/Z, trust it outright; otherwise treat the wall-clock
- * numbers as being in `timeZone` and convert properly — same round-trip
- * technique as agents/iris/cadence.ts's zonedHourToUtc, generalized here
- * to include minutes since a requested callback is rarely on the hour.
- */
-export function resolveRequestedTime(raw: string, timeZone: string): Date | null {
-  const hasOffset = /Z$|[+-]\d{2}:?\d{2}$/.test(raw.trim());
-  if (hasOffset) {
-    const direct = new Date(raw);
-    return Number.isNaN(direct.getTime()) ? null : direct;
-  }
-
-  const naiveAsUtc = new Date(`${raw}Z`);
-  if (Number.isNaN(naiveAsUtc.getTime())) return null;
-
-  const renderedInZone = new Date(naiveAsUtc.toLocaleString("en-US", { timeZone }));
-  const renderedInUtc = new Date(naiveAsUtc.toLocaleString("en-US", { timeZone: "UTC" }));
-  const offsetMs = renderedInUtc.getTime() - renderedInZone.getTime();
-  return new Date(naiveAsUtc.getTime() + offsetMs);
-}
+/** Moved to agents/iris/cadence.ts so every place that reads a model-written time shares it; re-exported for existing callers. */
+export { resolveRequestedTime };
 
 /**
  * Fetches live GHL calendar slots for the standard search window and
