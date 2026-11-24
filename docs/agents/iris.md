@@ -34,6 +34,9 @@ It only gates the dial — it has no effect on whether leads get queued.
    matching `iris.followUpStageIds` stage; an exhausted sequence gets tag `iris no answer`.
 6. Every finished call posts a one-liner to `#iris-call-logs`
    (`IRIS_CALL_LOG_CHANNEL`, literal default in `vapi-webhook.ts`).
+   An answered call that didn't transfer says who hung up (`describeHangup`, from Vapi's `endedReason`; Mark, 2026-11-25):
+   "the lead hung up", "the lead hung up right after Iris's opening line", "Iris ended the call". That line is
+   `describeOutcome`, which the call-alert DM, the status note on the lead's GHL record and the call review also use.
 
 ## Diagnosing live calls
 

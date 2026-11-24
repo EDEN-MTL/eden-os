@@ -55,6 +55,7 @@ import {
   attachRecording,
   createVapiRouter,
   customerSpokeAtAll,
+  describeHangup,
   describeOutcome,
   formatDuration,
   genuinelyAnswered,
@@ -533,6 +534,79 @@ describe("describeOutcome", () => {
   });
 });
 
+/**
+ * Mark, 2026-11-25 (Rod McCarthy): he picked up, said "Hello?", heard Iris's
+ * opening line and hung up 7 seconds in. The report said only "Answered (no
+ * transfer)", so nobody could tell a lead who walked away from Iris who ended
+ * it. Vapi's own endedReason says who: customer-ended-call is the lead,
+ * assistant-ended-call is Iris.
+ */
+describe("describeOutcome: who ended an answered call", () => {
+  const rod = {
+    messages: [
+      { role: "user", message: "Hello?" },
+      { role: "bot", message: "Hi. This is Iris with 3 percent East Coast. Am I speaking with Rod?" },
+    ],
+  };
+  const longChat = {
+    messages: [
+      { role: "user", message: "Hello?" },
+      { role: "bot", message: "Hi. This is Iris with 3 percent East Coast. Am I speaking with Rod?" },
+      { role: "user", message: "Yes, speaking." },
+      { role: "bot", message: "Great. I saw you were looking at homes. Are you buying or selling?" },
+      { role: "user", message: "Buying, maybe." },
+    ],
+  };
+
+  it("says the lead hung up right after Iris's opening line (Rod McCarthy's call)", () => {
+    expect(describeOutcome("customer-ended-call", rod)).toBe("💬 Answered (no transfer) — the lead hung up right after Iris's opening line");
+  });
+
+  it("says the lead hung up before Iris said anything, when she never got a word in", () => {
+    const heldLine = { messages: [{ role: "user", message: "Hello?" }] };
+    expect(describeOutcome("customer-ended-call", heldLine)).toBe("💬 Answered (no transfer) — the lead hung up before Iris said anything");
+  });
+
+  it("just says the lead hung up when it was a real back-and-forth, without claiming it was at the opening", () => {
+    const text = describeOutcome("customer-ended-call", longChat);
+    expect(text).toBe("💬 Answered (no transfer) — the lead hung up");
+    expect(text).not.toMatch(/opening/);
+  });
+
+  it("says Iris ended the call when she was the one who hung up", () => {
+    expect(describeOutcome("assistant-ended-call", longChat)).toBe("💬 Answered (no transfer) — Iris ended the call");
+    expect(describeOutcome("assistant-ended-call-after-message-spoken", longChat)).toBe("💬 Answered (no transfer) — Iris ended the call");
+  });
+
+  it("says so when the call simply ran to the maximum length", () => {
+    expect(describeOutcome("exceeded-max-duration", longChat)).toBe("💬 Answered (no transfer) — the call hit the maximum length");
+  });
+
+  it("counts Iris's lines whether Vapi labels them \"bot\" or \"assistant\"", () => {
+    const labelled = { messages: [{ role: "user", message: "Hello?" }, { role: "assistant", message: "Hi, this is Iris." }] };
+    expect(describeOutcome("customer-ended-call", labelled)).toMatch(/right after Iris's opening line/);
+  });
+
+  // The new wording is only for an answered call that ended with nothing else to say. Every
+  // outcome that already had its own, more specific line keeps it exactly.
+  it("leaves every other outcome's wording alone", () => {
+    expect(describeOutcome("assistant-forwarded-call", rod)).toBe("✅ Live transfer completed");
+    expect(describeOutcome("voicemail", rod)).toBe("📵 Left voicemail");
+    expect(describeOutcome("customer-ended-call-before-warm-transfer", rod)).toMatch(/^⚠️ Disconnected before the transfer connected/);
+    expect(describeOutcome("assistant-ended-call", { messages: [{ role: "bot", message: "Are you still there?" }] })).toBe("🔇 No response (gave up after the idle nudge)");
+    expect(describeOutcome("customer-did-not-answer", { messages: [] })).toBe("❌ No answer (`customer-did-not-answer`)");
+  });
+});
+
+describe("describeHangup", () => {
+  it("is null when nobody picked up or the reason names neither side", () => {
+    expect(describeHangup(null, {})).toBeNull();
+    expect(describeHangup("voicemail", {})).toBeNull();
+    expect(describeHangup("customer-did-not-answer", {})).toBeNull();
+    expect(describeHangup("twilio-failed-to-connect-call", {})).toBeNull();
+  });
+});
+
 describe("formatDuration", () => {
   it("formats sub-minute durations as seconds only", () => {
     expect(formatDuration(17)).toBe("17s");
@@ -621,6 +695,24 @@ describe("postCallLogToSlack", () => {
 
     expect(ghl.getContact).not.toHaveBeenCalled();
     expect(slack.sendMessage).toHaveBeenCalledWith("iris", expect.objectContaining({ text: expect.stringContaining("+17097496049") }));
+  });
+
+  it("says who ended an answered call that didn't transfer", async () => {
+    const rodMessage = {
+      call: { customer: { number: "+17095550100" } },
+      durationSeconds: 7,
+      messages: [
+        { role: "user", message: "Hello?" },
+        { role: "bot", message: "Hi. This is Iris with 3 percent East Coast. Am I speaking with Rod?" },
+      ],
+    };
+
+    await postCallLogToSlack("3-percent-east-coast", null, rodMessage, "customer-ended-call");
+
+    expect(slack.sendMessage).toHaveBeenCalledWith(
+      "iris",
+      expect.objectContaining({ text: expect.stringContaining("Answered (no transfer) — the lead hung up right after Iris's opening line") })
+    );
   });
 
   it("still posts using the phone number when the GHL name lookup fails", async () => {
@@ -800,6 +892,18 @@ describe("appendCallStatusNote", () => {
     const writtenValue = ghl.updateContact.mock.calls[0][1].customFields[0].value;
     expect(writtenValue).toMatch(/Answered/);
     expect(writtenValue).toContain("42s");
+  });
+
+  it("records who ended the call on the lead's own record too, so the note and Slack agree", async () => {
+    ghl.getGhlConfig.mockResolvedValue({ locationId: "loc-1", apiKey: "key-1" });
+    iris.loadIrisConfig.mockReturnValue(CONFIG);
+    ghl.getCustomFieldDefs.mockResolvedValue([{ fieldKey: "contact.isa_notes", id: "field-notes-1" }]);
+    ghl.getContact.mockResolvedValue({ contact: { customFields: [] } });
+    const hungUp = { ...message, messages: [{ role: "user", message: "Hello?" }, { role: "bot", message: "Hi, this is Iris." }] };
+
+    await appendCallStatusNote("3-percent-east-coast", "contact-1", "customer-ended-call", hungUp);
+
+    expect(ghl.updateContact.mock.calls[0][1].customFields[0].value).toContain("the lead hung up right after Iris's opening line");
   });
 
   it("never throws — a failure here must never break the end-of-call handler", async () => {

@@ -264,7 +264,39 @@ function verifyVapiSecret(expectedSecret: string, req: Request): boolean {
   return crypto.timingSafeEqual(a, b);
 }
 
-/** Human-readable one-liner for a call's real outcome, for the Slack post below. */
+/** How many of Iris's own lines are in the transcript. Vapi labels them "bot" in some payloads and "assistant" in others. */
+function irisLineCount(message: Record<string, any>): number {
+  return ((message?.messages ?? []) as any[]).filter(
+    (m) => (m?.role === "bot" || m?.role === "assistant") && typeof m?.message === "string" && m.message.trim() !== ""
+  ).length;
+}
+
+/**
+ * Who hung up on a call somebody answered, for the reports. Taken from Vapi's own endedReason, never guessed
+ * from the transcript: "customer-ended-call…" is the lead hanging up; "assistant-ended-call…" is Iris (her
+ * end-call tool, a wrap-up, or the idle give-up). Mark, 2026-11-25 (Rod McCarthy): he picked up, said "Hello?",
+ * heard Iris's opening line and hung up 7 seconds in, and the report said only "Answered (no transfer)".
+ * The transcript is used for one thing only — saying the lead hung up at the very start when Iris had spoken
+ * at most once, because that is a lead who walked away from her, not one who finished a conversation.
+ * Returns null for a reason that names neither side (nobody answered, a carrier error).
+ */
+export function describeHangup(endedReason: string | null, message: Record<string, any>): string | null {
+  if (!endedReason) return null;
+  if (endedReason.startsWith("customer-ended-call")) {
+    const irisLines = irisLineCount(message);
+    if (irisLines === 0) return "the lead hung up before Iris said anything";
+    if (irisLines === 1) return "the lead hung up right after Iris's opening line";
+    return "the lead hung up";
+  }
+  if (endedReason.startsWith("assistant-ended-call")) return "Iris ended the call";
+  if (endedReason === "exceeded-max-duration") return "the call hit the maximum length";
+  return null;
+}
+
+/**
+ * Human-readable one-liner for a call's real outcome. Read by the #iris-call-logs post, the DM call alert,
+ * the status note on the lead's own record and the call review, so a change here shows up in all four.
+ */
 export function describeOutcome(endedReason: string | null, message: Record<string, any>): string {
   if (endedReason === TRANSFER_SUCCEEDED_REASON) return "✅ Live transfer completed";
   if (endedReason === "voicemail") return "📵 Left voicemail";
@@ -272,7 +304,10 @@ export function describeOutcome(endedReason: string | null, message: Record<stri
   if (hitVoicemailGreeting(message)) return "📵 Voicemail greeting, no message left — will retry";
   if (endedReason === "assistant-ended-call" && !customerSpokeAtAll(message)) return "🔇 No response (gave up after the idle nudge)";
   if (TRANSFER_ABANDONED_REASONS.has(endedReason ?? "")) return "⚠️ Disconnected before the transfer connected — Iris calls back to connect them again, then texts if no answer";
-  if (wasAnswered(endedReason)) return "💬 Answered (no transfer)";
+  if (wasAnswered(endedReason)) {
+    const hangup = describeHangup(endedReason, message);
+    return `💬 Answered (no transfer)${hangup ? ` — ${hangup}` : ""}`;
+  }
   return `❌ No answer (\`${endedReason ?? "unknown"}\`)`;
 }
 
