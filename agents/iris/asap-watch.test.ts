@@ -26,6 +26,7 @@ import {
   asapTextProblem,
   buildAsapThread,
   cleanComposedText,
+  COMPOSER_SYSTEM,
   composeAsapText,
   composerInput,
   decideAsapText,
@@ -160,6 +161,12 @@ describe("what the model is shown", () => {
     expect(input).toContain("Lead: Maame S. Afriyie (first name: Maame)");
     expect(input).toContain("Still missing:");
     expect(input).toContain("Can we do this later in the day?");
+    expect(input).not.toContain("Phone calls: NO");
+  });
+
+  it("tells the composer when the lead asked for no calls, and its rules say never to ask for one (audit, 2026-11-20)", () => {
+    expect(composerInput({ ...maame, tags: ["buyer lead", "No Calls"] }, NOW, TZ)).toContain("Phone calls: NO. The lead asked not to be called. Text only.");
+    expect(COMPOSER_SYSTEM).toMatch(/asked for no calls[^\n]*never suggest, offer or ask for a phone call/);
   });
 });
 

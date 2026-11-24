@@ -38,7 +38,7 @@ vi.mock("./notes", () => notes);
 const optOut = vi.hoisted(() => ({ moveToNotInterested: vi.fn(async () => ({ moved: true, stageName: "Not Qualified/Not Interested" })) }));
 vi.mock("./opt-out", () => optOut);
 
-import { advanceAttempt, diagnoseStuckLead, formatStuckPost, isUnfinishedCall, retryStartAt, runStuckLeadCheck, saidWrongNumber, StuckFacts } from "./stuck-leads";
+import { advanceAttempt, STUCK_COMPOSER_SYSTEM, diagnoseStuckLead, formatStuckPost, isUnfinishedCall, retryStartAt, runStuckLeadCheck, saidWrongNumber, StuckFacts } from "./stuck-leads";
 import type { ReviewEvent } from "./lead-review";
 
 // Tuesday 2026-11-17, 10:20 NST (13:50 UTC)
@@ -434,5 +434,11 @@ describe("runStuckLeadCheck", () => {
     const r = await runStuckLeadCheck("c", { now: NOW });
     expect(r.skipped).toMatch(/off/);
     expect(ghl.listPipelines).not.toHaveBeenCalled();
+  });
+});
+
+describe("the stuck-lead text composer and no-calls leads (audit, 2026-11-20)", () => {
+  it("is told never to suggest or ask for a call when the lead asked for none", () => {
+    expect(STUCK_COMPOSER_SYSTEM).toMatch(/asked for no calls[^\n]*never suggest, offer or ask for a phone call/);
   });
 });

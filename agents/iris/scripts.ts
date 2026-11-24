@@ -86,7 +86,7 @@ export const NATURAL_TRANSITIONS = {
 };
 
 /** The straight answer to "are you an AI / a robot / a real person?" on a call. */
-const aiAnswerLine = (brandName: string): string =>
+export const aiAnswerLine = (brandName: string): string =>
   `Yes, I'm an AI assistant with ${brandName} — I just gather a few details so the right agent can help you.`;
 
 /**
@@ -229,6 +229,9 @@ export function liveTransferLineForIntent(intent: CallIntent): string[] {
  * can be offered next depends on whether a real calendar is available (see
  * buildLeadQualificationPrompt's schedulingFallback).
  */
+/** Said when this call has no live-transfer tool at all, so no agent was ever tried: it must not claim one was busy. */
+export const NO_TRANSFER_WRAP_LINE = "I'd love to get you set up with one of our agents, so let's find a time that works for you.";
+
 export const AGENT_UNAVAILABLE_LINE = "They're busy with another client right now, but they'd love to connect with you.";
 
 /**
@@ -872,6 +875,11 @@ export function buildLeadQualificationPrompt(
   // isn't known yet.
   const verifying: string[][] = [];
   const stillNeeded: string[] = [];
+  const sellerLike = lead.intent === "seller" || lead.intent === "downsize";
+  /** The buyer's questions: skipped for a seller or downsizer, who get their own set below. */
+  const need = (q: string): void => {
+    if (!sellerLike) stillNeeded.push(q);
+  };
 
   // Bare intent is already confirmed by the opening's own contextLine below
   // ("I was calling about the form you submitted online about buying a
@@ -883,7 +891,7 @@ export function buildLeadQualificationPrompt(
   // Area has no real data source on any client checked so far — always
   // asked fresh. (lead.propertyInterest is NOT area, despite this slot's
   // old "Area/property interest" label — see that field's own doc comment.)
-  stillNeeded.push(config.questions[1]);
+  need(config.questions[1]);
 
   // Property type + bedroom count — previously always one compound "still
   // needed" question (Jacob's live feedback, 2026-09-04) since no GHL field
@@ -895,23 +903,36 @@ export function buildLeadQualificationPrompt(
   // count has no field on any client checked so far, folded into the
   // bedroom fallback question.
   if (lead.propertyInterest) verifying.push(verifyPropertyTypeLines(lead.propertyInterest));
-  else stillNeeded.push("What type of home are you looking for?");
+  else need("What type of home are you looking for?");
 
   if (lead.bedrooms) verifying.push(verifyBedroomsLines(lead.bedrooms));
-  else stillNeeded.push("How many bedrooms and bathrooms do you need?");
+  else need("How many bedrooms and bathrooms do you need?");
 
   if (lead.timeline) verifying.push(verifyTimelineLines(lead.intent, lead.timeline));
-  else stillNeeded.push(config.questions[3]);
+  else need(config.questions[3]);
 
   if (lead.intent !== "seller") {
     if (lead.financing) verifying.push(verifyFinancingLines(lead.financing));
-    else stillNeeded.push("Are you preapproved for a mortgage yet?");
+    else need("Are you preapproved for a mortgage yet?");
 
     // Budget was captured and scored but never actually verified in
     // conversation until now — confirmed live, 2026-09-06: a real lead's
     // known $450k budget was still asked cold on every test call.
     if (lead.budget) verifying.push(verifyBudgetLines(lead.budget));
-    else stillNeeded.push("What specific budget do you have in mind?");
+    else need("What specific budget do you have in mind?");
+  }
+
+  // A seller or downsizer is asked the seller's questions (is it listed, the address, their timeline to sell, another agent,
+  // buying after) rather than the buyer's list above, which asked them "what type of home are you looking for?" and "are
+  // you preapproved?" (audit, 2026-11-20). SELLER_QUESTIONS.call and DOWNSIZER_QUESTIONS.call existed for this and were
+  // never used on a call. Whatever the form already told us is verified above, so it is not asked again here.
+  if (sellerLike) {
+    for (const q of lead.intent === "seller" ? SELLER_QUESTIONS.call : DOWNSIZER_QUESTIONS.call) {
+      if (/timeline/i.test(q) && lead.timeline) continue;
+      if (/working with another agent/i.test(q) && lead.workingWithRealtor !== null) continue;
+      if (/budget/i.test(q) && lead.budget) continue;
+      stillNeeded.push(q);
+    }
   }
 
   if (lead.workingWithRealtor !== null) verifying.push(verifyWorkingWithRealtorLines(lead.workingWithRealtor));
@@ -960,7 +981,7 @@ The moment the lead actually answers one of these — confirms it, or gives you 
    */
   const specificAnswersBlock = skipQualifying ? "" : specificAnswersRule(lead.intent);
 
-  const propertyTypeOrderingRule = skipQualifying ? "" : `\n\n## Ordering rule — property type, then bedrooms/bathrooms, always back to back
+  const propertyTypeOrderingRule = skipQualifying || sellerLike ? "" : `\n\n## Ordering rule — property type, then bedrooms/bathrooms, always back to back
 The moment the type of home is settled (confirmed if known, answered if you had to ask), your VERY NEXT question — before timeline, budget, area, financing, or anything else — must be how many bedrooms and bathrooms they need. Never let another topic land between these two.`;
 
   // bookingToolsAvailable reflects whether this environment actually has a
@@ -1309,7 +1330,8 @@ with a confirmed booking instead.`
 you're connecting them to an agent or say the line normally used for that,
 since there is no way to actually do it here. Once you're ready to wrap up,
 transition in your own words toward getting them scheduled with an agent
-directly (something like "${AGENT_UNAVAILABLE_LINE}").
+directly (something like "${NO_TRANSFER_WRAP_LINE}"). Never say an agent is
+busy or tied up: nobody was ever tried on this call, so it would not be true.
 ${schedulingFallback}`;
 
   // Mark's spec, 2026-09-12: warm, name-personalized closings — never
@@ -1858,8 +1880,14 @@ said goodbye once and called endCall. If for any reason you get another
 turn after invoking endCall, say NOTHING at all — not "goodbye" again, not
 anything.
 
-For a plain ending — the lead explicitly says they're done, or you're
-wrapping up a call where nothing specific was booked or transferred — a
+## When they say stop, not interested, or wrong number
+These three endings promise nothing, because the person has told you they do not want a next contact (or is not the lead at all). Never use the warm "talk soon" / "we'll be in touch" / "we'll follow up" lines below for them. Say ONE line, then endCall in that same turn. Never argue, never ask why, never offer a different option, never ask another question.
+- They tell you to stop, take them off the list, or never call or contact them again ("stop calling me", "remove me from your list", "don't call me again", "do not contact me"): "Of course, I'm sorry to have bothered you. I'll take you off our list right away."
+- They are not interested, or are already working with someone and want nothing from us ("not interested", "I already have an agent", "no thanks"): "No problem at all, thanks for letting me know. Take care."
+- You reached the wrong person or a wrong number ("this isn't ${firstName && firstName !== "there" ? firstName : "them"}", "wrong number"), and they cannot pass you to the lead: "Sorry about that, I'll fix our records. Have a good day."
+Busy, "not right now", "call me later" and "I can't talk" are NOT these: they are a callback request, handled by the scheduling rules above.
+
+For a plain ending — you're wrapping up a call where nothing specific was booked or transferred, or the lead is simply done and has not said stop, not interested or wrong number — a
 bare "Goodbye" is weak. Mark's spec, 2026-09-12: be warm, confident, and
 forward-moving instead. Pick ONE, using their name if you have it, never
 the same one call after call:
@@ -1881,9 +1909,12 @@ ${callbackRequestSection}
 - If the person on the line explicitly denies being the lead (e.g. "No,
   this isn't John," "Wrong number," "He's not available") — do NOT assume
   they're the lead anyway and do NOT continue into qualification. Ask
-  naturally whether the actual lead is reachable another way, or say
-  you'll try back another time, then move to wrap up the call. Never
-  qualify or book anything for someone who isn't confirmed as the lead.
+  naturally whether the actual lead is reachable another way. If the answer
+  is no, or it is simply a wrong number, apologize and end the call (see
+  "When they say stop, not interested, or wrong number" below). Never
+  promise to call back or try again: you don't know that anyone will, and
+  a wrong number must not hear it. Never qualify or book anything for
+  someone who isn't confirmed as the lead.
 - Recognize automated systems — call screeners, hold announcements, phone
   menus, voicemail — and never treat one as the lead. Follow "How you open
   the call" exactly: a screener asking who you are gets only "Iris." and then
@@ -2139,9 +2170,12 @@ export function buildSmsQualificationPrompt(
 This is an OLDER lead — they first inquired a while ago, went quiet, and are now replying to a check-in text we sent${options.openerText ? `: "${options.openerText}"` : ""}. Their plans may have changed since, so treat everything "already known" below as possibly out of date: start by confirming whether they're still thinking about buying or selling, and don't assume anything they told us months ago is still true.
 `
     : "";
+  // The straight answer, same as on a call (aiAnswerLine). The old text answers ("I'm part of the team, here to help book
+  // things faster") never say yes or no, which is how a lead ends up asking twice and then feeling tricked (audit,
+  // 2026-11-20). An Ember lead hears it with the way forward attached.
   const realPersonLine = fromEmber
-    ? `I'm the ${brandName} team's virtual assistant — happy to get one of our agents on the phone with you.`
-    : EDGE_CASE_RESPONSES.isRealPerson(brandName)[0];
+    ? `Yes, I'm an AI assistant with ${brandName}. I can get one of our agents on the phone with you.`
+    : aiAnswerLine(brandName);
 
   const noCallsBlock = options.noCalls
     ? `\n## This lead does NOT want phone calls

@@ -49,8 +49,11 @@ export interface StopOutcome {
   tagged: boolean;
 }
 
-export async function carryOutStop(clientId: string, contactId: string, requestedBy: string): Promise<StopOutcome> {
-  const reason = `stopped in Slack by ${requestedBy}`;
+/**
+ * Closes the lead's Iris queue rows (pending or placed) and exits their Ember nurture. Shared by a teammate's Slack stop and a
+ * lead's own stop on a call (voice-stop.ts). Does not tag or note: each caller words those for its own case.
+ */
+export async function closeQueueAndNurture(clientId: string, contactId: string, reason: string): Promise<{ closedRows: number; emberStopped: number }> {
   const closed = await query<{ id: number }>(
     `UPDATE iris_pending_calls
      SET status = 'skipped', resolution_reason = $3, resolved_at = now(), dial_lease_until = NULL, dial_lease_token = NULL
@@ -66,6 +69,12 @@ export async function carryOutStop(clientId: string, contactId: string, requeste
     });
   }
 
+  return { closedRows: closed.length, emberStopped };
+}
+
+export async function carryOutStop(clientId: string, contactId: string, requestedBy: string): Promise<StopOutcome> {
+  const { closedRows, emberStopped } = await closeQueueAndNurture(clientId, contactId, `stopped in Slack by ${requestedBy}`);
+
   let tagged = false;
   const ghl = await getGhlConfig(clientId).catch(() => null);
   if (ghl) {
@@ -75,5 +84,5 @@ export async function carryOutStop(clientId: string, contactId: string, requeste
     });
     await createContactNote(contactId, `Iris: a teammate (${requestedBy}) asked in Slack to stop all calls and texts to this lead. Tagged "${DO_NOT_CALL_TAG}", queue closed, nurture stopped.`, ghl.locationId, ghl.apiKey).catch(() => {});
   }
-  return { closedRows: closed.length, emberStopped, tagged };
+  return { closedRows, emberStopped, tagged };
 }

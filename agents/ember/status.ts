@@ -78,6 +78,10 @@ const CANDIDATE = [
   /\b(changed|change of) (our |my )?(plans|mind)\b/i,
   /\b(moved|moving) (away|out of (town|province|the province|the city))\b/i,
   /\b(agent|realtor|broker)\b/i,
+  // "I'm working with someone, thank you" names no agent, so it matched nothing here and was filed as ordinary interest
+  // with no model call at all (Sabrina Marie, 2026-11-19). Only a reason to ask the model, never a move on its own.
+  /\b(working|going|listed|signed)\s+with\s+(someone|somebody|another|a team|a different)\b/i,
+  /\b(have|got|found)\s+(someone|somebody)\b/i,
   /\b(don'?t|do not) need (your|any|the) (help|services?|assistance)\b/i,
 ];
 
@@ -114,7 +118,8 @@ Do NOT move them on assumptions. These are NOT Not Interested — keep nurturing
 
 Read the thread in order: if a later message shows renewed interest (e.g. "the other agent didn't work out, we're looking again"), an earlier decline no longer counts.
 
-Examples that DO move: "I already bought a house last month." / "We're no longer looking to buy." / "I decided to work with another agent." / "We've already sold our property." / "Please stop contacting me. I'm not interested anymore."
+Examples that DO move: "I already bought a house last month." / "We're no longer looking to buy." / "I decided to work with another agent." / "I'm working with someone, thank you." / "We have a realtor already." / "We've already sold our property." / "Please stop contacting me. I'm not interested anymore."
+(A lead who says they are working with someone, or already have an agent or realtor, is with another agent: category other_agent. It is not interest in us, and it is not a buying signal. Sabrina Marie replied "I'm working with someone, thank you" and was read as a reactivation, 2026-11-19.)
 
 Respond with ONLY one JSON object, no markdown:
 {"verdict":"not_interested","category":"<one of: asked_to_stop, other_agent, already_bought, already_sold, no_longer_looking, plans_changed, other_clear>","evidence":"<the lead's exact words, copied verbatim from ONE of their messages>"}

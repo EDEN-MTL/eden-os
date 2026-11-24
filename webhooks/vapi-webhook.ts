@@ -6,6 +6,7 @@ import { sendMessage, uploadFile } from "../shared/slack";
 import { appendHistory } from "../shared/conversation-memory";
 import { loadIrisConfig, loadClientBranding } from "../agents/iris";
 import { reopenForNextAttempt, reopenAfterMissedCallback, scheduleExplicitCallback, holdForTextReply, reopenNoShowAfterMiss, closeNoShowFollowUp, SWEEP_SOURCE } from "../agents/iris/dial-pending";
+import { maybeHonorVoiceStop } from "../agents/iris/voice-stop";
 import { NO_SHOW_SOURCE } from "../agents/iris/no-show-state";
 import {
   buildTransferResumeText,
@@ -470,6 +471,15 @@ async function handleEndOfCallReport(message: Record<string, any>): Promise<void
   if (endedReason === TRANSFER_SUCCEEDED_REASON && row?.contact_id) {
     await handleSuccessfulTransfer(row.client_id, row.contact_id);
     await postLiveTransferToSlack(row.client_id, row.contact_id, callId);
+  }
+
+  // A stop said out loud (audit, 2026-11-20). Nothing read the lead's words after a call before this, so "stop calling me"
+  // left no tag and the lead stayed open to the next sweep or follow-up. Not for a screener or voicemail (their lines are
+  // recordings), nor a call that connected to an agent.
+  if (row?.contact_id && endedReason !== TRANSFER_SUCCEEDED_REASON && !hitCallScreener(message) && !hitVoicemailGreeting(message)) {
+    await maybeHonorVoiceStop(row.client_id, row.contact_id, null, message).catch((error) => {
+      console.error(`[VAPI] Voice-stop check failed for contact ${row.contact_id}:`, error instanceof Error ? error.message : error);
+    });
   }
 
   // Only the automatic dial-pending queue's own retry cadence gets

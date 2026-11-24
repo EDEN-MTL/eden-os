@@ -186,7 +186,7 @@ ${known.length ? known.map((x) => `- ${x}`).join("\n") : "- nothing on file"}
 ${ctx.irisConfig.questions.map((q) => `- ${q}`).join("\n")}
 
 ## Situations
-- Asked if you're a real person / a bot: "I'm the ${ctx.brandName} team's virtual assistant — happy to get one of our agents on the phone with you."
+- Asked if you're a real person / a bot: "Yes, I'm an AI assistant with ${ctx.brandName}. I can get one of our agents on the phone with you." (a straight yes, never a dodge)
 - Already working with an agent: "${EDGE_CASE_RESPONSES.buyerHasAgent[0]}"
 - Not pre-approved yet: "${EDGE_CASE_RESPONSES.notPreApproved[0]}"
 - Interested but not now: use pause_for_now, then a short warm sign-off.

@@ -39,6 +39,21 @@ describe("Mark's 'Move to Not Interested' examples", () => {
     expect(d).toMatchObject({ verdict: "not_interested", category: "other_agent", by: "rule" });
   });
 
+  // Sabrina Marie, 2026-11-19: "I'm working with someone, thank you" matched no rule and no candidate, so no model was
+  // asked and it was read as interest. It is now a candidate: the model confirms it, quoting her.
+  it("'I'm working with someone, thank you.' — reaches the model, which can confirm another agent", async () => {
+    const body = "I'm working with someone, thank you.";
+    const ask = modelSays({ verdict: "not_interested", category: "other_agent", evidence: body });
+    expect(await classifyLeadStatus([us("Still thinking about a move?"), lead(body)], ask)).toEqual({ verdict: "not_interested", category: "other_agent", evidence: body, by: "ai" });
+    expect(ask).toHaveBeenCalled();
+  });
+
+  it("'we are working with someone on the financing' is still the model's call, and keeps nurturing when it says so", async () => {
+    const ask = modelSays({ verdict: "keep_nurturing", reason: "a lender, not an agent" });
+    expect((await classifyLeadStatus([lead("We are working with someone on the financing, still looking.")], ask)).verdict).toBe("keep_nurturing");
+    expect(ask).toHaveBeenCalled();
+  });
+
   it.each([
     ["I already bought a house last month.", "already_bought"],
     ["We're no longer looking to buy.", "no_longer_looking"],

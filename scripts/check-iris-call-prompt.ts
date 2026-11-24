@@ -18,12 +18,13 @@ const key = process.env.VAPI_API_KEY!;
 const cfg: any = { apiKey: key, phoneNumberId: "x", modelProvider: process.env.VAPI_MODEL_PROVIDER, modelName: process.env.VAPI_MODEL_NAME, voiceProvider: process.env.VAPI_VOICE_PROVIDER, voiceId: process.env.VAPI_VOICE_ID, serverUrl: "https://eden-os.onrender.com/webhooks/vapi", webhookSecret: "s" };
 const iris = loadIrisConfig("3-percent-east-coast")!; const br = loadClientBranding("3-percent-east-coast")!;
 const FIRST = process.env.FIRST || "Amanda"; // FIRST=Oluwadare re-runs everything with a name that is hard to say (2026-11-20)
-const lead: any = { name: `${FIRST} Test`, email: null, phone: "+15555550100", intent: "buyer", score: 50, budget: "$300K-$600K", timeline: "ASAP", leadSource: "Facebook", contactId: "zz", scoreReasons: [], qualified: false, firstTouch: true, attributed: false, attribution: {}, preApproved: null, financing: null, bedrooms: null, propertyInterest: null, workingWithRealtor: false, sources: {} };
+const INTENT = process.env.INTENT || "buyer"; // INTENT=seller checks a seller call (2026-11-20 audit: sellers were asked buyer questions)
+const lead: any = { name: `${FIRST} Test`, email: null, phone: "+15555550100", intent: INTENT, score: 50, budget: "$300K-$600K", timeline: "ASAP", leadSource: "Facebook", contactId: "zz", scoreReasons: [], qualified: false, firstTouch: true, attributed: false, attribution: {}, preApproved: null, financing: null, bedrooms: null, propertyInterest: null, workingWithRealtor: false, sources: {} };
 // NOSHOW=1 checks the no-show follow-up call (Mark, 2026-10-20): rebooking only, no qualification, no transfer.
 const NOSHOW = process.env.NOSHOW === "1";
 const noShowCtx = { agentName: "Chantelle English", missedDay: "yesterday", missedWhen: "Monday, October 19 at 11:00 AM" };
 let prompt = buildLeadQualificationPrompt(iris, lead, br.brandName, br.city, true, !NOSHOW, true, "form", NOSHOW ? noShowCtx : undefined);
-const p: any = buildCallPayload({ clientId: "3-percent-east-coast", brandName: br.brandName, city: br.city, phone: lead.phone, firstName: FIRST, intent: "buyer", leadSource: "Facebook", systemPrompt: prompt, contactId: "zz", triggeredBy: "manual" } as any, cfg);
+const p: any = buildCallPayload({ clientId: "3-percent-east-coast", brandName: br.brandName, city: br.city, phone: lead.phone, firstName: FIRST, intent: INTENT, leadSource: "Facebook", systemPrompt: prompt, contactId: "zz", triggeredBy: "manual" } as any, cfg);
 const assistant = { name: "zz-chat-test", model: p.assistant.model, firstMessageMode: "assistant-waits-for-user" };
 const OPENER = `Hi, this is Iris with 3 Percent East Coast. Am I speaking with ${FIRST}?`;
 /** Digits a voice reads one by one, a $ on a figure, or a currency that isn't ours — never acceptable in anything Iris says. */
@@ -72,6 +73,21 @@ async function main() {
   // Iris may take another known item first (working with a realtor, etc.), so this only checks she keeps qualifying
   // rather than transferring early; the narrowed-timeline wording itself shows in the samples.
   cases.push(["after a budget she keeps qualifying (timeline narrowed or next item), no early transfer", [...QH, { role: "assistant", content: "I see a budget of three hundred thousand to six hundred thousand dollars. What specific budget do you have in mind?" }, { role: "user", content: "About four fifty." }], "Yep.", (o) => /\?/.test(o) && !/transfer|connect you|put you through/i.test(o)]);
+  // Stop, not interested and wrong number end the call and promise nothing (2026-11-20 audit). She used to carry on
+  // qualifying after "stop calling me", and her plain goodbyes all promised "talk soon" / "we'll be in touch".
+  const AFTER_OPENER = [{ role: "user", content: "Hello?" }, { role: "assistant", content: OPENER }];
+  const PROMISE = /talk soon|chat soon|in touch|follow up|following up|call you back|try back|another time|reach out|look forward/i;
+  const ENDS_QUIETLY = (o: string) => !PROMISE.test(o) && !/\?/.test(o) && !/budget|bedroom|pre-?approved|timeline|what area|looking to (buy|sell)/i.test(o);
+  cases.push(["stop: stop calling me", AFTER_OPENER, "Yes, but please stop calling me.", (o) => /sorry|of course|take you off|remove/i.test(o) && ENDS_QUIETLY(o)]);
+  cases.push(["stop: take me off your list", AFTER_OPENER, "Take me off your list. Don't call me again.", (o) => /sorry|of course|take you off|remove/i.test(o) && ENDS_QUIETLY(o)]);
+  cases.push(["not interested: no thanks", AFTER_OPENER, "No thanks, I'm not interested.", (o) => /no problem|thanks for letting me know|take care|understand/i.test(o) && ENDS_QUIETLY(o)]);
+  cases.push(["wrong person: not them", AFTER_OPENER, `No, this isn't ${FIRST}. You have the wrong number.`, (o) => /sorry/i.test(o) && ENDS_QUIETLY(o)]);
+  cases.push(["busy is still a callback, not a stop", AFTER_OPENER, "Yes it's me but I'm in the middle of something, can you call me later?", (o) => !/take you off|off our list|sorry to have bothered/i.test(o)]);
+  if (INTENT === "seller") {
+    const SELLER_BAD = /pre-?approved|how many bedrooms|bathrooms do you need|what type of home are you looking|what specific budget|what area are you interested/i;
+    cases.push(["seller: next question is a seller's", [...AFTER_OPENER, { role: "user", content: "Yes." }, { role: "assistant", content: "How are you doing today?" }], "Good, thanks.", (o) => !SELLER_BAD.test(o)]);
+    cases.push(["seller: after the reason, still a seller's question", [...AFTER_OPENER, { role: "user", content: "Yes." }, { role: "assistant", content: "How are you doing today?" }, { role: "user", content: "Good." }, { role: "assistant", content: "I'm calling about the form you sent in about selling your home. Is that still the plan?" }], "Yeah, still selling.", (o) => !SELLER_BAD.test(o) && /\?/.test(o)]);
+  }
   const starters = NOSHOW ? [] : ["Hello", "Hi", "Yeah?", "Hello, this is Amanda", "Hello? Who's this?", "Hello? Hello?", "Hello? Can you hear me?", "Hello? Hello? Hello? Hello? Hello?", "Hello?? Anybody there?"];
   for (const st of starters) cases.push(["real person: " + st, [], st, (o) => norm(o).includes(norm(OPENER))]);
   // Garbled or odd first words from a real person (Oluwadare Ogunbiyi, 2026-11-20: the transcriber heard "With this", and

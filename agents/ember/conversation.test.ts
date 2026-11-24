@@ -56,7 +56,8 @@ describe("buildEmberSmsPrompt", () => {
     const p = buildEmberSmsPrompt(ctx());
     for (const q of IRIS_CONFIG.questions) expect(p).toContain(q);
     expect(p).toContain("confirm whether they're still thinking about buying or selling BEFORE anything else");
-    expect(p).toContain("virtual assistant");
+    expect(p).toContain("Yes, I'm an AI assistant with");
+    expect(p).not.toContain("virtual assistant");
     expect(p).toContain("Still thinking about a move?"); // the opener they're replying to
     expect(p).toContain("timeline: 3-6 months");
   });

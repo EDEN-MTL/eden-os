@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  NO_TRANSFER_WRAP_LINE,
   AGENT_UNAVAILABLE_FOLLOW_UP,
   AGENT_UNAVAILABLE_LINE,
   CHECK_AVAILABILITY_ACK_LINES,
@@ -371,7 +372,7 @@ describe("buildLeadQualificationPrompt", () => {
   });
 
   it("always asks the area question fresh — no client checked so far has a real field for it", () => {
-    const lead: NormalisedLead = { ...BLANK_LEAD, intent: "seller" };
+    const lead: NormalisedLead = { ...BLANK_LEAD, intent: "buyer" };
     const prompt = buildLeadQualificationPrompt(IRIS_CONFIG, lead, "3 Percent East Coast", "St. John's", false, true, false);
     expect(prompt).toContain(IRIS_CONFIG.questions[1]);
   });
@@ -1852,5 +1853,92 @@ describe("the call back after a transfer dropped", () => {
     const p = buildSmsQualificationPrompt(IRIS_CONFIG, LEAD, "3 Percent East Coast", "St. John's", { transferResume: true });
     expect(p).toContain("Call request_human_followup with the time they give.");
     expect(p).not.toContain("book_appointment with the isoTime");
+  });
+});
+
+describe("the call prompt after the 2026-11-20 audit", () => {
+  const call = (lead: NormalisedLead, transfer = true) => buildLeadQualificationPrompt(IRIS_CONFIG, lead, "3 Percent East Coast", "St. John's", true, transfer, false);
+
+  describe("sellers and downsizers are asked their own questions on a call", () => {
+    it("asks a seller about the listing, address, timeline and other agent, never what home they are looking for", () => {
+      const prompt = call({ ...BLANK_LEAD, intent: "seller" });
+      const gather = prompt.slice(prompt.indexOf("## Still need to gather"), prompt.indexOf("## Still need to gather") + 900);
+      expect(gather).toContain("Is the home already listed?");
+      expect(gather).toContain("What's the property address?");
+      expect(gather).toContain("And what's your ideal timeline for selling?");
+      expect(gather).not.toMatch(/What type of home are you looking for|How many bedrooms and bathrooms do you need|preapproved|What specific budget|What area are you interested in/);
+      expect(prompt).not.toContain("## Ordering rule — property type, then bedrooms/bathrooms");
+    });
+
+    it("does not re-ask what the form already told us", () => {
+      const prompt = call({ ...BLANK_LEAD, intent: "seller", timeline: "3-6 months", workingWithRealtor: false });
+      const gather = prompt.slice(prompt.indexOf("## Still need to gather"));
+      expect(gather).not.toContain("ideal timeline for selling");
+      expect(gather).not.toContain("currently working with another agent");
+      expect(gather).toContain("Is the home already listed?");
+    });
+
+    it("asks a downsizer the downsizer questions, and keeps the budget one only when no budget is known", () => {
+      const open = call({ ...BLANK_LEAD, intent: "downsize" });
+      expect(open).toContain("What has you thinking about downsizing?");
+      expect(open).toContain("What's your budget for the new home?");
+      const known = call({ ...BLANK_LEAD, intent: "downsize", budget: "$400K" });
+      expect(known.slice(known.indexOf("## Still need to gather"))).not.toContain("What's your budget for the new home?");
+    });
+
+    it("a buyer is unchanged", () => {
+      const prompt = call({ ...BLANK_LEAD, intent: "buyer" });
+      expect(prompt).toContain("What type of home are you looking for?");
+      expect(prompt).toContain("## Ordering rule — property type, then bedrooms/bathrooms");
+      expect(prompt).not.toContain("Is the home already listed?");
+    });
+  });
+
+  describe("stop, not interested and wrong number end the call without promising anything", () => {
+    const prompt = call({ ...BLANK_LEAD, intent: "buyer" });
+    const section = prompt.slice(prompt.indexOf("## When they say stop, not interested, or wrong number"), prompt.indexOf("For a plain ending"));
+
+    it("has a line for each, and says to end the call in the same turn", () => {
+      expect(section).toContain("I'm sorry to have bothered you. I'll take you off our list right away.");
+      expect(section).toContain("No problem at all, thanks for letting me know.");
+      expect(section).toContain("Sorry about that, I'll fix our records.");
+      expect(section).toMatch(/endCall in that same turn/);
+    });
+
+    it("none of those lines promises a next contact", () => {
+      const lines = section.split("\n").filter((l) => l.startsWith("- ")).join(" ");
+      expect(lines).not.toMatch(/talk soon|in touch|follow up|call you back|try back|another time|chat soon/i);
+    });
+
+    it("keeps 'busy' and 'call me later' out of it: that is a callback", () => {
+      expect(section).toMatch(/Busy, "not right now", "call me later"/);
+    });
+
+    it("the warm 'talk soon' endings are no longer offered for a lead who is not the lead or said stop", () => {
+      expect(prompt).toMatch(/has not said stop, not interested or wrong number/);
+    });
+
+    it("the wrong-number rule no longer says to promise to try back", () => {
+      expect(prompt).not.toMatch(/say\s+you'll try back another time/);
+      expect(prompt).toMatch(/Never\s+promise to call back or try again/);
+    });
+  });
+
+  describe("a call with no transfer tool never says an agent is busy", () => {
+    it("uses its own wrap-up wording", () => {
+      const prompt = call({ ...BLANK_LEAD, intent: "buyer" }, false);
+      const noTransfer = prompt.slice(prompt.indexOf("You do NOT have a live-transfer tool on this call"), prompt.indexOf("You do NOT have a live-transfer tool on this call") + 700);
+      expect(noTransfer).toContain(NO_TRANSFER_WRAP_LINE);
+      expect(noTransfer).not.toContain(AGENT_UNAVAILABLE_LINE);
+      expect(noTransfer).toMatch(/Never say an agent is\s+busy/);
+    });
+  });
+});
+
+describe("the text prompt's answer to 'are you a real person?' (audit, 2026-11-20)", () => {
+  it("says yes, it is an AI, instead of dodging", () => {
+    const prompt = buildSmsQualificationPrompt(IRIS_CONFIG, BLANK_LEAD, "3 Percent East Coast", "St. John's");
+    expect(prompt).toContain("If they ask whether you're a real person: \"Yes, I'm an AI assistant with 3 Percent East Coast");
+    expect(prompt).not.toContain("I'm part of the 3 Percent East Coast team, here to help book things faster");
   });
 });
