@@ -106,6 +106,12 @@ export interface IrisConfig {
    */
   callbackCalendarIds?: { buyer?: string; seller?: string };
   /**
+   * Calendars for booking a lead by TEXT only (iris.sms.bookingCalendarIds; Mark, 2026-11-26). Kept apart from
+   * callbackCalendarIds because that one also switches phone calls into real-calendar booking mode (a different
+   * call prompt that needs its own check). Falls back to callbackCalendarIds when unset.
+   */
+  smsBookingCalendarIds?: { buyer?: string; seller?: string };
+  /**
    * IANA timezone for this client — was hardcoded to "America/St_Johns"
    * (3% East Coast's own zone) in scripts.ts, dial-pending.ts, and
    * webhooks/vapi-tools.ts, which is wrong for any other client (Mark's
@@ -357,6 +363,14 @@ export function transferNumberForIntent(config: IrisConfig, intent: CallIntent):
 export function callbackCalendarForIntent(config: IrisConfig, intent: CallIntent): string | null {
   if (intent === "seller" || intent === "downsize") return config.callbackCalendarIds?.seller || null;
   if (intent === "buyer" || intent === "upgrading") return config.callbackCalendarIds?.buyer || null;
+  return null;
+}
+
+/** The calendar a lead qualified by text is booked on: iris.sms.bookingCalendarIds, else the callback calendars. */
+export function smsBookingCalendarForIntent(config: IrisConfig, intent: CallIntent): string | null {
+  const own = config.smsBookingCalendarIds;
+  if (intent === "seller" || intent === "downsize") return own?.seller || callbackCalendarForIntent(config, "seller");
+  if (intent === "buyer" || intent === "upgrading") return own?.buyer || callbackCalendarForIntent(config, "buyer");
   return null;
 }
 

@@ -472,3 +472,20 @@ she declined) and Veronica Dawson-Amoah ("No more interested", 11-12).
 
 Watch: the next "not interested" text should show a 🚫 post and a "do not call" tag within a minute; a ❓ for the same words
 means the rule did not match.
+
+## A lead Iris qualified by text is booked on the buyer or seller calendar (Mark, 2026-11-26)
+
+3% had `sms.callHandoff` on, so Iris's text conversation was offered `check_availability` and `book_appointment`, but the calendar lookup
+(`callbackCalendarForIntent`) read `iris.callbacks.calendarIds`, which 3% deliberately does not have (calls re-dial from a note since
+2026-09-03). Every booking by text therefore answered "no calendar set up, call request_human_followup": no text booking had ever
+succeeded for Iris or for Ember (none in the database), and qualified leads went to a person instead of onto a calendar.
+
+- New `iris.sms.bookingCalendarIds` (`{ buyer, seller }`) read by `smsBookingCalendarForIntent` (qualification.ts), used only by the text
+  tools in sms.ts; falls back to `iris.callbacks.calendarIds` for clients that set that. 3% points it at the same round-robin
+  consultation calendars as `scout.calendars` and `ember.bookingCalendarIds`. A no-show follow-up text books the same way.
+- **Phone calls are unchanged.** Setting `iris.callbacks.calendarIds` would also move every call into real-calendar booking mode
+  (a different call prompt, needs `scripts/check-iris-call-prompt.ts` and a go from Mark/Jacob), so it was not used.
+- Verified live, read-only: both calendars returned open slots for a time in NL. **No test appointment was created** (it would notify
+  the team's agents), so the first real booking is the first live proof of `createAppointment` on those calendars. Watch: the first
+  "booked by text" Slack post, the appointment on the right calendar with an agent assigned, and the card/stage the team expects.
+- The appointment is titled "Buyer callback" / "Seller callback" (vapi-tools.ts), with a note "Booked automatically by Iris over text."

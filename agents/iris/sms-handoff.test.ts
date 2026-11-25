@@ -315,6 +315,44 @@ describe("booking an appointment by text (Mark, 2026-10-15)", () => {
     expect(toolResultOf(1)).toContain("request_human_followup");
   });
 
+  it("books on iris.sms.bookingCalendarIds when only that is set — 3%'s shape: no callback calendar, so calls stay on note + re-dial (Mark, 2026-11-26)", async () => {
+    const base = JSON.parse(HANDOFF_CONFIG);
+    readFileSyncMock.mockReturnValue(
+      JSON.stringify({ ...base, iris: { ...base.iris, sms: { callHandoff: true, bookingCalendarIds: { buyer: "cons-buy", seller: "cons-sell" } }, callbacks: { notesFieldKey: "contact.isa_notes" } } })
+    );
+    db.query.mockResolvedValueOnce(row());
+    vapiTools.handleCheckAvailability.mockResolvedValue("That time is available.");
+    vi.mocked(chatWithTools)
+      .mockResolvedValueOnce(toolTurn(toolUseBlock("t1", "check_availability", { intent: "buyer", requestedTime: "2026-11-27T14:00:00-03:30" })))
+      .mockResolvedValueOnce(endTurn("Let me lock that in."));
+    await irisHandleInboundSms("contact-1", "tomorrow at 2", NO_WAIT);
+    expect(vapiTools.handleCheckAvailability).toHaveBeenCalledWith("eden-sub-account-one", "cons-buy", "2026-11-27T14:00:00-03:30");
+  });
+
+  it("the text booking calendar wins over the callback calendar, per intent", async () => {
+    const base = JSON.parse(HANDOFF_CONFIG);
+    readFileSyncMock.mockReturnValue(JSON.stringify({ ...base, iris: { ...base.iris, sms: { callHandoff: true, bookingCalendarIds: { seller: "cons-sell" } } } }));
+    db.query.mockResolvedValueOnce(row());
+    vapiTools.handleCheckAvailability.mockResolvedValue("ok");
+    vi.mocked(chatWithTools)
+      .mockResolvedValueOnce(toolTurn(toolUseBlock("t1", "check_availability", { intent: "seller", requestedTime: "2026-11-27T14:00:00-03:30" })))
+      .mockResolvedValueOnce(endTurn("ok"));
+    await irisHandleInboundSms("contact-1", "tomorrow at 2", NO_WAIT);
+    expect(vapiTools.handleCheckAvailability).toHaveBeenCalledWith("eden-sub-account-one", "cons-sell", expect.any(String));
+  });
+
+  it("with neither calendar set (a client that has not chosen one), booking by text still hands off to a person", async () => {
+    const base = JSON.parse(HANDOFF_CONFIG);
+    readFileSyncMock.mockReturnValue(JSON.stringify({ ...base, iris: { ...base.iris, sms: { callHandoff: true }, callbacks: { notesFieldKey: "contact.isa_notes" } } }));
+    db.query.mockResolvedValueOnce(row());
+    vi.mocked(chatWithTools)
+      .mockResolvedValueOnce(toolTurn(toolUseBlock("t1", "check_availability", { intent: "buyer", requestedTime: "2026-11-27T14:00:00-03:30" })))
+      .mockResolvedValueOnce(endTurn("Someone will be in touch."));
+    await irisHandleInboundSms("contact-1", "tomorrow at 2", NO_WAIT);
+    expect(vapiTools.handleCheckAvailability).not.toHaveBeenCalled();
+    expect(toolResultOf(1)).toContain("request_human_followup");
+  });
+
   it("a time named mid-conversation is booked by the model, not also queued as an Iris callback", async () => {
     vi.mocked(classifyInboundText).mockResolvedValueOnce({ type: "schedule_for", when: new Date(Date.now() + 86_400_000) });
     vi.mocked(loadHistory).mockResolvedValueOnce([{ role: "user", content: "hi" }, { role: "assistant", content: "When are you free for a quick call?" }] as any);

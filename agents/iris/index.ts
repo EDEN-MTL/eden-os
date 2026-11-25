@@ -710,6 +710,7 @@ export function loadIrisConfig(clientId: string): IrisConfig | null {
       followUpStageIds: raw.iris.followUpStageIds || undefined,
       callbackNotesFieldKey: raw.iris.callbacks.notesFieldKey,
       callbackCalendarIds: raw.iris.callbacks.calendarIds || undefined,
+      smsBookingCalendarIds: raw.iris.sms?.bookingCalendarIds || undefined,
       timezone: raw.iris.timezone || undefined,
       writeFields: raw.iris.writeFields || undefined,
       outreachCadence: raw.iris.outreachCadence,

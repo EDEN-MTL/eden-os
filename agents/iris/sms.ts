@@ -23,7 +23,7 @@ import { mightBeStop, recordNotNow, recordOptOut } from "./opt-out";
 import { classifyInboundText, lastInboundText, recentTexts } from "./text-signals";
 import { appendNoteToContact } from "./notes";
 import { checkHumanTouch, DEFAULT_HUMAN_HANDS_OFF_DAYS } from "./human-touch";
-import { IrisConfig, qualify, QualificationAnswers, callbackCalendarForIntent, CallIntent } from "./qualification";
+import { IrisConfig, qualify, QualificationAnswers, smsBookingCalendarForIntent, CallIntent } from "./qualification";
 import { clampToLegalCallingWindow, formatLocal, resolveRequestedTime } from "./cadence";
 import { chatWithTools, ChatMessage, ToolDef } from "../../shared/claude";
 import { loadHistory, appendHistory } from "../../shared/conversation-memory";
@@ -383,7 +383,7 @@ async function executeSmsTool(
   if (name === "check_availability" || name === "book_appointment") {
     if (!config.smsCallHandoff && !isNoShow) throw new Error(`${name} is not enabled for this client`);
     const intent: CallIntent = ["buyer", "seller", "downsize", "upgrading"].includes(input?.intent) ? input.intent : "unknown";
-    const calendarId = callbackCalendarForIntent(config, intent);
+    const calendarId = smsBookingCalendarForIntent(config, intent);
     if (!calendarId) return "There's no calendar set up for this kind of lead — don't try to book. Call request_human_followup so a teammate books a time.";
     // Loaded on demand: the booking logic lives with the phone tools (webhooks/vapi-tools.ts), which import this agent.
     const tools = await import("../../webhooks/vapi-tools");
