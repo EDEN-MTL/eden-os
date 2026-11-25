@@ -15,7 +15,9 @@ Turning a client on or off = `ember.enabled` in `config/clients/<id>.json` + dep
 - **Stop for good** on clear evidence — asked to stop, bought/sold, working with another
   agent, no longer looking: move to `ember.notInterestedStage`, never contact again
   (`agents/ember/status.ts`). "Not ready / next year / busy / no reply" keep nurturing;
-  "not right now" pauses 180 days. "Don't call me" is a call preference, not a texting
+  "not right now" pauses 180 days. Since 2026-11-25 Iris also hands these to Ember: a lead who texts "not
+  right now" / "not at this time" has their card moved to Not Ready (no tag, no text) and Ember picks them up
+  after the dormancy threshold (`recordNotNow`, agents/iris/opt-out.ts). "Don't call me" is a call preference, not a texting
   opt-out. One courtesy reply to a no — never after STOP.
 - "Are you a bot?" → it's the team's virtual assistant. Never names an individual agent.
 - **CASL**: re-approach only within 6 months of the lead's latest inquiry unless express

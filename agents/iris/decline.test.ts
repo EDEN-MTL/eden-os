@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { isNoOrParkedStage, isSoftDecline, notesSayDeclined, plainDeclineQuote } from "./decline";
+import { isNoOrParkedStage, isSoftDecline, notesSayDeclined, notNowQuote, plainDeclineQuote } from "./decline";
 
 /** Geoff Harris, 2026-11-22: "Not interested anymore" was only a "maybe" to the model, so nobody was closed. */
 describe("plainDeclineQuote: a message that is only a plain, permanent no", () => {
@@ -56,4 +56,20 @@ describe("notes and stages", () => {
     for (const s of ["Not Qualified/Not Interested", "Not Ready - [Endless Loop]", "Long Term Nurturing"]) expect(isNoOrParkedStage(s)).toBe(true);
     for (const s of ["Replied", "DAY 1 - AM FOLLOWUP", "Live Transferred"]) expect(isNoOrParkedStage(s)).toBe(false);
   });
+});
+
+describe("notNowQuote: not right now, which goes to Not Ready for Ember", () => {
+  it.each(["Not interested right now", "Not at this time. When I'm ready to pursue house hunting, I'll let you know", "maybe later", "Not this year", "I'm not ready yet", "Not right now, thanks"])("%s", (t) => {
+    expect(notNowQuote(t)).toBe(t.trim());
+  });
+  it.each([
+    "Not interested anymore", // permanent
+    "Not right now, stop texting me",
+    "Not right now and don't call me",
+    "No thanks", // could be forever
+    "Not right now, can you call me tomorrow?",
+    "Not right now, what are rates?",
+    "Never",
+    "",
+  ])("%s is not a not-now", (t) => expect(notNowQuote(t)).toBeNull());
 });

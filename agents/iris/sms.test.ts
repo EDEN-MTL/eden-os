@@ -738,6 +738,29 @@ describe("irisHandleInboundSms — a stop from a lead Iris just spoke to (row no
     expect(vi.mocked(sendMessage).mock.calls.some((c) => String((c[1] as any).text).includes('might mean "stop"'))).toBe(true);
   });
 
+  // Mark, 2026-11-25: "not right now" is not a stop. Not Ready, no tag, no text; Ember follows up.
+  it("moves a 'not right now' lead to Not Ready for Ember, with no tag and no text", async () => {
+    ghl.listPipelines.mockResolvedValue([{ stages: [{ id: "stage-not-ready", name: "Not Ready - [Endless Loop]" }, { id: "stage-replied", name: "Replied" }] }]);
+    textSignals.classifyInboundText.mockResolvedValue({ type: "not_now", quote: "Not at this time" } as any);
+
+    const handled = await irisHandleInboundSms("contact-1", "Not at this time. When I'm ready I'll let you know", { wait: async () => {} });
+
+    expect(handled).toBe(true);
+    expect(ghl.updateOpportunityStage).toHaveBeenCalledWith("opp-1", "stage-not-ready", "loc-1", "key-1");
+    expect(ghl.addContactTags).not.toHaveBeenCalled();
+    expect(ghl.sendSMS).not.toHaveBeenCalled();
+    const post = vi.mocked(sendMessage).mock.calls.map((c) => String((c[1] as any).text)).find((t) => t.includes("Not a stop"));
+    expect(post).toContain("Beverley Bradbury");
+    expect(post).toContain("Ember");
+    expect(db.query.mock.calls.some((c) => String(c[0]).includes("SET status = 'skipped'"))).toBe(true);
+  });
+
+  it("reads a 'not right now' text on a closed row even though it has no stop word", async () => {
+    textSignals.classifyInboundText.mockResolvedValue({ type: "none" } as any);
+    await irisHandleInboundSms("contact-1", "Not at this time, thanks", { wait: async () => {} });
+    expect(textSignals.classifyInboundText).toHaveBeenCalled();
+  });
+
   it("does not run the classifier on an ordinary text from a closed lead", async () => {
     const handled = await irisHandleInboundSms("contact-1", "Thanks, talk soon!", { wait: async () => {} });
 

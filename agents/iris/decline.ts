@@ -47,3 +47,17 @@ export const notesSayDeclined = (notes: string): boolean => NOTES_DECLINED.test(
 
 /** Cards already in a column for leads who said no or aren't ready: nothing left to move, so nothing to report. */
 export const isNoOrParkedStage = (stageName: string): boolean => /not interested|not qualified|not ready|long term|nurtur|endless loop/i.test(String(stageName ?? ""));
+
+/**
+ * "Not right now" in plain words (Mark, 2026-11-25: such a lead goes to Not Ready and Ember follows up). Narrower than
+ * isSoftDecline: no bare "no thanks" (could be forever), nothing that also says stop or "anymore", no question or request,
+ * and never a plain permanent no. Returns the message as the quote, or null.
+ */
+const NOT_NOW = /\b(?:not (?:interested )?(?:at this time|right now|at the moment|for now|yet|now|this year|this month|this season|next year)|not ready|maybe later|some other time|when i'?m ready|(?:i'?ll|i will|will) (?:reach out|let you know|get back to you|contact you))\b/i;
+export const MEANS_STOP = /\b(?:stop|remove|unsubscribe|leave me|harass|spam|never|do not|don'?t|dont|take me off|any ?more|no longer|no more)\b/i;
+export function notNowQuote(text: string): string | null {
+  const t = String(text ?? "").trim();
+  if (!t || t.length > 160) return null;
+  if (plainDeclineQuote(t) || MEANS_STOP.test(t) || ASKS_SOMETHING.test(t)) return null;
+  return NOT_NOW.test(t) ? t : null;
+}

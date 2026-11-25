@@ -39,7 +39,7 @@ describe("corrections ledger — real messages Iris misread", () => {
   }
 
   it("never lets a stop through on a quote that is not in the message (the guard behind every opt-out case above)", async () => {
-    for (const c of TEXT_SIGNAL_CASES.filter((x) => x.expect.length === 1 && x.expect[0] === "opt_out")) {
+    for (const c of TEXT_SIGNAL_CASES.filter((x) => x.expect.length === 1 && x.expect[0] === "opt_out" && !x.decidedInCode)) {
       claude.ask.mockResolvedValue('{"type": "opt_out", "certainty": "clear", "quote": "a sentence the lead never wrote"}');
       expect((await classifyInboundText(c.message, NOW, TIMEZONE)).type).toBe("unsure_stop");
     }

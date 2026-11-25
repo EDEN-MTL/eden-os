@@ -31,6 +31,8 @@ export interface TextSignalCase {
   why: string;
   /** The classifier prompt names this message as an example. */
   inPrompt?: boolean;
+  /** True when code decides this message before the model is asked (decline.ts), so a model-quote guard does not apply. */
+  decidedInCode?: boolean;
 }
 
 const INTAKE_TEXT = "Just a quick heads-up — you'll receive a quick call from our AI assistant, IRIS. She'll just ask you a few quick questions to make sure we can help you. If you're not available, what would be a good time to speak?";
@@ -108,9 +110,26 @@ export const TEXT_SIGNAL_CASES: TextSignalCase[] = [
     id: "not-interested-right-now",
     found: "2026-11-06, reference case",
     message: "Not interested right now",
-    expect: ["unsure_stop", "none"],
+    expect: ["not_now"],
     modelOutput: '{"type": "opt_out", "certainty": "unsure", "quote": "Not interested right now"}',
-    why: "Temporary. Must never close the lead; checking with them is right.",
+    why: "Temporary. Must never close the lead or tag \"do not call\" (Mark, 2026-11-06). Since 2026-11-25 it is read in code as not_now: the card goes to Not Ready and Ember follows up.",
+  },
+  {
+    id: "not-interested-anymore",
+    found: "2026-11-22, Geoff Harris (Mark, 2026-11-25)",
+    message: "Not interested anymore",
+    expect: ["opt_out"],
+    modelOutput: '{"type": "opt_out", "certainty": "unsure", "quote": "Not interested anymore"}',
+    decidedInCode: true,
+    why: "A plain permanent no is a stop even when the model hedges: it was only a Slack question and the lead was listed every morning for days. Decided in code (decline.ts), before the model.",
+  },
+  {
+    id: "not-at-this-time-ill-let-you-know",
+    found: "2026-11-17, Michelle Smith Funk (Mark, 2026-11-25)",
+    message: "Not at this time. When I'm ready to pursue house hunting, I'll let you know",
+    expect: ["not_now"],
+    modelOutput: '{"type": "none"}',
+    why: "Not now, not never: moved to Not Ready, Ember follows up. Was a Slack question re-posted every few days and a nightly 'qualified, untouched'.",
   },
   {
     id: "not-today",

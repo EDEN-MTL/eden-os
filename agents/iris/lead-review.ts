@@ -198,7 +198,7 @@ export function analyzeLead(f: LeadFacts, nowDate: Date): Finding[] {
         evidence: [`They said (${shortDate(lastText.at)}): ${quote(lastText.text)}`],
         suggested: plain
           ? "Move the card to Not Interested and tag them \"do not call\" (Iris does this herself when the text arrives; this one slipped past)."
-          : "They asked for nothing back. Move the card to Not Ready, or send one short reply if you want to keep them warm.",
+          : "They asked for nothing back. Move the card to Not Ready: Ember follows up when they are due (Iris does this herself when the text arrives; this one slipped past).",
       },
     ];
   }

@@ -35,16 +35,43 @@ describe("classifyInboundText", () => {
     expect(claude.ask).not.toHaveBeenCalled();
   });
 
-  it("still asks the model about a no with a qualifier", async () => {
-    claude.ask.mockResolvedValue('{"type": "opt_out", "certainty": "unsure", "quote": "not interested right now"}');
-    expect(await classifyInboundText("Not interested right now", NOW, TIMEZONE)).toEqual({ type: "unsure_stop" });
+  it("still asks the model about a no with a subject", async () => {
+    claude.ask.mockResolvedValue('{"type": "opt_out", "certainty": "unsure", "quote": "not interested in condos"}');
+    expect(await classifyInboundText("Not interested in condos", NOW, TIMEZONE)).toEqual({ type: "unsure_stop" });
     expect(claude.ask).toHaveBeenCalledTimes(1);
+  });
+
+  // Mark, 2026-11-25: "not right now" is not a stop. The card goes to Not Ready and Ember follows up.
+  it("reads \"Not interested right now\" as not_now in code, without asking the model", async () => {
+    expect(await classifyInboundText("Not interested right now", NOW, TIMEZONE)).toEqual({ type: "not_now", quote: "Not interested right now" });
+    expect(claude.ask).not.toHaveBeenCalled();
+  });
+
+  it("does not read a not-now that also says stop as not_now", async () => {
+    claude.ask.mockResolvedValue('{"type": "opt_out", "certainty": "clear", "quote": "stop texting me"}');
+    expect(await classifyInboundText("Not right now, stop texting me", NOW, TIMEZONE)).toEqual({ type: "opt_out", quote: "stop texting me" });
+    expect(claude.ask).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not read a not-now that asks for something as not_now", async () => {
+    claude.ask.mockResolvedValue('{"type": "schedule_for", "when": "2026-09-23T14:00:00-02:30"}');
+    const r = await classifyInboundText("Not right now, can you call me tomorrow at 11?", NOW, TIMEZONE);
+    expect(r.type).not.toBe("not_now");
+  });
+
+  it("accepts a model not_now only when its quote is in the message and nothing says stop", async () => {
+    claude.ask.mockResolvedValue('{"type": "not_now", "quote": "after the holidays"}');
+    expect(await classifyInboundText("Let's talk after the holidays", NOW, TIMEZONE)).toEqual({ type: "not_now", quote: "after the holidays" });
+    claude.ask.mockResolvedValue('{"type": "not_now", "quote": "made up words"}');
+    expect(await classifyInboundText("Let's talk after the holidays", NOW, TIMEZONE)).toEqual({ type: "unsure_stop" });
+    claude.ask.mockResolvedValue('{"type": "not_now", "quote": "not now"}');
+    expect(await classifyInboundText("Not now, don't text me again", NOW, TIMEZONE)).toEqual({ type: "unsure_stop" });
   });
 
   // Reversible by default (Mark, 2026-11-06): a stop is only acted on when it is clear AND the quoted words are really in the message.
   it("treats an opt-out the model is unsure about as unsure_stop, not a stop", async () => {
-    claude.ask.mockResolvedValue('{"type": "opt_out", "certainty": "unsure", "quote": "not interested right now"}');
-    expect(await classifyInboundText("Not interested right now", NOW, TIMEZONE)).toEqual({ type: "unsure_stop" });
+    claude.ask.mockResolvedValue('{"type": "opt_out", "certainty": "unsure", "quote": "not interested in this one"}');
+    expect(await classifyInboundText("Not interested in this one", NOW, TIMEZONE)).toEqual({ type: "unsure_stop" });
   });
 
   it("treats an opt-out with no certainty at all as unsure_stop", async () => {
@@ -54,7 +81,7 @@ describe("classifyInboundText", () => {
 
   it("does not trust a 'clear' opt-out whose quote is not in the message", async () => {
     claude.ask.mockResolvedValue('{"type": "opt_out", "certainty": "clear", "quote": "remove me from your list"}');
-    expect(await classifyInboundText("Maybe later, thanks", NOW, TIMEZONE)).toEqual({ type: "unsure_stop" });
+    expect(await classifyInboundText("Okay, bye then", NOW, TIMEZONE)).toEqual({ type: "unsure_stop" });
   });
 
   it("classifies a refusal of phone calls alone as no_calls, not as an opt-out", async () => {

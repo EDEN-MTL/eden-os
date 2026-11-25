@@ -18,9 +18,9 @@
 import { ask } from "../../shared/claude";
 import { getConversationMessages, getConversations } from "../../shared/ghl";
 import { clampToLegalCallingWindow, resolveRequestedTime } from "./cadence";
-import { plainDeclineQuote } from "./decline";
+import { MEANS_STOP, notNowQuote, plainDeclineQuote } from "./decline";
 
-export type TextSignal = { type: "opt_out"; quote: string } | { type: "unsure_stop" } | { type: "no_calls" } | { type: "schedule_for"; when: Date } | { type: "call_consent" } | { type: "none" };
+export type TextSignal = { type: "opt_out"; quote: string } | { type: "not_now"; quote: string } | { type: "unsure_stop" } | { type: "no_calls" } | { type: "schedule_for"; when: Date } | { type: "call_consent" } | { type: "none" };
 
 // Same bounds webhooks/vapi-tools.ts's handleScheduleCallback already
 // enforces for a live-call-requested callback (MIN_CALLBACK_MINUTES_OUT /
@@ -59,6 +59,8 @@ Classify the message into exactly ONE of these shapes:
 {"type": "opt_out", "certainty": "clear" | "unsure", "quote": "<the exact words from the message that show it>"} — the lead is declining ALL further contact: calls and texts both, or says they are not interested. Closing a lead cannot be undone by a person who didn't see it, so be strict about certainty:
   - "clear": the lead says it in plain words with no qualifier. "not interested, remove me", "stop texting me", "leave me alone", "take me off your list", "quit contacting me", "not interested", "not interested anymore", "no longer interested". "quote" must be copied exactly from the message.
   - "unsure": it MIGHT be a stop but could mean something smaller — temporary ("not interested right now", "not this year"), about one thing ("no thanks, we're not selling"), a mood, a complaint, or an angry or ambiguous message. Use "unsure" and a team member or Iris will check with the lead instead of closing them.
+
+{"type": "not_now", "quote": "<the exact words>"} — the lead says not now but is not refusing contact for good, and asks for nothing: "not interested right now", "not at this time", "not this year", "maybe later", "I'll let you know when I'm ready". Only when the message is that and nothing else (no question, no request, no "stop", no "anymore"). A mood, a complaint, or a no about one thing is still "opt_out" with certainty "unsure".
 
 {"type": "no_calls"} — the lead refuses PHONE CALLS only and says nothing about texts or about no longer being interested. Real example (2026-11-06, Kelly Joseph, replying to our first text): "Please no Calls". Others: "don't call me", "no phone calls please", "text only", "text me instead", "I can't take calls". Someone who just doesn't want a call is still a prospect we can help by text, so never use opt_out for this — but if the message ALSO says they're not interested or don't want texts ("don't call or text me"), it is opt_out.
 
@@ -102,6 +104,9 @@ export async function classifyInboundText(
   // or a subject ("right now", "in condos", "in a call") does not match and still goes to the model below.
   const plain = plainDeclineQuote(text);
   if (plain) return { type: "opt_out", quote: plain };
+  // "Not right now" is not a stop: the card goes to Not Ready and Ember follows up (Mark, 2026-11-25).
+  const notNow = notNowQuote(text);
+  if (notNow) return { type: "not_now", quote: notNow };
 
   let raw: string;
   try {
@@ -124,6 +129,11 @@ export async function classifyInboundText(
     return { type: "unsure_stop" };
   }
   if (parsed.type === "no_calls") return { type: "no_calls" };
+  if (parsed.type === "not_now") {
+    // Same safeguard as a stop: only acted on when the words it quotes are really in the message.
+    const quote = String(parsed.quote ?? "").trim();
+    return quote && text.toLowerCase().includes(quote.toLowerCase()) && !MEANS_STOP.test(text) ? { type: "not_now", quote } : { type: "unsure_stop" };
+  }
 
   // Defensive, code-level backstop (same philosophy as schedule_for's
   // MIN_MINUTES_OUT bound below) — call_consent only means anything when

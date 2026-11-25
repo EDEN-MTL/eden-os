@@ -18,7 +18,8 @@ import { NormalisedLead, buildKeyToId } from "../scout/intake";
 import { loadIrisConfig, loadClientBranding } from "./index";
 import { buildSmsQualificationPrompt, buildNoShowSmsPrompt } from "./scripts";
 import { NO_SHOW_SOURCE } from "./no-show-state";
-import { mightBeStop, recordOptOut } from "./opt-out";
+import { notNowQuote } from "./decline";
+import { mightBeStop, recordNotNow, recordOptOut } from "./opt-out";
 import { classifyInboundText, lastInboundText, recentTexts } from "./text-signals";
 import { appendNoteToContact } from "./notes";
 import { checkHumanTouch, DEFAULT_HUMAN_HANDS_OFF_DAYS } from "./human-touch";
@@ -476,7 +477,8 @@ async function recordTextCallback(clientId: string, contactId: string, when: Dat
  * handled a stop; everything else falls through as before.
  */
 async function handleStopOnClosedRow(row: IrisLeadRow, contactId: string, text: string, wait: (ms: number) => Promise<void>): Promise<boolean> {
-  if (!mightBeStop(text)) return false;
+  // A "not right now" is read too (it is not in the stop hints): it moves the card to Not Ready for Ember.
+  if (!mightBeStop(text) && !notNowQuote(text)) return false;
   // Already closed as an opt-out: nothing more to do, and no second acknowledgment.
   if (row.status === "skipped" && /opted out/i.test(row.resolution_reason ?? "")) return false;
 
@@ -495,6 +497,15 @@ async function handleStopOnClosedRow(row: IrisLeadRow, contactId: string, text: 
       text: `❓ *${name}* texted something that might mean "stop": "${text.slice(0, 200)}". I did not close or tag them. A teammate should read it and decide.${await linkSuffix(clientId, contactId)}`,
     }).catch(() => {});
     return false;
+  }
+  if (signal.type === "not_now") {
+    // Not a stop: the card goes to Not Ready and Ember follows up. No tag, no goodbye text (Mark, 2026-11-25).
+    const summary = await recordNotNow(clientId, contactId, ghlConfig, signal.quote);
+    await sendMessage(AGENT_ID, {
+      channel: CALL_LOG_CHANNEL,
+      text: `💤 *${name}* texted "${signal.quote.slice(0, 160)}" after Iris had already spoken with them. Not a stop: ${summary}. Ember will follow up when they are due.${await linkSuffix(clientId, contactId)}`,
+    }).catch(() => {});
+    return true;
   }
   if (signal.type !== "opt_out") return false;
 
@@ -581,6 +592,17 @@ async function handleInboundSms(contactId: string, text: string, options: Inboun
     });
     await appendHistory(AGENT_ID, key, "user", text).catch(() => {});
     await appendHistory(AGENT_ID, key, "assistant", reply).catch(() => {});
+    return true;
+  }
+
+  // "Not right now": not a stop. The card goes to Not Ready, Iris stops calling, and Ember takes over (Mark, 2026-11-25).
+  if (signal.type === "not_now") {
+    const summary = await recordNotNow(clientId, contactId, ghlConfig, signal.quote);
+    await sendMessage(AGENT_ID, {
+      channel: CALL_LOG_CHANNEL,
+      text: `💤 *${(row.lead as any)?.name ?? contactId}* texted "${signal.quote.slice(0, 160)}". Not a stop: ${summary}. Iris will not call; Ember follows up when they are due.${await linkSuffix(clientId, contactId)}`,
+    }).catch(() => {});
+    await appendHistory(AGENT_ID, key, "user", text).catch(() => {});
     return true;
   }
 

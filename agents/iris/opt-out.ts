@@ -10,6 +10,7 @@
  * Acted on only when text-signals.ts is certain (a clear opt_out with the lead's own words quoted). A maybe is
  * only reported to the team, never closed.
  */
+import { query } from "../../shared/db";
 import { addContactTags, createContactNote, listOpportunitiesForContact, listPipelines, updateOpportunityStage } from "../../shared/ghl";
 import { loadScoutConfig } from "../scout";
 import { loadIrisConfig } from "./index";
@@ -43,7 +44,15 @@ async function stageIdByName(locationId: string, apiKey: string, name: string): 
  * appointment) is left where it is: the tag still keeps Iris away, and the team is told.
  */
 export async function moveToNotInterested(clientId: string, contactId: string, ghl: { locationId: string; apiKey: string }): Promise<StageMove> {
-  const stageName = loadIrisConfig(clientId)?.followUpCohort?.notInterestedStage;
+  return moveCardToStage(clientId, contactId, ghl, loadIrisConfig(clientId)?.followUpCohort?.notInterestedStage);
+}
+
+/** Same move for "not right now": the client's Not Ready stage, where Ember takes over (Mark, 2026-11-25). */
+export async function moveToNotReady(clientId: string, contactId: string, ghl: { locationId: string; apiKey: string }): Promise<StageMove> {
+  return moveCardToStage(clientId, contactId, ghl, loadIrisConfig(clientId)?.followUpCohort?.notReadyStage);
+}
+
+async function moveCardToStage(clientId: string, contactId: string, ghl: { locationId: string; apiKey: string }, stageName: string | undefined): Promise<StageMove> {
   if (!stageName) return { moved: false, reason: "no-stage-configured" };
   const stageId = await stageIdByName(ghl.locationId, ghl.apiKey, stageName);
   if (!stageId) return { moved: false, reason: "stage-not-found" };
@@ -73,17 +82,17 @@ export async function moveToNotInterested(clientId: string, contactId: string, g
 }
 
 /** What the Slack post and the GHL note say about the card. */
-export function describeStageMove(move: StageMove): string {
+export function describeStageMove(move: StageMove, column = "Not Interested"): string {
   if (move.moved) return `moved their card to *${move.stageName}*`;
   switch (move.reason) {
     case "already-there":
-      return "their card was already in Not Interested";
+      return `their card was already in ${column}`;
     case "person-works-it":
       return "I left their card where it is because it sits in a column a person works — someone should move it";
     case "no-open-card":
       return "they have no open card to move";
     default:
-      return "I could not find the Not Interested column to move their card (check the stage name in the config)";
+      return `I could not find the ${column} column to move their card (check the stage name in the config)`;
   }
 }
 
@@ -103,5 +112,27 @@ export async function recordOptOut(clientId: string, contactId: string, ghl: { l
     summary = "I could not move their card (it failed), so someone should move it to Not Interested";
   }
   await createContactNote(contactId, `Iris: the lead texted to stop being contacted ("${quote.slice(0, 200)}") — tagged "${DO_NOT_CALL_TAG}"; ${summary.replace(/\*/g, "")}.`, ghl.locationId, ghl.apiKey).catch(() => {});
+  return summary;
+}
+
+/**
+ * A lead who said "not right now" / "not at this time" / "I'll let you know when I'm ready" (Mark, 2026-11-25): not a stop,
+ * so no "do not call" tag and no goodbye text. Iris closes her own queue row for them, moves the card to Not Ready, and
+ * Ember (which works that column) follows up when they are due. Returns what was done, for the Slack post.
+ */
+export async function recordNotNow(clientId: string, contactId: string, ghl: { locationId: string; apiKey: string }, quote: string): Promise<string> {
+  await query(
+    `UPDATE iris_pending_calls SET status = 'skipped', resolution_reason = 'lead said not right now — moved to Not Ready, Ember follows up', resolved_at = now()
+     WHERE client_id = $1 AND contact_id = $2 AND status IN ('pending', 'placed')`,
+    [clientId, contactId]
+  ).catch((error) => console.error(`[IRS] Failed to close the queue row for ${contactId}:`, error instanceof Error ? error.message : error));
+  let summary: string;
+  try {
+    summary = describeStageMove(await moveToNotReady(clientId, contactId, ghl), "Not Ready");
+  } catch (error) {
+    console.error(`[IRS] Failed to move contact ${contactId} to Not Ready:`, error instanceof Error ? error.message : error);
+    summary = "I could not move their card (it failed), so someone should move it to Not Ready";
+  }
+  await createContactNote(contactId, `Iris: the lead said not right now ("${quote.slice(0, 200)}") — no calls from Iris; ${summary.replace(/\*/g, "")}. Ember follows up when they are due.`, ghl.locationId, ghl.apiKey).catch(() => {});
   return summary;
 }

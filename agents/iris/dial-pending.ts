@@ -36,7 +36,7 @@ import { hasActiveSmsConversation, markLeadNoCalls, NO_CALLS_TAG } from "./sms";
 import { sendMessage } from "../../shared/slack";
 import { CALL_LOG_CHANNEL } from "./channels";
 import { NO_SHOW_SOURCE, noShowStillApplies } from "./no-show-state";
-import { recordOptOut } from "./opt-out";
+import { recordNotNow, recordOptOut } from "./opt-out";
 import { isTransferResumeRow, transferResumeExpired, whenPhrase, TransferResumeState } from "./transfer-resume";
 import { getGhlConfig, getLocationTimezone, addContactTags, getContact } from "../../shared/ghl";
 
@@ -581,6 +581,16 @@ async function resolveOne(row: PendingCallRow, leaseToken: string): Promise<void
       await sendMessage("iris", {
         channel: CALL_LOG_CHANNEL,
         text: `❓ *${row.lead?.name ?? row.contact_id}* texted something that might mean "stop": "${String(inbound?.text ?? "").slice(0, 200)}". I did not call, close or tag them. A teammate should read it and decide.`,
+      }).catch(() => {});
+      return;
+    }
+
+    // "Not right now" (Mark, 2026-11-25): not a stop. Close Iris's row, move the card to Not Ready, Ember follows up.
+    if (signal.type === "not_now") {
+      const summary = await recordNotNow(row.client_id, row.contact_id, ghlConfig, signal.quote);
+      await sendMessage("iris", {
+        channel: CALL_LOG_CHANNEL,
+        text: `💤 *${row.lead?.name ?? row.contact_id}* texted "${signal.quote.slice(0, 160)}". Not a stop: ${summary}. I did not call; Ember follows up when they are due.`,
       }).catch(() => {});
       return;
     }

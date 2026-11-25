@@ -460,8 +460,15 @@ she declined) and Veronica Dawson-Amoah ("No more interested", 11-12).
   kinds), so it no longer re-queues the lead and re-posts the ❓.
 - The stuck-lead check says "they said no: confirm and move the card" instead of "texted last and nobody has answered", and a no no
   longer counts as the lead having engaged.
-- Not done on purpose: a polite not-now ("not at this time") is not moved to Not Ready by Iris on her own. It is reported once, with
-  the words, for a person to move.
+- **"Not right now" goes to Not Ready, and Ember takes over (Mark, 2026-11-25).** `notNowQuote` (decline.ts) reads "not interested
+  right now", "not at this time", "not this year", "maybe later", "when I'm ready I'll let you know" in code; the model prompt also
+  has a `not_now` shape (accepted only when its quote is in the message and nothing says stop/anymore). `classifyInboundText`
+  returns `not_now`, and all three text paths (sms.ts for a pending row, sms.ts for a closed row, dial-pending.ts pre-dial) call
+  `recordNotNow` (opt-out.ts): Iris's queue row closes, the card moves to `iris.followUpCohort.notReadyStage` (never a column a
+  person works), a note is left, and Slack gets a 💤 line. **No "do not call" tag and no text to the lead.** Ember works that column
+  once the lead has been quiet for `ember.dormancyThresholdDays` (60 days for Not Ready, counted from the move) and applies its own
+  rules (a "not right now" pauses it 180 days). The closed-row gate also reads these phrases (they are not stop words).
+  A message that asks something ("not right now, can you call me tomorrow?") or says stop is not a not-now.
 
 Watch: the next "not interested" text should show a 🚫 post and a "do not call" tag within a minute; a ❓ for the same words
 means the rule did not match.
