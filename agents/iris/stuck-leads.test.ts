@@ -132,6 +132,15 @@ describe("diagnoseStuckLead: a person decides", () => {
   it("no phone", () => expect(act(facts({ hasPhone: false }))).toBe("person"));
   it("live transferred but the card never moved", () => expect(act(facts({ tags: ["buyer lead", "live transferred"] }))).toBe("person"));
   it("they texted last and nobody answered", () => expect(act(facts({ events: [irisText(5), leadText(4)] }))).toBe("person"));
+  it("they said no: a person confirms, and the reason says so", () => {
+    const d = diagnoseStuckLead(facts({ events: [irisText(5), leadText(4, "Not interested anymore")] }), cfg, NOW).diagnosis;
+    expect(d.action).toBe("person");
+    expect(d.why).toMatch(/said no/);
+  });
+  it("a no does not count as engagement for a lead who never answered", () => {
+    const d = diagnoseStuckLead(facts({ notes: "Buyer | 6+ months | St. John's | $300-350K | 3 bed", events: [irisText(9), leadText(8, "not interested")] }), cfg, NOW).diagnosis;
+    expect(d.why).toMatch(/said no/);
+  });
   it("an inquiry over six months old", () => expect(act(facts({ createdAt: ago(200), events: [irisText(30)] }))).toBe("person"));
   it("an old leftover nobody follows up on automatically", () => expect(act(facts({ createdAt: ago(75), events: [irisText(40), leadText(39)] }))).toBe("person"));
   it("an old lead nobody ever contacted", () => expect(act(facts({ createdAt: ago(45) }))).toBe("person"));

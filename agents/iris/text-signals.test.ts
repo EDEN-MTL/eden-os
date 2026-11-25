@@ -28,6 +28,19 @@ describe("classifyInboundText", () => {
     expect(result).toEqual({ type: "opt_out", quote: "I'm not interested" });
   });
 
+  // Geoff Harris, 2026-11-22: the model called this a maybe and nobody was closed. A message that is only a plain
+  // permanent no is decided in code, without asking the model at all.
+  it("treats a plain \"Not interested anymore\" as a clear stop without asking the model", async () => {
+    expect(await classifyInboundText("Not interested anymore", NOW, TIMEZONE)).toEqual({ type: "opt_out", quote: "Not interested anymore" });
+    expect(claude.ask).not.toHaveBeenCalled();
+  });
+
+  it("still asks the model about a no with a qualifier", async () => {
+    claude.ask.mockResolvedValue('{"type": "opt_out", "certainty": "unsure", "quote": "not interested right now"}');
+    expect(await classifyInboundText("Not interested right now", NOW, TIMEZONE)).toEqual({ type: "unsure_stop" });
+    expect(claude.ask).toHaveBeenCalledTimes(1);
+  });
+
   // Reversible by default (Mark, 2026-11-06): a stop is only acted on when it is clear AND the quoted words are really in the message.
   it("treats an opt-out the model is unsure about as unsure_stop, not a stop", async () => {
     claude.ask.mockResolvedValue('{"type": "opt_out", "certainty": "unsure", "quote": "not interested right now"}');

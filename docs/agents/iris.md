@@ -436,3 +436,32 @@ Each was found by reading the real prompts, not from a live complaint, and each 
 
 All the call-prompt changes were run through `scripts/check-iris-call-prompt.ts` (new cases: stop, take me off, not interested, wrong person, busy-is-a-callback; `INTENT=seller` adds two seller cases). The Ember classifier change cannot be run locally (no model key); its rule paths are unit-tested and the model path is mocked.
 
+
+## "Not interested anymore" was only a maybe, and the review kept listing the lead (Mark, 2026-11-25 — Geoff Harris)
+
+Geoff texted "Not interested anymore" 40 seconds after Iris's call (11-22). The text classifier called it `unsure_stop`, so Iris
+posted "might mean stop, I did not close or tag them" and did nothing else; nobody answered the question. The nightly lead review
+then read his text as "the lead spoke last and nobody answered" (its only stop rule was a text starting with the word "stop"), so
+he was in "Worth checking in on" and in the daily follow-up's "needs a person" list every day. The same happened to Michelle Smith
+Funk ("Not at this time. When I'm ready…", a ❓ post on 11-17, 11-21 and 11-25, and "qualified, untouched" because her notes said
+she declined) and Veronica Dawson-Amoah ("No more interested", 11-12).
+
+- `agents/iris/decline.ts` (pure): `plainDeclineQuote` matches a message that is nothing but a plain permanent no ("not interested",
+  "not interested anymore", "no longer interested", "no more interested", with greetings and thanks around it). No qualifier or
+  subject ("right now", "yet", "in condos", "in a call") is allowed; those still go to the model and stay a maybe.
+  `isSoftDecline` is a short polite not-now that asks nothing; the review uses it, it never closes anyone.
+- `classifyInboundText` (text-signals.ts) returns `opt_out` for a plain decline **before** asking the model, so the stop is carried
+  out (tag "do not call", card to Not Interested, Slack 🚫) by the existing handlers in sms.ts and dial-pending.ts. The prompt's
+  "clear" examples also list "not interested anymore".
+- The lead review has a new finding kind `said_no`: the lead's last text is a no and no teammate answered since, while the card is
+  still in an active column. It replaces the "unanswered reply"/"owed contact" lines for that lead, and says what to do (plain no:
+  Not Interested + "do not call"; polite not-now: Not Ready). A card already in Not Interested / Not Ready is not reported. Notes that
+  say the lead declined contact stop a "qualified, untouched" finding. The daily follow-up does not chase `said_no` (it is not in its
+  kinds), so it no longer re-queues the lead and re-posts the ❓.
+- The stuck-lead check says "they said no: confirm and move the card" instead of "texted last and nobody has answered", and a no no
+  longer counts as the lead having engaged.
+- Not done on purpose: a polite not-now ("not at this time") is not moved to Not Ready by Iris on her own. It is reported once, with
+  the words, for a person to move.
+
+Watch: the next "not interested" text should show a 🚫 post and a "do not call" tag within a minute; a ❓ for the same words
+means the rule did not match.

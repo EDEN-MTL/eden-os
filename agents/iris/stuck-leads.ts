@@ -53,6 +53,7 @@ import { queueColdLeadSweep } from "./dial-pending";
 import { callAnswered } from "./followup-cohort";
 import { checkHumanTouch, DEFAULT_HUMAN_HANDS_OFF_DAYS } from "./human-touch";
 import { loadIrisConfig } from "./index";
+import { isSoftDecline, plainDeclineQuote } from "./decline";
 import { eventsFromIrisCalls, eventsFromMessages, isTestContact, loadTeamIdentity, qualifiedSignals, ReviewEvent } from "./lead-review";
 import { appendNoteToContact } from "./notes";
 import { moveToNotInterested } from "./opt-out";
@@ -267,6 +268,10 @@ export function diagnoseStuckLead(f: StuckFacts, cfg: Pick<StuckLeadsConfig, "st
   if (f.lastActionAt !== null && t - f.lastActionAt < cfg.recheckDays * DAY) return done({ action: "leave", why: "handled in the last few days" });
 
   const last = f.events.at(-1);
+  // A "no" is not an unanswered question, and not engagement either: say what it was (Geoff Harris, 2026-11-22, "Not interested anymore").
+  if (last && last.direction === "in" && last.kind === "sms" && (plainDeclineQuote(last.text) || isSoftDecline(last.text))) {
+    return done({ action: "person", why: `they said no (“${last.text.replace(/\s+/g, " ").slice(0, 80)}”): confirm and move the card to Not Interested or Not Ready` });
+  }
   if (last && last.direction === "in" && last.kind === "sms" && !STOP.test(last.text) && t - last.at > TEXT_NOT_ANSWERED_AFTER_MS) return done({ action: "person", why: "they texted last and nobody has answered" });
   if (f.createdAt !== null && t - f.createdAt > STALE_INQUIRY_DAYS * DAY) return done({ action: "person", why: "the inquiry is over 6 months old: needs Jacob's OK before anyone contacts them" });
 

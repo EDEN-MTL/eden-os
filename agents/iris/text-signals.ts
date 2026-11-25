@@ -18,6 +18,7 @@
 import { ask } from "../../shared/claude";
 import { getConversationMessages, getConversations } from "../../shared/ghl";
 import { clampToLegalCallingWindow, resolveRequestedTime } from "./cadence";
+import { plainDeclineQuote } from "./decline";
 
 export type TextSignal = { type: "opt_out"; quote: string } | { type: "unsure_stop" } | { type: "no_calls" } | { type: "schedule_for"; when: Date } | { type: "call_consent" } | { type: "none" };
 
@@ -56,7 +57,7 @@ ${contextLine}
 Classify the message into exactly ONE of these shapes:
 
 {"type": "opt_out", "certainty": "clear" | "unsure", "quote": "<the exact words from the message that show it>"} — the lead is declining ALL further contact: calls and texts both, or says they are not interested. Closing a lead cannot be undone by a person who didn't see it, so be strict about certainty:
-  - "clear": the lead says it in plain words with no qualifier. "not interested, remove me", "stop texting me", "leave me alone", "take me off your list", "quit contacting me". "quote" must be copied exactly from the message.
+  - "clear": the lead says it in plain words with no qualifier. "not interested, remove me", "stop texting me", "leave me alone", "take me off your list", "quit contacting me", "not interested", "not interested anymore", "no longer interested". "quote" must be copied exactly from the message.
   - "unsure": it MIGHT be a stop but could mean something smaller — temporary ("not interested right now", "not this year"), about one thing ("no thanks, we're not selling"), a mood, a complaint, or an angry or ambiguous message. Use "unsure" and a team member or Iris will check with the lead instead of closing them.
 
 {"type": "no_calls"} — the lead refuses PHONE CALLS only and says nothing about texts or about no longer being interested. Real example (2026-11-06, Kelly Joseph, replying to our first text): "Please no Calls". Others: "don't call me", "no phone calls please", "text only", "text me instead", "I can't take calls". Someone who just doesn't want a call is still a prospect we can help by text, so never use opt_out for this — but if the message ALSO says they're not interested or don't want texts ("don't call or text me"), it is opt_out.
@@ -95,6 +96,12 @@ export async function classifyInboundText(
   precedingOutbound: string | null = null
 ): Promise<TextSignal> {
   if (!text || !text.trim()) return { type: "none" };
+
+  // A message that is nothing but a plain permanent no is a clear stop, decided here rather than by the model: the model
+  // called "Not interested anymore" a maybe (Geoff Harris, 2026-11-22) and nobody was closed. Anything with a qualifier
+  // or a subject ("right now", "in condos", "in a call") does not match and still goes to the model below.
+  const plain = plainDeclineQuote(text);
+  if (plain) return { type: "opt_out", quote: plain };
 
   let raw: string;
   try {

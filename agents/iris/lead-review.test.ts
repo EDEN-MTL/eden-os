@@ -157,6 +157,46 @@ describe("analyzeLead", () => {
   });
 });
 
+/** Geoff Harris, 2026-11-22: "Not interested anymore" was listed every morning as "texted and nobody has answered". */
+describe("analyzeLead: a lead who said no", () => {
+  const said = (text: string, daysAgo = 3) => ev({ at: d(daysAgo), actor: "lead", direction: "in", text });
+  const outreach = ev({ at: d(3, 1), actor: "automation", direction: "out", text: "you'll receive a quick call from our AI assistant, IRIS" });
+
+  it("reports a plain no as the card being in the wrong column, not as an unanswered text", () => {
+    const f = analyzeLead(lead({ events: [outreach, said("Not interested anymore")] }), NOW);
+    expect(f.map((x) => x.kind)).toEqual(["said_no"]);
+    expect(f[0].headline).toMatch(/said no .* still in Replied/);
+    expect(f[0].suggested).toMatch(/Not Interested/);
+  });
+
+  it("reports a polite not-now as Not Ready territory (Michelle Smith Funk)", () => {
+    const f = analyzeLead(lead({ events: [said("Not at this time. When I'm ready to pursue house hunting, I'll let you know")] }), NOW);
+    expect(f.map((x) => x.kind)).toEqual(["said_no"]);
+    expect(f[0].suggested).toMatch(/Not Ready/);
+  });
+
+  it("says nothing once the card is already in a no or not-ready column", () => {
+    for (const stageName of ["Not Qualified/Not Interested", "Not Ready - [Endless Loop]"]) {
+      expect(analyzeLead(lead({ stageName, events: [said("Not interested anymore")] }), NOW)).toEqual([]);
+    }
+  });
+
+  it("does not hide a real question that happens to say not now", () => {
+    const f = analyzeLead(lead({ events: [said("Not right now, but can you call me tomorrow at 5?")] }), NOW);
+    expect(f.some((x) => x.kind === "said_no")).toBe(false);
+  });
+
+  it("goes back to normal when a teammate answered after the no", () => {
+    const reply = ev({ at: d(2), actor: "human", direction: "out", text: "No problem Geoff, take care" });
+    expect(analyzeLead(lead({ events: [said("Not interested anymore"), reply] }), NOW).some((x) => x.kind === "said_no")).toBe(false);
+  });
+
+  it("does not call a lead qualified-untouched when the notes say they declined contact", () => {
+    const notes = "Buyer | 6+ months | St. John's | $300-350K | 3 bed | Not pre-approved. Lead declined to be connected at this time.";
+    expect(analyzeLead(lead({ notes, events: [ev({ at: d(14), actor: "app", direction: "out", text: "hello" })] }), NOW)).toEqual([]);
+  });
+});
+
 describe("qualifiedSignals and isTestContact", () => {
   it("counts the usual qualifying facts", () => {
     expect(qualifiedSignals("Budget: $350K Timeline: ASAP Area: Torbay pre-approved 3 bed", [])).toBe(5);

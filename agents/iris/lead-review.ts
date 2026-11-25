@@ -10,6 +10,7 @@
  *   unanswered_reply   the lead's last message is theirs and nobody has answered it
  *   qualified_untouched  the notes show a qualified lead and nobody has tried them in days
  *   only_missed_attempts a promise was made and the only tries since went unanswered, with nobody trying lately
+ *   said_no            the lead's last text was a no ("Not interested anymore") and the card still sits in an active column
  * It never contacts anyone and never moves a card; it produces a ranked list for a person (or, later, for Iris to
  * act on after a "yes").
  */
@@ -29,6 +30,7 @@ import { buildKeyToId, readField } from "../scout/intake";
 import { loadIrisConfig } from "./index";
 import { callAnswered } from "./followup-cohort";
 import { readAppointments } from "./no-show-state";
+import { isNoOrParkedStage, isSoftDecline, notesSayDeclined, plainDeclineQuote } from "./decline";
 
 export type Actor = "lead" | "automation" | "app" | "human" | "iris_call";
 
@@ -100,7 +102,7 @@ export interface LeadFacts {
   irisQueue: { status: string; callAfter: number | null } | null;
 }
 
-export type FindingKind = "owed_contact" | "unanswered_reply" | "qualified_untouched" | "only_missed_attempts";
+export type FindingKind = "owed_contact" | "unanswered_reply" | "qualified_untouched" | "only_missed_attempts" | "said_no";
 
 export interface Finding {
   kind: FindingKind;
@@ -179,6 +181,30 @@ export function analyzeLead(f: LeadFacts, nowDate: Date): Finding[] {
   const base = { contactId: f.contactId, name: f.name, stageName: f.stageName, lastContact, assignedTo: f.assignedTo };
   const findings: Finding[] = [];
 
+  // The lead said no, and nobody on the team has answered since. That is not "nobody has answered" or "qualified and
+  // untouched": the card is in the wrong column. Geoff Harris, 2026-11-22: "Not interested anymore" was listed every
+  // morning for days as an unanswered text. A card already in Not Interested / Not Ready has nothing left to report.
+  const lastText = [...events].reverse().find((e) => e.direction === "in" && e.kind === "sms");
+  const answeredByPerson = lastText ? humanOut.some((e) => e.at > lastText.at) : false;
+  if (lastText && !answeredByPerson && now - lastText.at < 60 * DAY && (plainDeclineQuote(lastText.text) || isSoftDecline(lastText.text))) {
+    if (isNoOrParkedStage(f.stageName)) return [];
+    const plain = plainDeclineQuote(lastText.text) !== null;
+    return [
+      {
+        ...base,
+        kind: "said_no",
+        score: 60,
+        headline: `They said no ${ago(lastText.at, now)} and the card is still in ${f.stageName}`,
+        evidence: [`They said (${shortDate(lastText.at)}): ${quote(lastText.text)}`],
+        suggested: plain
+          ? "Move the card to Not Interested and tag them \"do not call\" (Iris does this herself when the text arrives; this one slipped past)."
+          : "They asked for nothing back. Move the card to Not Ready, or send one short reply if you want to keep them warm.",
+      },
+    ];
+  }
+  // Notes where someone wrote that they turned down contact: a qualified-looking note must not send anyone after them.
+  const declinedInNotes = notesSayDeclined(f.notes);
+
   // The promise or request that created an obligation.
   // The intake automation's "you'll receive a call from IRIS" is a promise Iris's own sequence keeps, so it only
   // counts while that sequence could still be running; a person's or Iris's own promise counts for longer.
@@ -232,7 +258,7 @@ export function analyzeLead(f: LeadFacts, nowDate: Date): Finding[] {
   const recentlyTried = lastAttempt && now - lastAttempt.at < QUALIFIED_UNTOUCHED_AFTER_MS;
   const recentInbound = lastReached && lastReached.direction === "in" && now - lastReached.at < QUALIFIED_UNTOUCHED_AFTER_MS;
   const ageOk = f.createdAt === null || now - f.createdAt < 60 * DAY;
-  if (signals >= 3 && !recentlyTried && !recentInbound && !humanWorking && !irisSoon && ageOk && findings.length === 0) {
+  if (signals >= 3 && !recentlyTried && !recentInbound && !humanWorking && !irisSoon && ageOk && !declinedInNotes && findings.length === 0) {
     findings.push({
       ...base,
       kind: "qualified_untouched",
