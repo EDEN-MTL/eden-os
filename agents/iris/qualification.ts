@@ -111,6 +111,8 @@ export interface IrisConfig {
    * call prompt that needs its own check). Falls back to callbackCalendarIds when unset.
    */
   smsBookingCalendarIds?: { buyer?: string; seller?: string };
+  /** Wait for the intake automation's "AI assistant, IRIS" text before the first call (iris.firstCall; intro-text.ts). Unset = dial at the 5-minute mark as before. */
+  firstCall?: import("./intro-text").FirstCallConfig;
   /**
    * IANA timezone for this client — was hardcoded to "America/St_Johns"
    * (3% East Coast's own zone) in scripts.ts, dial-pending.ts, and

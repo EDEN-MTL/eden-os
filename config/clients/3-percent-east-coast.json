@@ -263,6 +263,13 @@
     "fromNumber": "+17097013598",
       "fromNumberNote": "Mark, 2026-10-07: GHL reuses whichever number last texted a lead, and older leads were last texted from +17097021163, which is no longer available in the account — every send to them failed ('Invalid from number'). Iris's own proactive texts name the main 3% number explicitly. Same number Iris calls out from."
     },
+    "firstCall": {
+      "waitForIntroText": true,
+      "introTextPattern": "AI assistant|IRIS",
+      "maxWaitMinutes": 20,
+      "recheckMinutes": 2,
+      "note": "Mark, 2026-11-27 (Ellen Adams): the first call to a new lead waits until the GHL automation's 'you'll receive a quick call from our AI assistant, IRIS' text is in the thread. It normally goes out ~40 seconds after the lead arrives; on 11-27 it ran 12 minutes late and Iris called first. Re-checks every recheckMinutes; after maxWaitMinutes of waiting she calls anyway and Slack says the text never went out. Applies to the first call to a brand-new lead only (not callbacks, Ember hand-overs, no-show follow-ups or sweeps). See agents/iris/intro-text.ts."
+    },
     "outreachCadence": {
       "_comment": "Jacob, 2026-08-25: Iris calls new leads morning and afternoon for the first 3-4 days trying to reach them. Iris owns this cadence internally — Scout fires ONCE per lead and does not trigger per attempt. scout.touchedTags gates whether a sequence STARTS, not each call.",
       "attemptsPerDay": 2,

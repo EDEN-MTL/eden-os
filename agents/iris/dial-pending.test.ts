@@ -35,8 +35,12 @@ vi.mock("./qualification", () => ({ transferNumberForIntent: vi.fn(() => undefin
 const textSignals = vi.hoisted(() => ({
   classifyInboundText: vi.fn(async () => ({ type: "none" })),
   lastInboundText: vi.fn(),
+  recentTexts: vi.fn(async () => [] as any[]),
 }));
 vi.mock("./text-signals", () => textSignals);
+
+const slack = vi.hoisted(() => ({ sendMessage: vi.fn(async () => ({})) }));
+vi.mock("../../shared/slack", () => slack);
 
 const smsModule = vi.hoisted(() => ({ hasActiveSmsConversation: vi.fn(async () => false), markLeadNoCalls: vi.fn(async () => {}), NO_CALLS_TAG: "no calls" }));
 vi.mock("./sms", () => smsModule);
@@ -531,5 +535,98 @@ describe("callBlockedReason", () => {
     expect(callBlockedReason({ tags: ["do not call"] })).toMatch(/do not call/);
     expect(callBlockedReason({ dndSettings: { Call: { status: "inactive" }, SMS: { status: "active" } }, tags: ["buyer lead"] })).toBeNull();
     expect(callBlockedReason(null)).toBeNull();
+  });
+});
+
+
+describe("resolveOne — the first call waits for the intro text (Mark, 2026-11-27, Ellen Adams)", () => {
+  const FIRST_CALL = { waitForIntroText: true, maxWaitMinutes: 20, recheckMinutes: 2, introTextPattern: "AI assistant|IRIS" };
+  const INTAKE_ROW = { ...DUE_ROW, attempts_made: 0, source: null };
+  const INTRO = { from: "us", text: "Just a quick heads-up — you'll receive a quick call from our AI assistant, IRIS.", at: "2026-11-27T15:22:04.769Z", source: "workflow" };
+  const HELLO = { from: "us", text: "Hey Ellen! Saw you submitted a form. Do I have the right number here ?", at: "2026-11-27T15:16:52.640Z", source: "workflow" };
+  const withConfig = (firstCall: any) =>
+    irisIndex.loadIrisConfig.mockReturnValue({ ...irisIndex.loadIrisConfig(), firstCall });
+  const useRow = (row: any) =>
+    db.query.mockImplementation(async (sql: string) => {
+      if (sql.includes("FOR UPDATE SKIP LOCKED")) return [row];
+      if (sql.includes("'dialing'")) return [{ id: row.id }];
+      return [];
+    });
+  const waited = () => db.query.mock.calls.find((c) => String(c[0]).includes("waiting for the intro text"));
+
+  beforeEach(() => {
+    scout.refreshLead.mockResolvedValue({ ...LEAD });
+    // clearAllMocks keeps implementations, so earlier tests' texting state would otherwise pause these calls.
+    textSignals.lastInboundText.mockResolvedValue(null);
+    smsModule.hasActiveSmsConversation.mockResolvedValue(false);
+    withConfig(FIRST_CALL);
+    useRow(INTAKE_ROW);
+  });
+
+  it("holds the call and looks again in two minutes when only the first automation text is there", async () => {
+    textSignals.recentTexts.mockResolvedValue([HELLO]);
+    await runDialPendingCalls();
+    expect(calling.placeCall).not.toHaveBeenCalled();
+    const [, [id, recheckAt, startedAt]] = waited()!;
+    expect(id).toBe(42);
+    expect(new Date(recheckAt).getTime() - Date.now()).toBeGreaterThan(110_000);
+    expect(new Date(recheckAt).getTime() - Date.now()).toBeLessThanOrEqual(120_000);
+    expect(Number.isNaN(Date.parse(startedAt))).toBe(false);
+  });
+
+  it("dials once the AI-assistant text is in the thread", async () => {
+    textSignals.recentTexts.mockResolvedValue([HELLO, INTRO]);
+    await runDialPendingCalls();
+    expect(waited()).toBeUndefined();
+    expect(calling.placeCall).toHaveBeenCalledTimes(1);
+    expect(slack.sendMessage).not.toHaveBeenCalled();
+  });
+
+  it("keeps the original wait start, so the cap counts from the first hold", async () => {
+    const started = new Date(Date.now() - 10 * 60_000).toISOString();
+    useRow({ ...INTAKE_ROW, lead: { ...LEAD, introWaitStartedAt: started } });
+    textSignals.recentTexts.mockResolvedValue([]);
+    await runDialPendingCalls();
+    expect(waited()?.[1][2]).toBe(started);
+    expect(calling.placeCall).not.toHaveBeenCalled();
+  });
+
+  it("calls anyway after the cap and tells Slack the automation never sent the text", async () => {
+    useRow({ ...INTAKE_ROW, lead: { ...LEAD, introWaitStartedAt: new Date(Date.now() - 25 * 60_000).toISOString() } });
+    textSignals.recentTexts.mockResolvedValue([]);
+    await runDialPendingCalls();
+    expect(waited()).toBeUndefined();
+    expect(calling.placeCall).toHaveBeenCalledTimes(1);
+    expect(String((slack.sendMessage.mock.calls[0] as any[])[1].text)).toContain("calling anyway");
+  });
+
+  it("does not hold a retry, a callback, a teammate's request or an Ember hand-over", async () => {
+    textSignals.recentTexts.mockResolvedValue([]);
+    for (const row of [
+      { ...INTAKE_ROW, attempts_made: 1 },
+      { ...INTAKE_ROW, is_explicit_callback: true },
+      { ...INTAKE_ROW, human_requested: true },
+      { ...INTAKE_ROW, source: "ember" },
+    ]) {
+      vi.clearAllMocks();
+      useRow(row);
+      await runDialPendingCalls();
+      expect(waited()).toBeUndefined();
+      expect(textSignals.recentTexts).not.toHaveBeenCalled();
+    }
+  });
+
+  it("dials as before when the thread cannot be read (a GHL blip must not stop the call)", async () => {
+    textSignals.recentTexts.mockRejectedValue(new Error("GHL down"));
+    await runDialPendingCalls();
+    expect(waited()).toBeUndefined();
+    expect(calling.placeCall).toHaveBeenCalledTimes(1);
+  });
+
+  it("does nothing when the client has not turned it on", async () => {
+    withConfig(undefined);
+    await runDialPendingCalls();
+    expect(textSignals.recentTexts).not.toHaveBeenCalled();
+    expect(calling.placeCall).toHaveBeenCalledTimes(1);
   });
 });

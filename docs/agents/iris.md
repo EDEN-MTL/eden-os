@@ -489,3 +489,21 @@ succeeded for Iris or for Ember (none in the database), and qualified leads went
   the team's agents), so the first real booking is the first live proof of `createAppointment` on those calendars. Watch: the first
   "booked by text" Slack post, the appointment on the right calendar with an agent assigned, and the card/stage the team expects.
 - The appointment is titled "Buyer callback" / "Seller callback" (vapi-tools.ts), with a note "Booked automatically by Iris over text."
+
+## The first call waits for the intro text (Mark, 2026-11-27 — Ellen Adams)
+
+The GHL intake automation texts a new lead "Hey <name>! … do I have the right number?" and then "you'll receive a quick call from our AI assistant,
+IRIS". Iris used to wait a fixed 5 minutes (`CALL_DELAY_MINUTES`) and dial, guessing the texts had gone. They normally have (first text +25 s,
+IRIS text +40 s across the last nine leads). On 11-27 the automation ran late (first text +6.5 min, IRIS text +11.7 min); Ellen was called at
++5.7 min with nothing in her thread and hung up after 50 seconds. GHL exposes no delivery event and no workflow run history, so the cause of the
+delay is unknown (look in GHL → Automation → Workflows → the intake workflow → its execution log).
+
+- `iris.firstCall` (config; 3% only): `waitForIntroText`, `introTextPattern` ("AI assistant|IRIS"), `maxWaitMinutes` 20, `recheckMinutes` 2.
+  Pure decision in `intro-text.ts` (`decideIntroWait`), gate in `resolveOne` (dial-pending.ts) right before the dial.
+- Reads the lead's thread. A text we sent that matches the pattern → dial. Not there → the row is pushed `recheckMinutes` out (reason "waiting for the
+  intro text before the first call"; `introWaitStartedAt` is stored in the row's lead JSON). After `maxWaitMinutes` **counted from the first hold**
+  (so an overnight lead is not cut short: the automation texts in the morning, the call is queued for 10 AM) she calls anyway and Slack gets a
+  ⏱️ line "no AI assistant, IRIS text after N minutes, so Iris is calling anyway".
+- Only the very first call to a brand-new lead (`source` null, `attempts_made` 0, not a callback, a teammate's request, an Ember hand-over, a no-show
+  follow-up, a sweep or a transfer retry). Fails open: if the thread cannot be read she dials as before. Calling hours are still checked first.
+- Watch: a new lead whose texts arrive late should show no call until the IRIS text lands; a ⏱️ Slack line means the automation is stuck.

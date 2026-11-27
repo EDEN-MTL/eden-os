@@ -30,7 +30,8 @@ import { buildLeadQualificationPrompt, extractFirstName } from "./scripts";
 import { placeCall, CallingDisabledError } from "./calling";
 import { applyPreferredTime, decideNextAttempt, isStatedCallbackTime, nextAttemptTime, nextFirstSlotTime, nextSlotAfter, clampToLegalCallingWindow, nextOpenCallDay, timeOfDayLocal, isWithinLegalCallingWindow } from "./cadence";
 import { transferNumberForIntent, callbackCalendarForIntent } from "./qualification";
-import { classifyInboundText, lastInboundText } from "./text-signals";
+import { classifyInboundText, lastInboundText, recentTexts } from "./text-signals";
+import { decideIntroWait, introTextSent } from "./intro-text";
 import { checkHumanTouch, assignedAgentOf, DEFAULT_HUMAN_HANDS_OFF_DAYS } from "./human-touch";
 import { hasActiveSmsConversation, markLeadNoCalls, NO_CALLS_TAG } from "./sms";
 import { sendMessage } from "../../shared/slack";
@@ -682,6 +683,38 @@ async function resolveOne(row: PendingCallRow, leaseToken: string): Promise<void
         );
         return;
       }
+    }
+  }
+
+  // The first call to a brand-new lead waits until the intake automation's "you'll receive a call from our AI assistant,
+  // IRIS" text is in the thread (Mark, 2026-11-27, Ellen Adams: the automation ran 12 minutes late and she was called with
+  // nothing in her thread). Only the very first intake call: not a callback, a teammate's request, an Ember hand-over, a
+  // no-show follow-up, a sweep or a transfer retry. Fails open: if the thread cannot be read, dial as before.
+  const firstCall = config.firstCall;
+  if (firstCall && ghlConfig && row.source === null && row.attempts_made === 0 && !row.is_explicit_callback && !row.sms_scheduled && !row.human_requested && !isTransferResumeRow(row)) {
+    let introSent = true;
+    try {
+      introSent = introTextSent(await recentTexts(row.contact_id, ghlConfig.locationId, ghlConfig.apiKey, 30), firstCall.introTextPattern);
+    } catch (error) {
+      console.error(`[IRS] Could not read ${row.contact_id}'s texts to look for the intro text — dialling as before:`, error instanceof Error ? error.message : error);
+    }
+    const startedRaw = Date.parse(String((row.lead as any)?.introWaitStartedAt ?? ""));
+    const decision = decideIntroWait({ introSent, waitStartedAt: Number.isNaN(startedRaw) ? null : new Date(startedRaw), now: new Date(), config: firstCall });
+    if (decision.action === "wait") {
+      await query(
+        `UPDATE iris_pending_calls
+         SET call_after = $2, lead = lead || jsonb_build_object('introWaitStartedAt', $3::text),
+             resolution_reason = 'waiting for the intro text before the first call'
+         WHERE id = $1`,
+        [row.id, decision.recheckAt, decision.startedAt.toISOString()]
+      );
+      return;
+    }
+    if (decision.action === "dial_anyway") {
+      await sendMessage("iris", {
+        channel: CALL_LOG_CHANNEL,
+        text: `⏱️ ${lead.name || "A new lead"} had no "AI assistant, IRIS" text after ${decision.waitedMinutes} minutes, so Iris is calling anyway. The GHL intake automation may be stuck or slow.`,
+      }).catch((error) => console.error("[IRS] Failed to post the missing-intro-text note:", error instanceof Error ? error.message : error));
     }
   }
 

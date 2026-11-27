@@ -9,6 +9,7 @@ import { Attachment, ToolDef } from "../../shared/claude";
 import { eventBus } from "../../shared/events";
 import { NormalisedLead } from "../scout/intake";
 import { IrisConfig } from "./qualification";
+import { parseFirstCallConfig } from "./intro-text";
 import { query } from "../../shared/db";
 import { isWithinLegalCallingWindow, nextFirstSlotTime, formatLocal, zonedHourToUtc } from "./cadence";
 import { getContact, getGhlConfig, getLocationTimezone, listContactsPaginated } from "../../shared/ghl";
@@ -711,6 +712,7 @@ export function loadIrisConfig(clientId: string): IrisConfig | null {
       callbackNotesFieldKey: raw.iris.callbacks.notesFieldKey,
       callbackCalendarIds: raw.iris.callbacks.calendarIds || undefined,
       smsBookingCalendarIds: raw.iris.sms?.bookingCalendarIds || undefined,
+      firstCall: parseFirstCallConfig(raw.iris.firstCall) ?? undefined,
       timezone: raw.iris.timezone || undefined,
       writeFields: raw.iris.writeFields || undefined,
       outreachCadence: raw.iris.outreachCadence,
